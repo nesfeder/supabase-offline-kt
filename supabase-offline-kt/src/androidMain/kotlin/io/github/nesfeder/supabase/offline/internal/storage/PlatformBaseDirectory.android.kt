@@ -13,7 +13,7 @@ internal actual class PlatformBaseDirectory(context: Context) {
     actual val path: Path =
         File(
                 context.applicationContext.filesDir,
-                "supabase_offline",
+                PLATFORM_DATA_DIRECTORY_NAME,
             )
             .absolutePath
             .toPath()

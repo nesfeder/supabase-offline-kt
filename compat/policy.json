@@ -49,6 +49,7 @@
       "supabase-offline-kt/src/commonTest/kotlin/io/github/nesfeder/supabase/offline/internal/storage/CacheFilePathsTest.kt",
       "supabase-offline-kt/src/commonTest/kotlin/io/github/nesfeder/supabase/offline/internal/storage/StorageObjectNameEncodingTest.kt",
       "supabase-offline-kt/src/commonTest/kotlin/io/github/nesfeder/supabase/offline/internal/storage/StorageObjectNamesTest.kt",
+      "supabase-offline-kt/src/iosTest/kotlin/io/github/nesfeder/supabase/offline/internal/EarlierDefaultLocationIosTest.kt",
       "supabase-offline-kt/src/iosTest/kotlin/io/github/nesfeder/supabase/offline/internal/db/CrossDriverOpenInPlaceIosTest.kt",
       "supabase-offline-kt/src/iosTest/kotlin/io/github/nesfeder/supabase/offline/internal/db/IosDbPathProviderTest.kt",
       "supabase-offline-kt/src/iosTest/kotlin/io/github/nesfeder/supabase/offline/internal/db/OfflineDatabaseOpenInPlaceIosTest.kt",

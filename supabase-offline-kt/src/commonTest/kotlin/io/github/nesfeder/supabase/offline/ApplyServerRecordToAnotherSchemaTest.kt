@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline
 
+import io.github.nesfeder.supabase.offline.internal.primaryKeysByTable
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
@@ -52,6 +53,44 @@ class ApplyServerRecordToAnotherSchemaTest {
         assertEquals("""[{"id":1,"title":"renamed in app"}]""", renamed.data)
         assertEquals("[]", deleted.data)
         assertEquals("""[{"id":1,"title":"in public"}]""", defaultSchema.data)
+        client.close()
+    }
+
+    @Test
+    fun a_table_of_another_schema_is_keyed_by_its_schema_qualified_name() = runTest {
+        // Given — a composite key configured for the other schema's table, and its rows cached
+        val keyed =
+            RecordingPostgrestServer(
+                answer = {
+                    okJson(
+                        """[{"org":1,"slug":"a","title":"first"},{"org":1,"slug":"b","title":"second"}]"""
+                    )
+                }
+            )
+        val config = Offline.createConfig { primaryKey("$SCHEMA.$TABLE", "org", "slug") }
+        val client =
+            newTestOfflineClient(
+                supabase = keyed.supabaseClient(),
+                primaryKeys = config.primaryKeysByTable(),
+            )
+        client.from(SCHEMA, TABLE).select(readStrategy = ReadStrategy.NetworkOnly)
+
+        // When — the server reports one of them changed, located by that key
+        client.applyServerRecord(
+            TABLE,
+            buildJsonObject {
+                put("org", 1)
+                put("slug", "b")
+                put("title", "renamed")
+            },
+            schema = SCHEMA,
+        )
+
+        // Then — that row alone changed
+        assertEquals(
+            """[{"org":1,"slug":"a","title":"first"},{"org":1,"slug":"b","title":"renamed"}]""",
+            client.from(SCHEMA, TABLE).select(readStrategy = ReadStrategy.CacheOnly()).data,
+        )
         client.close()
     }
 

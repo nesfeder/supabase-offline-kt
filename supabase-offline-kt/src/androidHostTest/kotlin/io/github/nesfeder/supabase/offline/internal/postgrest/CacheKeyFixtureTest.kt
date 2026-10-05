@@ -22,7 +22,7 @@ import kotlinx.serialization.json.jsonPrimitive
  * Pins the cache key of every query in `cache-key-fixture.json`: the key a network read's response
  * is stored under, read back from the query cache. Apps hold warm caches under these keys. A query
  * naming a call the pinned supabase-kt minor lacks ([callsMissingFromPinnedSupabaseKt]) is pinned
- * from the minor that has it on.
+ * from the minor that has it on, and one the library refuses ([REFUSED_CASES]) is never stored.
  */
 class CacheKeyFixtureTest {
 
@@ -35,14 +35,22 @@ class CacheKeyFixtureTest {
             }
 
         // When
+        val refused = mutableListOf<String>()
         val mismatches = cases.mapNotNull { case ->
-            val stored = storedCacheKeyOf(case)
+            val stored =
+                try {
+                    storedCacheKeyOf(case)
+                } catch (_: IllegalArgumentException) {
+                    refused += case.name
+                    return@mapNotNull null
+                }
             if (stored == case.cacheKey) null
             else "${case.name}: expected <${case.cacheKey}> but was <$stored>"
         }
 
-        // Then
+        // Then — and the queries the library refuses before sending are the ones it should
         assertEquals(emptyList(), mismatches, "cache keys changed")
+        assertEquals(REFUSED_CASES, refused, "the refused queries changed")
     }
 
     @Test
@@ -94,6 +102,14 @@ internal suspend fun storedCacheKeyOf(case: CacheKeyFixtureCase): String {
     check(rows.size == 1) { "${case.name} stored ${rows.size} rows" }
     return rows.single().cacheKey
 }
+
+/**
+ * The fixture's queries the library refuses before sending, each with two values for one top-level
+ * parameter, which supabase-kt would send only the first of: two filters on one column, and a raw
+ * parameter given two values.
+ */
+private val REFUSED_CASES: List<String> =
+    listOf("two_filters_on_one_column", "raw_param_two_values")
 
 /** Whether this call list, or a call nested in it (an `or` group's), is named one of [names]. */
 private fun JsonElement.namesAnyCall(names: Set<String>): Boolean =

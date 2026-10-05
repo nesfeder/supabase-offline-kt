@@ -29,6 +29,7 @@ import io.github.nesfeder.offlinetasks.data.TaskRefreshState
 import io.github.nesfeder.offlinetasks.data.TaskRepository
 import io.github.nesfeder.offlinetasks.data.TaskServerError
 import io.github.nesfeder.offlinetasks.data.TaskSyncReport
+import io.github.nesfeder.offlinetasks.data.TaskWriteRefusedException
 import io.github.nesfeder.offlinetasks.data.UserSession
 import io.github.nesfeder.offlinetasks.data.photoObjectPath
 import io.github.nesfeder.supabase.offline.CacheMissException
@@ -209,8 +210,15 @@ class OfflineTaskRepository(
                     height = photo.height,
                     createdAt = clock.now().toString(),
                 )
-            write(Tables.TASK_PHOTOS, TaskMutationOperation.Insert, taskTitle = null) {
-                offline.from(Tables.TASK_PHOTOS).insert(row)
+            try {
+                write(Tables.TASK_PHOTOS, TaskMutationOperation.Insert, taskTitle = null) {
+                    offline.from(Tables.TASK_PHOTOS).insert(row)
+                }
+            } catch (refused: TaskWriteRefusedException) {
+                // Refused at once (its task deleted on the server meanwhile, say): no row will ever
+                // name the file, so it goes too. Any other failure may leave the row queued.
+                deleteUploadedFile(objectPath, refused)
+                throw refused
             }
             TaskPhoto(
                 id = photoId,
@@ -247,6 +255,20 @@ class OfflineTaskRepository(
             throw cancellation
         } catch (failure: Exception) {
             throw failure.asStorageFailure(objectPath)
+        }
+    }
+
+    /**
+     * Deletes the file just uploaded to [objectPath] when its row was [refused]. Best effort: a
+     * failure to delete it is kept on [refused], which is what the caller is told.
+     */
+    private suspend fun deleteUploadedFile(objectPath: String, refused: Exception) {
+        try {
+            photoBucket.delete(objectPath)
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (failure: Exception) {
+            refused.addSuppressed(failure)
         }
     }
 
