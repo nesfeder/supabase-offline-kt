@@ -1,0 +1,9 @@
+# The required-reason APIs (Apple's "Describing use of required reason API") the release
+# framework SupabaseOfflineCore references, one `category API` per line. The privacy
+# manifest, swift/Sources/SupabaseOffline/PrivacyInfo.xcprivacy, declares a reason for each
+# category here. Written by `python3 scripts/swift-release.py check-required-reasons
+# --framework <framework> --update`; CI fails when the framework's list differs.
+NSPrivacyAccessedAPICategoryFileTimestamp NSFileModificationDate
+NSPrivacyAccessedAPICategoryFileTimestamp fstat
+NSPrivacyAccessedAPICategoryFileTimestamp lstat
+NSPrivacyAccessedAPICategoryUserDefaults NSUserDefaults

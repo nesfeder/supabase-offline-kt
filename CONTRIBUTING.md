@@ -43,7 +43,7 @@ own, and no person applies them. `full-ci` is described under "Continuous integr
 
 Kotlin sources and Gradle scripts are formatted by [kempt](https://github.com/ZacSweers/kempt).
 It runs [ktfmt](https://github.com/facebook/ktfmt) in its `kotlinlang` style (the Kotlin coding
-conventions: 4-space indent, 100 columns) and puts the licence header from
+conventions: 4-space indent, 100 columns) and puts the license header from
 `config/license-header.txt` at the top of every `.kt` and `.kts` file. It also strips trailing
 whitespace from Kotlin, Markdown and `.gitignore`, and ends each of those files with a single
 newline. Its settings are in `.kempt.toml`. The Formatting job in CI runs `kempt check` on every
@@ -66,7 +66,7 @@ kempt check     # read-only; what CI runs
 check fails in CI, run `kempt format`, commit the result, and push.
 
 **Write nothing above a file's `package` line, or above a script's first `import` or `plugins`
-line.** kempt puts the licence header there and deletes whatever it replaces, without a warning:
+line.** kempt puts the license header there and deletes whatever it replaces, without a warning:
 in a `.kt` file, everything above the first `package` or `@file:` line; in a `.kts` script,
 everything above the first `@file:`, `import`, `plugins`, `buildscript`, `dependencies`,
 `pluginManagement` or `dependencyResolutionManagement` line. That includes a comment, or a
@@ -164,7 +164,7 @@ check CI does.
 
 The script cannot see everything. A person reviews:
 
-- **Documented behaviour**, such as a default, the order of replay, or what is kept after a
+- **Documented behavior**, such as a default, the order of replay, or what is kept after a
   sign-out. If your change alters it, put it under `### Breaking` yourself: the release check
   treats a Breaking line as breaking whatever the records say.
 - **The body of an inline function**, which a caller keeps until it recompiles; anything a
@@ -172,7 +172,7 @@ The script cannot see everything. A person reviews:
 - **A deprecation level raised to error, or a new opt-in requirement** on existing API: neither
   record shows annotations.
 
-The script errs towards breaking. If it calls a change breaking that is not, copy its finding into
+The script errs toward breaking. If it calls a change breaking that is not, copy its finding into
 `compat/overrides.txt`, followed by two spaces, `# ` and the reason. The reviewer judges the reason.
 An override stays until the release after it empties the file, so the release check sees it too; a
 line your pull request adds must match one of its findings. A rename inside a test that pins a
@@ -250,6 +250,21 @@ The XCFrameworks the Swift package builds against locally come from
 `assembleSupabaseOfflineCoreDebugXCFramework` and `assembleSupabaseOfflineCoreReleaseXCFramework`,
 with the same property.
 
+The framework ships with a privacy manifest (`swift/Sources/SupabaseOffline/PrivacyInfo.xcprivacy`,
+copied into each slice by the release), which declares a reason for each kind of Apple's
+required-reason APIs the framework references. Those APIs are recorded in
+`supabase-offline-swift-bridge/privacy/required-reason-apis.txt`, and CI's iOS job fails when the
+linked release framework references a different set. When a change adds or drops one (a new
+dependency that reads a file's date, say), record it again, declare or remove its category's
+reason in the manifest, and commit both:
+
+```bash
+./gradlew :supabase-offline-swift-bridge:linkReleaseFrameworkIosArm64 \
+    -Psupabase.offline.iosSqlite=system
+python3 scripts/swift-release.py check-required-reasons --update \
+    --framework supabase-offline-swift-bridge/build/bin/iosArm64/releaseFramework/SupabaseOfflineCore.framework
+```
+
 ## The Swift package
 
 The Swift package lives in `swift/`, laid out as the repository the release publishes it to: its
@@ -267,9 +282,37 @@ followed by the check that the public API names nothing of the framework underne
 scripts/test-swift-package.sh --simulator <simulator UDID> --derived-data <a scratch folder>
 ```
 
-The script copies the framework into `swift/LocalCore/`. To open the package in Xcode afterwards,
+The script copies the framework into `swift/LocalCore/`; `--framework <path>` tests against
+another build of it instead, such as the release's. To open the package in Xcode afterward,
 start Xcode with the variable set: `SUPABASE_OFFLINE_LOCAL_CORE=1 open -a Xcode swift/Package.swift`.
-CI runs the same script in the iOS job on the self-hosted runner.
+CI runs the same script in the iOS job on the self-hosted runner, and the release runs it on
+GitHub's macOS runner against the release framework. GitHub's own runners do not run it in CI (the
+merge queue and the weekly run skip it, to save macOS minutes), so a change to the bridge or to
+`swift/` should run it locally before review, and a framework change that breaks the package is
+caught at the latest by the release's `framework` job, before anything is published.
+
+`swift/` is not what a Swift developer sees. A release publishes part of it to the package's own
+repository, `nesfeder/supabase-offline-swift`: `Package.swift` up to its `// MARK: Development only`
+line (so without the local-framework switch and the test target), with the version and the
+framework's checksum set; `Sources/`; `swift/README.md` as the repository's README; and the root
+`LICENSE`. `Tests/` and `swift/PARITY.md` stay here. The release refuses a tree that holds anything
+else, or says Kotlin, KMP, Konan or kfun anywhere but in the code of `Sources/` (where the
+framework's own types and the patterns that redact them carry the word): keep it out of doc
+comments, comments, string literals, file names and `swift/README.md`. To see
+exactly what a release would publish from your branch, build and zip the release framework and
+stage the tree (macOS; nothing is pushed):
+
+```bash
+python3 scripts/swift-release.py build --out <a scratch folder>
+python3 scripts/swift-release.py zip --framework <the scratch folder>/SupabaseOfflineCore.xcframework \
+    --out <the scratch folder>/SupabaseOfflineCore.xcframework.zip
+python3 scripts/swift-release.py publish --dry-run --version 0.1.0 --sha HEAD \
+    --zip <the scratch folder>/SupabaseOfflineCore.xcframework.zip --out <an empty folder>
+```
+
+`publish --dry-run` reads the committed `swift/`, not your working tree, so commit first. Without a
+framework, `python3 scripts/swift-release.py check-sources` stages the same tree from `HEAD` with a
+stand-in for it and runs the same check; CI's Static checks run it on every pull request.
 
 The core framework is imported `internal` everywhere (`InternalImportsByDefault`), so the compiler
 refuses a public declaration that names one of its types; the one file that needs more is the
@@ -280,7 +323,9 @@ the core's own threads, so it must not inherit an actor: the adapters in
 ## Releasing
 
 Releases are published from GitHub Actions by the Release workflow, which a maintainer starts by
-hand; nothing is published from a laptop. The steps, what the owner does in the Central Portal and
+hand; nothing is published from a laptop. A release publishes the Maven artifacts, the Swift
+package (to `nesfeder/supabase-offline-swift`, with its framework on this repository's GitHub
+Release) and the documentation site. The steps, what the owner does in the Central Portal and
 in the repository settings, and what to do when a release stops halfway are in
 [RELEASING.md](https://github.com/nesfeder/supabase-offline-kt/blob/main/RELEASING.md). A pull
 request prepares a release by setting `VERSION_NAME` without `-SNAPSHOT` and naming the changelog
@@ -342,16 +387,27 @@ Material for MkDocs prints a notice about MkDocs 2.0 on every run. Set
 
 ### Writing pages
 
+- Write American spelling: behavior, color, canceled, labeled, license, catalog, toward,
+  `-ize`. Identifiers keep their platform's spelling, in inline code (`isCancelled`).
+  `python3 scripts/check-spelling.py` checks every tracked Markdown file and `mkdocs.yml`, as the
+  docs job does.
 - Every page must be listed under `nav` in `mkdocs.yml`.
 - Some pages are pulled in from elsewhere in the repository when the site is built: this file,
   `CHANGELOG.md`, and the sample schema in
   `samples/supabase/migrations/20260930000000_offline_tasks.sql`. Edit those files, not the pages
   that include them. Links inside them must be absolute URLs, because they are resolved
   relative to the page that includes them.
-- A page that has not been written yet opens with a "Not written yet" note, and a page written
-  for the engine before 0.1.0 opens with a "Written for an earlier engine" note. Both are plain
-  Markdown blockquotes, so they show on GitHub as well as on the site. Remove the note when the
-  page is rewritten.
+- Every Kotlin sample on the Getting started, Behaviors and Reference pages is a named section of
+  a source file the build compiles, in
+  `supabase-offline-kt/src/androidHostTest/kotlin/io/github/nesfeder/supabase/offline/docs/` (the
+  testing artifact's in its own `commonTest`), marked by start and end comments as the files
+  there show; a page includes the section by file and name, as it includes the root files. Edit
+  the sample there: `./gradlew :supabase-offline-kt:compileAndroidHostTest` compiles it, and the
+  strict build fails on a section that is gone. Gradle files, shell, SQL, XML and a sample that
+  needs a module the library does not bring stay inline in the page.
+- A page that has not been written yet opens with a "Not written yet" note. It is a plain Markdown
+  blockquote, so it shows on GitHub as well as on the site. Remove the note when the page is
+  written.
 
 ## Dependency updates
 
@@ -436,7 +492,7 @@ Dependabot alerts and security updates for Gradle dependencies are based on that
 on a transitive dependency comes without a pull request: update the dependency that brings it in,
 or add a dependency constraint.
 
-Each package in the graph is labelled. It is `runtime` when a published module's shipping
+Each package in the graph is labeled. It is `runtime` when a published module's shipping
 classpath resolves it (the Android runtime classpath or an iOS target's klibs), and `development`
 otherwise: Gradle plugins, build tools and test libraries. GitHub tags an alert on a development
 package "Development". An alert without that tag concerns what the library ships, so read those
@@ -472,6 +528,21 @@ Every pull request runs `.github/workflows/ci.yml`. Its last job, **All Green**,
 a pull request needs. Most failures are the change's own. This section covers two kinds that are
 not.
 
+### Pull requests from forks
+
+A pull request from a fork runs the workflow files as the fork's branch has them, not as `main`
+has them. GitHub gives such a run no secrets and a read-only token, but the steps are the
+contributor's: read every change under `.github/` in an outside pull request before you approve
+its run.
+
+### The two iOS routes
+
+The iOS tests run on one of two routes: GitHub's macOS runner, or the self-hosted Mac (the rule
+is at the top of `ci.yml`). The two can have different iOS simulator runtimes installed, and so
+different system SQLite versions under the suite's system-SQLite build. A failure that appears on
+one route only may be that difference: compare the runtime each run's simulator used before you
+look for anything else.
+
 ### When a run fails on a download
 
 A job can fail because something it downloads is briefly unavailable. Each of these is covered:
@@ -490,7 +561,7 @@ A job can fail because something it downloads is briefly unavailable. Each of th
   job fails with "Failed to download archive … after 3 attempts". That is at most about six minutes
   for each action; only if several of a job's actions stall at once can it reach the job's
   timeout, which is then a download failure too. A job whose only error is "The request was
-  canceled due to the configured HttpClient.Timeout of 100 seconds elapsing" was cancelled while it
+  canceled due to the configured HttpClient.Timeout of 100 seconds elapsing" was canceled while it
   waited, so the runner never retried: re-run it.
 - **Other downloads in a step:** `setup-java`'s JDK, the Gradle wrapper's distribution, the build's
   dependencies and the documentation toolchain, when one of them fails with the same kinds of

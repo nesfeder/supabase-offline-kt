@@ -190,9 +190,19 @@ jobs:
                 docs=true; workflows=true ;;
               .github/workflows/* | .github/dependabot.yml)
                 workflows=true ;;
-              docs/* | mkdocs.yml | CHANGELOG.md | CONTRIBUTING.md | samples/supabase/*)
+              swift/*.md)
+                # The Swift package's README is published with it, and its PARITY.md sits beside
+                # it: the Kotlin jobs check the published tree, the docs job's spelling check reads
+                # every Markdown file.
+                kotlin=true; docs=true ;;
+              # Every other Markdown file: the docs job's spelling check reads them all.
+              docs/* | mkdocs.yml | *.md | samples/supabase/* | scripts/check-spelling.py)
                 docs=true ;;
-              .github/* | *.md | LICENSE | .gitignore | .editorconfig | .git-blame-ignore-revs \
+              # The site's Kotlin samples: the Kotlin jobs compile them, the docs build includes them.
+              supabase-offline-kt/src/androidHostTest/kotlin/io/github/nesfeder/supabase/offline/docs/* \
+                | supabase-offline-kt-testing/src/commonTest/kotlin/io/github/nesfeder/supabase/offline/testing/docs/*)
+                kotlin=true; docs=true ;;
+              .github/* | LICENSE | .gitignore | .editorconfig | .git-blame-ignore-revs \
                 | .kempt.toml | config/license-header* | *.properties.example)
                 ;;
               *)
@@ -421,6 +431,20 @@ jobs:
       - name: Test the release script
         if: needs.changes.outputs.kotlin == 'true' || needs.changes.outputs.workflows == 'true'
         run: python3 scripts/release.py self-test
+
+      # The Swift package's release script: its staging, its tree check, its pushes against a
+      # throwaway remote and its draft release against a stand-in for gh. Its framework commands
+      # need macOS; the release's own macOS job runs them for real.
+      - name: Test the Swift package's release script
+        if: needs.changes.outputs.kotlin == 'true' || needs.changes.outputs.workflows == 'true'
+        run: python3 scripts/swift-release.py self-test
+
+      # The tree a release would publish to the Swift package's repository, staged from this commit
+      # with a stand-in for the framework (nothing is built) and checked: a word the package must
+      # not show, or a file it must not hold, is found here rather than in the release.
+      - name: Check the Swift package's published tree
+        if: needs.changes.outputs.kotlin == 'true' || needs.changes.outputs.workflows == 'true'
+        run: python3 scripts/swift-release.py check-sources
 
       # The scripts CI itself depends on, each proved by its own self-test, then the structure
       # of the workflows: the fan-in needs every job but the two coverage jobs, `$/` references
@@ -723,6 +747,14 @@ jobs:
       # intended change, run it with --update and commit the record).
       - name: Check the Swift bridge's header
         run: python3 scripts/check-bridge-header.py
+
+      # The required-reason APIs the Swift bridge's release framework references, against the
+      # record its privacy manifest declares reasons for (scripts/swift-release.py; after an
+      # intended change, run it with --update, declare the reasons and commit both).
+      - name: Check the Swift bridge's required-reason APIs
+        run: >-
+          python3 scripts/swift-release.py check-required-reasons
+          --framework supabase-offline-swift-bridge/build/bin/iosArm64/releaseFramework/SupabaseOfflineCore.framework
 
       # Tests never compile the device target or link a framework; this does.
       - name: Link the iOS device framework

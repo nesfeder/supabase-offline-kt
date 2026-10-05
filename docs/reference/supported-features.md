@@ -1,200 +1,79 @@
-# API Reference
+# Supported features
 
-> **Written for an earlier engine.** This page describes the library as it was before 0.1.0: an
-> earlier engine, API and release process. Parts of it contradict what 0.1.0 will ship. It is
-> being rewritten for 0.1.0; until then, do not rely on it.
+What the library does with each part of supabase-kt 3.6, the version it is built against. The
+library caches PostgREST lists and Storage downloads, and queues PostgREST writes; everything else
+goes to the server as supabase-kt sends it.
 
-This document lists the public types, their behavior, and the exceptions you should expect to
-handle. For the *why* behind any of this, see [architecture.md](../project/internals.md). For real
-usage examples in the test apps, see [test-apps.md](../samples/index.md).
+| Term | Meaning |
+| --- | --- |
+| **Cached** | The server's answer is kept on the device, and served from there as the read's strategy says, when the server cannot be reached |
+| **Queued** | The write is saved on the device first and sent in order; offline, it is sent when the network comes back |
+| **Sent directly** | Sent at once, never queued, and the cache is kept in step with what the server applied; offline it fails |
+| **Passed through** | Sent as supabase-kt sends it, and nothing is kept; offline it fails with supabase-kt's own error |
+| **Refused** | The library throws before anything is sent |
 
-## Contents
+While network access is switched off (`disableNetwork()`), whatever must reach the server throws
+`NetworkDisabledException` instead of being sent.
 
-- [Client surface](#client-surface)
-- [Read strategies (`ReadStrategy`)](#read-strategies-readstrategy)
-- [Reactive read strategies (`FlowReadStrategy`)](#reactive-read-strategies-flowreadstrategy)
-- [Mutation strategies (`MutationStrategy`)](#mutation-strategies-mutationstrategy)
-- [Exception types](#exception-types)
-- [Behavior reference](#behavior-reference)
-    - [SELECT (one-shot)](#select-one-shot)
-    - [SELECT as Flow](#select-as-flow)
-    - [Mutations (INSERT / UPSERT / UPDATE / DELETE)](#mutations-insert-upsert-update-delete)
-    - [Sync APIs](#sync-apis)
-    - [Storage downloads](#storage-downloads)
-    - [Storage path helpers](#storage-path-helpers)
-    - [Pending mutation count](#pending-mutation-count)
+## PostgREST
 
-## Client surface
+Reached through `supabase.offline.from(table)` or `from(schema, table)`.
 
-The entry point is the `SupabaseOfflineClient` interface, defined in
-[shared/src/commonMain/kotlin/io/github/nesfeder/supabase/SupabaseOfflineClient.kt](https://github.com/nesfeder/supabase-offline-kt/blob/9b014a795453590d7aecd704b01ca36ade8f67cb/shared/src/commonMain/kotlin/io/github/nesfeder/supabase/SupabaseOfflineClient.kt).
+| Call | What the library does |
+| --- | --- |
+| `select` of a list of rows | **Cached**, under its query: filters, order, columns, `limit`, `range`. The user's queued writes are laid over every answer |
+| `selectAsFlow` of a list of rows | **Cached**, and emitted again as the cached rows change; refreshed from the server as its strategy says |
+| `select` of another shape: `single()`, `head`, a `count` (with rows or without), `csv()`, `geojson()`, `stripNulls()`, `explain()` | **Passed through**, never stored. Under `CacheOnly`, refused with `CacheMissException` |
+| `selectAsFlow` of another shape | The server's answer, emitted once; offline the flow fails |
+| `insert`, `upsert` (`QueueIfOffline`) | **Queued**, with `onConflict`, `ignoreDuplicates` and `defaultToNull` kept for the replay. `select()` brings the server's rows back when the write is sent at once |
+| `update`, `delete` (`QueueIfOffline`) with a filter the queue can record | **Queued**. The queue records filters on the table's own columns, joined as AND, with any of supabase-kt's operators |
+| `update`, `delete` with a filter the queue cannot record | **Sent directly**: no filter, an `or { }` or `and { }` group, a negated filter (`filterNot`), an embedded table's column, `limit`, `order` or `offset`. Offline, `MutationNotQueueableException` |
+| Two top-level filters on one column, in a read, an update or a delete | **Refused** with `IllegalArgumentException`: supabase-kt would send only the first. Use one `and { }` group |
+| A write carrying `Prefer: tx=rollback` (a dry run) | **Sent directly**, never queued. A rolled-back write is not patched into the cache |
+| A write to a schema other than the client's default | **Sent directly**: the queue replays to the default schema only |
+| Any write with `mutationStrategy = OnlineOnly` | **Passed through**; the cached lists change when they are fetched again |
+| `supabase.offline.rpc(…)` | **Passed through**: a function may change data, so it is neither cached nor queued |
+| `applyServerRecord`, `applyServerDelete` | Applies a row the server reports to every cached list of the table; sends nothing |
 
-| Member | Purpose |
-|--------|---------|
-| `supabase: SupabaseClient` | Underlying online supabase-kt client |
-| `from(table)` / `get(table)` | Returns an offline-aware `OfflinePostgrestQueryBuilder` |
-| `from(schema, table)` / `get(schema, table)` | Same, in a non-default schema |
-| `storage(bucket)` | Returns an offline-aware `BucketApi` |
-| `syncAllPendingMutations()` | Push every queued mutation across all tables |
-| `syncPendingMutations(table)` | Push queued mutations for a single table |
-| `pendingMutationCount()` / `pendingMutationCount(table)` | Suspend snapshot |
-| `pendingMutationCountFlow()` / `pendingMutationCountFlow(table)` | Reactive `Flow<Int>` |
+Not in supabase-kt 3.6, so not here: `maybeSingle()`, `dryRun()` (add the `Prefer` header
+yourself) and the `isdistinct` operator.
 
-`OfflinePostgrestQueryBuilder` (in
-[OfflinePostgrestQueryBuilder.kt](https://github.com/nesfeder/supabase-offline-kt/blob/9b014a795453590d7aecd704b01ca36ade8f67cb/shared/src/commonMain/kotlin/io/github/nesfeder/supabase/OfflinePostgrestQueryBuilder.kt))
-exposes:
+## Storage
 
-- `select` — one-shot, configurable via `ReadStrategy`
-- `selectAsFlow` — reactive, configurable via `FlowReadStrategy`
-- `insertJson` / `insertWith` (+ Android reified `insert`)
-- `upsertJson` / `upsertWith` (+ Android reified `upsert`)
-- `updateJson` / `updateWith` (+ Android reified `update`)
-- `delete`
+Reached through `supabase.offline.storage.from(bucket)`.
 
-> **iOS note:** `selectAsFlow` is currently exposed only in the Kotlin/Android surface. iOS code
-> uses the Swift wrapper in
-> [ios/support/SupabaseOfflineSupport/](https://github.com/nesfeder/supabase-offline-kt/tree/9b014a795453590d7aecd704b01ca36ade8f67cb/ios/support/SupabaseOfflineSupport), which provides
-> `selectAll`, `selectRaw`, `selectColumns`, `insertOne`, `updateOne`, `deleteWhere`, etc., all
-> built on the one-shot Kotlin API.
+| Call | What the library does |
+| --- | --- |
+| `downloadAuthenticated`, `downloadPublic`, to bytes or to a channel | **Cached**: network first, the cached copy when the network fails. A "not found" drops the copy. An image transform is cached apart, per transform |
+| `cachedFile`, `ensureCachedFile`, and the platform helpers (`ensureLocalFile`, `ensureLocalUri`, `localUriIfCached` on Android; `ensureLocalPath`, `localPathIfCached` on iOS) | The file cache itself: `cachedFile` never touches the network, `ensureCachedFile` downloads only when nothing is cached |
+| `upload`, `update`, `delete`, `move`, `copy`, `uploadAsFlow`, resumable uploads, uploads to a signed URL | **Passed through**, online only, never queued. A write that reaches the server drops the cached copies it made stale |
+| `createSignedUrl`, `createSignedUrls`, `list`, `info`, `exists` | **Passed through** |
+| `publicUrl`, `authenticatedUrl` and the other URL builders | Built on the device; nothing is sent |
+| Bucket management: `createBucket`, `listBuckets`, `emptyBucket`, `deleteBucket` and the rest | Not on the offline client: call it on `supabase.storage` |
+| An object name with `%`, `?` or `#` | **Passed through**, never cached: supabase-kt 3.6 puts it in the URL as written. `ensureCachedFile` refuses it |
+| An object path that cannot map onto a file (a leading `/`, an empty, `.` or `..` segment, a `\`, a control character) | **Passed through**, never cached. `ensureCachedFile` refuses it |
 
-## Read strategies (`ReadStrategy`)
+`purgeCache` is not in supabase-kt 3.6. On an app that forces 3.8, call it on `supabase.storage`'s
+bucket, not on the offline one.
 
-Defined as a sealed interface in
-[OperationOfflineStrategy.kt](https://github.com/nesfeder/supabase-offline-kt/blob/9b014a795453590d7aecd704b01ca36ade8f67cb/shared/src/commonMain/kotlin/io/github/nesfeder/supabase/OperationOfflineStrategy.kt).
+## Auth, Realtime and Functions
 
-| Variant | Behavior |
-|---------|----------|
-| `NetworkOnly` | Always go to the network. Updates the cache on success. Throws on any failure. |
-| `NetworkFirst(cacheDuration?)` (default) | Try network. On **connectivity** failure, fall back to a cached row newer than `cacheDuration`. Server errors do **not** trigger fallback. |
-| `CacheFirst(cacheDuration?)` | Try cache (subject to TTL). On miss/stale, go to network. |
-| `CacheOnly(cacheDuration?)` | Cache only. On miss/stale, throw `NoSuchElementException`. |
+| Plugin | What the library does |
+| --- | --- |
+| Auth | Optional. **Passed through**: sign-in, sign-out and the session are supabase-kt's. The library reads the session to know whose cache and queue it serves, and sends each queued write with its own user's token |
+| Realtime | Not used. Apply a channel's records with `applyServerRecord` and `applyServerDelete`; see [Applying Realtime events](../behaviors/realtime.md) |
+| Functions | Not used: call Edge Functions through supabase-kt |
 
-`cacheDuration` is a `kotlin.time.Duration?`. `null` means "no TTL — never stale by time". A
-millisecond constructor overload is provided for Swift convenience.
+GraphQL is not covered.
 
-See the [caching deep-dive](../project/internals.md#read-path-caching-deep-dive) for how TTL is
-evaluated, signature generation, and the cache subset resolver.
+## Platforms
 
-## Reactive read strategies (`FlowReadStrategy`)
+| | |
+| --- | --- |
+| Android | API 23 and later |
+| iOS, from Kotlin | 15 and later: `iosArm64` and `iosSimulatorArm64` |
+| iOS, from Swift | Through the Swift package; see [iOS apps in Swift](../getting-started/swift.md) |
+| JVM, JS, Wasm | Not supported |
 
-Enum in the same file.
-
-| Variant | Behavior |
-|---------|----------|
-| `CacheFirstThenNetwork` (default) | Emit cached row immediately (if any); start a background network refresh in parallel. Network errors are swallowed; subsequent cache updates keep emitting. |
-| `NetworkFirstThenCache` | Fetch network first; once stored, observe the cache. Network failure terminates the Flow with the error. |
-| `CacheOnly` | Observe cache rows only. No network call. |
-
-## Mutation strategies (`MutationStrategy`)
-
-Enum in the same file.
-
-| Variant | Behavior |
-|---------|----------|
-| `QueueIfOffline` (default) | Try network. On connectivity failure, persist to local queue and return an empty result. On server failure, rethrow. |
-| `OnlineOnly` | Network only. Connectivity failure rethrows without queueing. |
-
-## Exception types
-
-The SDK does not invent its own exception hierarchy — it re-throws exceptions raised by
-supabase-kt, Ktor, kotlinx, and Room. Catch by type at the call site.
-
-| Exception | Category | Source | Meaning |
-|---|---|---|---|
-| `HttpRequestTimeoutException` | Network | Ktor | The HTTP request exceeded the configured timeout |
-| `ConnectTimeoutException` | Network | Ktor | TCP connection could not be established in time |
-| `SocketTimeoutException` | Network | Ktor | An established socket timed out during read/write |
-| `IOException` | Network | kotlinx.io / Okio | General transport failure (DNS, TLS, reset, file I/O) |
-| `PostgrestRestException` | Server | supabase-kt | Supabase PostgREST returned an HTTP error; carries `statusCode` |
-| `ResponseException` | Server | Ktor | Generic HTTP response error (non-2xx status) |
-| `NoSuchElementException` | Cache | SDK | `ReadStrategy.CacheOnly` with no valid cached data for the query |
-| `IllegalStateException` | Config | SDK | Postgrest or Storage plugin was not installed on `SupabaseClient` |
-| `SerializationException` | Serialization | kotlinx.serialization | JSON encoding or decoding failed (malformed payload, schema mismatch) |
-| `ClassCastException` | Serialization | Kotlin | JSON payload was not the expected type (e.g. not a `JsonArray`) |
-| `CancellationException` | Coroutine | kotlinx.coroutines | Caller's coroutine scope was cancelled; never treated as a network error |
-
-### Network vs. server classification
-
-`isNetworkOrConnectivityFailure()` in
-[ThrowableExtensions.kt](https://github.com/nesfeder/supabase-offline-kt/blob/9b014a795453590d7aecd704b01ca36ade8f67cb/shared/src/commonMain/kotlin/io/github/nesfeder/supabase/internal/util/ThrowableExtensions.kt)
-drives all fallback and queuing behavior:
-
-- **Network/connectivity (transient):** `HttpRequestTimeoutException`, `ConnectTimeoutException`,
-  `SocketTimeoutException`, `IOException`, and any throwable whose cause chain contains one of
-  the above.
-- **NOT network (rethrown unchanged):** `CancellationException`, anything carrying an HTTP
-  status (`PostgrestRestException`, `ResponseException`), everything else.
-
-## Behavior reference
-
-### SELECT (one-shot)
-
-`OfflinePostgrestQueryBuilder.select`:
-
-| `ReadStrategy` | Network OK | Network error | Server error (4xx/5xx) | Possible exceptions |
-|---|---|---|---|---|
-| `NetworkOnly` | Returns result, updates cache | Throws | Throws | Network, Server, Serialization |
-| `NetworkFirst(cacheDuration?)` | Returns result, updates cache | Cache hit within TTL: returns cached. Cache miss or expired: throws | Throws (no fallback) | Network, Server, Serialization |
-| `CacheFirst(cacheDuration?)` | Cache hit within TTL: returns cached. Cache miss: fetches | Cache hit: returns cached. Cache miss: throws | Cache hit: returns cached. Cache miss: throws | Network, Server, Serialization |
-| `CacheOnly(cacheDuration?)` | Cache hit within TTL: returns cached. Cache miss or expired: throws | Network is never used | Network is never used | `NoSuchElementException` |
-
-### SELECT as Flow
-
-`OfflinePostgrestQueryBuilder.selectAsFlow`:
-
-| `FlowReadStrategy` | Behavior | Throws? | Possible exceptions |
-|---|---|---|---|
-| `CacheFirstThenNetwork` | Emits cached data immediately. Fires a background network request in parallel. Network errors are silently swallowed; the Flow continues emitting cached data. | No | None (network errors caught internally) |
-| `NetworkFirstThenCache` | Performs a network request in `onStart`. If the network fails, the Flow terminates with the exception. On success, caches the result and observes the cache for future changes. | Yes | Network, Server |
-| `CacheOnly` | Observes only the local cache. No network request is ever made. Emits cached data and future cache updates. | No | None |
-
-### Mutations (INSERT / UPSERT / UPDATE / DELETE)
-
-| `MutationStrategy` | Network OK | Network error | Server error (4xx/5xx) | Possible exceptions |
-|---|---|---|---|---|
-| `OnlineOnly` | Returns result from server | Throws | Throws | Network, Server, Serialization |
-| `QueueIfOffline` | Returns result from server | Queues mutation locally, returns empty result (no exception) | Throws (non-network errors are never queued) | Server, Serialization |
-
-### Sync APIs
-
-| Method | Permanent failure (4xx except 408/429) | Network error | Unknown error | Possible exceptions |
-|---|---|---|---|---|
-| `syncAllPendingMutations()` | Mutation dropped, sync continues. Per-table errors are swallowed; returns total synced count | Stops syncing for that table, continues to other tables. Returns total synced count | Per-table errors are swallowed. Returns total synced count | `CancellationException` only (all others swallowed) |
-| `syncPendingMutations(table)` | Mutation dropped, continues to next mutation | Stops syncing; current + remaining mutations stay queued. Returns synced count | Keeps failing mutation in queue. Rethrows to caller | Network, Server, `CancellationException` |
-
-### Storage downloads
-
-| Method | Network OK | Network error | No cache available | Possible exceptions |
-|---|---|---|---|---|
-| `downloadAuthenticated(path)` | Returns bytes, caches to disk | Falls back to disk cache if available | Throws | Network, Server |
-| `downloadPublic(path)` | Returns bytes, caches to disk | Falls back to disk cache if available | Throws | Network, Server |
-| `delete(paths)` | Deletes remotely, removes local cache entries and files | Throws | n/a | Network, Server |
-| `move(from, to)` | Moves remotely, updates local cache paths | Throws | n/a | Network, Server, `IOException` |
-| `copy(from, to)` | Copies remotely (no local cache population) | Throws | n/a | Network, Server |
-
-### Storage path helpers
-
-Convenience extensions defined per platform — see
-[OfflineBucketApi.android.kt](https://github.com/nesfeder/supabase-offline-kt/blob/9b014a795453590d7aecd704b01ca36ade8f67cb/shared/src/androidMain/kotlin/io/github/nesfeder/supabase/OfflineBucketApi.android.kt)
-and
-[OfflineBucketApi.ios.kt](https://github.com/nesfeder/supabase-offline-kt/blob/9b014a795453590d7aecd704b01ca36ade8f67cb/shared/src/iosMain/kotlin/io/github/nesfeder/supabase/OfflineBucketApi.ios.kt).
-
-| Method | Behavior | Throws? | Possible exceptions |
-|---|---|---|---|
-| `ensureLocalPath(objectPath, isPublic)` (iOS) / `ensureLocalFile(objectPath, isPublic)` (Android) | Returns cached path if present. Otherwise downloads (download errors caught, returns `null`). | Yes | `IOException`, database errors |
-| `localPathIfCached(objectPath)` (iOS) / `localUriIfCached(objectPath)` (Android) | Returns cached path or `null`. Reads from local database directly. | Yes | Database errors |
-| `storageCacheMetadata(objectPath)` | Returns [`StorageCacheMetadata`](https://github.com/nesfeder/supabase-offline-kt/blob/9b014a795453590d7aecd704b01ca36ade8f67cb/shared/src/commonMain/kotlin/io/github/nesfeder/supabase/StorageCacheMetadata.kt) when a cache row exists **and the file exists on disk**, otherwise returns `null`. Includes `lastFetchedEpochMs`. | Yes | Database errors |
-| `ensureLocalUri(objectPath, isPublic)` (Android) | Delegates to `ensureLocalFile`, returns a `file:` `Uri` | Yes | Same as `ensureLocalPath` |
-
-**Client-driven staleness:** The SDK does not enforce a max age for storage files. Compare
-`StorageCacheMetadata.lastFetchedEpochMs` to your own cutoff to decide whether to use the cache
-or re-download. See [storage.md](../behaviours/storage.md) for examples.
-
-### Pending mutation count
-
-| Method | Throws? | Possible exceptions |
-|---|---|---|
-| `pendingMutationCount()` | Yes | Database errors |
-| `pendingMutationCount(table)` | Yes | Database errors |
-| `pendingMutationCountFlow()` | No (Flow) | Errors surface as Flow termination |
-| `pendingMutationCountFlow(table)` | No (Flow) | Errors surface as Flow termination |
+One client per database, and one database per process: see
+[Project setup](../getting-started/setup.md#create-the-client).

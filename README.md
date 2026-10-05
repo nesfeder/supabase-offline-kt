@@ -89,7 +89,7 @@ when (val outcome = supabase.offline.from("tasks").insert(task)) {
 ```
 
 Make the row's id on the device. A write that was sent but whose answer never arrived stays queued
-and is sent again; with its id it is recognised as the row already there instead of being inserted
+and is sent again; with its id it is recognized as the row already there instead of being inserted
 twice. Reads show a queued write at once, and the library sends the queue by itself when the
 network comes back.
 
@@ -97,6 +97,12 @@ network comes back.
 
 The Swift package is being rebuilt as a native Swift API, and this build has no Swift API to call
 yet; its quick start comes with it.
+
+Add `https://github.com/nesfeder/supabase-offline-swift` with `.upToNextMinor(from: "X.Y.Z")`, the
+`SupabaseOffline` product to your app's target and `SupabaseOfflineTesting` to its tests. It needs
+iOS 16 and Xcode 26 or later, and runs on arm64 simulators only: a simulator build that includes
+x86_64 fails to link, so build for a specific simulator or with `ARCHS=arm64`. See the
+[guide for Swift apps](./docs/getting-started/swift.md).
 
 ## Documentation
 

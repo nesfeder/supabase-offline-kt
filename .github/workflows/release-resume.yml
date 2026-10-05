@@ -1,17 +1,20 @@
 name: Release resume
 
-# Finishes a release that Maven Central has published but whose last steps did not run: the tag,
-# the GitHub Release, the Swift package (not set up yet) and the post-release branch. It
-# never builds and never publishes to Maven Central, so it cannot change what Central serves; a
-# published version cannot be rebuilt identically, and must not be. Each step does only what is
-# missing, so it can run again. RELEASING.md says when to use it.
+# Finishes a release that Maven Central has published but whose last steps did not run: the Swift
+# package's commit and tag, this repository's tag, the GitHub Release, the post-release branch and
+# the documentation site. It never builds and never publishes to Maven Central, so it cannot change
+# what Central serves; a published version cannot be rebuilt identically, and must not be. The Swift
+# package's framework is the one the Release run staged on the draft GitHub Release, never a new
+# build. Each step does only what is missing, so it can run again. RELEASING.md says when to use it.
 #
 # The input is the commit the stopped Release run built, as its summary names it. The job checks
 # that the commit is on main, that its VERSION_NAME is a release version whose changelog section
 # exists, that no tag of that version points anywhere else, and that Maven Central serves every
-# artifact of that version, before it changes anything. It runs behind the `release` environment,
-# so a resume waits for the same approval a release does; it uses none of that environment's
-# secrets.
+# artifact of that version, before it changes anything. It runs main's scripts, never the input
+# commit's: that commit's swift/ and LICENSE are read as data (git archive), and nothing of it
+# runs. It runs behind the `release` environment, so a resume waits for the same approval a
+# release does; of that environment's secrets it reads the Swift package's deploy key alone, in
+# the one step that pushes the package.
 
 on:
   workflow_dispatch:
@@ -42,7 +45,9 @@ jobs:
     timeout-minutes: 15
     environment: release
     permissions:
-      contents: write # the tag, the GitHub Release and the post-release branch
+      contents: write # the draft release's asset, the tag, the GitHub Release and the post-release branch
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     steps:
       # main as it is now, never the input commit: nothing from that commit runs until the check
       # below has found it on main, and even then only its files are read. The pushes are this
@@ -60,24 +65,72 @@ jobs:
           SHA: ${{ inputs.sha }}
         run: python3 scripts/release.py check-resume --sha "$SHA" --github-output "$GITHUB_OUTPUT"
 
+      # The framework the Release run built and staged on the GitHub Release (a draft until this
+      # job publishes it), checked to come from that commit. Never a new build.
+      - name: Fetch the Swift package's framework
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+          SHA: ${{ steps.version.outputs.sha }}
+        run: >-
+          python3 scripts/swift-release.py download-framework
+          --version "$VERSION" --sha "$SHA" --out "$RUNNER_TEMP/swift-release"
+
+      # As in release.yml: the deploy key in this step alone, in a file only this user can read,
+      # host-key checking on against GitHub's pinned host keys, removed by the next step. A tag
+      # that holds this tree already is left as it is; one that holds anything else stops the job.
+      - name: Publish the Swift package
+        env:
+          SWIFT_PACKAGE_DEPLOY_KEY: ${{ secrets.SWIFT_PACKAGE_DEPLOY_KEY }}
+          VERSION: ${{ steps.version.outputs.version }}
+          SHA: ${{ steps.version.outputs.sha }}
+        run: |
+          set -euo pipefail
+          key="$RUNNER_TEMP/swift-package-deploy-key"
+          known_hosts="$RUNNER_TEMP/github-known-hosts"
+          (umask 077 && printenv SWIFT_PACKAGE_DEPLOY_KEY > "$key")
+          chmod 600 "$key"
+          unset SWIFT_PACKAGE_DEPLOY_KEY
+          python3 scripts/swift-release.py known-hosts > "$known_hosts"
+          export GIT_SSH_COMMAND="ssh -i $key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$known_hosts -o UpdateHostKeys=no"
+          python3 scripts/swift-release.py publish \
+            --zip "$RUNNER_TEMP/swift-release/SupabaseOfflineCore.xcframework.zip" \
+            --version "$VERSION" --sha "$SHA" --out "$RUNNER_TEMP/swift-package" \
+            --remote git@github.com:nesfeder/supabase-offline-swift.git
+
+      - name: Remove the deploy key
+        if: always()
+        run: rm -f "$RUNNER_TEMP/swift-package-deploy-key"
+
       - name: Push the tag
         env:
           VERSION: ${{ steps.version.outputs.version }}
           SHA: ${{ steps.version.outputs.sha }}
         run: python3 scripts/release.py push-tag --version "$VERSION" --sha "$SHA"
 
-      - name: Create the GitHub Release
+      - name: Publish the GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.version.outputs.version }}
         run: python3 scripts/release.py publish-github-release --version "$VERSION"
-
-      # A placeholder that does nothing, as in release.yml; the Swift distribution fills it in.
-      - name: Publish the Swift package (not set up yet)
-        run: echo "The Swift package is not published by this workflow yet; nothing to do."
 
       # As in release.yml: the branch, and its pull request's link in the summary.
       - name: Push the post-release branch
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: python3 scripts/release.py push-post-release-branch --version "$VERSION"
+
+  # As in release.yml: the documentation site at the tag, on GitHub Pages.
+  docs:
+    name: Publish the documentation site
+    needs: finish
+    if: >-
+      github.actor != 'dependabot[bot]' && github.triggering_actor != 'dependabot[bot]'
+      && (github.repository == 'nesfeder/supabase-offline-kt' && github.ref == 'refs/heads/main')
+    permissions:
+      contents: read # the checkout at the tag the site is built from
+      pages: write # the called workflow's deploy job publishes the site to GitHub Pages
+      id-token: write # the OIDC token that deploy job exchanges with the Pages service
+    uses: $/.github/workflows/docs-publish.yml
+    with:
+      ref: refs/tags/${{ needs.finish.outputs.version }}

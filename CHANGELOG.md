@@ -214,6 +214,13 @@ release.
 - Published on Maven Central as `io.github.nesfeder.supabase-offline:supabase-offline-kt` and
   `io.github.nesfeder.supabase-offline:supabase-offline-kt-testing`, for Android, `iosArm64` and
   `iosSimulatorArm64`, each with its sources, an HTML API reference and a signature on every file.
+- The Swift package `SupabaseOffline` (and `SupabaseOfflineTesting` for tests), published by each
+  release to `https://github.com/nesfeder/supabase-offline-swift` under the same version. It needs
+  iOS 16 and Xcode 26 or later, and runs on arm64 simulators only: a simulator build that includes
+  x86_64 (such as Any iOS Simulator Device) fails to link, so build for a specific simulator, or
+  with `ARCHS=arm64`. Its framework is an asset of this repository's GitHub Release, and carries a
+  privacy manifest, as the `SupabaseOffline` target does, declaring the file-timestamp and
+  user-defaults APIs it references. It is not code-signed in 0.1.0.
 - `SyncReport.heldBehindOtherTablesCount`, and the testing artifact's
   `syncReport(heldBehindOtherTablesCount = …)`, defaulting to `0`.
 
@@ -386,7 +393,7 @@ release.
   rows, or none, and a live read shows nothing (`Refreshing`) until the session settles.
 - A read the cache cannot answer, made while the connectivity monitor says the network is down, is
   sent once instead of after supabase-kt's retries.
-- One failed read of the database no longer turns automatic behaviour off for the client's life,
+- One failed read of the database no longer turns automatic behavior off for the client's life,
   or fails a write the server answered: a later sign-in sends the user's queued writes, the sync
   status follows the queue again, and a write the server applied (or refused), or a discard that
   happened, is reported as it happened rather than as the failed read.
