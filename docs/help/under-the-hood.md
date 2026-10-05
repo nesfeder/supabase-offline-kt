@@ -22,10 +22,17 @@ The framework ships unsigned in 0.1.0.
 
 ## App size
 
-The engine and its runtime are most of what the package adds to an app. Measured on 2026-10-04
-with a **debug** build of the framework: a minimal arm64 app built in Release grew from about 70 KB
-to 13.4 MB once stripped (4.3 MB compressed with gzip). The published package carries a release
-build of the framework, whose figures replace these with the first release.
+The engine and its runtime are most of what the package adds to an app. The framework a release
+packages, measured on 2026-10-05:
+
+| What | Size |
+| --- | --- |
+| The archive SwiftPM downloads, both slices zipped | 16.3 MB |
+| One slice unzipped (device, or arm64 simulator): a static library, from which the app's linker takes what the app uses | about 29 MB |
+| That framework linked into a small dynamic library that calls the package, in a debug build | 15.8 MB |
+
+These are the framework's sizes, not an app's. How much an app grows once it is built for release,
+stripped and thinned for a device is measured with the first release, and replaces this table.
 
 ## Crash reports and the debugger
 
