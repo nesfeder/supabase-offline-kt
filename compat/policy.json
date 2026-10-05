@@ -9,7 +9,7 @@
     "supabase-offline-kt-testing/api/**"
   ],
   "swiftInterfaces": [
-    "swift/api/*.swiftinterface"
+    "swift/api/*.api"
   ],
   "abiExclusions": "compat/abi-exclusions.txt",
   "overrides": "compat/overrides.txt",
@@ -21,7 +21,18 @@
       "io.github.nesfeder.supabase.offline.MutationStrategy",
       "io.github.nesfeder.supabase.offline.ResponseTrust"
     ],
-    "swift": []
+    "swift": [
+      "ReadStrategy",
+      "SequenceReadStrategy",
+      "MutationStrategy",
+      "Count",
+      "FilterOperator",
+      "OfflineTextSearchType",
+      "SupabaseOfflineClient.CacheSize",
+      "SupabaseOfflineClient.LogLevel",
+      "OfflineBucketApi.ImageTransformation.Resize",
+      "OfflineBucketApi.StorageListFilter.SortOrder"
+    ]
   },
   "closedForImplementation": {
     "_comment": "Interfaces and abstract classes consumers may not implement (each carrying @SubclassOptInRequired with an error-level marker). A new abstract member of one of these is additive. Every other public interface counts as one a consumer may implement.",

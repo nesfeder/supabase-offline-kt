@@ -1,0 +1,614 @@
+// The public interface of SupabaseOffline, from its symbol graph; scripts/api-compat.py rates a
+// change to it. Do not edit: scripts/check-swift-public-api.py --products DIR --update writes it.
+platform iOS 16.0
+property Array.filterText | var filterText: String { get }
+property Bool.filterText | var filterText: String { get }
+struct CachedFile | struct CachedFile
+property CachedFile.fetchedAt | let fetchedAt: Date
+property CachedFile.path | let path: String
+property CachedFile.sizeBytes | let sizeBytes: Int
+property CachedFile.url | var url: URL { get }
+enum Count | enum Count
+enum.case Count.estimated | case estimated
+enum.case Count.exact | case exact
+init Count.init(rawValue:) | init?(rawValue: String)
+enum.case Count.planned | case planned
+property Date.filterText | var filterText: String { get }
+property Decimal.filterText | var filterText: String { get }
+property Double.filterText | var filterText: String { get }
+enum FilterOperator | enum FilterOperator
+enum.case FilterOperator.adj | case adj
+enum.case FilterOperator.cd | case cd
+enum.case FilterOperator.cs | case cs
+enum.case FilterOperator.eq | case eq
+enum.case FilterOperator.fts | case fts
+enum.case FilterOperator.gt | case gt
+enum.case FilterOperator.gte | case gte
+enum.case FilterOperator.ilike | case ilike
+enum.case FilterOperator.imatch | case imatch
+enum.case FilterOperator.in | case `in`
+init FilterOperator.init(rawValue:) | init?(rawValue: String)
+enum.case FilterOperator.is | case `is`
+enum.case FilterOperator.like | case like
+enum.case FilterOperator.lt | case lt
+enum.case FilterOperator.lte | case lte
+enum.case FilterOperator.match | case match
+enum.case FilterOperator.neq | case neq
+enum.case FilterOperator.nxl | case nxl
+enum.case FilterOperator.nxr | case nxr
+enum.case FilterOperator.ov | case ov
+enum.case FilterOperator.phfts | case phfts
+enum.case FilterOperator.plfts | case plfts
+enum.case FilterOperator.sl | case sl
+enum.case FilterOperator.sr | case sr
+enum.case FilterOperator.wfts | case wfts
+property Float.filterText | var filterText: String { get }
+property Int.filterText | var filterText: String { get }
+property Int16.filterText | var filterText: String { get }
+property Int32.filterText | var filterText: String { get }
+property Int64.filterText | var filterText: String { get }
+property Int8.filterText | var filterText: String { get }
+enum MutationOperation | enum MutationOperation
+enum.case MutationOperation.delete | case delete
+init MutationOperation.init(rawValue:) | init?(rawValue: String)
+enum.case MutationOperation.insert | case insert
+enum.case MutationOperation.update | case update
+enum.case MutationOperation.upsert | case upsert
+enum MutationOutcome | enum MutationOutcome<Value> where Value : Sendable
+enum.case MutationOutcome.applied(result:) | case applied(result: OfflineResponse<Value>)
+property MutationOutcome.isQueued | var isQueued: Bool { get }
+enum.case MutationOutcome.queued(pendingMutation:) | case queued(pendingMutation: PendingMutation)
+property MutationOutcome.result | var result: OfflineResponse<Value>? { get }
+enum MutationStrategy | enum MutationStrategy
+enum.case MutationStrategy.onlineOnly | case onlineOnly
+enum.case MutationStrategy.queueIfOffline | case queueIfOffline
+enum NetworkStatus | enum NetworkStatus
+enum.case NetworkStatus.disabled | case disabled
+enum.case NetworkStatus.offline | case offline
+enum.case NetworkStatus.online | case online
+enum.case NetworkStatus.unknown | case unknown
+struct OfflineBucketApi | struct OfflineBucketApi
+struct OfflineBucketApi.FileObject | struct FileObject
+property OfflineBucketApi.FileObject.createdAt | let createdAt: Date?
+property OfflineBucketApi.FileObject.id | let id: String?
+property OfflineBucketApi.FileObject.lastAccessedAt | let lastAccessedAt: Date?
+property OfflineBucketApi.FileObject.metadata | let metadata: [String : OfflineJSON]?
+property OfflineBucketApi.FileObject.name | let name: String
+property OfflineBucketApi.FileObject.updatedAt | let updatedAt: Date?
+struct OfflineBucketApi.FileObjectV2 | struct FileObjectV2
+property OfflineBucketApi.FileObjectV2.bucketId | let bucketId: String?
+property OfflineBucketApi.FileObjectV2.cacheControl | let cacheControl: String?
+property OfflineBucketApi.FileObjectV2.contentType | let contentType: String
+property OfflineBucketApi.FileObjectV2.createdAt | let createdAt: Date
+property OfflineBucketApi.FileObjectV2.etag | let etag: String?
+property OfflineBucketApi.FileObjectV2.id | let id: String?
+property OfflineBucketApi.FileObjectV2.lastAccessedAt | let lastAccessedAt: Date?
+property OfflineBucketApi.FileObjectV2.lastModified | let lastModified: Date?
+property OfflineBucketApi.FileObjectV2.metadata | let metadata: [String : OfflineJSON]?
+property OfflineBucketApi.FileObjectV2.name | let name: String
+property OfflineBucketApi.FileObjectV2.size | let size: Int
+property OfflineBucketApi.FileObjectV2.updatedAt | let updatedAt: Date?
+property OfflineBucketApi.FileObjectV2.version | let version: String
+struct OfflineBucketApi.FileUploadResponse | struct FileUploadResponse
+property OfflineBucketApi.FileUploadResponse.id | let id: String?
+property OfflineBucketApi.FileUploadResponse.key | let key: String?
+property OfflineBucketApi.FileUploadResponse.path | let path: String
+struct OfflineBucketApi.ImageTransformation | struct ImageTransformation
+enum OfflineBucketApi.ImageTransformation.Resize | enum Resize
+enum.case OfflineBucketApi.ImageTransformation.Resize.contain | case contain
+enum.case OfflineBucketApi.ImageTransformation.Resize.cover | case cover
+enum.case OfflineBucketApi.ImageTransformation.Resize.fill | case fill
+property OfflineBucketApi.ImageTransformation.format | var format: String?
+property OfflineBucketApi.ImageTransformation.height | var height: Int?
+init OfflineBucketApi.ImageTransformation.init(width:height:resize:quality:format:) | init(width: Int? = nil, height: Int? = nil, resize: OfflineBucketApi.ImageTransformation.Resize? = nil, quality: Int? = nil, format: String? = nil)
+property OfflineBucketApi.ImageTransformation.quality | var quality: Int?
+property OfflineBucketApi.ImageTransformation.resize | var resize: OfflineBucketApi.ImageTransformation.Resize?
+property OfflineBucketApi.ImageTransformation.width | var width: Int?
+struct OfflineBucketApi.SignedURL | struct SignedURL
+property OfflineBucketApi.SignedURL.error | let error: String?
+property OfflineBucketApi.SignedURL.path | let path: String
+property OfflineBucketApi.SignedURL.signedURL | let signedURL: URL
+struct OfflineBucketApi.StorageListFilter | struct StorageListFilter
+struct OfflineBucketApi.StorageListFilter.SortBy | struct SortBy
+property OfflineBucketApi.StorageListFilter.SortBy.column | var column: String
+init OfflineBucketApi.StorageListFilter.SortBy.init(column:order:) | init(column: String, order: OfflineBucketApi.StorageListFilter.SortOrder = .asc)
+property OfflineBucketApi.StorageListFilter.SortBy.order | var order: OfflineBucketApi.StorageListFilter.SortOrder
+enum OfflineBucketApi.StorageListFilter.SortOrder | enum SortOrder
+enum.case OfflineBucketApi.StorageListFilter.SortOrder.asc | case asc
+enum.case OfflineBucketApi.StorageListFilter.SortOrder.desc | case desc
+init OfflineBucketApi.StorageListFilter.init(limit:offset:sortBy:search:) | init(limit: Int? = nil, offset: Int? = nil, sortBy: OfflineBucketApi.StorageListFilter.SortBy? = nil, search: String? = nil)
+property OfflineBucketApi.StorageListFilter.limit | var limit: Int?
+property OfflineBucketApi.StorageListFilter.offset | var offset: Int?
+property OfflineBucketApi.StorageListFilter.search | var search: String?
+property OfflineBucketApi.StorageListFilter.sortBy | var sortBy: OfflineBucketApi.StorageListFilter.SortBy?
+struct OfflineBucketApi.UploadOptions | struct UploadOptions
+property OfflineBucketApi.UploadOptions.contentType | var contentType: String?
+init OfflineBucketApi.UploadOptions.init(contentType:upsert:userMetadata:) | init(contentType: String? = nil, upsert: Bool = false, userMetadata: [String : OfflineJSON]? = nil)
+property OfflineBucketApi.UploadOptions.upsert | var upsert: Bool
+property OfflineBucketApi.UploadOptions.userMetadata | var userMetadata: [String : OfflineJSON]?
+struct OfflineBucketApi.UploadSignedURL | struct UploadSignedURL
+property OfflineBucketApi.UploadSignedURL.path | let path: String
+property OfflineBucketApi.UploadSignedURL.token | let token: String
+property OfflineBucketApi.UploadSignedURL.url | let url: URL
+method OfflineBucketApi.authenticatedURL(path:) | func authenticatedURL(path: String) async throws -> URL
+property OfflineBucketApi.bucketId | let bucketId: String
+method OfflineBucketApi.cachedFile(path:) | func cachedFile(path: String) async throws -> CachedFile?
+method OfflineBucketApi.copy(from:to:destinationBucket:) | func copy(from source: String, to destination: String, destinationBucket: String? = nil) async throws
+method OfflineBucketApi.createSignedURL(path:expiresIn:transform:) | func createSignedURL(path: String, expiresIn: Int, transform: OfflineBucketApi.ImageTransformation? = nil) async throws -> URL
+method OfflineBucketApi.createSignedURLs(paths:expiresIn:) | func createSignedURLs(paths: [String], expiresIn: Int) async throws -> [OfflineBucketApi.SignedURL]
+method OfflineBucketApi.createSignedUploadURL(path:upsert:) | func createSignedUploadURL(path: String, upsert: Bool = false) async throws -> OfflineBucketApi.UploadSignedURL
+method OfflineBucketApi.download(path:options:isPublic:) | func download(path: String, options: OfflineBucketApi.ImageTransformation? = nil, isPublic: Bool = false) async throws -> Data
+method OfflineBucketApi.ensureCachedFile(path:isPublic:) | func ensureCachedFile(path: String, isPublic: Bool = false) async throws -> CachedFile
+method OfflineBucketApi.exists(path:) | func exists(path: String) async throws -> Bool
+method OfflineBucketApi.info(path:) | func info(path: String) async throws -> OfflineBucketApi.FileObjectV2
+method OfflineBucketApi.list(path:options:) | func list(path: String? = nil, options: OfflineBucketApi.StorageListFilter? = nil) async throws -> [OfflineBucketApi.FileObject]
+method OfflineBucketApi.move(from:to:destinationBucket:) | func move(from source: String, to destination: String, destinationBucket: String? = nil) async throws
+method OfflineBucketApi.publicURL(path:) | func publicURL(path: String) async throws -> URL
+method OfflineBucketApi.remove(paths:) | func remove(paths: [String]) async throws
+method OfflineBucketApi.update(_:data:options:) | @discardableResult func update(_ path: String, data: Data, options: OfflineBucketApi.UploadOptions = UploadOptions()) async throws -> OfflineBucketApi.FileUploadResponse
+method OfflineBucketApi.upload(_:data:options:) | @discardableResult func upload(_ path: String, data: Data, options: OfflineBucketApi.UploadOptions = UploadOptions()) async throws -> OfflineBucketApi.FileUploadResponse
+method OfflineBucketApi.uploadToSignedURL(_:token:data:options:) | @discardableResult func uploadToSignedURL(_ path: String, token: String, data: Data, options: OfflineBucketApi.UploadOptions = UploadOptions()) async throws -> OfflineBucketApi.FileUploadResponse
+struct OfflineError | struct OfflineError
+struct OfflineError.Code | struct Code
+type.property OfflineError.Code.accessToken | static let accessToken: OfflineError.Code
+type.property OfflineError.Code.cacheMiss | static let cacheMiss: OfflineError.Code
+type.property OfflineError.Code.clientClosed | static let clientClosed: OfflineError.Code
+type.property OfflineError.Code.configuration | static let configuration: OfflineError.Code
+type.property OfflineError.Code.connectivity | static let connectivity: OfflineError.Code
+type.property OfflineError.Code.decoding | static let decoding: OfflineError.Code
+property OfflineError.Code.description | var description: String { get }
+type.property OfflineError.Code.encoding | static let encoding: OfflineError.Code
+init OfflineError.Code.init(rawValue:) | init(rawValue: String)
+type.property OfflineError.Code.invalidRequest | static let invalidRequest: OfflineError.Code
+type.property OfflineError.Code.mutationNotQueueable | static let mutationNotQueueable: OfflineError.Code
+type.property OfflineError.Code.networkDisabled | static let networkDisabled: OfflineError.Code
+property OfflineError.Code.rawValue | let rawValue: String
+type.property OfflineError.Code.server | static let server: OfflineError.Code
+type.property OfflineError.Code.syncFailed | static let syncFailed: OfflineError.Code
+type.property OfflineError.Code.unexpected | static let unexpected: OfflineError.Code
+func.op OfflineError.Code.~=(_:_:) | static func ~= (code: OfflineError.Code, error: any Error) -> Bool
+struct OfflineError.ServerError | struct ServerError
+property OfflineError.ServerError.code | let code: String?
+property OfflineError.ServerError.details | let details: String?
+property OfflineError.ServerError.hint | let hint: String?
+property OfflineError.ServerError.message | let message: String
+property OfflineError.ServerError.status | let status: Int
+type.property OfflineError.accessToken | static var accessToken: OfflineError.Code { get }
+type.property OfflineError.cacheMiss | static var cacheMiss: OfflineError.Code { get }
+type.property OfflineError.clientClosed | static var clientClosed: OfflineError.Code { get }
+property OfflineError.code | let code: OfflineError.Code
+type.property OfflineError.configuration | static var configuration: OfflineError.Code { get }
+type.property OfflineError.connectivity | static var connectivity: OfflineError.Code { get }
+type.property OfflineError.decoding | static var decoding: OfflineError.Code { get }
+property OfflineError.description | var description: String { get }
+type.property OfflineError.encoding | static var encoding: OfflineError.Code { get }
+property OfflineError.errorDescription | var errorDescription: String? { get }
+property OfflineError.httpStatus | var httpStatus: Int? { get }
+type.property OfflineError.invalidRequest | static var invalidRequest: OfflineError.Code { get }
+property OfflineError.isNetworkOrConnectivityFailure | let isNetworkOrConnectivityFailure: Bool
+property OfflineError.message | let message: String
+type.property OfflineError.mutationNotQueueable | static var mutationNotQueueable: OfflineError.Code { get }
+type.property OfflineError.networkDisabled | static var networkDisabled: OfflineError.Code { get }
+type.property OfflineError.server | static var server: OfflineError.Code { get }
+property OfflineError.serverError | let serverError: OfflineError.ServerError?
+type.property OfflineError.syncFailed | static var syncFailed: OfflineError.Code { get }
+property OfflineError.underlyingError | let underlyingError: (any Error)?
+type.property OfflineError.unexpected | static var unexpected: OfflineError.Code { get }
+protocol OfflineFilterValue | protocol OfflineFilterValue : Sendable
+property OfflineFilterValue.filterText | var filterText: String { get }
+requirement OfflineFilterValue.filterText | var filterText: String { get }
+enum OfflineJSON | enum OfflineJSON
+enum.case OfflineJSON.array(_:) | case array([OfflineJSON])
+enum.case OfflineJSON.bool(_:) | case bool(Bool)
+enum.case OfflineJSON.double(_:) | case double(Double)
+method OfflineJSON.encode(to:) | func encode(to encoder: any Encoder) throws
+property OfflineJSON.filterText | var filterText: String { get }
+init OfflineJSON.init(arrayLiteral:) | init(arrayLiteral elements: OfflineJSON...)
+init OfflineJSON.init(booleanLiteral:) | init(booleanLiteral value: Bool)
+init OfflineJSON.init(dictionaryLiteral:) | init(dictionaryLiteral elements: (String, OfflineJSON)...)
+init OfflineJSON.init(floatLiteral:) | init(floatLiteral value: Double)
+init OfflineJSON.init(from:) | init(from decoder: any Decoder) throws
+init OfflineJSON.init(integerLiteral:) | init(integerLiteral value: Int)
+init OfflineJSON.init(nilLiteral:) | init(nilLiteral: ())
+init OfflineJSON.init(stringLiteral:) | init(stringLiteral value: String)
+enum.case OfflineJSON.int(_:) | case int(Int)
+enum.case OfflineJSON.null | case null
+enum.case OfflineJSON.object(_:) | case object([String : OfflineJSON])
+enum.case OfflineJSON.string(_:) | case string(String)
+struct OfflineMutationRequestBuilder | struct OfflineMutationRequestBuilder
+method OfflineMutationRequestBuilder.applying(_:) | func applying(_ change: OfflineQueryChange) -> OfflineMutationRequestBuilder
+method OfflineMutationRequestBuilder.execute() | @discardableResult func execute() async throws -> MutationOutcome<Void>
+method OfflineMutationRequestBuilder.execute(_:) | @discardableResult func execute<Value>(_ type: Value.Type = Value.self) async throws -> MutationOutcome<Value> where Value : Decodable, Value : Sendable
+method OfflineMutationRequestBuilder.select(_:) | func select(_ columns: String = "*") -> OfflineMutationRequestBuilder
+method OfflineMutationRequestBuilder.single() | func single() -> OfflineMutationRequestBuilder
+protocol OfflinePostgrestFilterBuilder | protocol OfflinePostgrestFilterBuilder : Sendable
+requirement OfflinePostgrestFilterBuilder.applying(_:) | func applying(_ change: OfflineQueryChange) -> Self
+method OfflinePostgrestFilterBuilder.containedBy(_:value:) | func containedBy(_ column: String, value: some OfflineFilterValue) -> Self
+method OfflinePostgrestFilterBuilder.contains(_:value:) | func contains(_ column: String, value: some OfflineFilterValue) -> Self
+method OfflinePostgrestFilterBuilder.eq(_:value:) | func eq(_ column: String, value: some OfflineFilterValue) -> Self
+method OfflinePostgrestFilterBuilder.filter(_:operator:value:) | func filter(_ column: String, operator filterOperator: String, value: String) -> Self
+method OfflinePostgrestFilterBuilder.fts(_:query:config:) | func fts(_ column: String, query: some OfflineFilterValue, config: String? = nil) -> Self
+method OfflinePostgrestFilterBuilder.gt(_:value:) | func gt(_ column: String, value: some OfflineFilterValue) -> Self
+method OfflinePostgrestFilterBuilder.gte(_:value:) | func gte(_ column: String, value: some OfflineFilterValue) -> Self
+method OfflinePostgrestFilterBuilder.iLikeAllOf(_:patterns:) | func iLikeAllOf(_ column: String, patterns: [some OfflineFilterValue]) -> Self
+method OfflinePostgrestFilterBuilder.iLikeAnyOf(_:patterns:) | func iLikeAnyOf(_ column: String, patterns: [some OfflineFilterValue]) -> Self
+method OfflinePostgrestFilterBuilder.ilike(_:pattern:) | func ilike(_ column: String, pattern: some OfflineFilterValue) -> Self
+method OfflinePostgrestFilterBuilder.imatch(_:pattern:) | func imatch(_ column: String, pattern: some OfflineFilterValue) -> Self
+method OfflinePostgrestFilterBuilder.in(_:values:) | func `in`(_ column: String, values: [any OfflineFilterValue]) -> Self
+method OfflinePostgrestFilterBuilder.is(_:value:) | func `is`(_ column: String, value: Bool?) -> Self
+method OfflinePostgrestFilterBuilder.like(_:pattern:) | func like(_ column: String, pattern: some OfflineFilterValue) -> Self
+method OfflinePostgrestFilterBuilder.likeAllOf(_:patterns:) | func likeAllOf(_ column: String, patterns: [some OfflineFilterValue]) -> Self
+method OfflinePostgrestFilterBuilder.likeAnyOf(_:patterns:) | func likeAnyOf(_ column: String, patterns: [some OfflineFilterValue]) -> Self
+method OfflinePostgrestFilterBuilder.lt(_:value:) | func lt(_ column: String, value: some OfflineFilterValue) -> Self
+method OfflinePostgrestFilterBuilder.lte(_:value:) | func lte(_ column: String, value: some OfflineFilterValue) -> Self
+method OfflinePostgrestFilterBuilder.match(_:) | func match(_ query: [String : any OfflineFilterValue]) -> Self
+method OfflinePostgrestFilterBuilder.match(_:pattern:) | func match(_ column: String, pattern: some OfflineFilterValue) -> Self
+method OfflinePostgrestFilterBuilder.neq(_:value:) | func neq(_ column: String, value: some OfflineFilterValue) -> Self
+method OfflinePostgrestFilterBuilder.not(_:operator:value:) | func not(_ column: String, operator filterOperator: FilterOperator, value: some OfflineFilterValue) -> Self
+method OfflinePostgrestFilterBuilder.notIn(_:values:) | func notIn(_ column: String, values: [any OfflineFilterValue]) -> Self
+method OfflinePostgrestFilterBuilder.or(_:referencedTable:) | func or(_ filters: String, referencedTable: String? = nil) -> Self
+method OfflinePostgrestFilterBuilder.overlaps(_:value:) | func overlaps(_ column: String, value: some OfflineFilterValue) -> Self
+method OfflinePostgrestFilterBuilder.rangeAdjacent(_:range:) | func rangeAdjacent(_ column: String, range: some OfflineFilterValue) -> Self
+method OfflinePostgrestFilterBuilder.rangeGt(_:range:) | func rangeGt(_ column: String, range: some OfflineFilterValue) -> Self
+method OfflinePostgrestFilterBuilder.rangeGte(_:range:) | func rangeGte(_ column: String, range: some OfflineFilterValue) -> Self
+method OfflinePostgrestFilterBuilder.rangeLt(_:range:) | func rangeLt(_ column: String, range: some OfflineFilterValue) -> Self
+method OfflinePostgrestFilterBuilder.rangeLte(_:range:) | func rangeLte(_ column: String, range: some OfflineFilterValue) -> Self
+method OfflinePostgrestFilterBuilder.textSearch(_:query:config:type:) | func textSearch(_ column: String, query: some OfflineFilterValue, config: String? = nil, type: OfflineTextSearchType? = nil) -> Self
+struct OfflinePostgrestQueryBuilder | struct OfflinePostgrestQueryBuilder
+method OfflinePostgrestQueryBuilder.delete(mutationStrategy:) | func delete(mutationStrategy: MutationStrategy = .queueIfOffline) -> OfflineMutationRequestBuilder
+method OfflinePostgrestQueryBuilder.insert(_:defaultToNull:mutationStrategy:) | func insert(_ values: OfflineJSON, defaultToNull: Bool = true, mutationStrategy: MutationStrategy = .queueIfOffline) -> OfflineMutationRequestBuilder
+method OfflinePostgrestQueryBuilder.insert(_:defaultToNull:mutationStrategy:) | func insert(_ values: some Encodable, defaultToNull: Bool = true, mutationStrategy: MutationStrategy = .queueIfOffline) -> OfflineMutationRequestBuilder
+property OfflinePostgrestQueryBuilder.schema | let schema: String?
+method OfflinePostgrestQueryBuilder.select(_:head:count:readStrategy:) | func select(_ columns: String = "*", head: Bool = false, count: Count? = nil, readStrategy: ReadStrategy = .networkFirst) -> OfflineSelectRequestBuilder
+method OfflinePostgrestQueryBuilder.selectAsSequence(_:as:readStrategy:) | func selectAsSequence<Value>(_ columns: String = "*", as type: Value.Type = Value.self, readStrategy: SequenceReadStrategy = .cacheFirstThenNetwork) -> QuerySnapshotSequence<Value> where Value : Decodable, Value : Sendable
+property OfflinePostgrestQueryBuilder.table | let table: String
+method OfflinePostgrestQueryBuilder.update(_:mutationStrategy:) | func update(_ values: [String : OfflineJSON], mutationStrategy: MutationStrategy = .queueIfOffline) -> OfflineMutationRequestBuilder
+method OfflinePostgrestQueryBuilder.update(_:mutationStrategy:) | func update(_ values: some Encodable, mutationStrategy: MutationStrategy = .queueIfOffline) -> OfflineMutationRequestBuilder
+method OfflinePostgrestQueryBuilder.upsert(_:onConflict:ignoreDuplicates:defaultToNull:mutationStrategy:) | func upsert(_ values: OfflineJSON, onConflict: String? = nil, ignoreDuplicates: Bool = false, defaultToNull: Bool = true, mutationStrategy: MutationStrategy = .queueIfOffline) -> OfflineMutationRequestBuilder
+method OfflinePostgrestQueryBuilder.upsert(_:onConflict:ignoreDuplicates:defaultToNull:mutationStrategy:) | func upsert(_ values: some Encodable, onConflict: String? = nil, ignoreDuplicates: Bool = false, defaultToNull: Bool = true, mutationStrategy: MutationStrategy = .queueIfOffline) -> OfflineMutationRequestBuilder
+protocol OfflinePostgrestRequestBuilder | protocol OfflinePostgrestRequestBuilder : OfflinePostgrestFilterBuilder
+method OfflinePostgrestRequestBuilder.csv() | func csv() -> Self
+method OfflinePostgrestRequestBuilder.geojson() | func geojson() -> Self
+method OfflinePostgrestRequestBuilder.limit(_:referencedTable:) | func limit(_ count: Int, referencedTable: String? = nil) -> Self
+method OfflinePostgrestRequestBuilder.order(_:ascending:nullsFirst:referencedTable:) | func order(_ column: String, ascending: Bool = true, nullsFirst: Bool = false, referencedTable: String? = nil) -> Self
+method OfflinePostgrestRequestBuilder.range(from:to:referencedTable:) | func range(from: Int, to: Int, referencedTable: String? = nil) -> Self
+method OfflinePostgrestRequestBuilder.single() | func single() -> Self
+method OfflinePostgrestRequestBuilder.stripNulls() | func stripNulls() -> Self
+struct OfflineQueryChange | struct OfflineQueryChange
+struct OfflineRPCRequestBuilder | struct OfflineRPCRequestBuilder
+method OfflineRPCRequestBuilder.applying(_:) | func applying(_ change: OfflineQueryChange) -> OfflineRPCRequestBuilder
+method OfflineRPCRequestBuilder.execute() | @discardableResult func execute() async throws -> OfflineResponse<Void>
+method OfflineRPCRequestBuilder.execute(_:) | func execute<Value>(_ type: Value.Type = Value.self) async throws -> OfflineResponse<Value> where Value : Decodable, Value : Sendable
+struct OfflineResponse | struct OfflineResponse<Value> where Value : Sendable
+property OfflineResponse.count | let count: Int?
+property OfflineResponse.data | let data: Data
+property OfflineResponse.fetchedAt | let fetchedAt: Date?
+property OfflineResponse.hasPendingMutations | let hasPendingMutations: Bool
+property OfflineResponse.isFromCache | let isFromCache: Bool
+property OfflineResponse.value | let value: Value
+struct OfflineSelectRequestBuilder | struct OfflineSelectRequestBuilder
+method OfflineSelectRequestBuilder.applying(_:) | func applying(_ change: OfflineQueryChange) -> OfflineSelectRequestBuilder
+method OfflineSelectRequestBuilder.execute() | @discardableResult func execute() async throws -> OfflineResponse<Void>
+method OfflineSelectRequestBuilder.execute(_:) | func execute<Value>(_ type: Value.Type = Value.self) async throws -> OfflineResponse<Value> where Value : Decodable, Value : Sendable
+struct OfflineStorage | struct OfflineStorage
+method OfflineStorage.from(_:) | func from(_ bucketId: String) -> OfflineBucketApi
+enum OfflineTextSearchType | enum OfflineTextSearchType
+init OfflineTextSearchType.init(rawValue:) | init?(rawValue: String)
+enum.case OfflineTextSearchType.phrase | case phrase
+enum.case OfflineTextSearchType.plain | case plain
+enum.case OfflineTextSearchType.websearch | case websearch
+property Optional.filterText | var filterText: String { get }
+struct PendingMutation | struct PendingMutation
+property PendingMutation.body | let body: OfflineJSON?
+property PendingMutation.createdAt | let createdAt: Date
+property PendingMutation.id | let id: Int64
+property PendingMutation.operation | let operation: MutationOperation
+property PendingMutation.rowKeys | let rowKeys: [[String : OfflineJSON]]
+property PendingMutation.table | let table: String
+struct PendingMutationCountSequence | struct PendingMutationCountSequence
+typealias PendingMutationCountSequence.Element | typealias Element = Int
+struct PendingMutationCountSequence.Iterator | struct Iterator
+method PendingMutationCountSequence.Iterator.next() | mutating func next() async throws -> PendingMutationCountSequence.Element?
+method PendingMutationCountSequence.makeAsyncIterator() | func makeAsyncIterator() -> PendingMutationCountSequence.Iterator
+struct PendingMutationSequence | struct PendingMutationSequence
+typealias PendingMutationSequence.Element | typealias Element = [PendingMutation]
+struct PendingMutationSequence.Iterator | struct Iterator
+method PendingMutationSequence.Iterator.next() | mutating func next() async throws -> PendingMutationSequence.Element?
+method PendingMutationSequence.first() | func first() async throws -> PendingMutationSequence.Element
+method PendingMutationSequence.makeAsyncIterator() | func makeAsyncIterator() -> PendingMutationSequence.Iterator
+struct QuerySnapshot | struct QuerySnapshot<Value> where Value : Sendable
+property QuerySnapshot.fetchedAt | let fetchedAt: Date?
+property QuerySnapshot.hasPendingMutations | let hasPendingMutations: Bool
+property QuerySnapshot.isFromCache | let isFromCache: Bool
+property QuerySnapshot.refresh | let refresh: RefreshState
+property QuerySnapshot.result | let result: Value?
+struct QuerySnapshotSequence | struct QuerySnapshotSequence<Value> where Value : Decodable, Value : Sendable
+typealias QuerySnapshotSequence.Element | typealias Element = QuerySnapshot<Value>
+struct QuerySnapshotSequence.Iterator | struct Iterator
+method QuerySnapshotSequence.Iterator.next() | mutating func next() async throws -> QuerySnapshotSequence<Value>.Element?
+method QuerySnapshotSequence.applying(_:) | func applying(_ change: OfflineQueryChange) -> QuerySnapshotSequence<Value>
+method QuerySnapshotSequence.makeAsyncIterator() | func makeAsyncIterator() -> QuerySnapshotSequence<Value>.Iterator
+enum ReadStrategy | enum ReadStrategy
+type.property ReadStrategy.cacheFirst | static var cacheFirst: ReadStrategy { get }
+enum.case ReadStrategy.cacheFirst(maxAge:) | case cacheFirst(maxAge: Duration? = nil)
+type.property ReadStrategy.cacheOnly | static var cacheOnly: ReadStrategy { get }
+enum.case ReadStrategy.cacheOnly(maxAge:) | case cacheOnly(maxAge: Duration? = nil)
+type.property ReadStrategy.networkFirst | static var networkFirst: ReadStrategy { get }
+enum.case ReadStrategy.networkFirst(maxAge:) | case networkFirst(maxAge: Duration? = nil)
+enum.case ReadStrategy.networkOnly | case networkOnly
+enum RefreshState | enum RefreshState
+func.op RefreshState.==(_:_:) | static func == (lhs: RefreshState, rhs: RefreshState) -> Bool
+enum.case RefreshState.idle | case idle
+enum.case RefreshState.paused | case paused
+enum.case RefreshState.refreshing | case refreshing
+enum.case RefreshState.stalled(cause:) | case stalled(cause: OfflineError)
+struct RejectedMutation | struct RejectedMutation
+property RejectedMutation.body | let body: OfflineJSON?
+property RejectedMutation.createdAt | let createdAt: Date
+property RejectedMutation.id | let id: Int64
+property RejectedMutation.isRetryable | let isRetryable: Bool
+property RejectedMutation.message | let message: String
+property RejectedMutation.operation | let operation: MutationOperation
+property RejectedMutation.rejectedAt | let rejectedAt: Date
+property RejectedMutation.rowKeys | let rowKeys: [[String : OfflineJSON]]
+property RejectedMutation.serverError | let serverError: OfflineError.ServerError?
+property RejectedMutation.table | let table: String
+struct RejectedMutationSequence | struct RejectedMutationSequence
+typealias RejectedMutationSequence.Element | typealias Element = [RejectedMutation]
+struct RejectedMutationSequence.Iterator | struct Iterator
+method RejectedMutationSequence.Iterator.next() | mutating func next() async throws -> RejectedMutationSequence.Element?
+method RejectedMutationSequence.first() | func first() async throws -> RejectedMutationSequence.Element
+method RejectedMutationSequence.makeAsyncIterator() | func makeAsyncIterator() -> RejectedMutationSequence.Iterator
+enum SequenceReadStrategy | enum SequenceReadStrategy
+enum.case SequenceReadStrategy.cacheFirstThenNetwork | case cacheFirstThenNetwork
+enum.case SequenceReadStrategy.cacheOnly | case cacheOnly
+enum.case SequenceReadStrategy.networkFirstThenCache | case networkFirstThenCache
+property String.filterText | var filterText: String { get }
+class SupabaseOfflineClient | final class SupabaseOfflineClient
+enum SupabaseOfflineClient.CacheSize | enum CacheSize
+enum.case SupabaseOfflineClient.CacheSize.bytes(_:) | case bytes(Int)
+enum.case SupabaseOfflineClient.CacheSize.unlimited | case unlimited
+struct SupabaseOfflineClient.Config | struct Config
+property SupabaseOfflineClient.Config.accessToken | var accessToken: (@Sendable () async throws -> String?)?
+property SupabaseOfflineClient.Config.autoSync | var autoSync: Bool
+property SupabaseOfflineClient.Config.cacheSize | var cacheSize: SupabaseOfflineClient.CacheSize
+property SupabaseOfflineClient.Config.dataDirectory | var dataDirectory: URL?
+property SupabaseOfflineClient.Config.defaultSchema | var defaultSchema: String
+property SupabaseOfflineClient.Config.fileCacheSize | var fileCacheSize: SupabaseOfflineClient.CacheSize
+init SupabaseOfflineClient.Config.init(defaultSchema:accessToken:dataDirectory:cacheSize:fileCacheSize:networkAvailability:autoSync:primaryKeys:logLevel:) | init(defaultSchema: String = "public", accessToken: (@Sendable () async throws -> String?)? = nil, dataDirectory: URL? = nil, cacheSize: SupabaseOfflineClient.CacheSize = .bytes(100 * 1_024 * 1_024), fileCacheSize: SupabaseOfflineClient.CacheSize = .bytes(256 * 1_024 * 1_024), networkAvailability: (@Sendable () -> AsyncStream<Bool>)? = nil, autoSync: Bool = true, primaryKeys: [String : [String]] = [:], logLevel: SupabaseOfflineClient.LogLevel = .warning)
+property SupabaseOfflineClient.Config.logLevel | var logLevel: SupabaseOfflineClient.LogLevel
+property SupabaseOfflineClient.Config.networkAvailability | var networkAvailability: (@Sendable () -> AsyncStream<Bool>)?
+property SupabaseOfflineClient.Config.primaryKeys | var primaryKeys: [String : [String]]
+enum SupabaseOfflineClient.LogLevel | enum LogLevel
+enum.case SupabaseOfflineClient.LogLevel.debug | case debug
+enum.case SupabaseOfflineClient.LogLevel.error | case error
+enum.case SupabaseOfflineClient.LogLevel.info | case info
+enum.case SupabaseOfflineClient.LogLevel.off | case off
+enum.case SupabaseOfflineClient.LogLevel.warning | case warning
+method SupabaseOfflineClient.applyServerDelete(table:oldRecord:primaryKeys:schema:) | func applyServerDelete(table: String, oldRecord: [String : OfflineJSON], primaryKeys: [String]? = nil, schema: String? = nil) async throws
+method SupabaseOfflineClient.applyServerDelete(table:oldRecord:primaryKeys:schema:) | func applyServerDelete(table: String, oldRecord: some Encodable, primaryKeys: [String]? = nil, schema: String? = nil) async throws
+method SupabaseOfflineClient.applyServerRecord(table:record:primaryKeys:schema:) | func applyServerRecord(table: String, record: [String : OfflineJSON], primaryKeys: [String]? = nil, schema: String? = nil) async throws
+method SupabaseOfflineClient.applyServerRecord(table:record:primaryKeys:schema:) | func applyServerRecord(table: String, record: some Encodable, primaryKeys: [String]? = nil, schema: String? = nil) async throws
+method SupabaseOfflineClient.clearLocalData() | func clearLocalData() async throws
+method SupabaseOfflineClient.close() | func close() async throws
+method SupabaseOfflineClient.disableNetwork() | func disableNetwork() async throws
+method SupabaseOfflineClient.discardPendingMutation(id:) | func discardPendingMutation(id: Int64) async throws
+method SupabaseOfflineClient.dismissRejectedMutation(id:) | func dismissRejectedMutation(id: Int64) async throws
+method SupabaseOfflineClient.enableNetwork() | func enableNetwork() async throws
+method SupabaseOfflineClient.from(_:) | func from(_ table: String) -> OfflinePostgrestQueryBuilder
+method SupabaseOfflineClient.from(schema:table:) | func from(schema: String, table: String) -> OfflinePostgrestQueryBuilder
+init SupabaseOfflineClient.init(supabaseURL:supabaseKey:config:) | convenience init(supabaseURL: URL, supabaseKey: String, config: SupabaseOfflineClient.Config = Config())
+method SupabaseOfflineClient.pendingMutationCount(table:) | func pendingMutationCount(table: String? = nil) async throws -> Int
+method SupabaseOfflineClient.pendingMutationCountSequence(table:) | func pendingMutationCountSequence(table: String? = nil) -> PendingMutationCountSequence
+method SupabaseOfflineClient.pendingMutations(table:) | func pendingMutations(table: String? = nil) -> PendingMutationSequence
+method SupabaseOfflineClient.rejectedMutations() | func rejectedMutations() -> RejectedMutationSequence
+method SupabaseOfflineClient.retryRejectedMutation(id:) | func retryRejectedMutation(id: Int64) async throws
+method SupabaseOfflineClient.rpc(_:head:get:count:schema:) | func rpc(_ function: String, head: Bool = false, get: Bool = false, count: Count? = nil, schema: String? = nil) -> OfflineRPCRequestBuilder
+method SupabaseOfflineClient.rpc(_:params:count:schema:) | func rpc(_ function: String, params: [String : OfflineJSON], count: Count? = nil, schema: String? = nil) -> OfflineRPCRequestBuilder
+method SupabaseOfflineClient.rpc(_:params:count:schema:) | func rpc(_ function: String, params: some Encodable, count: Count? = nil, schema: String? = nil) -> OfflineRPCRequestBuilder
+property SupabaseOfflineClient.storage | var storage: OfflineStorage { get }
+method SupabaseOfflineClient.syncPendingMutations(table:) | @discardableResult func syncPendingMutations(table: String? = nil) async throws -> SyncReport
+property SupabaseOfflineClient.syncStatus | var syncStatus: SyncStatusSequence { get }
+struct SyncReport | struct SyncReport
+property SyncReport.alreadyOnServerCount | let alreadyOnServerCount: Int
+property SyncReport.heldBehindOtherTablesCount | let heldBehindOtherTablesCount: Int
+property SyncReport.rejected | let rejected: [RejectedMutation]
+property SyncReport.remainingCount | let remainingCount: Int
+property SyncReport.syncedCount | let syncedCount: Int
+struct SyncStatus | struct SyncStatus
+func.op SyncStatus.==(_:_:) | static func == (lhs: SyncStatus, rhs: SyncStatus) -> Bool
+property SyncStatus.isSyncing | let isSyncing: Bool
+property SyncStatus.lastSyncError | let lastSyncError: OfflineError?
+property SyncStatus.lastSyncedAt | let lastSyncedAt: Date?
+property SyncStatus.network | let network: NetworkStatus
+property SyncStatus.pendingMutationCount | let pendingMutationCount: Int
+property SyncStatus.rejectedMutationCount | let rejectedMutationCount: Int
+struct SyncStatusSequence | struct SyncStatusSequence
+typealias SyncStatusSequence.Element | typealias Element = SyncStatus
+struct SyncStatusSequence.Iterator | struct Iterator
+method SyncStatusSequence.Iterator.next() | mutating func next() async throws -> SyncStatusSequence.Element?
+method SyncStatusSequence.makeAsyncIterator() | func makeAsyncIterator() -> SyncStatusSequence.Iterator
+property SyncStatusSequence.value | var value: SyncStatus { get }
+property UInt.filterText | var filterText: String { get }
+property UInt16.filterText | var filterText: String { get }
+property UInt32.filterText | var filterText: String { get }
+property UInt64.filterText | var filterText: String { get }
+property UInt8.filterText | var filterText: String { get }
+property UUID.filterText | var filterText: String { get }
+conformance CachedFile | Swift.Equatable
+conformance CachedFile | Swift.Hashable
+conformance CachedFile | Swift.Sendable
+conformance Count | Swift.CaseIterable
+conformance Count | Swift.Equatable
+conformance Count | Swift.Hashable
+conformance Count | Swift.RawRepresentable
+conformance Count | Swift.Sendable
+conformance FilterOperator | Swift.CaseIterable
+conformance FilterOperator | Swift.Equatable
+conformance FilterOperator | Swift.Hashable
+conformance FilterOperator | Swift.RawRepresentable
+conformance FilterOperator | Swift.Sendable
+conformance Foundation.Date | OfflineFilterValue
+conformance Foundation.Decimal | OfflineFilterValue
+conformance Foundation.UUID | OfflineFilterValue
+conformance MutationOperation | Swift.CaseIterable
+conformance MutationOperation | Swift.Equatable
+conformance MutationOperation | Swift.Hashable
+conformance MutationOperation | Swift.RawRepresentable
+conformance MutationOperation | Swift.Sendable
+conformance MutationOutcome | Swift.Sendable
+conformance MutationStrategy | Swift.CaseIterable
+conformance MutationStrategy | Swift.Equatable
+conformance MutationStrategy | Swift.Hashable
+conformance MutationStrategy | Swift.Sendable
+conformance NetworkStatus | Swift.CaseIterable
+conformance NetworkStatus | Swift.Equatable
+conformance NetworkStatus | Swift.Hashable
+conformance NetworkStatus | Swift.Sendable
+conformance OfflineBucketApi | Swift.Sendable
+conformance OfflineBucketApi.FileObject | Swift.Equatable
+conformance OfflineBucketApi.FileObject | Swift.Hashable
+conformance OfflineBucketApi.FileObject | Swift.Sendable
+conformance OfflineBucketApi.FileObjectV2 | Swift.Equatable
+conformance OfflineBucketApi.FileObjectV2 | Swift.Hashable
+conformance OfflineBucketApi.FileObjectV2 | Swift.Sendable
+conformance OfflineBucketApi.FileUploadResponse | Swift.Equatable
+conformance OfflineBucketApi.FileUploadResponse | Swift.Hashable
+conformance OfflineBucketApi.FileUploadResponse | Swift.Sendable
+conformance OfflineBucketApi.ImageTransformation | Swift.Equatable
+conformance OfflineBucketApi.ImageTransformation | Swift.Hashable
+conformance OfflineBucketApi.ImageTransformation | Swift.Sendable
+conformance OfflineBucketApi.ImageTransformation.Resize | Swift.Equatable
+conformance OfflineBucketApi.ImageTransformation.Resize | Swift.Hashable
+conformance OfflineBucketApi.ImageTransformation.Resize | Swift.Sendable
+conformance OfflineBucketApi.SignedURL | Swift.Equatable
+conformance OfflineBucketApi.SignedURL | Swift.Hashable
+conformance OfflineBucketApi.SignedURL | Swift.Sendable
+conformance OfflineBucketApi.StorageListFilter | Swift.Equatable
+conformance OfflineBucketApi.StorageListFilter | Swift.Hashable
+conformance OfflineBucketApi.StorageListFilter | Swift.Sendable
+conformance OfflineBucketApi.StorageListFilter.SortBy | Swift.Equatable
+conformance OfflineBucketApi.StorageListFilter.SortBy | Swift.Hashable
+conformance OfflineBucketApi.StorageListFilter.SortBy | Swift.Sendable
+conformance OfflineBucketApi.StorageListFilter.SortOrder | Swift.Equatable
+conformance OfflineBucketApi.StorageListFilter.SortOrder | Swift.Hashable
+conformance OfflineBucketApi.StorageListFilter.SortOrder | Swift.Sendable
+conformance OfflineBucketApi.UploadOptions | Swift.Equatable
+conformance OfflineBucketApi.UploadOptions | Swift.Hashable
+conformance OfflineBucketApi.UploadOptions | Swift.Sendable
+conformance OfflineBucketApi.UploadSignedURL | Swift.Equatable
+conformance OfflineBucketApi.UploadSignedURL | Swift.Hashable
+conformance OfflineBucketApi.UploadSignedURL | Swift.Sendable
+conformance OfflineError | Foundation.LocalizedError
+conformance OfflineError | Swift.CustomStringConvertible
+conformance OfflineError | Swift.Error
+conformance OfflineError | Swift.Sendable
+conformance OfflineError.Code | Swift.CustomStringConvertible
+conformance OfflineError.Code | Swift.Equatable
+conformance OfflineError.Code | Swift.Hashable
+conformance OfflineError.Code | Swift.RawRepresentable
+conformance OfflineError.Code | Swift.Sendable
+conformance OfflineError.ServerError | Swift.Equatable
+conformance OfflineError.ServerError | Swift.Hashable
+conformance OfflineError.ServerError | Swift.Sendable
+conformance OfflineFilterValue | Swift.Sendable
+conformance OfflineJSON | OfflineFilterValue
+conformance OfflineJSON | Swift.Decodable
+conformance OfflineJSON | Swift.Encodable
+conformance OfflineJSON | Swift.Equatable
+conformance OfflineJSON | Swift.ExpressibleByArrayLiteral
+conformance OfflineJSON | Swift.ExpressibleByBooleanLiteral
+conformance OfflineJSON | Swift.ExpressibleByDictionaryLiteral
+conformance OfflineJSON | Swift.ExpressibleByExtendedGraphemeClusterLiteral
+conformance OfflineJSON | Swift.ExpressibleByFloatLiteral
+conformance OfflineJSON | Swift.ExpressibleByIntegerLiteral
+conformance OfflineJSON | Swift.ExpressibleByNilLiteral
+conformance OfflineJSON | Swift.ExpressibleByStringLiteral
+conformance OfflineJSON | Swift.ExpressibleByUnicodeScalarLiteral
+conformance OfflineJSON | Swift.Hashable
+conformance OfflineJSON | Swift.Sendable
+conformance OfflineMutationRequestBuilder | OfflinePostgrestFilterBuilder
+conformance OfflineMutationRequestBuilder | Swift.Sendable
+conformance OfflinePostgrestFilterBuilder | Swift.Sendable
+conformance OfflinePostgrestQueryBuilder | Swift.Sendable
+conformance OfflinePostgrestRequestBuilder | OfflinePostgrestFilterBuilder
+conformance OfflinePostgrestRequestBuilder | Swift.Sendable
+conformance OfflineQueryChange | Swift.Sendable
+conformance OfflineRPCRequestBuilder | OfflinePostgrestFilterBuilder
+conformance OfflineRPCRequestBuilder | OfflinePostgrestRequestBuilder
+conformance OfflineRPCRequestBuilder | Swift.Sendable
+conformance OfflineResponse | Swift.Sendable
+conformance OfflineSelectRequestBuilder | OfflinePostgrestFilterBuilder
+conformance OfflineSelectRequestBuilder | OfflinePostgrestRequestBuilder
+conformance OfflineSelectRequestBuilder | Swift.Sendable
+conformance OfflineStorage | Swift.Sendable
+conformance OfflineTextSearchType | Swift.CaseIterable
+conformance OfflineTextSearchType | Swift.Equatable
+conformance OfflineTextSearchType | Swift.Hashable
+conformance OfflineTextSearchType | Swift.RawRepresentable
+conformance OfflineTextSearchType | Swift.Sendable
+conformance PendingMutation | Swift.Equatable
+conformance PendingMutation | Swift.Hashable
+conformance PendingMutation | Swift.Identifiable
+conformance PendingMutation | Swift.Sendable
+conformance PendingMutationCountSequence | Swift.Sendable
+conformance PendingMutationCountSequence | _Concurrency.AsyncSequence
+conformance PendingMutationCountSequence.Iterator | _Concurrency.AsyncIteratorProtocol
+conformance PendingMutationSequence | Swift.Sendable
+conformance PendingMutationSequence | _Concurrency.AsyncSequence
+conformance PendingMutationSequence.Iterator | _Concurrency.AsyncIteratorProtocol
+conformance QuerySnapshot | Swift.Equatable where Value: Equatable, Value: Sendable
+conformance QuerySnapshot | Swift.Sendable
+conformance QuerySnapshotSequence | OfflinePostgrestFilterBuilder
+conformance QuerySnapshotSequence | OfflinePostgrestRequestBuilder
+conformance QuerySnapshotSequence | Swift.Sendable
+conformance QuerySnapshotSequence | _Concurrency.AsyncSequence
+conformance QuerySnapshotSequence.Iterator | _Concurrency.AsyncIteratorProtocol
+conformance ReadStrategy | Swift.Equatable
+conformance ReadStrategy | Swift.Hashable
+conformance ReadStrategy | Swift.Sendable
+conformance RefreshState | Swift.Equatable
+conformance RefreshState | Swift.Sendable
+conformance RejectedMutation | Swift.Equatable
+conformance RejectedMutation | Swift.Hashable
+conformance RejectedMutation | Swift.Identifiable
+conformance RejectedMutation | Swift.Sendable
+conformance RejectedMutationSequence | Swift.Sendable
+conformance RejectedMutationSequence | _Concurrency.AsyncSequence
+conformance RejectedMutationSequence.Iterator | _Concurrency.AsyncIteratorProtocol
+conformance SequenceReadStrategy | Swift.CaseIterable
+conformance SequenceReadStrategy | Swift.Equatable
+conformance SequenceReadStrategy | Swift.Hashable
+conformance SequenceReadStrategy | Swift.Sendable
+conformance SupabaseOfflineClient | Swift.Sendable
+conformance SupabaseOfflineClient.CacheSize | Swift.Equatable
+conformance SupabaseOfflineClient.CacheSize | Swift.Hashable
+conformance SupabaseOfflineClient.CacheSize | Swift.Sendable
+conformance SupabaseOfflineClient.Config | Swift.Sendable
+conformance SupabaseOfflineClient.LogLevel | Swift.Equatable
+conformance SupabaseOfflineClient.LogLevel | Swift.Hashable
+conformance SupabaseOfflineClient.LogLevel | Swift.Sendable
+conformance Swift.Array | OfflineFilterValue where Element: OfflineFilterValue
+conformance Swift.Bool | OfflineFilterValue
+conformance Swift.Double | OfflineFilterValue
+conformance Swift.Float | OfflineFilterValue
+conformance Swift.Int | OfflineFilterValue
+conformance Swift.Int16 | OfflineFilterValue
+conformance Swift.Int32 | OfflineFilterValue
+conformance Swift.Int64 | OfflineFilterValue
+conformance Swift.Int8 | OfflineFilterValue
+conformance Swift.Optional | OfflineFilterValue where Wrapped: OfflineFilterValue
+conformance Swift.String | OfflineFilterValue
+conformance Swift.UInt | OfflineFilterValue
+conformance Swift.UInt16 | OfflineFilterValue
+conformance Swift.UInt32 | OfflineFilterValue
+conformance Swift.UInt64 | OfflineFilterValue
+conformance Swift.UInt8 | OfflineFilterValue
+conformance SyncReport | Swift.Equatable
+conformance SyncReport | Swift.Hashable
+conformance SyncReport | Swift.Sendable
+conformance SyncStatus | Swift.Equatable
+conformance SyncStatus | Swift.Sendable
+conformance SyncStatusSequence | Swift.Sendable
+conformance SyncStatusSequence | _Concurrency.AsyncSequence
+conformance SyncStatusSequence.Iterator | _Concurrency.AsyncIteratorProtocol

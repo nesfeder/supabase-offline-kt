@@ -1,0 +1,42 @@
+// The public interface of SupabaseOfflineTesting, from its symbol graph; scripts/api-compat.py rates a
+// change to it. Do not edit: scripts/check-swift-public-api.py --products DIR --update writes it.
+platform iOS 16.0
+struct FakeServer | struct FakeServer
+struct FakeServer.Request | struct Request
+property FakeServer.Request.body | let body: Data
+property FakeServer.Request.headers | let headers: [String : String]
+property FakeServer.Request.method | let method: String
+property FakeServer.Request.url | let url: URL
+struct FakeServer.Response | struct Response
+type.method FakeServer.Response.json(_:status:headers:) | static func json(_ json: String, status: Int = 200, headers: [String : String] = [:]) -> FakeServer.Response
+type.property FakeServer.Response.noConnection | static let noConnection: FakeServer.Response
+type.method FakeServer.Response.status(_:headers:body:) | static func status(_ status: Int, headers: [String : String] = [:], body: Data = Data()) -> FakeServer.Response
+init FakeServer.init() | init()
+init FakeServer.init(respond:) | init(respond: @escaping @Sendable (FakeServer.Request) async -> FakeServer.Response)
+class ManualClock | final class ManualClock
+method ManualClock.advance(by:) | func advance(by duration: Duration)
+init ManualClock.init(now:) | init(now: Date = Date())
+property ManualClock.now | var now: Date { get }
+method ManualClock.set(to:) | func set(to date: Date)
+type.method SupabaseOfflineClient.inMemory(supabaseURL:supabaseKey:config:server:clock:) | static func inMemory(supabaseURL: URL = URL(string: "https://in-memory.supabase.co")!, supabaseKey: String = "in-memory-publishable-key", config: SupabaseOfflineClient.Config = Config(), server: FakeServer = FakeServer(), clock: ManualClock? = nil) -> SupabaseOfflineClient
+func cacheMissError(message:) | func cacheMissError(message: String = "No valid cached data found for this query") -> OfflineError
+func cachedFile(path:fetchedAt:sizeBytes:) | func cachedFile(path: String, fetchedAt: Date, sizeBytes: Int) -> CachedFile
+func mutationNotQueueableError(message:) | func mutationNotQueueableError(message: String = "The write could not be queued, and could not be sent") -> OfflineError
+func networkDisabledError(message:) | func networkDisabledError(message: String = "The client's network access is turned off") -> OfflineError
+func offlineError(code:message:serverError:isNetworkOrConnectivityFailure:) | func offlineError(code: OfflineError.Code, message: String, serverError: OfflineError.ServerError? = nil, isNetworkOrConnectivityFailure: Bool = false) -> OfflineError
+func offlineResponse(value:data:count:isFromCache:fetchedAt:hasPendingMutations:) | func offlineResponse<Value>(value: Value, data: Data = Data(), count: Int? = nil, isFromCache: Bool = false, fetchedAt: Date? = nil, hasPendingMutations: Bool = false) -> OfflineResponse<Value> where Value : Sendable
+func pendingMutation(id:table:operation:createdAt:rowKeys:body:) | func pendingMutation(id: Int64, table: String, operation: MutationOperation, createdAt: Date, rowKeys: [[String : OfflineJSON]] = [], body: OfflineJSON? = nil) -> PendingMutation
+func querySnapshot(result:isFromCache:fetchedAt:hasPendingMutations:refresh:) | func querySnapshot<Value>(result: Value?, isFromCache: Bool, fetchedAt: Date?, hasPendingMutations: Bool = false, refresh: RefreshState = .idle) -> QuerySnapshot<Value> where Value : Sendable
+func rejectedMutation(id:table:operation:createdAt:rowKeys:body:serverError:message:rejectedAt:isRetryable:) | func rejectedMutation(id: Int64, table: String, operation: MutationOperation, createdAt: Date, rowKeys: [[String : OfflineJSON]] = [], body: OfflineJSON? = nil, serverError: OfflineError.ServerError? = nil, message: String, rejectedAt: Date, isRetryable: Bool = true) -> RejectedMutation
+func serverError(status:code:message:details:hint:) | func serverError(status: Int, code: String? = nil, message: String, details: String? = nil, hint: String? = nil) -> OfflineError.ServerError
+func syncFailedError(message:httpStatus:code:isConnectivityFailure:) | func syncFailedError(message: String = "The sync pass stopped with writes still queued", httpStatus: Int? = nil, code: String? = nil, isConnectivityFailure: Bool = false) -> OfflineError
+func syncReport(syncedCount:rejected:remainingCount:alreadyOnServerCount:heldBehindOtherTablesCount:) | func syncReport(syncedCount: Int, rejected: [RejectedMutation] = [], remainingCount: Int = 0, alreadyOnServerCount: Int = 0, heldBehindOtherTablesCount: Int = 0) -> SyncReport
+func syncStatus(network:pendingMutationCount:rejectedMutationCount:isSyncing:lastSyncedAt:lastSyncError:) | func syncStatus(network: NetworkStatus = .unknown, pendingMutationCount: Int = 0, rejectedMutationCount: Int = 0, isSyncing: Bool = false, lastSyncedAt: Date? = nil, lastSyncError: OfflineError? = nil) -> SyncStatus
+conformance FakeServer | Swift.Sendable
+conformance FakeServer.Request | Swift.Equatable
+conformance FakeServer.Request | Swift.Hashable
+conformance FakeServer.Request | Swift.Sendable
+conformance FakeServer.Response | Swift.Equatable
+conformance FakeServer.Response | Swift.Hashable
+conformance FakeServer.Response | Swift.Sendable
+conformance ManualClock | Swift.Sendable

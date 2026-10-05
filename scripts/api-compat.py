@@ -6,7 +6,8 @@ What it reads, all from git, so nothing is built:
   * the committed Kotlin ABI records (``.api`` for Android, ``.klib.api`` for iOS) under each
     published module's ``api/``, and beside them the record of public signatures with parameter
     names (``.signatures``, from scripts/check-public-signatures.py),
-  * the committed Swift interfaces under ``swift/api/`` (once the Swift package exists),
+  * the committed records of the Swift package's public interface, ``swift/api/*.api``
+    (scripts/check-swift-public-api.py writes them),
   * the Room schema directory, the files that pin stored formats, and the version catalog,
   * ``CHANGELOG.md``.
 
@@ -499,17 +500,29 @@ def parent_is_implementable(parent_text: str, klib: bool) -> bool:
 
 
 def normalise_swift(content: str) -> List[str]:
-    lines = []
-    for line in content.splitlines():
-        if line.startswith("// swift-") or not line.strip():
-            continue
-        lines.append(line.rstrip())
-    return lines
+    """A Swift interface record's lines, without its comments and blank lines."""
+    return [line.rstrip() for line in content.splitlines() if line.strip() and not line.startswith("//")]
+
+
+def swift_platform(lines: List[str]) -> Optional[Tuple[int, ...]]:
+    """The iOS version a record's `platform iOS X.Y` line names."""
+    for line in lines:
+        match = re.match(r"^platform iOS (\d+(?:\.\d+)*)$", line)
+        if match:
+            return tuple(int(part) for part in match.group(1).split("."))
+    return None
 
 
 def classify_swift(
     path: str, base: Optional[str], head: Optional[str], policy: dict, report: Report
 ) -> None:
+    """Rates a change to a record of the Swift package's public interface.
+
+    Each line is one declaration (`<kind> <path> | <declaration>`), one conformance, or the
+    package's platform. A line removed or changed is breaking; a line added is an addition, except
+    a case of an enum callers may match exhaustively and a requirement of a protocol apps may
+    adopt, which break a `switch` and a conformance. A raised platform is a dependency floor.
+    """
     input_only = set(policy.get("inputOnlyTypes", {}).get("swift", []))
     if base is None and head is None:
         return
@@ -520,42 +533,32 @@ def classify_swift(
         report.add(Finding("breaking", "swift-interface-removed", path))
         return
     before, after = normalise_swift(base), normalise_swift(head)
+    before_platform, after_platform = swift_platform(before), swift_platform(after)
+    if before_platform != after_platform:
+        detail = f"{path}: iOS {'.'.join(map(str, before_platform or ()))} -> {'.'.join(map(str, after_platform or ()))}"
+        if before_platform and after_platform and after_platform > before_platform:
+            report.add(Finding("additive", "swift-platform-raised", detail, flag="dependency"))
+        elif before_platform and after_platform:
+            report.add(Finding("additive", "swift-platform-lowered", detail))
+        else:
+            report.add(Finding("breaking", "swift-platform-unreadable", detail))
     before_set, after_set = set(before), set(after)
     for line in before:
-        if line not in after_set and line.strip() not in ("}", "{"):
-            report.add(Finding("breaking", "swift-removed", f"{path}: {line.strip()}"))
-    enclosing: List[str] = []
+        if line not in after_set and not line.startswith("platform "):
+            report.add(Finding("breaking", "swift-removed", f"{path}: {line}"))
     for line in after:
-        stripped = line.strip()
-        if stripped.endswith("{"):
-            enclosing.append(stripped)
-        elif stripped == "}" and enclosing:
-            enclosing.pop()
+        if line in before_set or line.startswith("platform "):
             continue
-        if line in before_set or stripped in ("}", "{"):
-            continue
-        if enclosing and not stripped.endswith("{"):
-            owner = enclosing[-1]
+        kind, _, rest = line.partition(" ")
+        symbol_path = rest.split(" | ", 1)[0]
+        owner = symbol_path.rsplit(".", 1)[0] if "." in symbol_path else ""
+        if kind == "enum.case":
+            level = "additive" if owner in input_only else "breaking"
+            report.add(Finding(level, "swift-enum-case-added", f"{path}: {symbol_path}"))
+        elif kind == "requirement":
+            report.add(Finding("breaking", "swift-protocol-requirement-added", f"{path}: {owner}: {rest}"))
         else:
-            owner = enclosing[-2] if len(enclosing) > 1 else ""
-        enum_match = re.match(r"^(?:@\w+\s+)*public (?:indirect )?enum (\w+)", owner)
-        if stripped.startswith("case ") and enum_match:
-            level = "additive" if enum_match.group(1) in input_only else "breaking"
-            report.add(
-                Finding(level, "swift-enum-case-added", f"{path}: {enum_match.group(1)}.{stripped[5:]}")
-            )
-            continue
-        protocol_match = re.match(r"^public protocol (\w+)", owner)
-        if protocol_match and re.match(r"^(func|var|associatedtype|init|static|subscript)\b", stripped):
-            report.add(
-                Finding(
-                    "breaking",
-                    "swift-protocol-requirement-added",
-                    f"{path}: {protocol_match.group(1)}: {stripped}",
-                )
-            )
-            continue
-        report.add(Finding("additive", "swift-added", f"{path}: {stripped}"))
+            report.add(Finding("additive", "swift-added", f"{path}: {line}"))
 
 
 def read_digester_report(path: Optional[str], report: Report) -> None:
@@ -663,7 +666,7 @@ def policy_problems(git: Git, head: str, policy: dict) -> List[str]:
     for directory in policy.get("schemaDirectories", []):
         if not any(path.startswith(directory.rstrip("/") + "/") for path in files):
             problems.append(f"compat/policy.json names the schema directory {directory}, which holds no file")
-    for pattern in policy.get("kotlinDumps", []):
+    for pattern in policy.get("kotlinDumps", []) + policy.get("swiftInterfaces", []):
         if not any(fnmatch.fnmatch(path, pattern) for path in files):
             problems.append(f"compat/policy.json names the records {pattern}, which match no file")
     return problems
@@ -1056,7 +1059,7 @@ def command_check_release(git: Git, arguments: argparse.Namespace) -> int:
 
 POLICY = {
     "kotlinDumps": ["lib/api/**"],
-    "swiftInterfaces": ["swift/api/*.swiftinterface"],
+    "swiftInterfaces": ["swift/api/*.api"],
     "inputOnlyTypes": {"kotlin": ["io.example.ReadStrategy", "io.example.Mode"], "swift": ["ReadStrategy"]},
     "closedForImplementation": {"kotlin": ["io.example.Closed"]},
     "schemaDirectories": ["lib/schemas"],
@@ -1134,18 +1137,18 @@ public abstract class io/example/Base {
 }
 """
 
-SWIFT_BASE = """// swift-interface-format-version: 1.0
-// swift-module-flags: -target arm64-apple-ios16.0-simulator -enable-library-evolution -module-name SupabaseOffline
-import Foundation
-final public class SupabaseOfflineClient : Swift.Sendable {
-  final public func close()
-}
-public enum ReadStrategy : Swift.Sendable {
-  case networkOnly
-}
-public enum OfflineSyncState : Swift.Sendable {
-  case idle
-}
+SWIFT_BASE = """// The public interface of SupabaseOffline, from its symbol graph.
+platform iOS 16.0
+class SupabaseOfflineClient | final class SupabaseOfflineClient
+method SupabaseOfflineClient.close() | func close() async throws
+method SupabaseOfflineClient.from(_:) | func from(_ table: String) -> OfflinePostgrestQueryBuilder
+enum ReadStrategy | enum ReadStrategy
+enum.case ReadStrategy.networkOnly | case networkOnly
+enum NetworkStatus | enum NetworkStatus
+enum.case NetworkStatus.online | case online
+protocol OfflinePostgrestFilterBuilder | protocol OfflinePostgrestFilterBuilder : Sendable
+requirement OfflinePostgrestFilterBuilder.applying(_:) | func applying(_ change: OfflineQueryChange) -> Self
+conformance SupabaseOfflineClient | Swift.Sendable
 """
 
 CATALOG = """[versions]
@@ -1205,7 +1208,7 @@ class Fixture:
         self.write("compat/policy.json", json.dumps(POLICY))
         self.write("lib/api/lib.klib.api", KLIB_BASE)
         self.write("lib/api/android/lib.api", JVM_BASE)
-        self.write("swift/api/SupabaseOffline.swiftinterface", SWIFT_BASE)
+        self.write("swift/api/SupabaseOffline.api", SWIFT_BASE)
         self.write("lib/schemas/2.json", '{"version": 2}')
         self.write("lib/src/commonTest/PersistedNamesTest.kt", 'val NAME = "mutation_owners"\n')
         self.write("gradle/libs.versions.toml", CATALOG.format(**CATALOG_DEFAULTS))
@@ -1267,7 +1270,7 @@ def self_test() -> int:
 
     def with_swift(old: str, new: str):
         return lambda repository: repository.write(
-            "swift/api/SupabaseOffline.swiftinterface", SWIFT_BASE.replace(old, new)
+            "swift/api/SupabaseOffline.api", SWIFT_BASE.replace(old, new)
         )
 
     def with_catalog(**versions: str):
@@ -1458,21 +1461,65 @@ def self_test() -> int:
     )
     scenario(
         "a Swift case added to an output enum",
-        with_swift("  case idle\n", "  case idle\n  case paused\n"),
+        with_swift("enum.case NetworkStatus.online | case online\n",
+                   "enum.case NetworkStatus.online | case online\nenum.case NetworkStatus.paused | case paused\n"),
         "breaking",
         ["swift-enum-case-added"],
     )
     scenario(
         "a Swift case added to an input-only enum",
-        with_swift("  case networkOnly\n", "  case networkOnly\n  case cacheOnly\n"),
+        with_swift("enum.case ReadStrategy.networkOnly | case networkOnly\n",
+                   "enum.case ReadStrategy.networkOnly | case networkOnly\nenum.case ReadStrategy.cacheOnly | case cacheOnly\n"),
         "additive",
         ["swift-enum-case-added"],
     )
     scenario(
         "a Swift method removed",
-        with_swift("  final public func close()\n", ""),
+        with_swift("method SupabaseOfflineClient.close() | func close() async throws\n", ""),
         "breaking",
         ["swift-removed"],
+    )
+    scenario(
+        "a Swift declaration changed",
+        with_swift("func from(_ table: String)", "func from(_ table: String, schema: String)"),
+        "breaking",
+        ["swift-removed", "swift-added"],
+    )
+    scenario(
+        "a Swift method added",
+        with_swift("method SupabaseOfflineClient.close() | func close() async throws\n",
+                   "method SupabaseOfflineClient.close() | func close() async throws\n"
+                   "method SupabaseOfflineClient.clearLocalData() | func clearLocalData() async throws\n"),
+        "additive",
+        ["swift-added"],
+    )
+    scenario(
+        "a Swift protocol requirement added",
+        with_swift("conformance SupabaseOfflineClient | Swift.Sendable\n",
+                   "requirement OfflinePostgrestFilterBuilder.reset() | func reset() -> Self\n"
+                   "conformance SupabaseOfflineClient | Swift.Sendable\n"),
+        "breaking",
+        ["swift-protocol-requirement-added"],
+    )
+    scenario(
+        "a Swift conformance removed",
+        with_swift("conformance SupabaseOfflineClient | Swift.Sendable\n", ""),
+        "breaking",
+        ["swift-removed"],
+    )
+    scenario(
+        "the Swift package's platform raised",
+        with_swift("platform iOS 16.0\n", "platform iOS 17.0\n"),
+        "additive",
+        ["swift-platform-raised"],
+        ["dependency"],
+        ["swift-removed", "swift-added"],
+    )
+    scenario(
+        "a comment of a Swift record changed",
+        with_swift("from its symbol graph.", "from its symbol graph; do not edit."),
+        "none",
+        [],
     )
     scenario(
         "a new Room schema version",
