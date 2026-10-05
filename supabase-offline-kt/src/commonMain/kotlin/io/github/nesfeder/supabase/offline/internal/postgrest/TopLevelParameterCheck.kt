@@ -22,10 +22,14 @@ internal fun requireOneValuePerTopLevelParameter(builder: PostgrestRequestBuilde
     )
 }
 
-/** [request], then [requireOneValuePerTopLevelParameter] on the builder it configured. */
-internal fun <B : PostgrestRequestBuilder> refusingRepeatedParameters(
+/**
+ * [request], then [requireOneValuePerTopLevelParameter] and [requireReadablePatternLists] on the
+ * builder it configured.
+ */
+internal fun <B : PostgrestRequestBuilder> refusingMisreadFilters(
     request: B.() -> Unit
 ): B.() -> Unit = {
     request()
     requireOneValuePerTopLevelParameter(this)
+    requireReadablePatternLists(this)
 }

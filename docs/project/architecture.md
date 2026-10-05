@@ -130,8 +130,8 @@ filter values or object paths; `DEBUG` may.
 | --- | --- | --- | --- |
 | `from(table)`, `from(schema, table)`, `get(table)`, `get(schema, table)` | A table's `OfflinePostgrestQueryBuilder`; `offline["todos"]` is `offline.from("todos")`. | A table of another schema is cached apart from the default schema's table of the same name. | `IllegalStateException` without PostgREST |
 | `class OfflinePostgrestQueryBuilder` | The offline counterpart of supabase-kt's `PostgrestQueryBuilder`, with its `postgrest`, `table` and `schema`. | Final, with an internal constructor. Each verb takes its offline choice as a named parameter with a default, before the trailing request lambda. | — |
-| `select(columns, readStrategy = ReadStrategy.NetworkFirst(), request): PostgrestResult` | Reads rows once, from the server or the cache. | Each request is cached on its own. Only a list of rows is cached. `single()`, `maybeSingle()` (supabase-kt 3.8), `head`, a count (with rows or without), `csv()`, `geojson()`, `stripNulls()` and `explain()` go to the server under every strategy but `CacheOnly`, are never stored, and fail offline as `NetworkOnly` does. | `CacheMissException` under `CacheOnly`; `NetworkDisabledException` while network access is off and the cache cannot answer; `IllegalArgumentException` for two top-level filters on one column |
-| `selectAsFlow(columns, readStrategy = FlowReadStrategy.CacheFirstThenNetwork, request): Flow<QuerySnapshot>` | Reads rows as they change: emits again whenever a write, a refresh or a server record changes them. | A failing refresh is reported in the snapshot, not thrown. A failure the read cannot recover from ends the flow after the values before it. A shape the cache never holds emits the server's answer once and completes. Needs no Realtime channel. | Through the flow: `CacheMissException` under `CacheOnly` for a shape the cache never holds; `NetworkDisabledException` while network access is off, for such a shape or for `NetworkFirstThenCache` with nothing cached; `IllegalArgumentException` for two top-level filters on one column |
+| `select(columns, readStrategy = ReadStrategy.NetworkFirst(), request): PostgrestResult` | Reads rows once, from the server or the cache. | Each request is cached on its own. Only a list of rows is cached. `single()`, `maybeSingle()` (supabase-kt 3.8), `head`, a count (with rows or without), `csv()`, `geojson()`, `stripNulls()` and `explain()` go to the server under every strategy but `CacheOnly`, are never stored, and fail offline as `NetworkOnly` does. | `CacheMissException` under `CacheOnly`; `NetworkDisabledException` while network access is off and the cache cannot answer; `IllegalArgumentException` for two top-level filters on one column or a pattern list the server would misread |
+| `selectAsFlow(columns, readStrategy = FlowReadStrategy.CacheFirstThenNetwork, request): Flow<QuerySnapshot>` | Reads rows as they change: emits again whenever a write, a refresh or a server record changes them. | A failing refresh is reported in the snapshot, not thrown. A failure the read cannot recover from ends the flow after the values before it. A shape the cache never holds emits the server's answer once and completes. Needs no Realtime channel. | Through the flow: `CacheMissException` under `CacheOnly` for a shape the cache never holds; `NetworkDisabledException` while network access is off, for such a shape or for `NetworkFirstThenCache` with nothing cached; `IllegalArgumentException` for two top-level filters on one column or a pattern list the server would misread |
 
 A verb may run its `request` lambda more than once: a read once to learn its shape and once per
 request sent, a queueable write up to three times. The lambda must build the same request every
@@ -152,6 +152,14 @@ calls that replace an earlier value and leave one: a second top-level `or` group
 after a filter on its column. A test pins what supabase-kt itself sends, so the day it sends every
 value this rule, and the query shape and queue capture that read a column's first value alone, are
 revisited before the pin moves.
+
+**A pattern list the server would misread is refused.** supabase-kt quotes a pattern of `likeAll`,
+`likeAny`, `ilikeAll` or `ilikeAny` only when it holds one of `,.:()`, so an empty list, or a
+pattern that is empty, `NULL` in any case, edged with white space or holding a brace, reaches the
+server as another list: `likeAll("code", listOf(""))` sends `like(all).{}`, and `LIKE ALL` over no
+pattern matches every row. A read, an update or a delete carrying such a list, at the top level or
+in a group, throws `IllegalArgumentException`, naming the column and never a pattern, before
+anything is sent, queued or read from the cache. A test pins what supabase-kt sends.
 
 `ReadStrategy`, for `select`:
 
@@ -206,8 +214,8 @@ asked for a shape the cache never holds. No request was sent.
 | --- | --- | --- | --- |
 | `insert(body: JsonArray, mutationStrategy, request)`; reified `insert(value: T, …)`, `insert(values: List<T>, …)` | Inserts rows. | A typed value is encoded by `postgrest.serializer`, as supabase-kt encodes it. | `MutationNotQueueableException` |
 | `upsert(body: JsonArray, …)`; reified `upsert(value: T, …)`, `upsert(values: List<T>, …)` | Inserts rows, or merges them into the rows they conflict with. | Shown merged by `onConflict`'s columns, or by the table's key. | `MutationNotQueueableException` |
-| `update(update: PostgrestUpdate.() -> Unit, …)`, `update(body: JsonElement, …)`; reified `update(value: T, …)` | Sets columns on the rows `request` filters. | A queued update replays exactly the values it sets. Queueing needs a filter the queue can record exactly. | `MutationNotQueueableException`; `IllegalArgumentException` for two top-level filters on one column |
-| `delete(mutationStrategy, request)` | Deletes the rows `request` filters. | Queueing needs a filter the queue can record exactly. | `MutationNotQueueableException`; `IllegalArgumentException` for two top-level filters on one column |
+| `update(update: PostgrestUpdate.() -> Unit, …)`, `update(body: JsonElement, …)`; reified `update(value: T, …)` | Sets columns on the rows `request` filters. | A queued update replays exactly the values it sets. Queueing needs a filter the queue can record exactly. | `MutationNotQueueableException`; `IllegalArgumentException` for two top-level filters on one column or a pattern list the server would misread |
+| `delete(mutationStrategy, request)` | Deletes the rows `request` filters. | Queueing needs a filter the queue can record exactly. | `MutationNotQueueableException`; `IllegalArgumentException` for two top-level filters on one column or a pattern list the server would misread |
 
 Each returns a `MutationOutcome`, and `mutationStrategy` defaults to `QueueIfOffline`. An
 `OnlineOnly` write made while network access is off throws `NetworkDisabledException`.
@@ -1154,6 +1162,7 @@ What the library promises, each with the tests that pin it:
 | On a table whose configured key matches a unique key on the server, a keyed INSERT whose send may have reached the server is never inserted twice. | `MutationQueueIdempotentReplayTest`, `UnconfirmedSendProofTest`, `UndeliveredRequestsAndroidTest`, `UndeliveredRequestsIosTest` |
 | Answering a read from the cache sends no request. | `CachedReadsSendNothingTest` |
 | A read, an update or a delete with two top-level filters on one column is refused before anything is sent or queued, under every strategy, online and offline. | `SameColumnFiltersTest`, `UpstreamRepeatedParameterTest` |
+| A read, an update or a delete with a pattern list the server would read as another list (empty, or a pattern that is empty, `NULL`, edged with white space or holding a brace) is refused before anything is sent or queued, at the top level and in a group, online and offline. | `PatternListsTest`, `UpstreamPatternListTest` |
 | Each emission of a live read is one view of the cache, the queue and its refresh: no write shows both patched into the cache and still queued, a replayed write never drops out of a list that holds it, and `Idle` comes with the rows its refresh fetched. | `LiveReadConsistencyTest`, `LiveReadSourceOrderTest`, `LiveReadConsistencyAndroidTest`, `LiveReadConsistencyIosTest` |
 | No error answer from Storage is cached as a file. | `ChannelDownloadStatusTest`, `DownloadToFileStatusAndroidTest` |
 | A response whose request started before a write changed the cache, before a clear, or before a change of owner never lands in the cache. | `StaleRefreshWatermarkTest`, `CacheOwnershipTest`, `ClearLocalDataDuringWritesTest`, `StorageClearDuringDownloadTest` |

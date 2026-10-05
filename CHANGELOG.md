@@ -88,6 +88,11 @@ release.
   sent or queued. supabase-kt sends only the first of them, so the read showed rows outside the
   window and the write reached them, and a queued write replayed that way later. Write the two as
   one `and { }` group, which sends both.
+- A read, an update or a delete whose pattern list (`likeAll`, `likeAny`, `ilikeAll`, `ilikeAny`)
+  is empty, or holds a pattern that is empty, `NULL`, edged with white space or holding a brace
+  (and none of `,.:()`), throws `IllegalArgumentException` before anything is sent or queued, at
+  the top level or in a group. supabase-kt sends such a pattern unquoted, so the server read another
+  list: `likeAll("code", listOf(""))` went out as `like(all).{}`, which matches every row.
 - On iOS the database and the file cache live in `Library/Application Support` by default
   (`supabase_offline.db` and `supabase_offline/`), not in `Documents`, which an app with file
   sharing on shows in the Files app. A client that finds a database in `Documents` moves it, with

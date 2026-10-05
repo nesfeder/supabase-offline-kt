@@ -143,6 +143,7 @@ internal class QueryReader(
         val shape =
             delegate.shapeOf(columns, request) { builder ->
                 requireOneValuePerTopLevelParameter(builder)
+                requireReadablePatternLists(builder)
                 built = cacheSlotOf(columns, builder)
             }
         val slot = built ?: cacheSlotOf(columns, request)
@@ -329,6 +330,7 @@ internal class QueryReader(
         val shape =
             delegate.shapeOf(columns, request) { builder ->
                 requireOneValuePerTopLevelParameter(builder)
+                requireReadablePatternLists(builder)
                 built = cacheSlotOf(columns, builder)
             }
         if (shape is ReadShape.Uncacheable) {

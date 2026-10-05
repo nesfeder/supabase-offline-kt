@@ -56,6 +56,10 @@ import kotlinx.serialization.json.jsonArray
  *   [IllegalArgumentException] before anything is sent or queued. Put them in one group, `filter {
  *   and { gte("age", 1); lte("age", 10) } }`, which sends both. A second top-level `or` group, or a
  *   text search after a filter on its column, replaces what came before, and is not caught.
+ * - **A pattern list the server would misread**: supabase-kt quotes a pattern only when it holds
+ *   one of `,.:()`, so `likeAll`, `likeAny`, `ilikeAll` or `ilikeAny` with an empty list, or with a
+ *   pattern that is empty, `NULL`, edged with white space or holding a brace, throws
+ *   [IllegalArgumentException] before anything is sent or queued.
  *
  * A verb may run its `request` lambda more than once: a read once to learn its shape and once per
  * request sent, a queueable write up to three times. The lambda must configure the same request
