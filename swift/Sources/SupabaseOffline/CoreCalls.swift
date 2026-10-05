@@ -140,8 +140,8 @@ extension BridgeCancellable: CoreCallHandle {}
 /// Awaits one call that `start` sends, returning its handle and calling `complete` once, from any
 /// thread, before or after it returns.
 ///
-/// Cancelling the awaiting task throws `CancellationError` at once and cancels the call through
-/// its handle exactly once; a completion that arrives after that is dropped. A task cancelled
+/// Canceling the awaiting task throws `CancellationError` at once and cancels the call through
+/// its handle exactly once; a completion that arrives after that is dropped. A task canceled
 /// before the call is sent never sends it.
 func awaitCompletion<Value: Sendable>(
     _ start: @Sendable (_ complete: @escaping @Sendable (Result<Value, any Error>) -> Void) -> any CoreCallHandle
@@ -157,7 +157,7 @@ func awaitCompletion<Value: Sendable>(
     }
 }
 
-/// One awaited call: its continuation, resumed once, and its handle, cancelled at most once.
+/// One awaited call: its continuation, resumed once, and its handle, canceled at most once.
 private final class PendingCall<Value: Sendable>: @unchecked Sendable {
 
     /// Guards every property below.
@@ -166,17 +166,17 @@ private final class PendingCall<Value: Sendable>: @unchecked Sendable {
     /// The awaiting task, until it is resumed.
     private var continuation: CheckedContinuation<Value, any Error>?
 
-    /// The core's handle, from the call's start until it answers or is cancelled.
+    /// The core's handle, from the call's start until it answers or is canceled.
     private var handle: (any CoreCallHandle)?
 
     /// Whether the core has answered.
     private var isAnswered = false
 
-    /// Whether the awaiting task was cancelled.
+    /// Whether the awaiting task was canceled.
     private var isCancelled = false
 
     /// Keeps `continuation`; false, after resuming it with `CancellationError`, when the task was
-    /// cancelled first, so the call is never sent.
+    /// canceled first, so the call is never sent.
     func wait(with continuation: CheckedContinuation<Value, any Error>) -> Bool {
         lock.lock()
         let cancelledFirst = isCancelled
@@ -186,7 +186,7 @@ private final class PendingCall<Value: Sendable>: @unchecked Sendable {
         return !cancelledFirst
     }
 
-    /// Keeps the sent call's handle; cancels the call at once when the task was cancelled while it
+    /// Keeps the sent call's handle; cancels the call at once when the task was canceled while it
     /// was being sent, and drops the handle when the call has already answered.
     func attach(_ handle: any CoreCallHandle) {
         lock.lock()
@@ -257,7 +257,7 @@ func requiredValue<Value>(_ value: Value?) throws -> Value {
 ///
 /// Every value is a whole state (a snapshot, a count, a list), so a slow reader skips stale ones
 /// and nothing piles up. The stream finishes when the subscription ends; when the reader stops
-/// first, the subscription is cancelled through its handle exactly once. `owner` lives as long as
+/// first, the subscription is canceled through its handle exactly once. `owner` lives as long as
 /// the stream.
 func subscriptionStream<Element: Sendable>(
     keepingNewest limit: Int = 1,
@@ -293,7 +293,7 @@ func subscriptionStream<Element: Sendable>(
     return stream
 }
 
-/// One subscription's handle, cancelled at most once, even when the reader stops before it starts.
+/// One subscription's handle, canceled at most once, even when the reader stops before it starts.
 private final class LiveSubscription: @unchecked Sendable {
 
     /// Guards every property below.
@@ -335,7 +335,7 @@ private final class LiveSubscription: @unchecked Sendable {
 /// A sequence whose every iterator is a subscription of its own, started by `makeAsyncIterator()`.
 ///
 /// Only the iterator holds the stream, so leaving a `for try await` loop (a `break`, a `return`, a
-/// thrown error or a cancelled task) ends the subscription even while the sequence is still held.
+/// thrown error or a canceled task) ends the subscription even while the sequence is still held.
 struct SubscriptionSequence<Element: Sendable>: AsyncSequence, Sendable {
 
     /// Starts one subscription.

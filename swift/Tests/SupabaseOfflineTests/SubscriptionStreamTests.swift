@@ -171,7 +171,7 @@ struct SubscriptionStreamTests {
     }
 }
 
-/// A stream of 0, 1, 2, … every millisecond until `handle` is cancelled.
+/// A stream of 0, 1, 2, … every millisecond until `handle` is canceled.
 private func endlessCounter(handle: RecordingCallHandle) -> AsyncThrowingStream<Int, any Error> {
     subscriptionStream { yield, _ in
         DispatchQueue.global().async {

@@ -4,7 +4,7 @@
 /// The current user's rejected writes as the list changes, oldest first: the list now, then a new
 /// list after each change.
 ///
-/// Each iteration is a subscription of its own; leaving the loop, throwing out of it or cancelling
+/// Each iteration is a subscription of its own; leaving the loop, throwing out of it or canceling
 /// its task ends it. Only the newest list waits for a slow reader. Iterating keeps the client open;
 /// closing the client ends the iteration normally. ``first()`` reads the list once without
 /// subscribing.

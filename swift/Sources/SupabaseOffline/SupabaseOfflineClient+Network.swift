@@ -31,6 +31,8 @@ extension SupabaseOfflineClient {
     /// ``MutationStrategy/onlineOnly`` write, a function call) throws ``OfflineError/Code/networkDisabled``
     /// at once, which counts as a network failure; a request already on the wire still answers. The
     /// switch is not kept: a new client starts with access on. Calling it again changes nothing.
+    ///
+    /// - Throws: ``OfflineError``: `clientClosed` once the client is closed.
     public func disableNetwork() async throws {
         try await connection.call { core, complete in
             core.disableNetwork { failure in complete(coreResult(failure)) }
@@ -40,6 +42,8 @@ extension SupabaseOfflineClient {
     /// Turns the client's network access back on: a waiting refresh runs, and with
     /// ``Config/autoSync`` the queued writes are sent once the network is reachable. Calling it
     /// while access is on changes nothing.
+    ///
+    /// - Throws: ``OfflineError``: `clientClosed` once the client is closed.
     public func enableNetwork() async throws {
         try await connection.call { core, complete in
             core.enableNetwork { failure in complete(coreResult(failure)) }
