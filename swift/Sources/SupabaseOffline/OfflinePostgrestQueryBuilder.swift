@@ -70,7 +70,7 @@ public struct OfflinePostgrestQueryBuilder: Sendable {
     /// changes with every local write, sync, refresh and server record that touches its rows.
     ///
     /// Chain filters and transforms onto it, then iterate it: each iteration subscribes, and
-    /// leaving the loop or cancelling its task ends the subscription. Iterating keeps the client
+    /// leaving the loop or canceling its task ends the subscription. Iterating keeps the client
     /// open.
     public func selectAsSequence<Value: Decodable & Sendable>(
         _ columns: String = "*",

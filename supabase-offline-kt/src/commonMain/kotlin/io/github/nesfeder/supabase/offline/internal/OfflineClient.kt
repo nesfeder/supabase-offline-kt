@@ -40,6 +40,7 @@ import io.github.nesfeder.supabase.offline.internal.db.QueryCacheDao
 import io.github.nesfeder.supabase.offline.internal.db.isReservedTable
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogLevel
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.AUTH_SESSION_SETTLE_TIMEOUT
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.AutomaticReplay
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.DefaultPrimaryKeys
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueue
@@ -50,7 +51,6 @@ import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentityR
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.RejectedMutation as EngineRejectedMutation
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.SyncReport as EngineSyncReport
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.SyncStop
-import io.github.nesfeder.supabase.offline.internal.mutationqueue.currentQueueIdentity
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.currentReplayIdentity
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.replayIdentityFor
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.syncFailureOf
@@ -72,6 +72,7 @@ import io.github.nesfeder.supabase.offline.internal.postgrest.refreshWakeUps
 import io.github.nesfeder.supabase.offline.internal.postgrest.requestSessionFor
 import io.github.nesfeder.supabase.offline.internal.storage.CachingBucketApi
 import io.github.nesfeder.supabase.offline.internal.storage.StorageFileCache
+import io.github.nesfeder.supabase.offline.internal.storage.installDownloadStatusCheck
 import io.github.nesfeder.supabase.offline.internal.storage.markFileUsed
 import io.github.nesfeder.supabase.offline.internal.storage.renderImagePathOf
 import kotlin.concurrent.atomics.AtomicBoolean
@@ -411,6 +412,7 @@ internal class OfflineClient(
         supabaseClient.installDryRunCheck()
         supabaseClient.installReadShapeCheck()
         supabaseClient.installTransportFailureCapture()
+        supabaseClient.installDownloadStatusCheck()
         supabaseClient.installCommittedDryRunReport(::reportCommittedDryRunOnce)
         networkAccess.watchIn(clientScope, onReconnected = ::replayAsTheNetworkReturns)
         replayWhenTheSessionSettles()
@@ -436,17 +438,29 @@ internal class OfflineClient(
 
     /**
      * The stored identity value for the current session status, computed once per status: while the
-     * session restores or refreshes, telling it reads the stored session.
+     * session restores or refreshes, telling it reads the stored session, through the reader the
+     * writes share, for at most [AUTH_SESSION_SETTLE_TIMEOUT]. A store that takes longer leaves the
+     * identity untold for that status: the caches are not served to it, so a read goes to the
+     * network instead of waiting.
      */
     private suspend fun overlayIdentityValue(): String? {
         val status = authPluginOrNull()?.sessionStatus?.value
         overlayIdentity.value?.let { (cachedStatus, identity) ->
             if (cachedStatus == status) return identity
         }
-        val identity = supabaseClient.currentQueueIdentity()?.storedValue
+        val identity =
+            withTimeoutOrNull(AUTH_SESSION_SETTLE_TIMEOUT) {
+                    StoredIdentity(queueIdentityReader.current()?.storedValue)
+                }
+                ?.value
         overlayIdentity.value = status to identity
         return identity
     }
+
+    /**
+     * An identity read from the stored session, `null` when it names none, as a timeout's result.
+     */
+    private class StoredIdentity(val value: String?)
 
     /**
      * As the session settles into an identity, starts a new offline period, and, with `autoSync`
@@ -1000,6 +1014,9 @@ internal class OfflineClient(
                 }
             }
         } finally {
+            // To a live read the clear, done or cut short, is what a change of owner is: it
+            // fetches again. Asked first, as finishing the rewrite rethrows a cancellation
+            liveQueries.liveTables().forEach { table -> liveQueries.requestRefresh(table) }
             // Cancelled too: what the rewrite left goes to the background
             databaseScrub.finishSoon()
         }

@@ -6,7 +6,7 @@
 /// The first snapshot comes as the ``SequenceReadStrategy`` says; after it, a new one comes whenever a
 /// local write, a sync, a refresh or a server record changes the rows or their state. Only the
 /// newest snapshot waits for a slow reader. Each iteration is a subscription of its own: leaving
-/// the loop, throwing out of it or cancelling its task ends it. Iterating keeps the client open;
+/// the loop, throwing out of it or canceling its task ends it. Iterating keeps the client open;
 /// closing the client ends the iteration normally. A snapshot whose rows do not decode as `Value`
 /// ends the iteration with ``OfflineError/Code/decoding``.
 public struct QuerySnapshotSequence<Value: Decodable & Sendable>: AsyncSequence, OfflinePostgrestRequestBuilder {
@@ -84,7 +84,7 @@ public struct QuerySnapshotSequence<Value: Decodable & Sendable>: AsyncSequence,
         ///
         /// - Throws: ``OfflineError``: `cacheMiss` under ``SequenceReadStrategy/cacheOnly`` for a
         ///   query the cache never holds, a failure the read cannot recover from, `decoding` or
-        ///   `invalidRequest`. Cancelling the task ends the iteration.
+        ///   `invalidRequest`. Canceling the task ends the iteration.
         public mutating func next() async throws -> Element? {
             try await base.next()
         }

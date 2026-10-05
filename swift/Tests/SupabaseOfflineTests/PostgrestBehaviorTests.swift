@@ -8,7 +8,7 @@ import Testing
 
 /// Reads and writes on the in-memory client against a fake server: the real cache, overlay and
 /// mutation queue, seen through the Swift chain.
-struct PostgrestBehaviourTests {
+struct PostgrestBehaviorTests {
 
     /// The two rows the server holds.
     private static let serverRows = #"[{"id":1,"title":"Milk","done":false},{"id":2,"title":"Eggs","done":true}]"#
@@ -180,7 +180,7 @@ struct PostgrestBehaviourTests {
         try await client.close()
     }
 
-    @Test func cancellingAReadThrowsCancellationAndLeavingALiveReadEndsItsSubscription() async throws {
+    @Test func cancelingAReadThrowsCancellationAndLeavingALiveReadEndsItsSubscription() async throws {
         // Given a server that holds every request until the test lets it go
         let gate = Gate()
         let server = RecordingFakeServer { _ in
@@ -189,7 +189,7 @@ struct PostgrestBehaviourTests {
         }
         let client = SupabaseOfflineClient.inMemory(server: server.server)
 
-        // When a one-shot read is cancelled while the server holds it
+        // When a one-shot read is canceled while the server holds it
         let reading = Task { try await client.from("todos").select().execute([TodoRow].self) }
         #expect(await eventually { server.requests.values.count == 1 })
         reading.cancel()
@@ -211,7 +211,7 @@ struct PostgrestBehaviourTests {
         try await client.close()
     }
 
-    @Test func cancellingTheTaskOfALiveReadEndsItsSubscription() async throws {
+    @Test func cancelingTheTaskOfALiveReadEndsItsSubscription() async throws {
         // Given
         let client = SupabaseOfflineClient.inMemory(server: RecordingFakeServer(rows: Self.serverRows).server)
         let ends = RecordingList<String?>()
@@ -393,6 +393,7 @@ struct PostgrestBehaviourTests {
         for error in [inList, notInList] {
             #expect(error?.code == .invalidRequest)
             #expect(error?.message.contains("double quote or a backslash") == true)
+            #expect(!namesTheRuntime(error?.message ?? ""))
         }
         #expect(inList?.message.contains(#"a"b"#) == false)
         #expect(server.requests.values.isEmpty)
@@ -470,6 +471,183 @@ struct PostgrestBehaviourTests {
             [["title", #"in.("a \"b\", c","d\\e.f")"#], ["select", "*"]],
             [["or", #"(title.eq."a \"b\", c",done.eq.true)"#], ["select", "*"]],
         ])
+        try await client.close()
+    }
+
+    @Test func aPatternListWrittenAsTextIsSentAsPostgresReadsIt() async throws {
+        // Given
+        let server = RecordingFakeServer(rows: "[]")
+        let client = SupabaseOfflineClient.inMemory(server: server.server)
+
+        // When: an escaped backslash and an escaped quote in plain elements of an array literal
+        _ = try await client.from("todos").select().or(#"code.like(any).{a\\b,c}"#).execute()
+        _ = try await client.from("todos").select().filter("code", operator: "like(any)", value: #"{a\\b,c}"#).execute()
+        _ = try await client.from("todos").select().filter("code", operator: "like(any)", value: #"{a\"b,c}"#).execute()
+
+        // Then: each is sent as written, so Postgres reads `a\b` and `a"b`, as written
+        #expect(server.requests.values.map(\.queryParameters) == [
+            [["or", #"(code.like(any).{a\\b,c})"#], ["select", "*"]],
+            [["code", #"like(any).{a\\b,c}"#], ["select", "*"]],
+            [["code", #"like(any).{a\"b,c}"#], ["select", "*"]],
+        ])
+        try await client.close()
+    }
+
+    @Test func aRefusedValueInAnEmbeddedPairIsNamedByTheColumnAsWritten() async throws {
+        // Given
+        let server = RecordingFakeServer(rows: "[]")
+        let client = SupabaseOfflineClient.inMemory(server: server.server)
+
+        // When
+        let error = await #expect(throws: OfflineError.self) {
+            try await client.from("books").select().neq("authors.name", value: #"a\b"#).neq("authors.name", value: "c")
+                .execute()
+        }
+
+        // Then
+        #expect(error?.code == .invalidRequest)
+        #expect(error?.message.contains(#""authors.name""#) == true)
+        #expect(server.requests.values.isEmpty)
+        try await client.close()
+    }
+
+    @Test func aTokenWithALineBreakFailsWithoutQuotingItsHeader() async throws {
+        // Given an access token that ends in a line break, which no HTTP header may carry
+        let server = RecordingFakeServer(rows: "[]")
+        let token = "eyJhbGciOi.secret-token-tail\n"
+        let client = SupabaseOfflineClient.inMemory(config: .init(accessToken: { token }), server: server.server)
+
+        // When
+        let error = await #expect(throws: OfflineError.self) {
+            try await client.from("todos").select(readStrategy: .networkOnly).execute()
+        }
+
+        // Then
+        #expect(error?.code == .invalidRequest)
+        let message = error?.message ?? ""
+        #expect(!message.contains("Bearer"), "\(message)")
+        #expect(!message.contains("secret"), "\(message)")
+        #expect(!message.contains("eyJ"), "\(message)")
+        #expect(!namesTheRuntime(message), "\(message)")
+        #expect(server.requests.values.isEmpty)
+        try await client.close()
+    }
+
+    // MARK: - Pattern lists Postgres would read differently
+
+    /// Runs each of `chains` on a client of its own and returns the errors, failing the test when
+    /// any request reached the server.
+    private func refusalsOf(
+        _ chains: [@Sendable (SupabaseOfflineClient) async throws -> Void]
+    ) async throws -> [OfflineError?] {
+        var errors: [OfflineError?] = []
+        for chain in chains {
+            let server = RecordingFakeServer(rows: "[]")
+            let client = SupabaseOfflineClient.inMemory(server: server.server)
+            errors.append(await #expect(throws: OfflineError.self) { try await chain(client) })
+            #expect(server.requests.values.isEmpty)
+            try await client.close()
+        }
+        for error in errors {
+            #expect(error?.code == .invalidRequest)
+            #expect(error?.message.contains(#""code""#) == true)
+            #expect(!namesTheRuntime(error?.message ?? ""))
+        }
+        return errors
+    }
+
+    @Test func anEmptyPatternIsRefusedAndNothingIsSent() async throws {
+        _ = try await refusalsOf([
+            { try await $0.from("todos").delete().likeAllOf("code", patterns: [""]).execute() },
+            { try await $0.from("todos").select().filter("code", operator: "like(all)", value: #"{""}"#).execute() },
+            { try await $0.from("todos").select().filter("code", operator: "like(any)", value: #"{"",c}"#).execute() },
+            { try await $0.from("todos").select().or(#"code.like(all).{""},done.eq.true"#).execute() },
+        ])
+    }
+
+    @Test func aNullPatternInAnyCaseIsRefusedAndNothingIsSent() async throws {
+        _ = try await refusalsOf([
+            { try await $0.from("todos").select().likeAnyOf("code", patterns: ["null"]).execute() },
+            { try await $0.from("todos").update(["done": true]).iLikeAllOf("code", patterns: ["NuLl"]).execute() },
+            { try await $0.from("todos").select().filter("code", operator: "ilike(any)", value: #"{"NULL",c}"#).execute() },
+        ])
+    }
+
+    @Test func aPatternEdgedWithWhiteSpaceIsRefusedAndNothingIsSent() async throws {
+        _ = try await refusalsOf([
+            { try await $0.from("todos").update(["done": true]).iLikeAllOf("code", patterns: [" "]).execute() },
+            { try await $0.from("todos").select().likeAnyOf("code", patterns: [" a"]).execute() },
+            { try await $0.from("todos").select().iLikeAnyOf("code", patterns: ["a\t"]).execute() },
+            { try await $0.from("todos").select().filter("code", operator: "like(any)", value: #"{" a",c}"#).execute() },
+        ])
+    }
+
+    @Test func aPatternHoldingABraceIsRefusedAndNothingIsSent() async throws {
+        _ = try await refusalsOf([
+            { try await $0.from("todos").select().likeAllOf("code", patterns: ["a{b"]).execute() },
+            { try await $0.from("todos").delete().likeAnyOf("code", patterns: ["}"]).execute() },
+            { try await $0.from("todos").select().filter("code", operator: "like(all)", value: #"{"a}b",c}"#).execute() },
+        ])
+    }
+
+    @Test func anEmptyPatternListIsRefusedAndNothingIsSent() async throws {
+        let errors = try await refusalsOf([
+            { try await $0.from("todos").delete().likeAllOf("code", patterns: [String]()).execute() },
+            { try await $0.from("todos").select().filter("code", operator: "ilike(all)", value: "{}").execute() },
+        ])
+        #expect(errors.allSatisfy { $0?.message.contains("empty") == true })
+    }
+
+    @Test func aPlainPatternListIsSentAsBefore() async throws {
+        // Given
+        let server = RecordingFakeServer(rows: "[]")
+        let client = SupabaseOfflineClient.inMemory(server: server.server)
+
+        // When
+        _ = try await client.from("todos").select().likeAllOf("code", patterns: ["%a%", "b_c"]).execute()
+        _ = try await client.from("todos").delete().iLikeAnyOf("code", patterns: ["%x%", " a.", "NULL:"]).execute()
+        _ = try await client.from("todos").select().filter("code", operator: "like(any)", value: "{%a%,b_c}").execute()
+
+        // Then: patterns holding one of ,.:() are quoted, as Postgres reads them
+        #expect(server.requests.values.map(\.queryParameters) == [
+            [["code", "like(all).{%a%,b_c}"], ["select", "*"]],
+            [["code", #"ilike(any).{%x%," a.","NULL:"}"#]],
+            [["code", "like(any).{%a%,b_c}"], ["select", "*"]],
+        ])
+        try await client.close()
+    }
+
+    // MARK: - The parser's refusals
+
+    @Test func aValueWhereAColumnOrOperatorStandsIsNeverQuoted() async throws {
+        // Given
+        let server = RecordingFakeServer(rows: "[]")
+        let client = SupabaseOfflineClient.inMemory(server: server.server)
+
+        // When
+        let column = await #expect(throws: OfflineError.self) {
+            try await client.from("todos").select().or("done.eq.true,zqx").execute()
+        }
+        let operatorPlace = await #expect(throws: OfflineError.self) {
+            try await client.from("todos").select().or("status.eq.active,jane@example.com").execute()
+        }
+        let operatorText = await #expect(throws: OfflineError.self) {
+            try await client.from("todos").select().filter("email", operator: "eq.jane@example.com", value: "").execute()
+        }
+        let list = await #expect(throws: OfflineError.self) {
+            try await client.from("todos").select().filter("status", operator: "in", value: "zqx").execute()
+        }
+
+        // Then
+        for error in [column, operatorPlace, operatorText, list] {
+            let message = error?.message ?? ""
+            #expect(error?.code == .invalidRequest)
+            #expect(!message.contains("zqx") && !message.contains("jane") && !message.contains("example"), "\(message)")
+        }
+        #expect(column?.message.contains("at the end of the filter text") == true)
+        #expect(list?.message.contains(#"On "status""#) == true)
+        #expect(list?.message.contains("character 1 of the value") == true)
+        #expect(server.requests.values.isEmpty)
         try await client.close()
     }
 

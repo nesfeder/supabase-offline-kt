@@ -101,6 +101,10 @@ struct RequestRenderingFixtureTests {
             var found: [String] = []
             let code = (thrown as? OfflineError)?.code
             if code != expectedCode(forKind: kind) { found.append("\(name): expected \(kind), got \(String(describing: thrown))") }
+            // A refusal reaches the app from the Swift checks, in the package's words, never the framework's
+            if (thrown as? OfflineError)?.message.contains("supabase-kt") == true {
+                found.append("\(name): the refusal came from the framework, not the Swift checks")
+            }
             if !requests.isEmpty { found.append("\(name): a refused chain sent a request") }
             return found
         }

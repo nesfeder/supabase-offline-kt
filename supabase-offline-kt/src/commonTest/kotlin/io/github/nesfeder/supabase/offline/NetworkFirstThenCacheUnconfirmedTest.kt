@@ -139,9 +139,12 @@ class NetworkFirstThenCacheUnconfirmedTest {
         advanceTimeBy(10.seconds)
         runCurrent()
 
-        // Then — the cache, not the anon key's answer, and not confirmed
+        // Then — the cache, not the anon key's answer, and not confirmed: still refreshing, as
+        // waiting for the session is not a failure, so never Stalled with the engine's own
+        // exception
         assertEquals(CACHED, shown.first().result?.data)
-        assertTrue(shown.first().refresh is RefreshState.Stalled, "${shown.first().refresh}")
+        assertTrue(shown.first().isFromCache)
+        assertTrue(shown.all { read -> read.refresh == RefreshState.Refreshing }, "$shown")
     }
 
     private companion object {

@@ -4,8 +4,14 @@
 /// A filter written as PostgREST text that cannot be sent as written; its message says why.
 struct FilterTextError: Error, Sendable, Equatable {
 
-    /// What is wrong, naming the text.
+    /// What is wrong and where: what was expected, a column the caller named, a character
+    /// position; never the caller's text.
     let message: String
+
+    /// This error with `column` named first, for a value read for that column.
+    func on(column: String) -> FilterTextError {
+        FilterTextError(message: "On \"\(column)\": \(message)")
+    }
 }
 
 /// Reads filters written as PostgREST text into the nodes a description carries: one condition's
@@ -20,8 +26,12 @@ enum PostgrestFilterText {
     static func node(column: String, operatorText: String, valueText: String) throws(FilterTextError) -> FilterNode {
         var reader = FilterTextReader(operatorText)
         let parsed = try reader.readOperator()
-        guard reader.isAtEnd else { throw FilterTextError(message: "\"\(operatorText)\" is not a filter operator") }
-        return try node(column: column, operator: parsed, valueText: valueText, isInLogicList: false)
+        guard reader.isAtEnd else { throw FilterTextError(message: "The operator text is not a filter operator") }
+        do {
+            return try node(column: column, operator: parsed, valueText: valueText, isInLogicList: false)
+        } catch {
+            throw error.on(column: column)
+        }
     }
 
     /// The conditions and nested groups of a logic list: the text inside `or=( … )`.
@@ -65,7 +75,7 @@ enum PostgrestFilterText {
             return try patternList(column: column, operator: written, patternsText: valueText)
         }
         guard let filterOperator = FilterOperator(rawValue: written.name) else {
-            throw FilterTextError(message: "\"\(written.name)\" is not a filter operator this build sends")
+            throw FilterTextError(message: "The operator is not a filter operator this build sends")
         }
         let value: FilterNode.ConditionValue
         switch filterOperator.valueForm {
@@ -87,10 +97,10 @@ enum PostgrestFilterText {
             "like(all)": .likeAll, "like(any)": .likeAny, "ilike(all)": .ilikeAll, "ilike(any)": .ilikeAny,
         ]
         guard let kind = kinds["\(written.name)(\(written.argument ?? ""))"] else {
-            throw FilterTextError(message: "\"\(written.name)(\(written.argument ?? ""))\" is not a filter operator")
+            throw FilterTextError(message: "The operator and its argument are not a filter operator this build sends")
         }
         guard !written.isNegated else {
-            throw FilterTextError(message: "A pattern list (\(written.name)) cannot be negated")
+            throw FilterTextError(message: "A pattern list cannot be negated")
         }
         return .patternList(kind: kind, column: column, patterns: try listElements(of: patternsText, opening: "{", closing: "}"))
     }
@@ -98,8 +108,7 @@ enum PostgrestFilterText {
     /// The bounds of `(lower,upper)`, the one range form the core sends.
     static func range(of text: String) throws(FilterTextError) -> FilterNode.ConditionValue {
         let refusal = FilterTextError(
-            message: "A range is written (lower,upper), with exclusive bounds, the one form this build sends; "
-                + "\"\(text)\" is not"
+            message: "A range is written (lower,upper), with exclusive bounds, the one form this build sends"
         )
         guard let bounds = try? listElements(of: text, opening: "(", closing: ")"), bounds.count == 2 else {
             throw refusal
@@ -108,16 +117,20 @@ enum PostgrestFilterText {
     }
 
     /// The elements of `text`, a list between `opening` and `closing` separated by commas, each
-    /// plain or double-quoted.
+    /// plain or double-quoted. In a `{…}` array literal a `\` in a plain element escapes the next
+    /// character, as Postgres reads it; in a `(…)` list it is kept, as PostgREST reads it.
     static func listElements(of text: String, opening: Character, closing: Character) throws(FilterTextError) -> [String] {
-        var reader = FilterTextReader(text)
+        var reader = FilterTextReader(text, subject: "the value")
         guard reader.read(opening) else {
-            throw FilterTextError(message: "Expected a list in \(opening)\(closing), not \"\(text)\"")
+            throw reader.unexpected("a list in \(opening)\(closing)")
         }
         var elements: [String] = []
         if !reader.read(closing) {
             repeat {
-                elements.append(try reader.readValue(stoppingAt: [",", closing]))
+                elements.append(
+                    opening == "{"
+                        ? try reader.readArrayElement(closing: closing) : try reader.readValue(stoppingAt: [",", closing])
+                )
             } while reader.read(",")
             guard reader.read(closing) else { throw reader.unexpected("\"\(closing)\"") }
         }
@@ -126,7 +139,7 @@ enum PostgrestFilterText {
     }
 }
 
-/// Reads PostgREST filter text left to right; every `read` consumes only what it recognises.
+/// Reads PostgREST filter text left to right; every `read` consumes only what it recognizes.
 struct FilterTextReader {
 
     /// The text's characters.
@@ -135,8 +148,12 @@ struct FilterTextReader {
     /// The index of the next character.
     private var position = 0
 
-    init(_ text: String) {
+    /// What the text is, in an error: `the filter text`, or `the value` of one condition.
+    private let subject: String
+
+    init(_ text: String, subject: String = "the filter text") {
         characters = Array(text)
+        self.subject = subject
     }
 
     /// Whether every character has been read.
@@ -159,10 +176,10 @@ struct FilterTextReader {
         return true
     }
 
-    /// An error naming what was expected and where.
+    /// An error naming what was expected and how far into the text, never quoting the text.
     func unexpected(_ expected: String) -> FilterTextError {
-        let rest = isAtEnd ? "the end" : "\"\(String(characters[position...]))\""
-        return FilterTextError(message: "Expected \(expected) at \(rest)")
+        let place = isAtEnd ? "at the end of \(subject)" : "at character \(position + 1) of \(subject)"
+        return FilterTextError(message: "Expected \(expected) \(place)")
     }
 
     /// `[not.]name[(argument)]`, stopping before the `.` that leads to the value.
@@ -210,9 +227,9 @@ struct FilterTextReader {
         }
         position = start
         let column = try readColumn()
-        guard read(".") else { throw unexpected("\".\" after the column \"\(column)\"") }
+        guard read(".") else { throw unexpected("\".\" after a column") }
         let written = try readOperator()
-        guard read(".") else { throw unexpected("\".\" after the operator \"\(written.name)\"") }
+        guard read(".") else { throw unexpected("\".\" after an operator") }
         let valueText = try readLogicValue(for: written)
         return try PostgrestFilterText.node(column: column, operator: written, valueText: valueText, isInLogicList: true)
     }
@@ -276,6 +293,24 @@ struct FilterTextReader {
         }
         var text = ""
         while position < characters.count, !stops.contains(characters[position]) {
+            text.append(characters[position])
+            position += 1
+        }
+        return text
+    }
+
+    /// One element of a Postgres array literal: double-quoted, or plain up to a `,` or `closing`
+    /// (not consumed), a `\` taking the character after it as written.
+    mutating func readArrayElement(closing: Character) throws(FilterTextError) -> String {
+        if position < characters.count, characters[position] == "\"" {
+            return try readQuoted()
+        }
+        var text = ""
+        while position < characters.count, characters[position] != ",", characters[position] != closing {
+            if characters[position] == "\\" {
+                position += 1
+                guard position < characters.count else { throw FilterTextError(message: "A list ends in an unfinished escape") }
+            }
             text.append(characters[position])
             position += 1
         }

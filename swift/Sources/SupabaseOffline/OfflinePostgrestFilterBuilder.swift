@@ -330,6 +330,20 @@ enum FilterValueNodes {
         _ value: some OfflineFilterValue,
         isNegated: Bool
     ) throws(FilterTextError) -> FilterNode {
+        do {
+            return try conditionNode(column, filterOperator, value, isNegated: isNegated)
+        } catch {
+            throw error.on(column: column)
+        }
+    }
+
+    /// ``condition(_:_:_:isNegated:)`` without the column in its error.
+    private static func conditionNode(
+        _ column: String,
+        _ filterOperator: FilterOperator,
+        _ value: some OfflineFilterValue,
+        isNegated: Bool
+    ) throws(FilterTextError) -> FilterNode {
         let elements = (value as? any FilterValueList)?.elementTexts
         let conditionValue: FilterNode.ConditionValue
         switch filterOperator.valueForm {

@@ -67,7 +67,9 @@ public struct OfflineError: Error, Sendable, CustomStringConvertible {
         }
     }
 
-    /// The server's own account of a refusal, as it sent it.
+    /// The server's account of a refusal. For ``Code/server`` every field is as the server sent
+    /// it; for ``Code/syncFailed`` only `status` and `code` are the server's, and `message` is the
+    /// library's summary of the stopped sync.
     public struct ServerError: Sendable, Hashable {
 
         /// The HTTP status.
@@ -76,7 +78,7 @@ public struct OfflineError: Error, Sendable, CustomStringConvertible {
         /// The Postgres SQLSTATE or PostgREST code, such as `23505` or `PGRST116`, when one was sent.
         public let code: String?
 
-        /// The server's message.
+        /// The server's message; for a sync failure, the library's summary of it.
         public let message: String
 
         /// The server's details, when it sent any; they may quote the request's values.
@@ -97,10 +99,12 @@ public struct OfflineError: Error, Sendable, CustomStringConvertible {
     /// What failed.
     public let code: Code
 
-    /// What happened, in words; it never quotes a token.
+    /// What happened, in words. The library's own messages never quote a token, nor a request's URL
+    /// or values; a server's text is passed on as the server wrote it.
     public let message: String
 
-    /// The server's refusal: set for ``Code/server``, and for a ``Code/syncFailed`` the server caused.
+    /// The server's refusal: set for ``Code/server``, and for a ``Code/syncFailed`` the server
+    /// caused, where only its `status` and `code` are the server's.
     public let serverError: ServerError?
 
     /// The Swift error behind this one: the `DecodingError` of a ``Code/decoding`` failure, or the

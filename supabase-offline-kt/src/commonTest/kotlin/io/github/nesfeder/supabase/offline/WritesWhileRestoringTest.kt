@@ -132,14 +132,14 @@ class WritesWhileRestoringTest {
     fun writes_made_while_restoring_read_the_stored_session_once_between_them() = runTest {
         // Given
         val items = restoringItems()
-        val loadsBefore = sessions.loads
 
         // When — three writes while the session restores
         repeat(3) { items.insert(ROW) }
         runCurrent()
 
-        // Then — one read of the stored session served all three
-        assertEquals(1, sessions.loads - loadsBefore)
+        // Then — besides the plugin's own load, one read of the stored session served the client's
+        // reads and all three writes
+        assertEquals(2, sessions.loads)
     }
 
     private fun RecordingPostgrestServer.writes(): Int = requests.count { request ->

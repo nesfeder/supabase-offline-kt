@@ -63,6 +63,15 @@ struct FilterDescriptionTests {
         #expect(throws: FilterTextError.self) { try PostgrestFilterText.nodes(inLogicList: text) }
     }
 
+    @Test func aBackslashEscapesInAnArrayLiteralAndIsKeptInAList() throws {
+        #expect(try PostgrestFilterText.listElements(of: #"{a\\b,c\,d,x\"y,"e f"}"#, opening: "{", closing: "}")
+            == [#"a\b"#, "c,d", #"x"y"#, "e f"])
+        #expect(try PostgrestFilterText.listElements(of: #"(a\b,c)"#, opening: "(", closing: ")") == [#"a\b"#, "c"])
+        #expect(throws: FilterTextError.self) {
+            try PostgrestFilterText.listElements(of: #"{a\"#, opening: "{", closing: "}")
+        }
+    }
+
     @Test func aSingleConditionTakesItsValueAsWritten() throws {
         #expect(try PostgrestFilterText.node(column: "a", operatorText: "eq", valueText: #""x,y""#)
             == .condition(column: "a", operator: .eq, value: .single(#""x,y""#), isNegated: false))
@@ -210,6 +219,13 @@ struct FilterDescriptionTests {
         }
         #expect(error?.code == .invalidRequest)
         #expect(error?.message.contains("(lower,upper)") == true)
+        #expect(error?.message.contains("[1,5)") == false)
+        let unreadable = #expect(throws: OfflineError.self) {
+            try client.from("todos").select().or("done.eq.true,zqx").descriptionText()
+        }
+        #expect(unreadable?.code == .invalidRequest)
+        #expect(unreadable?.message.contains("zqx") == false)
+        #expect(!namesTheRuntime(unreadable?.message ?? "") && !namesTheRuntime(error?.message ?? ""))
     }
 
     // MARK: - The rest of a description

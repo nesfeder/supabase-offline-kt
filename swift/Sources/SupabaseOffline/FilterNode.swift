@@ -223,25 +223,27 @@ enum TopLevelFilters {
     /// Why `nodes` cannot be sent as written at this level, or `nil` when they can: what the core
     /// refuses (an empty group anywhere, a text search after a filter on its column, and at the top
     /// level a second filter on one column or a second group on one parameter), and a value the
-    /// request would carry in a form PostgREST reads differently (``valueRefusal(of:isInGroup:)``).
-    static func refusal(of nodes: [FilterNode], isTopLevel: Bool = true) -> String? {
+    /// request would carry in a form PostgREST reads differently (``valueRefusal(of:isInGroup:table:)``).
+    /// `table` is the embedded table a group's columns belong to, named in a message as the caller
+    /// wrote the column (`authors.name`).
+    static func refusal(of nodes: [FilterNode], isTopLevel: Bool = true, table: String? = nil) -> String? {
         var filteredColumns: Set<String> = []
         var groupParameters: Set<String> = []
         for node in nodes {
-            if let refusal = valueRefusal(of: node, isInGroup: !isTopLevel) { return refusal }
-            if case .group(_, let children, _, _) = node {
+            if let refusal = valueRefusal(of: node, isInGroup: !isTopLevel, table: table) { return refusal }
+            if case .group(_, let children, _, let referencedTable) = node {
                 if children.isEmpty { return "A filter group is empty; leave it out" }
-                if let refusal = refusal(of: children, isTopLevel: false) { return refusal }
+                if let refusal = refusal(of: children, isTopLevel: false, table: referencedTable ?? table) { return refusal }
                 if isTopLevel, let parameter = node.groupParameter, !groupParameters.insert(parameter).inserted {
                     return "Two \"\(parameter)\" groups at the top level; combine them in one group"
                 }
             }
             guard let column = node.column else { continue }
             if node.isTextSearch && filteredColumns.contains(column) {
-                return "A text search on \"\(column)\" follows another filter on that column, which it would replace"
+                return "A text search on \"\(written(column, in: table))\" follows another filter on that column, which it would replace"
             }
             if !filteredColumns.insert(column).inserted && isTopLevel {
-                return "Two filters on \"\(column)\" at the top level"
+                return "Two filters on \"\(written(column, in: table))\" at the top level"
             }
         }
         return nil
@@ -249,24 +251,44 @@ enum TopLevelFilters {
 
     /// Why `node`'s value would reach PostgREST as something else, or `nil`; never quotes the value.
     ///
-    /// A list or group escapes `"` and `\` but quotes only a value with one of `,.:()`, and PostgREST
-    /// reads the escapes of an unquoted one literally; a group splits an unquoted range at its comma
-    /// and cuts a text search's query at a comma or `)`. A top-level single value is read as written.
-    static func valueRefusal(of node: FilterNode, isInGroup: Bool) -> String? {
+    /// A list or group escapes `"` and `\` but quotes only a value with one of `,.:()`, which
+    /// PostgREST then reads literally; a group splits a range and cuts a text search's query at a
+    /// comma or `)`. A pattern list leaves empty, `NULL`, edge-spaced or braced patterns unquoted
+    /// (and an empty list matches every row). A top-level single value is read as written.
+    static func valueRefusal(of node: FilterNode, isInGroup: Bool, table: String? = nil) -> String? {
         let advice = "filter on it with a single condition outside any list or group"
+        let column = node.column.map { written($0, in: table) } ?? ""
         switch node {
-        case .condition(let column, _, .list(let elements), _) where elements.contains(where: isReadDifferentlyUnquoted):
+        case .condition(_, _, .list(let elements), _) where elements.contains(where: isReadDifferentlyUnquoted):
             return "A value in the list for \"\(column)\" holds a double quote or a backslash, which a list sends in a form the server reads differently; \(advice)"
-        case .condition(let column, _, .single(let text), _) where isInGroup && isReadDifferentlyUnquoted(text):
+        case .condition(_, _, .single(let text), _) where isInGroup && isReadDifferentlyUnquoted(text):
             return "A value for \"\(column)\" inside a filter group holds a double quote or a backslash, which a group sends in a form the server reads differently; \(advice)"
-        case .condition(let column, _, .range, _) where isInGroup:
+        case .condition(_, _, .range, _) where isInGroup:
             return "A range filter on \"\(column)\" cannot be sent inside a filter group; filter on it with a single condition outside any group"
-        case .textSearch(let column, let query, _, _)
+        case .patternList(_, _, let patterns) where patterns.isEmpty:
+            return "The pattern list for \"\(column)\" is empty, which would match every row; give at least one pattern"
+        case .patternList(_, _, let patterns) where patterns.contains(where: isMisreadInAnArrayUnquoted):
+            return "A pattern for \"\(column)\" is empty, NULL, edged with white space or holds a brace, which a pattern list sends in a form the server reads differently; match it with a single like or ilike condition outside any list"
+        case .textSearch(_, let query, _, _)
         where isInGroup && (query.contains(where: { $0 == "," || $0 == ")" }) || query.hasPrefix("\"")):
             return "A text search on \"\(column)\" inside a filter group has a comma, a \")\" or a leading double quote in its query, which a group cannot carry; search on it with a single condition outside any group"
         default:
             return nil
         }
+    }
+
+    /// `column` as the caller wrote it: prefixed with its embedded `table`, when it has one.
+    private static func written(_ column: String, in table: String?) -> String {
+        table.map { "\($0).\(column)" } ?? column
+    }
+
+    /// Whether Postgres would read `text`, sent unquoted in an array literal (it holds none of
+    /// `,.:()`), as something else: empty, `NULL` in any case, edged with white space, or braced.
+    static func isMisreadInAnArrayUnquoted(_ text: String) -> Bool {
+        guard !text.contains(where: { ",.:()".contains($0) }) else { return false }
+        return text.isEmpty || text.caseInsensitiveCompare("NULL") == .orderedSame
+            || text.first?.isWhitespace == true || text.last?.isWhitespace == true
+            || text.contains(where: { $0 == "{" || $0 == "}" })
     }
 
     /// Whether `text` would be escaped but left unquoted in a list or group (a `"` or `\`, and none

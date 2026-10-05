@@ -151,7 +151,7 @@ time: no side effects, and no clock or counter read.
 | Case | What it does | Rule |
 | --- | --- | --- |
 | `CacheFirstThenNetwork` | Emits the cached rows at once and refreshes them from the server in parallel. | A failing refresh leaves the rows on screen and is retried for as long as the flow is collected, at most a minute apart, and at once when the session settles or the network comes back. |
-| `NetworkFirstThenCache` | Asks the server first, then emits the cached rows as they change. | Offline with the query cached, it emits the cached rows at once, `Stalled` (`Paused` when the network is known down), and keeps asking until the server answers. With nothing cached, or on a server error, the flow fails. |
+| `NetworkFirstThenCache` | Asks the server first, then emits the cached rows as they change. | Offline with the query cached, it emits the cached rows at once, `Stalled` (`Paused` when the network is known down), and keeps asking until the server answers. Then it fetches again only after a write the cache could not follow, a change of the cache's owner, or `clearLocalData()`. With nothing cached, or on a server error, the flow fails. |
 | `CacheOnly` | Emits the cached rows and never sends a request. | A shape the cache never holds fails with `CacheMissException`. |
 
 `QuerySnapshot` is one emission:
@@ -164,14 +164,15 @@ time: no side effects, and no clock or counter read.
 | `hasPendingMutations: Boolean` | Whether a queued write added, changed or removed a row shown. |
 | `refresh: RefreshState` | How the refresh behind the read stands. |
 
-Each field is true of its own emission, so a change to any of them emits.
+Each emission is read as one view of the cache, the queue and the refresh, so its fields are true
+together, and a change to any of them emits.
 
 `RefreshState` is a closed set:
 
 | Case | Meaning |
 | --- | --- |
 | `Idle` | No refresh is running or waiting: the last one succeeded, or the read does not refresh. |
-| `Refreshing` | A refresh is running, or is about to be tried again soon after a failure. |
+| `Refreshing` | A refresh is running, or is about to be tried again soon after a failure, or waits for a session that is still settling, which is not a failure. Under `AuthenticatedSessionOnly`, a live read of an empty table made signed out or without Auth stays here, retried at most a minute apart, until a user signs in. |
 | `Paused` | The refresh waits for the network, which the library knows to be unavailable. Nothing is failing. |
 | `Stalled(cause)` | The refresh keeps failing; `cause` is the failure that stalled it, and a later, different failure does not replace it. It is still tried, at most a minute apart. |
 
@@ -413,7 +414,10 @@ seconds, when the cache is dropped for a new owner, and when local data is clear
 
 **What is cached, and what is not.** Downloads (`downloadAuthenticated` and `downloadPublic`, to
 bytes or to a channel) go to the network first. A success is written to the cache; a "not found" from the server drops the
-copy and is rethrown; any other failure is answered from the cached copy when there is one. A download with an image transform is cached per transform, apart from the original, and
+copy and is rethrown; any other failure is answered from the cached copy when there is one. An
+error answer is a failure for a channel download too: supabase-kt's own channel download copies
+whatever the server answers into the channel, so the offline bucket checks the status first and
+throws what the bytes download throws, and nothing of the answer is cached or handed on. A download with an image transform is cached per transform, apart from the original, and
 a channel download streams through a file on disk instead of being held in memory. Writes (uploads,
 updates, deletes, moves and copies) are online-only and never queued: offline they fail with
 supabase-kt's error, and one that reaches the server drops the cached copies it made stale. A
@@ -429,7 +433,7 @@ written, so its request can fetch a different object.
 
 | Member | What it does | Rule | Throws |
 | --- | --- | --- | --- |
-| `clearLocalData()` | Deletes everything the library keeps on the device: cached results, downloaded files, and every queued write, which is never sent, with the rejected list. | A pass in flight is cancelled first, and nothing queued is sent once it has begun. Keeping the deleted rows out of the database's files is best effort: the database is rewritten without them, and its write-ahead log is emptied once no open read holds it. The clear waits up to a second for such reads; when one outlasts that, the library empties the log in the background as soon as the read ends, and once more at `close()`. It never fails the clear and never waits longer. The client stays usable. | — |
+| `clearLocalData()` | Deletes everything the library keeps on the device: cached results, downloaded files, and every queued write, which is never sent, with the rejected list. | A pass in flight is cancelled first, and nothing queued is sent once it has begun. Live reads open through it fetch again, as after a change of owner. Keeping the deleted rows out of the database's files is best effort: the database is rewritten without them, and its write-ahead log is emptied once no open read holds it. The clear waits up to a second for such reads; when one outlasts that, the library empties the log in the background as soon as the read ends, and once more at `close()`. It never fails the clear and never waits longer. The client stays usable. | — |
 | `applyServerRecord(table, record: JsonObject, primaryKeys = null, schema = null)`; reified `applyServerRecord(table, record: T, …)` | Applies a row the server reports, such as a Realtime INSERT or UPDATE record, to every cached query of the table. | The cached row with the same key is replaced, and a query that admits the row gains it. A record without its whole key is logged and dropped. `primaryKeys = null` is the table's configured key, and `id` for a table of another schema. | The reified form: `IllegalArgumentException` when `record` does not encode to a JSON object |
 | `applyServerDelete(table, oldRecord, primaryKeys = null, schema = null)` | Removes a row the server reports deleted from every cached query of the table. | As `applyServerRecord`. | — |
 | `rpc(function, request)`, `rpc(function, parameters: JsonObject, request)`; reified `rpc(function, parameters: T, request)` | Calls a database function, as `supabase.postgrest.rpc` does. | Network only: never cached, never queued, since a function may change data. | `NetworkDisabledException` while access is off; `IllegalStateException` without PostgREST; the reified form, `IllegalArgumentException` when `parameters` does not encode to a JSON object |
@@ -603,15 +607,16 @@ own locks.
 | `CacheOwnership` | Whose the query cache and the file cache are, and whether the current identity may read or write them; asked on every cache read and write. | The owner record's, always last |
 | `MutationQueue` | The queue's rows and the records beside them: enqueue, the head checks, a send's outcome, rejection, retry, discard, the counts and lists the app is shown, the send record, the sync sequence, the rejected list, and retiring replayed writes. | The queue lock, and a read lock per table that its readers share |
 | `QueryCache` | The cached queries: writing a response behind its guards, reading payloads, size eviction, and each query's shape record. | The per-table write locks, the eviction lock, and the query-shape records' own |
-| `QueryOverlay` | Every read served with the writes its payload does not hold laid over it, and the key indexes that find rows other queries hold. | None |
+| `QueryOverlay` | Every read served with the writes its payload does not hold laid over it, and the key indexes that find rows other queries hold. | A snapshot lock per table, between its readers and a change to both its payloads and its queue |
 | `CachePatcher` | Patching an online write into its table's cached queries, and marking stale the queries a write may have changed but cannot be patched into. | None of its own |
 | `LocalData` | Clearing local data, and dropping the cache for a new owner, in one transaction each. | None of its own |
 
 ### The lock order
 
-Outermost first: the replayer's send lock, then the file cache's lock, then a table's write lock,
-then the queue lock, then the clear lock, then the owner record's and the query-shape records' own
-locks. Every commit, eviction, move and invalidation of a file takes the file cache's lock too, but
+Outermost first: the replayer's send lock, then the file cache's lock, then a table's snapshot
+lock, then its write lock, then the queue lock, then the clear lock, then the owner record's and
+the query-shape records' own locks. A reader holds a table's snapshot lock only while it reads the
+table's queue and one payload, taking nothing else under it. Every commit, eviction, move and invalidation of a file takes the file cache's lock too, but
 only a clear or a drop holds it while taking the cache's and the queue's locks; its other users take
 none of them under it. A clear or a drop takes no table lock: a write that holds one checks the
 watermarks under the clear lock instead. The eviction lock and the queue's per-table read locks are
@@ -663,6 +668,18 @@ changes, borrowing a row only from a query read with the same select list and em
 DELETE removes provable matches. A queued row is appended past a list's order and limit. A write
 that fails part-way is undone from a journal and reported once, and the rest still show.
 
+**One view per emission.** The payload, the table's queue, the sends that may have reached the
+server and the refresh's progress change together at their writers but would reach a reader in any
+order. So every change of any of them makes a live read read them all again, in the order the
+writers publish them: the refresh's progress (written after its payload), the cache's owner, then
+the queue and the payload together under the table's snapshot lock (the queue first, since a
+refresh writes its payload before it retires the replayed writes that payload holds). The head
+send's patch and its row's removal hold the same lock, so a write never shows both patched in and
+still queued, a replayed one never drops out, and a refresh is `Idle` only in an emission showing
+what it fetched.
+A one-shot read from the cache takes the same snapshot. An idle refresh whose confirmed rows are
+gone (a clear, a drop) is shown `Refreshing` until the read has fetched again.
+
 **The cache's guards.** A network answer is offered to the cache under the table's write lock,
 the queue lock and the clear lock, in that order, and is not stored when it is older than a change
 to the cache (below), when it started before a clear or a drop, when the cache is another
@@ -697,7 +714,11 @@ reactive refresh send their SELECT with supabase-kt's transport retries off, so 
 `503` or `520` is still retried on supabase-kt's schedule. A `CacheFirstThenNetwork` refresh retries
 after 300, 900 and 2,400 ms, then after 5 s, 15 s and every 60 s, for as long as the flow is
 collected: `Stalled` after the fourth failure (about 3.6 s), `Paused` instead when the network is
-known down. A session settling or the network coming back cuts the wait short. A slow collector is
+known down, and `Refreshing` for as long as the answers come back under a session still settling,
+which is a wait, not a failure. A session settling or the network coming back cuts the wait short.
+A read the cache cannot answer, sent while the network is known down, goes out once with transport
+retries off too: the monitor is a hint, so it is still tried, but supabase-kt's waits could only
+delay the failure. A slow collector is
 handed the latest snapshot, never holding back the query's other collectors.
 
 ### The write path
@@ -753,7 +774,8 @@ refusals. The order is the row's autoincrement id.
 **The head send.** Before a keyed INSERT (one whose rows all carry the table's primary key) goes
 out, its send is recorded as possibly delivered. The request runs carrying its owner, which the
 replay-token check below reads. Accepted, the response is patched into the cache, then the row, its
-send record and any stale rejected entry are deleted, and the caller gets `Applied`; if the patch,
+send record and any stale rejected entry are deleted, both under the table's snapshot lock, so no
+live read sees one without the other, and the caller gets `Applied`; if the patch,
 the delete or the read of the queue that follows (whether anything waits behind it) fails, the
 caller still gets `Applied`, since the server has the write, and the failure is logged. A refusal
 is likewise thrown as the server's error whatever that read does. A failure that may not have run keeps the row. The send record is cleared only on proof
@@ -900,9 +922,15 @@ runs, in order:
 
 **Who a request speaks for.** With Auth, a signed-in session is its user, and a signed-out one the
 anonymous identity. A session that is restoring, or whose refresh failed, is the stored session's
-user for queueing and for the overlay, but is not settled: nothing is sent under it and no response
-it brings is trusted, since its requests carry the anon key. Without Auth, or with the app's own
-token provider, every request is the anonymous identity: the engine cannot tell those users apart.
+user for queueing and for the overlay, but is not settled: no write is sent under it and no response
+it brings is trusted, since its requests carry the anon key. The overlay waits for the stored
+session at most 10 seconds; past that the identity is untold for that session status, so the cache
+is not served and a read goes out under the restoring session, on the anon key, instead of waiting
+on a session store that hangs. Nothing such a read brings back is cached: a one-shot read waits out
+the restore window (a few seconds) and then returns the anon key's answer uncached, with a warning,
+which under row-level security can hold fewer rows, or none; a live read shows nothing
+(`Refreshing`) until the session settles. Without Auth, or with the app's own token provider, every
+request is the anonymous identity: the engine cannot tell those users apart.
 
 **Ownerless mutations.** Every write the plugin queues records its owner. The queue also accepts a
 write with no owner recorded, which the plugin itself does not make; a pass adopts such writes for a
@@ -934,8 +962,9 @@ length, tries to empty its write-ahead log, and the cache directories go last. O
 locks let go: when an open read held the log, the clear tries again every 50 ms for at most a
 second, then leaves it to the client's scope, which tries with a wait doubling up to five seconds
 until the log is emptied, and `close()` tries once more before the database closes. The same path
-follows `dropCacheFor`. Without Auth there is one identity and its cache is never dropped; only this
-call empties it.
+follows `dropCacheFor`. Live queries fetch again once the clear has let the locks go, and after a
+clear that was cut short too. Without Auth there is one identity and its cache is never dropped;
+only this call empties it.
 
 ### Logging
 
@@ -1041,6 +1070,8 @@ What the library promises, each with the tests that pin it:
 | No write leaves the queue silently. It leaves when the server accepts it; when the server refuses it for good on replay, or its schema-cache refusals reach the bound (it goes to the rejected list); when the library can no longer replay it exactly as it was made (the rejected list too); when, sent at once, it fails with any status but `503` or `520` (the error is thrown to its caller); or when the app discards it or clears local data. A failure that may pass leaves it queued. | `MutationQueueTransientFailureTest`, `SchemaCacheMissTest`, `HeadSendTest`, `DiscardPendingMutationTest`, `RejectedMutationListTest`, `UnknownOperationRowAndroidTest`, `UnknownOperationRowIosTest` |
 | On a table whose configured key matches a unique key on the server, a keyed INSERT whose send may have reached the server is never inserted twice. | `MutationQueueIdempotentReplayTest`, `UnconfirmedSendProofTest`, `UndeliveredRequestsAndroidTest`, `UndeliveredRequestsIosTest` |
 | Answering a read from the cache sends no request. | `CachedReadsSendNothingTest` |
+| Each emission of a live read is one view of the cache, the queue and its refresh: no write shows both patched into the cache and still queued, a replayed write never drops out of a list that holds it, and `Idle` comes with the rows its refresh fetched. | `LiveReadConsistencyTest`, `LiveReadSourceOrderTest`, `LiveReadConsistencyAndroidTest`, `LiveReadConsistencyIosTest` |
+| No error answer from Storage is cached as a file. | `ChannelDownloadStatusTest`, `DownloadToFileStatusAndroidTest` |
 | A response whose request started before a write changed the cache, before a clear, or before a change of owner never lands in the cache. | `StaleRefreshWatermarkTest`, `CacheOwnershipTest`, `ClearLocalDataDuringWritesTest`, `StorageClearDuringDownloadTest` |
 | With Auth, one user's cached rows and files are never served to another. | `CacheBelongsToOneIdentityTest`, `CacheOwnershipTest` |
 | After `clearLocalData()`, the deleted rows cannot be read back from the database's files once no open read holds its write-ahead log: when the clear returns if none does within a second, otherwise as soon as the read ends while the client is open, or at `close()`. The clear never waits longer, and never fails for it. | `ClearLocalDataAndroidTest`, `ClearLocalDataIosTest`, `DatabaseScrubTest` |
@@ -1057,7 +1088,7 @@ What it does not do yet, or does only so far:
 | Rejected entries dropped from a full list are not reported anywhere public. | An additive count; its release is not fixed |
 | Nothing fires when the app comes to the foreground: a resume starts a pass only when Auth refreshes the session on it, and a reconnect starts one through the network trigger. | Open: whether to add a trigger is to be decided before 0.1.0 |
 | An upload does not seed the file cache, so a file uploaded just before going offline is not available offline: the bytes are the caller's, and caching them needs a size and ownership policy. | 0.2.0 |
-| An INSERT whose key the server makes is inserted twice when its response is lost and it replays. Give rows their ids on the device. | No change planned |
+| An INSERT whose key the server makes is inserted twice when its response is lost and it replays, and shows twice in a cached list when a read of its table is answered while it is on the wire, until the list is fetched again. Give rows their ids on the device. | No change planned |
 | A replayed UPSERT, UPDATE or DELETE overwrites a change another writer made between the lost response and the replay. | No change planned |
 | A queued UPDATE or DELETE whose filter the engine cannot evaluate changes nothing on screen until it is sent and the list fetched again. | No change planned |
 | A queued row is appended past a list's order and limit, on every page it matches. | 0.2.0 |

@@ -206,7 +206,14 @@ release.
   the library hands Swift a failure as an error instead of ending the process. `close()`, which
   overrides supabase-kt's, and the `syncStatus` property cannot declare it.
 - A reactive read's refresh that fails for a reason other than the network is logged at WARNING,
-  by type, each time it is tried again; it was retried silently.
+  by type, once for each kind of failure in a row; it was retried silently.
+- A reactive read's refresh that waits for the session to settle (an answer it may not cache yet)
+  reports `RefreshState.Refreshing`, never `Stalled` with an exception of the library's own.
+- Expected offline conditions on the read side log at INFO: a `CacheOnly` read with nothing cached,
+  a cold `NetworkFirst` read offline, a read answered from the cache because the network failed,
+  and a download offline. A download the server refuses logs at WARNING.
+- A `NetworkFirstThenCache` read fetches again when its cached rows may no longer be the server's:
+  after a write the cache could not follow, a change of the cache's owner, or `clearLocalData()`.
 - okio is no longer an `api` dependency of the library: no public declaration names one of its
   types. It still reaches an app, at the same version, through supabase-kt's Auth.
 - The Android artifact depends on `androidx.startup:startup-runtime` itself, at the version
@@ -338,9 +345,27 @@ release.
   write has no filter.
 - The in-memory client of the testing artifact is safe across threads: a live read while another
   thread writes no longer fails with `ConcurrentModificationException`.
+- Each emission of a live read is one view of the cache, the queue and its refresh. An insert the
+  server applied no longer shows twice for an emission (a list keyed by id crashed on it), a
+  replayed insert no longer drops out of a list opened right after the sync, and a
+  `CacheFirstThenNetwork` read no longer reports `Idle` one emission before the rows its refresh
+  fetched.
+- A channel download Storage answers with an error (`ensureCachedFile`, the offline bucket's
+  `downloadAuthenticated` and `downloadPublic` to a channel, and supabase-kt's `…To` helpers through
+  it) throws what the bytes download throws. It cached the error body as the file and served it
+  from then on.
+- A live read fetches again after `clearLocalData()`, as after a change of owner, instead of
+  showing the emptied cache until something else fetched; a refresh request made while a read's
+  refresh ran is no longer lost.
+- A read made while the stored session restores waits for it at most 10 seconds instead of waiting
+  on a session store that hangs. Past that the cache is not served and the read goes out on the anon
+  key: a one-shot read returns that answer uncached, which under row-level security can hold fewer
+  rows, or none, and a live read shows nothing (`Refreshing`) until the session settles.
+- A read the cache cannot answer, made while the connectivity monitor says the network is down, is
+  sent once instead of after supabase-kt's retries.
 - One failed read of the database no longer turns automatic behaviour off for the client's life,
   or fails a write the server answered: a later sign-in sends the user's queued writes, the sync
   status follows the queue again, and a write the server applied (or refused), or a discard that
   happened, is reported as it happened rather than as the failed read.
 - A sync that `clearLocalData()` cut short reports the writes it had sent before.
-- While a stored session restores, writes read it once between them, not once each.
+- While a stored session restores, reads and writes read it once between them, not once each.

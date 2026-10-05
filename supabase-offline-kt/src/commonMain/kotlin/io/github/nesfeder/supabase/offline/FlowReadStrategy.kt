@@ -24,8 +24,10 @@ public sealed interface FlowReadStrategy {
      *
      * When the server cannot be reached and the query is cached, it emits the cached rows at once,
      * as [ReadStrategy.NetworkFirst] falls back to them, marked [RefreshState.Stalled] until a
-     * later attempt confirms them; it then fetches nothing more. With nothing cached, or when the
-     * server answers with an error, the flow fails.
+     * later attempt confirms them ([RefreshState.Paused] while the network is known down). It then
+     * fetches again only when the cached rows may no longer be the server's: after a write the
+     * cache could not follow, a change of the cache's owner, or [Offline.clearLocalData]. With
+     * nothing cached, or when the server answers with an error, the flow fails.
      */
     public data object NetworkFirstThenCache : FlowReadStrategy
 
