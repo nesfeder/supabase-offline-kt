@@ -424,3 +424,7 @@ release.
   location, moves the downloaded files with it; one that cannot move is deleted, to be downloaded
   again. They stayed in the default directory, where `clearLocalData()` no longer reached them and,
   on Android, Auto Backup still included them.
+- `SyncStatus.lastSyncError` for a pass stopped on the device, by neither the server nor the
+  network, says so in a fixed sentence instead of naming the failure's class. On iOS a pass stopped
+  by a request header the HTTP client refuses now says so, and what to check, instead of that
+  general sentence.
