@@ -166,17 +166,23 @@ internal object ClientCloseRaces {
             val written = write.await()
             val closed = close.await()
 
-            // Then — the caller got the server's answer, and a reopened client sends nothing again
-            assertIs<MutationOutcome.Applied>(
-                written.getOrNull(),
-                "the write in flight got ${written.exceptionOrNull()}",
-            )
+            // Then — a reopened client sends nothing again, checked first so a failure says whether
+            // the write was duplicated, and the caller got the server's answer
             assertTrue(closed.isSuccess, "close() failed: ${closed.exceptionOrNull()}")
             val reopened = openClient(server.supabaseClient(), configIn(directory))
-            assertEquals(0, reopened.pendingMutationCount(), "the accepted write stayed queued")
+            val stillQueued = reopened.pendingMutationCount()
             reopened.syncPendingMutations().syncedCount
             reopened.close()
-            assertEquals(1, server.restWrites.load(), "the accepted write was sent again")
+            assertEquals(
+                1,
+                server.restWrites.load(),
+                "the server did not get the write exactly once",
+            )
+            assertEquals(0, stillQueued, "the accepted write stayed queued")
+            assertIs<MutationOutcome.Applied>(
+                written.getOrNull(),
+                "the write in flight got ${written.getOrNull() ?: written.exceptionOrNull()}",
+            )
             assertEquals(emptyList(), errorsIn(logger), "errors were logged")
         }
 

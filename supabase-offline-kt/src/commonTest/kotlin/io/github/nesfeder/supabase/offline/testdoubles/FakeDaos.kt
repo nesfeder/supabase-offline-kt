@@ -214,6 +214,12 @@ internal class FakeMutationDao : InMemoryMutationDao() {
      */
     var failNextWholeQueueCheck: Boolean = false
 
+    /**
+     * When set, runs before each [hasPendingOwnedBy] over the whole queue reads it: a test holds it
+     * to keep a trigger's check reading.
+     */
+    var beforeWholeQueueCheck: (suspend () -> Unit)? = null
+
     /** When set, runs after [unconfirmedSendIds] read the rows and before it returns them. */
     var afterUnconfirmedSendIdsRead: (suspend () -> Unit)? = null
 
@@ -291,6 +297,7 @@ internal class FakeMutationDao : InMemoryMutationDao() {
             failNextWholeQueueCheck = false
             error("Scripted failure reading the queue")
         }
+        if (beforeId == Long.MAX_VALUE) beforeWholeQueueCheck?.invoke()
         return super.hasPendingOwnedBy(owner, includeOwnerless, beforeId)
     }
 
