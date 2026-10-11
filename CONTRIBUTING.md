@@ -159,6 +159,8 @@ Then add a line under `## Unreleased` in `CHANGELOG.md`, under the heading the r
 
 Until the first release is tagged, `## Unreleased` describes that release as a whole, so any new or
 edited line in it satisfies the check; from the first release on, the rating decides the heading.
+A release's prepare pull request renames `## Unreleased` to the version it releases, and the check
+reads that section in its place until the version is tagged.
 `python3 scripts/api-compat.py check-pr --base "$(git merge-base origin/main HEAD)"` runs the same
 check CI does.
 
