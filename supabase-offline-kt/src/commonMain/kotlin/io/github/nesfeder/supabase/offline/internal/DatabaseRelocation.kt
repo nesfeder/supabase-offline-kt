@@ -78,12 +78,20 @@ internal fun moveDefaultDatabaseIfUnclaimed(
             }
             return defaultDatabase
         }
-        moveFileCacheDirectories(
-            default.dataDirectory,
-            configured.dataDirectory,
-            engineLogger,
-            fileSystem,
-        )
+        // The database is in the configured directory now, whatever happens to its files
+        try {
+            moveFileCacheDirectories(
+                default.dataDirectory,
+                configured.dataDirectory,
+                engineLogger,
+                fileSystem,
+            )
+        } catch (failure: IOException) {
+            engineLogger.warning {
+                "Could not move the file cache with the offline database (${failure::class.simpleName}); " +
+                    "its files stay at the default location"
+            }
+        }
         engineLogger.info {
             "Moved the offline database from the default location into the configured directory"
         }

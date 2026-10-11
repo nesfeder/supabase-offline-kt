@@ -4,6 +4,7 @@ package io.github.nesfeder.supabase.offline.internal
 
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogLevel
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
+import io.github.nesfeder.supabase.offline.testdoubles.FakeFailingFileSystem
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingLogSink
 import kotlin.random.Random
 import kotlin.test.AfterTest
@@ -83,6 +84,42 @@ class ConfiguredDirectoryMoveTest {
         assertEquals("database", read(configured.databasePath))
         assertFalse(exists(default.dataDirectory / "storage"))
         assertEquals("hashed", read(configured.dataDirectory / "storage-hashed" / "0a1b"))
+    }
+
+    @Test
+    fun a_file_cache_that_cannot_be_read_still_leaves_the_moved_database_in_use() {
+        // Given — a disk that refuses to look at the default file cache's directories
+        leaveDataAtTheDefaultLocation()
+        val disk =
+            FakeFailingFileSystem().apply {
+                failMetadataOf = { path ->
+                    path.toString().startsWith((default.dataDirectory / "storage").toString())
+                }
+            }
+
+        // When
+        val opened = moveDefaultDatabaseIfUnclaimed(configured, default, engineLogger, disk)
+
+        // Then — the client opens the database where it now is, not an empty one at the default
+        assertEquals(configured.databasePath, opened)
+        assertEquals("database", read(configured.databasePath))
+        assertFalse(exists(default.databasePath))
+    }
+
+    @Test
+    fun a_database_that_cannot_move_keeps_its_file_cache_with_it() {
+        // Given — a disk that refuses every rename
+        leaveDataAtTheDefaultLocation()
+        val disk = FakeFailingFileSystem().apply { failMoves = true }
+
+        // When
+        val opened = moveDefaultDatabaseIfUnclaimed(configured, default, engineLogger, disk)
+
+        // Then — the default database stays in use, with its files beside it
+        assertEquals(default.databasePath, opened)
+        assertEquals("database", read(default.databasePath))
+        assertEquals("file", read(default.dataDirectory / "storage" / "photos" / "a.jpg"))
+        assertFalse(exists(configured.databasePath))
     }
 
     @Test

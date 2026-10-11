@@ -3,6 +3,7 @@
 package io.github.nesfeder.supabase.offline.testdoubles
 
 import okio.Buffer
+import okio.FileMetadata
 import okio.FileSystem
 import okio.ForwardingFileSystem
 import okio.IOException
@@ -12,8 +13,9 @@ import okio.Sink
 import okio.Timeout
 
 /**
- * The real file system with two failures a test can switch on: a disk that fills part-way through a
- * file, and a refused rename. Every other operation reaches the disk.
+ * The real file system with the failures a test can switch on: a disk that fills part-way through a
+ * file, a refused rename, a refused delete and a refused look at a path. Every other operation
+ * reaches the disk.
  */
 internal class FakeFailingFileSystem : ForwardingFileSystem(FileSystem.SYSTEM) {
 
@@ -25,6 +27,12 @@ internal class FakeFailingFileSystem : ForwardingFileSystem(FileSystem.SYSTEM) {
 
     /** When `true`, [delete] throws, so a recursive delete fails too. */
     var failDeletes: Boolean = false
+
+    /**
+     * When it accepts a path, [metadataOrNull] throws for that path, as a `stat` the system refuses
+     * does, and so does every check that a path exists. `null` never fails.
+     */
+    var failMetadataOf: ((Path) -> Boolean)? = null
 
     /** Runs once a file sink is open, with the file on disk, on the thread that opened it. */
     var onSinkOpened: ((Path) -> Unit)? = null
@@ -57,6 +65,11 @@ internal class FakeFailingFileSystem : ForwardingFileSystem(FileSystem.SYSTEM) {
 
             override fun timeout(): Timeout = real.timeout()
         }
+    }
+
+    override fun metadataOrNull(path: Path): FileMetadata? {
+        if (failMetadataOf?.invoke(path) == true) throw IOException("Permission denied")
+        return super.metadataOrNull(path)
     }
 
     override fun delete(path: Path, mustExist: Boolean) {

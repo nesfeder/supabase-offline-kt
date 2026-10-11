@@ -972,7 +972,8 @@ holds it or the default place already has a database (then it is left, and a war
 cache that cannot move is deleted, so no cached file outlives a clear. With `dataDirectory` set, a
 database at the default place moves there, with its side files and then its file cache, when that
 directory has none and nothing holds the default one; a file cache that cannot move is deleted
-there too, unless the two directories overlap. Room then opens the database on the bundled SQLite, and the client is built over it: every
+there too, unless the two directories overlap, and one that cannot even be read is left, with a
+warning, while the database opens where it moved. Room then opens the database on the bundled SQLite, and the client is built over it: every
 setting of `Offline.Config` reaches the engine in that one function, read once (the opener also
 reads `dataDirectory`, and the version check `logLevel`). The client installs its request-pipeline
 phases once (the dry-run check, the read-shape check, the transport-failure capture and the
