@@ -94,6 +94,11 @@ final class TasksModel {
         rows.map { $0.filter { !$0.done }.count } ?? openCountAtLaunch
     }
 
+    /// The newest task's id, for Try it's upload through a signed URL.
+    var newestTaskID: String? {
+        rows?.max { $0.createdAt < $1.createdAt }?.id
+    }
+
     /// The ids of the tasks on screen, for the photo counts' query.
     var visibleTaskIDs: [String] {
         (visibleRows ?? []).map(\.id).sorted()

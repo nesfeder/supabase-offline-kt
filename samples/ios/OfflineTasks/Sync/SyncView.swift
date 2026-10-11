@@ -228,7 +228,7 @@ struct SyncView: View {
         Section {
             ForEach(TryItItem.allCases, id: \.self) { item in
                 VStack(alignment: .leading, spacing: 4) {
-                    Button(item.title) { app.sync.run(item, newestTaskID: app.tasks.rows?.first?.id) }
+                    Button(item.title) { app.sync.run(item, newestTaskID: app.tasks.newestTaskID) }
                         .disabled(app.session.userID == nil)
                     Text(app.sync.tryItResults[item] ?? item.call)
                         .font(.footnote)
@@ -359,12 +359,12 @@ extension TryItItem {
     /// The call it makes, shown until it has run.
     var call: String {
         switch self {
-        case .invalidTitle: "insert of a JSON row with a blank title: online the server refuses it at once, offline when it syncs."
-        case .sampleTasks: "insert of a list of five rows: one write, one request."
-        case .starterList: "upsert with onConflict and ignoreDuplicates: running it twice changes nothing."
-        case .tasksWithNotes: "filter(\"notes\", operator: \"not.is\", value: \"null\"), the generic filter: asks the server."
-        case .groupedDelete: "delete with gte and lt on created_at, one group the queue can’t hold: offline, refused."
-        case .signedUpload: "createSignedUploadURL, then uploadToSignedURL: a generated photo on your newest task."
+        case .invalidTitle: "An insert of a JSON row with a blank title: online the server refuses it at once, offline when it syncs."
+        case .sampleTasks: "An insert of a list of five rows: one write, one request."
+        case .starterList: "An upsert with onConflict and ignoreDuplicates: running it twice changes nothing."
+        case .tasksWithNotes: "The generic filter, filter(\"notes\", operator: \"not.is\", value: \"null\"): it asks the server."
+        case .groupedDelete: "A delete with gte and lt on created_at, one group the queue can’t hold: offline, it’s refused."
+        case .signedUpload: "createSignedUploadURL, then uploadToSignedURL: a generated photo for your newest task."
         }
     }
 }
