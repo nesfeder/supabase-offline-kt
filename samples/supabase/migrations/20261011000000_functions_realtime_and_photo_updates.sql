@@ -75,8 +75,12 @@ create policy "task-photos: owner updates" on storage.objects
 -- Realtime: the two tables in the supabase_realtime publication
 -- =============================================================================================
 
--- Realtime sends a table's changes only when the table is in this publication, and only to the
--- users whose policies admit the row. Each table is added once, so a second run changes nothing.
+-- Realtime sends a table's changes only when the table is in this publication. An insert or an
+-- update reaches only the users whose select policies admit the row. A delete is not filtered:
+-- Supabase applies no row-level security to delete events, so every subscriber receives each
+-- deleted row's primary key, its id, whoever owned it. Here an id is a random UUID and says
+-- nothing; a table whose keys mean something does not belong in the publication on these terms.
+-- Each table is added once, so a second run changes nothing.
 do $$
 declare
   table_name text;

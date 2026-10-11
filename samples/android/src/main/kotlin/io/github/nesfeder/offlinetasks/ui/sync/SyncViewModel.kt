@@ -22,7 +22,9 @@ import io.github.nesfeder.offlinetasks.data.WaitingChange
 import io.github.nesfeder.offlinetasks.offlineTasksApplication
 import io.github.nesfeder.offlinetasks.platform.SessionState
 import io.github.nesfeder.offlinetasks.ui.feedback.FailureReports
+import io.github.nesfeder.offlinetasks.ui.feedback.awaitNetworkChange
 import io.github.nesfeder.offlinetasks.ui.feedback.launchReporting
+import io.github.nesfeder.offlinetasks.ui.feedback.readingAgainAfterFailures
 import io.github.nesfeder.offlinetasks.ui.feedback.reportingFailures
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -167,7 +169,12 @@ class SyncViewModel(
                 combine(
                     repository.syncStatus,
                     queue,
-                    repository.tasks().map { it.refresh }.reportingFailures(failures),
+                    repository
+                        .tasks()
+                        .map { it.refresh }
+                        .readingAgainAfterFailures(failures) {
+                            repository.syncStatus.awaitNetworkChange()
+                        },
                     ::Triple,
                 ),
                 repository.rejectedMutations().reportingFailures(failures),

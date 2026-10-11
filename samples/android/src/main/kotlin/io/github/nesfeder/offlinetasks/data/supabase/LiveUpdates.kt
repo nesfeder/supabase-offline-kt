@@ -9,7 +9,9 @@ import io.github.jan.supabase.realtime.channel
 import io.github.jan.supabase.realtime.decodeRecord
 import io.github.jan.supabase.realtime.postgresChangeFlow
 import io.github.jan.supabase.realtime.realtime
+import io.github.nesfeder.offlinetasks.data.LiveUpdatesStatus
 import io.github.nesfeder.offlinetasks.data.Tables
+import io.github.nesfeder.supabase.offline.NetworkStatus
 import io.github.nesfeder.supabase.offline.applyServerRecord
 import io.github.nesfeder.supabase.offline.offline
 import kotlinx.coroutines.CoroutineStart
@@ -85,3 +87,20 @@ class LiveUpdates(private val supabase: SupabaseClient) {
     }
     // --8<-- [end:apply-records]
 }
+
+/**
+ * What Live updates should be doing: off when switched off; paused with no user, while the network
+ * is known to be down, or under Simulate offline; else connecting. The network's return is a new
+ * value, so a channel that failed starts again then.
+ */
+internal fun liveUpdatesWanted(
+    switchedOn: Boolean,
+    signedIn: Boolean,
+    network: NetworkStatus,
+): LiveUpdatesStatus =
+    when {
+        !switchedOn -> LiveUpdatesStatus.Off
+        !signedIn || network == NetworkStatus.OFFLINE || network == NetworkStatus.DISABLED ->
+            LiveUpdatesStatus.Paused
+        else -> LiveUpdatesStatus.Connecting
+    }

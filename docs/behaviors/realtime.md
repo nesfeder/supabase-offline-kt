@@ -27,8 +27,8 @@ table emits the change.
 
 With supabase-kt's Realtime plugin installed, collect the table's changes and apply each one. The
 sample subscribes to both of its tables behind its "Live updates" switch, on by default, and
-leaves the channel when the switch goes off, when nobody is signed in, and while Simulate offline
-is on:
+leaves the channel when the switch goes off, when nobody is signed in, and while the network is
+down or Simulate offline is on; it joins again when the network is back:
 
 From the samples: [LiveUpdates.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/LiveUpdates.kt) · [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift)
 

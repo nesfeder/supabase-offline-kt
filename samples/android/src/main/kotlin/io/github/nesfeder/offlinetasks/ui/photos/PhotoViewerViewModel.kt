@@ -17,7 +17,9 @@ import io.github.nesfeder.offlinetasks.offlineTasksApplication
 import io.github.nesfeder.offlinetasks.ui.feedback.FailureReports
 import io.github.nesfeder.offlinetasks.ui.feedback.Notice
 import io.github.nesfeder.offlinetasks.ui.feedback.Notices
+import io.github.nesfeder.offlinetasks.ui.feedback.awaitNetworkChange
 import io.github.nesfeder.offlinetasks.ui.feedback.launchReporting
+import io.github.nesfeder.offlinetasks.ui.feedback.readingAgainAfterFailures
 import io.github.nesfeder.offlinetasks.ui.feedback.reportingFailures
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
@@ -95,7 +97,9 @@ class PhotoViewerViewModel(
     val uiState: StateFlow<PhotoViewerUiState> =
         combine(
                 repository.allPhotos().reportingFailures(failures),
-                repository.tasks().reportingFailures(failures),
+                repository.tasks().readingAgainAfterFailures(failures) {
+                    repository.syncStatus.awaitNetworkChange()
+                },
                 repository.syncStatus,
                 version,
             ) { snapshot, tasks, status, replaced ->

@@ -79,7 +79,8 @@ class NewTaskViewModel(
 
     /**
      * Adds the task. The screen closes straight away, and the outcome is said on the screen in
-     * front: saved, with the time the server stored it, or saved on this device.
+     * front: saved, with the time the server stored it (the row's `updated_at`, which the server
+     * sets; `created_at` is the device's), or saved on this device.
      */
     fun add() {
         val form = state.value as? NewTaskUiState.Editing ?: return
@@ -95,7 +96,7 @@ class NewTaskViewModel(
                 )
             notices.post(
                 when (outcome) {
-                    is NewTaskOutcome.Saved -> Notice.TaskSaved(title, outcome.task.createdAt)
+                    is NewTaskOutcome.Saved -> Notice.TaskSaved(title, outcome.task.updatedAt)
                     NewTaskOutcome.SavedOnDevice -> Notice.TaskSavedOnDevice(title)
                 }
             )

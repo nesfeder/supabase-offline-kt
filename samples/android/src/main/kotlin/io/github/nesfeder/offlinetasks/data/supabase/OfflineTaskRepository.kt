@@ -66,6 +66,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
@@ -749,8 +750,9 @@ class OfflineTaskRepository(
     }
 
     /**
-     * Runs [liveUpdates] while the switch is on, a user is signed in and the app's network is not
-     * switched off; Simulate offline pauses it too, so it simulates being offline for Realtime.
+     * Runs [liveUpdates] while the switch is on, a user is signed in and the network is neither
+     * known to be down nor switched off: Simulate offline pauses it too, so it simulates being
+     * offline for Realtime. A channel that failed starts again when the network comes back.
      */
     @OptIn(ExperimentalCoroutinesApi::class)
     private suspend fun keepLiveUpdatesRunning() {
@@ -760,12 +762,7 @@ class OfflineTaskRepository(
             return
         }
         combine(switches, session.userId, offline.syncStatus) { switch, userId, status ->
-                when {
-                    !switch.liveUpdates -> LiveUpdatesStatus.Off
-                    userId == null || status.network == NetworkStatus.DISABLED ->
-                        LiveUpdatesStatus.Paused
-                    else -> LiveUpdatesStatus.Connecting
-                }
+                liveUpdatesWanted(switch.liveUpdates, signedIn = userId != null, status.network)
             }
             .distinctUntilChanged()
             .collectLatest { wanted ->
@@ -850,11 +847,15 @@ class OfflineTaskRepository(
 
     // --8<-- [end:photos-page]
 
-    /** [read] while there is a session; before, [before] alone, and nothing is sent. */
+    /**
+     * [read] while there is a session; before, [before] alone, and nothing is sent. A failure ends
+     * the read in the app's terms, as every other call's does.
+     */
     @OptIn(ExperimentalCoroutinesApi::class)
     private fun <T> whileSignedIn(before: T, read: () -> Flow<T>): Flow<T> =
         session.userId
             .flatMapLatest { userId -> if (userId == null) flowOf(before) else read() }
+            .catch { failure -> throw failure.toAppFailure(LibraryCall.Read) }
             .flowOn(Dispatchers.Default)
 
     // --8<-- [start:pending-marks]

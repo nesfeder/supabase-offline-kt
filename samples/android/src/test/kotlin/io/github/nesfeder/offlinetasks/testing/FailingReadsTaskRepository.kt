@@ -9,18 +9,23 @@ import io.github.nesfeder.offlinetasks.data.TaskListSnapshot
 import io.github.nesfeder.offlinetasks.data.TaskQuery
 import io.github.nesfeder.offlinetasks.data.TaskRepository
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
 
 /**
  * [delegate], except that every read shows its first loaded value and then fails with [failure], as
  * a read does when a later row cannot be decoded: the failure a screen must report, keeping what it
- * showed, rather than crash on.
+ * showed, rather than crash on. Once [failing] is false, a read started again is [delegate]'s.
  */
 class FailingReadsTaskRepository(
     private val delegate: TaskRepository,
     private val failure: Exception,
 ) : TaskRepository by delegate {
+
+    /** Whether a read started now fails after its first value. */
+    val failing = MutableStateFlow(true)
 
     override fun tasks(query: TaskQuery): Flow<TaskListSnapshot> =
         loadedThenFailing(delegate.tasks(query))
@@ -47,6 +52,10 @@ class FailingReadsTaskRepository(
 
     /** [read]'s first value with rows in it, then [failure]. */
     private fun <T> loadedThenFailing(read: Flow<RowsSnapshot<T>>): Flow<RowsSnapshot<T>> = flow {
+        if (!failing.value) {
+            emitAll(read)
+            return@flow
+        }
         emit(read.first { it.value != null })
         throw failure
     }

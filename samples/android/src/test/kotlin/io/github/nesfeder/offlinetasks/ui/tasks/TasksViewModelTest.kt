@@ -26,8 +26,10 @@ import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import org.junit.Rule
 
@@ -268,6 +270,30 @@ class TasksViewModelTest {
 
         // Then — the announcement waiting for the screen is dropped
         assertNull(withTimeoutOrNull(10.seconds) { viewModel.messages.first() })
+    }
+
+    @Test
+    fun a_failed_list_read_starts_again_when_the_network_changes() = runTest {
+        // Given — the screen up, its list read failing once it has loaded
+        val inMemory = repositoryFixture(seedSampleTasks = true).repository
+        val failure = IllegalStateException("A row the app cannot read")
+        val repository = FailingReadsTaskRepository(inMemory, failure)
+        val viewModel = tasksViewModel(repository)
+        backgroundScope.launch { viewModel.uiState.collect {} } // the screen stays up throughout
+        viewModel.loaded()
+        assertEquals(failure, failures.reported.first())
+
+        // When — reads work again, the network is switched off, and a task is added on the device
+        repository.failing.value = false
+        inMemory.setNetworkEnabled(false)
+        inMemory.addTask("Made after the failure", notes = null)
+
+        // Then — the list was read again, and keeps following the device's copy
+        withTimeout(30.seconds) {
+            viewModel.loaded { state ->
+                state.openTasks.any { it.title == "Made after the failure" }
+            }
+        }
     }
 
     @Test

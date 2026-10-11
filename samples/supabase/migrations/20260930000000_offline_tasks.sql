@@ -250,10 +250,11 @@ on conflict (id) do update set
   allowed_mime_types = excluded.allowed_mime_types;
 
 -- A file lives under "<user_id>/...", and only its owner may read, upload or delete there: the
--- first folder of the path must be the caller's id, in lower case. There is no update policy, so
--- a file is never replaced or moved: an upload to a path already taken is refused, with or
--- without upsert. A photo is replaced by deleting it and uploading a new one under a new id, so
--- no cached copy goes stale.
+-- first folder of the path must be the caller's id, in lower case. This file adds no update
+-- policy, so on its own a file is never replaced or moved, and an upload to a path already taken
+-- is refused, with or without upsert. The second migration,
+-- 20261011000000_functions_realtime_and_photo_updates.sql, adds the owner's update policy, which
+-- Storage's replace and move need.
 drop policy if exists "task-photos: owner reads" on storage.objects;
 create policy "task-photos: owner reads" on storage.objects
   for select to authenticated

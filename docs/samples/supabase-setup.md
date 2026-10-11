@@ -99,7 +99,7 @@ delete every file in `task-photos`. Deal with each as the hint says, then run th
 | `public.complete_all_tasks()` | Marks every open task of the caller done, and returns how many it changed. The samples' **Mark all done** |
 | `public.tasks_done_count(created_since)` | How many of the caller's tasks are done, those created since `created_since` when it is given. The samples' **Server** section |
 | Functions' grants | `execute` for `authenticated` and `service_role` only. Both run as the caller (`security invoker`), so the tables' policies decide which rows they reach |
-| Realtime | `tasks` and `task_photos` in the `supabase_realtime` publication, so the samples' **Live updates** get their changes. Realtime sends a user only the rows the policies let them read |
+| Realtime | `tasks` and `task_photos` in the `supabase_realtime` publication, so the samples' **Live updates** get their changes. An insert or an update reaches only the users whose policies let them read the row. A delete is not filtered: Supabase applies no row-level security to delete events, so every subscriber receives each deleted row's `id`, whoever owned it. Here an `id` is a random UUID and says nothing; a table whose keys mean something does not belong in the publication on these terms |
 
 The rules the sample apps build on:
 
@@ -174,6 +174,10 @@ The publishable key is public: anyone can take it out of an app. With this schem
 - A signed-in user, anonymous or not, reaches only the rows and files that carry their own id.
   Knowing another user's ids does not help: a read returns nothing, and an update or a delete
   changes nothing.
+- Through Realtime, a signed-in user hears of inserts and updates to their own rows only, but of
+  every deleted row, anyone's: Supabase applies no row-level security to a delete event, which
+  carries the row's primary key, its `id`, and no other column. The ids are random UUIDs, so they
+  say nothing about anyone.
 - A file is a JPEG of at most 5 MB, and none has a public URL.
 
 An anonymous user cannot sign back in: after signing out, or deleting the app, their tasks stay on

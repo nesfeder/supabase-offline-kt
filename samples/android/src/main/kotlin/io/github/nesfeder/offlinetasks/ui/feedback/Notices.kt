@@ -13,7 +13,7 @@ import kotlinx.coroutines.flow.receiveAsFlow
 
 /** What became of work a screen started, said once on whichever screen is in front by then. */
 sealed interface Notice {
-    /** The server stored the task [title] at [savedAt]. */
+    /** The server stored the task [title] at [savedAt], the row's `updated_at`, which it sets. */
     data class TaskSaved(val title: String, val savedAt: Instant) : Notice
 
     /** The task [title] is saved on this device, and syncs when the server can be reached. */

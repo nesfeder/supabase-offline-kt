@@ -186,7 +186,7 @@
     <string name="sync_prefer_fresh_data_body">The list asks the server first and shows this device’s copy only when it can’t answer. Off, it shows the copy at once and refreshes it.</string>
     <string name="sync_live_updates">Live updates</string>
     <string name="live_updates_off">Off: other devices’ changes show after the next refresh.</string>
-    <string name="live_updates_paused">Waiting for a user, or for Simulate offline to be switched off.</string>
+    <string name="live_updates_paused">Waiting for a user, for the network, or for Simulate offline to be switched off.</string>
     <string name="live_updates_connecting">Connecting to Realtime…</string>
     <string name="live_updates_connected">On: other devices’ changes show as they happen.</string>
     <string name="live_updates_failed">Couldn’t connect to Realtime. It tries again when you switch it or the network comes back.</string>

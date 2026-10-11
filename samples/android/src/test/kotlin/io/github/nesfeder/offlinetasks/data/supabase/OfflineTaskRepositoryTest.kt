@@ -8,6 +8,7 @@ import io.github.jan.supabase.serializer.KotlinXSerializer
 import io.github.nesfeder.offlinetasks.data.AppNetworkStatus
 import io.github.nesfeder.offlinetasks.data.EncodedPhoto
 import io.github.nesfeder.offlinetasks.data.InvalidRequestException
+import io.github.nesfeder.offlinetasks.data.LiveUpdatesStatus
 import io.github.nesfeder.offlinetasks.data.NetworkSwitchedOffException
 import io.github.nesfeder.offlinetasks.data.NetworkUnavailableException
 import io.github.nesfeder.offlinetasks.data.NewTaskOutcome
@@ -27,6 +28,7 @@ import io.github.nesfeder.offlinetasks.data.WriteNeedsConnectionException
 import io.github.nesfeder.offlinetasks.testing.FakeSteppingClock
 import io.github.nesfeder.offlinetasks.testing.FakeSupabaseServer
 import io.github.nesfeder.offlinetasks.testing.FakeUserSession
+import io.github.nesfeder.supabase.offline.NetworkStatus
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
@@ -259,6 +261,44 @@ class OfflineTaskRepositoryTest {
         // Then — the device's copy of that query has both, with nothing asked of the server
         repository.setNetworkEnabled(false)
         assertEquals(2, repository.tasks(open).first().value?.size)
+    }
+
+    @Test
+    fun a_live_read_that_fails_fails_in_the_apps_terms() = runTest {
+        // Given — Prefer fresh data on, and the network switched off before the open tasks were
+        // ever read, so the device has nothing to fall back on
+        repository.setPreferFreshData(true)
+        repository.setNetworkEnabled(false)
+
+        // When / Then — the app's own failure, which has a sentence of its own on screen
+        assertFailsWith<NetworkSwitchedOffException> {
+            repository.tasks(TaskQuery(TaskFilter.Open)).first()
+        }
+    }
+
+    @Test
+    fun live_updates_pause_while_the_network_is_down_so_a_failed_channel_starts_again() {
+        // A change of the wanted state restarts the channel, so the network's return restarts it.
+        assertEquals(
+            LiveUpdatesStatus.Paused,
+            liveUpdatesWanted(switchedOn = true, signedIn = true, NetworkStatus.OFFLINE),
+        )
+        assertEquals(
+            LiveUpdatesStatus.Paused,
+            liveUpdatesWanted(switchedOn = true, signedIn = true, NetworkStatus.DISABLED),
+        )
+        assertEquals(
+            LiveUpdatesStatus.Connecting,
+            liveUpdatesWanted(switchedOn = true, signedIn = true, NetworkStatus.ONLINE),
+        )
+        assertEquals(
+            LiveUpdatesStatus.Paused,
+            liveUpdatesWanted(switchedOn = true, signedIn = false, NetworkStatus.ONLINE),
+        )
+        assertEquals(
+            LiveUpdatesStatus.Off,
+            liveUpdatesWanted(switchedOn = false, signedIn = true, NetworkStatus.ONLINE),
+        )
     }
 
     @Test

@@ -84,7 +84,8 @@ foreground ([Replaying the queue](../behaviors/sync.md#when-to-call-sync)).
 ### Online basics
 
 1. Open the app. It signs in anonymously and shows an empty list.
-2. Add a task with **New task**: the app says it was saved, with the time the server stored it.
+2. Add a task with **New task**: the app says it was saved, with the time the server stored it
+   (the row's `updated_at`, which the server sets; `created_at` is the time the device made it).
    Open it, add some notes and tick it done.
 3. In the dashboard, open the **Table Editor** and the `tasks` table: the row is there, with your
    anonymous user's id in `user_id` and the id the app made on the device in `id`.

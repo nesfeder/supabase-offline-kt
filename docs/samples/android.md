@@ -114,7 +114,7 @@ data** makes the list ask the server first rather than show the device's copy fi
 
 With **Live updates** on, the default, a change made elsewhere (in the Table Editor, say) shows in
 the list as it happens. The Sync tab says whether the Realtime channel is connected; Simulate
-offline pauses it.
+offline and a lost network pause it, and it connects again when the network is back.
 
 ### Photos, beyond the upload
 

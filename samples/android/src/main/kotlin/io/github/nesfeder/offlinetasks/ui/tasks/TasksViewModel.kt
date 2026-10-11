@@ -24,6 +24,7 @@ import io.github.nesfeder.offlinetasks.ui.feedback.FailureReports
 import io.github.nesfeder.offlinetasks.ui.feedback.Notice
 import io.github.nesfeder.offlinetasks.ui.feedback.Notices
 import io.github.nesfeder.offlinetasks.ui.feedback.launchReporting
+import io.github.nesfeder.offlinetasks.ui.feedback.readingAgainAfterFailures
 import io.github.nesfeder.offlinetasks.ui.feedback.reportingFailures
 import io.github.nesfeder.offlinetasks.ui.status.SyncHeadline
 import io.github.nesfeder.offlinetasks.ui.status.syncHeadlineOf
@@ -34,6 +35,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -41,8 +43,10 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.shareIn
@@ -138,6 +142,9 @@ class TasksViewModel(
     private val isRefreshing = MutableStateFlow(false)
     private val caption = MutableStateFlow<ReadProvenance?>(null)
 
+    /** A pull to refresh or Mark all done: a list read that failed starts again then. */
+    private val readAgainRequests = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+
     /** Tasks swiped away whose deletion can still be undone. */
     private val undoableDeletions = mutableSetOf<String>()
     private val messageChannel = Channel<TasksMessage>(Channel.BUFFERED)
@@ -157,15 +164,21 @@ class TasksViewModel(
     private val snapshots: Flow<Pair<TaskQuery, TaskListSnapshot>> =
         query
             .flatMapLatest { asked ->
-                repository.tasks(asked).reportingFailures(failures).map { asked to it }
+                repository
+                    .tasks(asked)
+                    .readingAgainAfterFailures(failures, ::untilWorthReadingAgain)
+                    .map { asked to it }
             }
             .shareIn(viewModelScope, SharingStarted.WhileSubscribed(), replay = 1)
 
-    /** Every task, for the open count and the headline, whatever the query. */
+    /**
+     * Every task, for the open count and the headline, whatever the query. A failure is the shown
+     * list's to report: both read the same rows.
+     */
     private val allTasks: Flow<TaskListSnapshot> =
         repository
             .tasks()
-            .reportingFailures(failures)
+            .readingAgainAfterFailures(failures = null, readAgain = ::untilWorthReadingAgain)
             .shareIn(viewModelScope, SharingStarted.WhileSubscribed(), replay = 1)
 
     private val photoCounts: Flow<Map<String, Int>> =
@@ -263,6 +276,16 @@ class TasksViewModel(
         }
     }
 
+    /**
+     * Returns when a list read that failed is worth starting again: the network's state changes, or
+     * the user pulls to refresh. A server's own error does not pass by itself.
+     */
+    private suspend fun untilWorthReadingAgain() {
+        val network = repository.syncStatus.value.network
+        merge(repository.syncStatus.filter { it.network != network }.map {}, readAgainRequests)
+            .first()
+    }
+
     override fun onCleared() {
         // Nothing can undo them any more.
         undoableDeletions.toList().forEach(::commitDelete)
@@ -273,6 +296,7 @@ class TasksViewModel(
      * the caption. Offline it answers from this device, when the copy is a day old at most.
      */
     fun refresh() {
+        readAgainRequests.tryEmit(Unit)
         viewModelScope.launchReporting(failures) {
             isRefreshing.value = true
             try {
@@ -293,6 +317,7 @@ class TasksViewModel(
     fun markAllDone() {
         commitScope.launchReporting(failures) {
             notices.post(Notice.MarkedDone(repository.markAllDone()))
+            readAgainRequests.tryEmit(Unit)
             val shown = uiState.value.query
             caption.value = repository.refreshTasks(shown)
             if (shown != TaskQuery()) repository.refreshTasks()

@@ -12,6 +12,8 @@ import io.github.nesfeder.offlinetasks.offlineTasksApplication
 import io.github.nesfeder.offlinetasks.ui.feedback.FailureReports
 import io.github.nesfeder.offlinetasks.ui.feedback.Notice
 import io.github.nesfeder.offlinetasks.ui.feedback.Notices
+import io.github.nesfeder.offlinetasks.ui.feedback.awaitNetworkChange
+import io.github.nesfeder.offlinetasks.ui.feedback.readingAgainAfterFailures
 import io.github.nesfeder.offlinetasks.ui.feedback.reportingFailures
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
@@ -51,9 +53,13 @@ class AppShellViewModel(
     private val openTaskCount: Flow<Int?> = flow {
         emit(repository.openTaskCountNow())
         emitAll(
-            repository.tasks().mapNotNull { snapshot ->
-                snapshot.value?.count { !it.isDone }
-            }
+            repository
+                .tasks()
+                // The Tasks screen reports a failed read; the badge reads again when it can.
+                .readingAgainAfterFailures(failures = null) {
+                    repository.syncStatus.awaitNetworkChange()
+                }
+                .mapNotNull { snapshot -> snapshot.value?.count { !it.isDone } }
         )
     }
         .reportingFailures(failures)
