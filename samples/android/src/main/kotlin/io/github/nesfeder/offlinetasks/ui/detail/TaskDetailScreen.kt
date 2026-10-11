@@ -100,7 +100,8 @@ fun TaskDetailRoute(
         viewModel.messages.collect { message ->
             when (message) {
                 TaskDetailMessage.Deleted -> onBack()
-                is TaskDetailMessage.ShareLinks -> context.shareText(message.links.joinToString("\n"))
+                is TaskDetailMessage.ShareLinks ->
+                    context.shareText(message.links.joinToString("\n"))
             }
         }
     }
@@ -179,7 +180,8 @@ fun TaskDetailScreen(
                     actions = {
                         if (editing != null) {
                             DetailMenu(
-                                canShareAll = editing.canChangePhotos && editing.photos.isNotEmpty(),
+                                canShareAll =
+                                    editing.canChangePhotos && editing.photos.isNotEmpty(),
                                 onDuplicate = onDuplicate,
                                 onShareAllPhotos = onShareAllPhotos,
                             )
@@ -300,7 +302,11 @@ fun TaskDetailScreen(
 
 /** The app bar's menu: Duplicate task, and links to every photo for the share sheet. */
 @Composable
-private fun DetailMenu(canShareAll: Boolean, onDuplicate: () -> Unit, onShareAllPhotos: () -> Unit) {
+private fun DetailMenu(
+    canShareAll: Boolean,
+    onDuplicate: () -> Unit,
+    onShareAllPhotos: () -> Unit,
+) {
     var expanded by remember { mutableStateOf(false) }
     IconButton(onClick = { expanded = true }) {
         Icon(painterResource(R.drawable.ic_more_vert), stringResource(R.string.action_more))

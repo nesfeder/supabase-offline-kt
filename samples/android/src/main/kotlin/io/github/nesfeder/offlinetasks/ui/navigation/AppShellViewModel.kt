@@ -48,27 +48,25 @@ class AppShellViewModel(
     val notices: Flow<Notice> = notices.posted
 
     /** The open-task count: at launch from the device's copy, then from the live list. */
-    private val openTaskCount: Flow<Int?> =
-        flow {
-                emit(repository.openTaskCountNow())
-                emitAll(
-                    repository.tasks().mapNotNull { snapshot ->
-                        snapshot.value?.count { !it.isDone }
-                    }
-                )
+    private val openTaskCount: Flow<Int?> = flow {
+        emit(repository.openTaskCountNow())
+        emitAll(
+            repository.tasks().mapNotNull { snapshot ->
+                snapshot.value?.count { !it.isDone }
             }
-            .reportingFailures(failures)
+        )
+    }
+        .reportingFailures(failures)
 
     /**
      * The queue's size: read once at launch, so the badge is right at once, then from the status,
      * which follows each change to the queue shortly after it.
      */
-    private val pendingCount: Flow<Int> =
-        flow {
-                emit(repository.pendingMutationCountNow())
-                emitAll(repository.syncStatus.drop(1).map { it.pendingMutationCount })
-            }
-            .reportingFailures(failures)
+    private val pendingCount: Flow<Int> = flow {
+        emit(repository.pendingMutationCountNow())
+        emitAll(repository.syncStatus.drop(1).map { it.pendingMutationCount })
+    }
+        .reportingFailures(failures)
 
     /** The badge counts. */
     val uiState: StateFlow<AppShellUiState> =

@@ -57,6 +57,7 @@ internal fun RefreshState.toTaskRefreshState(): TaskRefreshState =
         RefreshState.Paused -> TaskRefreshState.Paused // the network is known to be down
         is RefreshState.Stalled -> TaskRefreshState.Stalled(cause) // failing while online
     }
+
 // --8<-- [end:refresh-state]
 
 // --8<-- [start:provenance]
@@ -67,6 +68,7 @@ internal fun PostgrestResult.toReadProvenance(): ReadProvenance =
         fetchedAt = fetchedAt, // when the server last answered this query
         hasPendingMutations = hasPendingMutations, // a queued write changes these rows
     )
+
 // --8<-- [end:provenance]
 
 // --8<-- [start:sync-banner]
@@ -86,6 +88,7 @@ internal fun SyncStatus.toAppSyncStatus(): AppSyncStatus =
         lastSyncedAt = lastSyncedAt,
         lastSyncError = lastSyncError?.toAppFailure(LibraryCall.Sync),
     )
+
 // --8<-- [end:sync-banner]
 
 /** What one replay did, every count of it. */
@@ -109,6 +112,7 @@ internal fun PendingMutation.toWaitingChange(): WaitingChange =
         rowKey = rowKeys.firstOrNull()?.idOrNull(),
         taskTitle = body?.titleOrNull(), // null for a delete
     )
+
 // --8<-- [end:waiting-change]
 
 // --8<-- [start:rejected-list]
@@ -127,6 +131,7 @@ internal fun RejectedMutation.toRejectedTaskMutation(): RejectedTaskMutation =
         createdAt = createdAt,
         isRetryable = isRetryable, // false when its body was too long to keep
     )
+
 // --8<-- [end:rejected-list]
 
 /** The server's answer to a refused write, kept as data so it survives a restart. */

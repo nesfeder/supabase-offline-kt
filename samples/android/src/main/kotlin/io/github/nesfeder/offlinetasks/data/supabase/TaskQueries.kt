@@ -51,8 +51,8 @@ internal fun recentWindow(now: Instant): RecentWindow {
 }
 
 /**
- * The one order every list is read in, newest first. Each query is cached apart, so every read of
- * a table that should share one cached list asks the same query.
+ * The one order every list is read in, newest first. Each query is cached apart, so every read of a
+ * table that should share one cached list asks the same query.
  */
 internal fun PostgrestRequestBuilder.newestFirst() {
     order(CREATED_AT, Order.DESCENDING)
@@ -78,6 +78,7 @@ private fun PostgrestFilterBuilder.chip(filter: TaskFilter, recent: RecentWindow
         TaskFilter.Recent -> madeIn(recent)
     }
 }
+
 // --8<-- [end:filters]
 
 // --8<-- [start:same-column]
@@ -91,6 +92,7 @@ private fun PostgrestFilterBuilder.madeIn(window: RecentWindow) {
         lt(CREATED_AT, window.until.toString())
     }
 }
+
 // --8<-- [end:same-column]
 
 // --8<-- [start:search]

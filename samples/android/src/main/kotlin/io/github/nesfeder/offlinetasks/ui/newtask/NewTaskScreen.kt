@@ -168,13 +168,15 @@ fun NewTaskScreen(
 }
 
 /**
- * "Needs a connection": off, the task is saved on this device when the server cannot be reached
- * and synced later; on, it is sent now or not at all.
+ * "Needs a connection": off, the task is saved on this device when the server cannot be reached and
+ * synced later; on, it is sent now or not at all.
  */
 @Composable
 private fun NeedsConnectionSwitch(checked: Boolean, onChange: (Boolean) -> Unit) {
     Row(
-        modifier = Modifier.fillMaxWidth().toggleable(checked, role = Role.Switch, onValueChange = onChange),
+        modifier =
+            Modifier.fillMaxWidth()
+                .toggleable(checked, role = Role.Switch, onValueChange = onChange),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(16.dp),
     ) {

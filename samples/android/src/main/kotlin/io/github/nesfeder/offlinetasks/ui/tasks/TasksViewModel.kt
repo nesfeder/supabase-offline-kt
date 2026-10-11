@@ -113,9 +113,9 @@ sealed interface TasksMessage {
 }
 
 /**
- * The Tasks screen's state: the live task list for the chips and the search, the sync headline,
- * the photo counts, deletions that can still be undone, and Mark all done. A swiped-away task is
- * only hidden until its snackbar goes; then it is deleted, unless the user chose Undo.
+ * The Tasks screen's state: the live task list for the chips and the search, the sync headline, the
+ * photo counts, deletions that can still be undone, and Mark all done. A swiped-away task is only
+ * hidden until its snackbar goes; then it is deleted, unless the user chose Undo.
  *
  * @param sessionState whether anyone is signed in: nothing can be shown or added before.
  * @param commitScope where deletions run; it outlives this ViewModel, so a task swiped away just
@@ -269,8 +269,8 @@ class TasksViewModel(
     }
 
     /**
-     * Pull to refresh: asks the server for the list again, and keeps where the answer came from
-     * for the caption. Offline it answers from this device, when the copy is a day old at most.
+     * Pull to refresh: asks the server for the list again, and keeps where the answer came from for
+     * the caption. Offline it answers from this device, when the copy is a day old at most.
      */
     fun refresh() {
         viewModelScope.launchReporting(failures) {
@@ -286,8 +286,8 @@ class TasksViewModel(
     }
 
     /**
-     * Marks every open task done on the server, says how many, and refreshes the list: a
-     * function's changes reach the device by a read.
+     * Marks every open task done on the server, says how many, and refreshes the list: a function's
+     * changes reach the device by a read.
      */
     fun markAllDone() {
         commitScope.launchReporting(failures) {
@@ -297,8 +297,8 @@ class TasksViewModel(
     }
 
     /**
-     * Announces the newest refusal waiting at launch, read once, then each write refused while
-     * this screen exists; the rest are on the Sync screen.
+     * Announces the newest refusal waiting at launch, read once, then each write refused while this
+     * screen exists; the rest are on the Sync screen.
      */
     private fun announceRejections() {
         viewModelScope.launchReporting(failures) {

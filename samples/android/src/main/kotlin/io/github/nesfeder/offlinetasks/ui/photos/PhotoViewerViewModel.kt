@@ -145,7 +145,9 @@ class PhotoViewerViewModel(
     fun shareLink() {
         val showing = uiState.value as? PhotoViewerUiState.Showing ?: return
         viewModelScope.launchReporting(failures) {
-            messageChannel.send(PhotoViewerMessage.ShareLink(repository.photoShareLink(showing.photo)))
+            messageChannel.send(
+                PhotoViewerMessage.ShareLink(repository.photoShareLink(showing.photo))
+            )
         }
     }
 

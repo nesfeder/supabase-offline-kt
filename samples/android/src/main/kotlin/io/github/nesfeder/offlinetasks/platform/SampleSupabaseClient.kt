@@ -59,7 +59,8 @@ private fun Offline.Config.writeEverySetting(
 ) {
     // --8<-- [start:sizes]
     // Cached query results, by the length of their answers: past it, the longest-fetched go.
-    cacheSizeBytes = QUERY_CACHE_SIZE_BYTES // the default; Offline.CACHE_SIZE_UNLIMITED never evicts
+    cacheSizeBytes =
+        QUERY_CACHE_SIZE_BYTES // the default; Offline.CACHE_SIZE_UNLIMITED never evicts
     // Downloaded photos: past it, the least recently used go, never one in use.
     fileCacheSizeBytes = PHOTO_CACHE_SIZE_BYTES // the default
     // --8<-- [end:sizes]

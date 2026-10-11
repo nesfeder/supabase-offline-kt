@@ -90,9 +90,12 @@ class SyncViewModelTest {
 
         // Then — the refusal is the line under the action, and not kept as a rejection
         val result =
-            viewModel.ready { it.tryIt[TryIt.InvalidTitle] is TryItResult.Failed }.tryIt
+            viewModel
+                .ready { it.tryIt[TryIt.InvalidTitle] is TryItResult.Failed }
+                .tryIt
                 .getValue(TryIt.InvalidTitle)
-        val refused = assertIs<TaskWriteRefusedException>(assertIs<TryItResult.Failed>(result).failure)
+        val refused =
+            assertIs<TaskWriteRefusedException>(assertIs<TryItResult.Failed>(result).failure)
         assertEquals("23514", refused.serverError.code)
         assertTrue(viewModel.ready().rejected.isEmpty())
     }

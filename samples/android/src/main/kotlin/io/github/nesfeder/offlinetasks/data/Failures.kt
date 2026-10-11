@@ -36,8 +36,7 @@ class SyncStoppedException(
 ) : Exception("The last sync stopped early", cause)
 
 /** The session expired and could not be refreshed; the server took the request as no one's. */
-class SessionExpiredException(cause: Throwable? = null) :
-    Exception("The session expired", cause)
+class SessionExpiredException(cause: Throwable? = null) : Exception("The session expired", cause)
 
 /**
  * The server refused a request that was not a write of the user's: a read, a function or a count.
@@ -45,8 +44,12 @@ class SessionExpiredException(cause: Throwable? = null) :
  * @property status the HTTP status.
  * @property code the PostgREST or Postgres code, if any.
  */
-class ServerRefusedException(val status: Int, val code: String?, message: String, cause: Throwable?) :
-    Exception(message, cause)
+class ServerRefusedException(
+    val status: Int,
+    val code: String?,
+    message: String,
+    cause: Throwable?,
+) : Exception(message, cause)
 
 /**
  * The library refused a request before sending it: two top-level filters on one column, or a retry
@@ -58,8 +61,7 @@ class InvalidRequestException(val libraryMessage: String, cause: Throwable? = nu
     Exception(libraryMessage, cause)
 
 /** A row from the server did not decode into the app's type, or a value did not encode. */
-class RowUnreadableException(cause: Throwable? = null) :
-    Exception("A row could not be read", cause)
+class RowUnreadableException(cause: Throwable? = null) : Exception("A row could not be read", cause)
 
 /** The Supabase client is closed, or was built without a plugin the call needs. */
 class ClientUnavailableException(cause: Throwable? = null) :

@@ -156,8 +156,7 @@ class SyncViewModel(
             ::QueueCounts,
         )
 
-    private val calls: Flow<OnDemand> =
-        combine(serverCounts, bucket, tryIt, syncNow, ::OnDemand)
+    private val calls: Flow<OnDemand> = combine(serverCounts, bucket, tryIt, syncNow, ::OnDemand)
 
     private val switches: Flow<Switches> =
         combine(repository.settings, repository.liveUpdatesStatus, ::Switches)
@@ -315,7 +314,11 @@ class SyncViewModel(
             ServerAnswer.Failed(failure)
         }
 
-    private data class QueueCounts(val tasks: Int, val photos: Int, val waiting: List<WaitingChange>)
+    private data class QueueCounts(
+        val tasks: Int,
+        val photos: Int,
+        val waiting: List<WaitingChange>,
+    )
 
     private data class SyncNowRun(val isRunning: Boolean, val report: TaskSyncReport?)
 

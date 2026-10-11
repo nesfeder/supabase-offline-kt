@@ -121,6 +121,7 @@ class OfflineTaskRepositoryTest {
             tasks.size == 2 && tasks.none { it.hasPendingMutations }
         }
     }
+
     // --8<-- [end:offline-test]
 
     @Test
@@ -166,9 +167,10 @@ class OfflineTaskRepositoryTest {
         repository.setNetworkEnabled(false)
 
         // When / Then — the queue cannot hold a group, and the library says so
-        val refused = assertFailsWith<WriteNeedsConnectionException> {
-            repository.deleteThisWeeksDoneTasks()
-        }
+        val refused =
+            assertFailsWith<WriteNeedsConnectionException> {
+                repository.deleteThisWeeksDoneTasks()
+            }
         assertTrue(refused.libraryMessage.isNotBlank())
         assertEquals(0, repository.pendingMutationCountNow())
     }
@@ -201,7 +203,8 @@ class OfflineTaskRepositoryTest {
         // Given — a task made offline
         repository.setNetworkEnabled(false)
         repository.addTask("Thrown away", notes = null)
-        val change = withTimeout(WAIT) { repository.waitingChanges().first { it.isNotEmpty() } }.single()
+        val change =
+            withTimeout(WAIT) { repository.waitingChanges().first { it.isNotEmpty() } }.single()
         assertEquals("Thrown away", change.taskTitle)
 
         // When
@@ -240,7 +243,10 @@ class OfflineTaskRepositoryTest {
         updates.applyTaskChange(PostgresAction.Insert(row, emptyList(), now(), KotlinXSerializer()))
 
         // Then — the device's copy has it, with nothing asked of the server
-        assertEquals("From elsewhere", repository.tasks().awaitValue { it.size == 1 }.single().title)
+        assertEquals(
+            "From elsewhere",
+            repository.tasks().awaitValue { it.size == 1 }.single().title,
+        )
 
         // When — and then deleted
         updates.applyTaskChange(PostgresAction.Delete(row, emptyList(), now(), KotlinXSerializer()))

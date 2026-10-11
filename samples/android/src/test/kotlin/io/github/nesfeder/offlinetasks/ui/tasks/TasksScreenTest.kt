@@ -90,11 +90,17 @@ class TasksScreenTest {
         val fetched = Instant.parse("2026-10-01T09:00:00Z")
         show(
             loaded(open = listOf(task("One")), done = emptyList())
-                .copy(caption = RefreshCaption(ReadProvenance(true, fetched, true), pendingCount = 1))
+                .copy(
+                    caption = RefreshCaption(ReadProvenance(true, fetched, true), pendingCount = 1)
+                )
         )
 
         // Then
-        compose.onNodeWithText(text(R.string.tasks_caption_from_device).substringBefore(" %"), substring = true)
+        compose
+            .onNodeWithText(
+                text(R.string.tasks_caption_from_device).substringBefore(" %"),
+                substring = true,
+            )
             .assertIsDisplayed()
     }
 

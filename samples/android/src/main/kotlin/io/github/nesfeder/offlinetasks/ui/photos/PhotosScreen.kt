@@ -111,7 +111,13 @@ fun PhotosScreen(
                         modifier = Modifier.padding(padding),
                     )
                 } else {
-                    PhotoGrid(state, onOpenPhoto, loadPhotoFile, onShowMore, Modifier.padding(padding))
+                    PhotoGrid(
+                        state,
+                        onOpenPhoto,
+                        loadPhotoFile,
+                        onShowMore,
+                        Modifier.padding(padding),
+                    )
                 }
         }
     }
@@ -151,7 +157,9 @@ private fun PhotoGrid(
         }
         if (state.hasMore) {
             item(key = "show-more", span = { GridItemSpan(maxLineSpan) }) {
-                FilledTonalButton(onClick = onShowMore) { Text(stringResource(R.string.photos_show_more)) }
+                FilledTonalButton(onClick = onShowMore) {
+                    Text(stringResource(R.string.photos_show_more))
+                }
             }
         }
     }

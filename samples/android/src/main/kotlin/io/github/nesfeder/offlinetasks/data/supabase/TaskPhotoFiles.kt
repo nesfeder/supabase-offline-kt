@@ -42,9 +42,9 @@ private const val FOLDERS_PER_PAGE = 10
 private const val FILES_PER_FOLDER = 100
 
 /**
- * The photos' files in the private `task-photos` bucket, through the library's offline bucket: every
- * Storage operation supabase-kt has, with downloads kept on the device. Failures are the library's
- * and supabase-kt's own; the repository puts them in the app's terms.
+ * The photos' files in the private `task-photos` bucket, through the library's offline bucket:
+ * every Storage operation supabase-kt has, with downloads kept on the device. Failures are the
+ * library's and supabase-kt's own; the repository puts them in the app's terms.
  */
 internal class TaskPhotoFiles(offline: Offline) {
 
@@ -56,6 +56,7 @@ internal class TaskPhotoFiles(offline: Offline) {
      */
     private val bucket: OfflineBucketApi =
         offline.storage.from(PHOTOS_BUCKET).setHeader("X-Client-Name", "offline-tasks-android")
+
     // --8<-- [end:bucket]
 
     // --8<-- [start:upload]
@@ -72,6 +73,7 @@ internal class TaskPhotoFiles(offline: Offline) {
                 }
             }
     }
+
     // --8<-- [end:upload]
 
     /** Deletes the files at [paths], in batches; a missing file is no error. */
@@ -85,22 +87,26 @@ internal class TaskPhotoFiles(offline: Offline) {
 
     /**
      * The copy on this device, downloaded into the cache first when there is none. A copy is
-     * returned however old it is; the photos never change in place but through Replace photo,
-     * which drops the copy.
+     * returned however old it is; the photos never change in place but through Replace photo, which
+     * drops the copy.
      */
     suspend fun ensureCachedFile(path: String): PhotoFile =
         bucket.ensureCachedFile(path).toPhotoFile() // isPublic = false: a private bucket
+
     // --8<-- [end:cached-file]
 
     // --8<-- [start:android-helpers]
     /** A thumbnail's copy as a `file:` URI when it is on this device; never touches the network. */
     suspend fun uriIfCached(path: String): String? = bucket.localUriIfCached(path)?.toString()
 
-    /** The copy as a `file:` URI for the image loader, downloaded into the cache first if needed. */
+    /**
+     * The copy as a `file:` URI for the image loader, downloaded into the cache first if needed.
+     */
     suspend fun uri(path: String): String = bucket.ensureLocalUri(path).toString()
 
     /** The copy as a [File], downloaded first if needed: Share copies it out of the cache. */
     suspend fun file(path: String): File = bucket.ensureLocalFile(path)
+
     // --8<-- [end:android-helpers]
 
     // --8<-- [start:photo-details]
@@ -120,6 +126,7 @@ internal class TaskPhotoFiles(offline: Offline) {
             cachedFile = cachedFile(path), // the device's copy: when fetched, how large
         )
     }
+
     // --8<-- [end:photo-details]
 
     // --8<-- [start:share-link]
@@ -131,12 +138,14 @@ internal class TaskPhotoFiles(offline: Offline) {
                 quality = SHARE_LINK_QUALITY
             }
         }
+
     // --8<-- [end:share-link]
 
     // --8<-- [start:share-all-links]
     /** Links anyone can open for an hour, one per file, in one request. */
     suspend fun shareLinks(paths: List<String>): List<String> =
         bucket.createSignedUrls(SHARE_LINK_LIFETIME, paths).map { it.signedURL }
+
     // --8<-- [end:share-all-links]
 
     // --8<-- [start:replace-photo]
@@ -147,6 +156,7 @@ internal class TaskPhotoFiles(offline: Offline) {
             contentType = ContentType.Image.JPEG
         }
     }
+
     // --8<-- [end:replace-photo]
 
     /** Moves the file at [from] to [to]; the cached copy at [from] goes. */
@@ -170,7 +180,8 @@ internal class TaskPhotoFiles(offline: Offline) {
             }
         val page = folders.take(FOLDERS_PER_PAGE)
         return BucketListing(
-            folders = page.map { folder -> BucketFolder(folder.name, filesIn("$userId/${folder.name}")) },
+            folders =
+                page.map { folder -> BucketFolder(folder.name, filesIn("$userId/${folder.name}")) },
             hasMore = folders.size > FOLDERS_PER_PAGE,
             nextOffset = offset + page.size,
         )
@@ -185,12 +196,13 @@ internal class TaskPhotoFiles(offline: Offline) {
                 search = "" // the start of a name to match; empty matches every file
             }
             .map { it.toBucketFile() }
+
     // --8<-- [end:list-bucket]
 
     // --8<-- [start:signed-upload]
     /**
-     * Uploads a JPEG to [path] through a signed upload URL: the URL's token, not the session,
-     * lets it in, so an app can hand such an upload to code that holds no session.
+     * Uploads a JPEG to [path] through a signed upload URL: the URL's token, not the session, lets
+     * it in, so an app can hand such an upload to code that holds no session.
      */
     suspend fun uploadThroughSignedUrl(path: String, jpeg: ByteArray) {
         val signed = bucket.createSignedUploadUrl(path) // the server checks the policies here

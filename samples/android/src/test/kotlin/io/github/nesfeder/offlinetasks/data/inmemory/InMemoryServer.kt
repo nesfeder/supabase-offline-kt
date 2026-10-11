@@ -54,7 +54,8 @@ internal class InMemoryServer(initialTasks: List<Task> = emptyList()) {
                 is QueuedMutation.MovePhoto -> {
                     val photo = photos[mutation.photoId]
                     if (photo != null && photo.userId == userId) {
-                        val moved = photo.copy(taskId = mutation.taskId, objectPath = mutation.objectPath)
+                        val moved =
+                            photo.copy(taskId = mutation.taskId, objectPath = mutation.objectPath)
                         photos = photos + (photo.id to moved)
                     }
                     ServerAnswer.Accepted(row = null)

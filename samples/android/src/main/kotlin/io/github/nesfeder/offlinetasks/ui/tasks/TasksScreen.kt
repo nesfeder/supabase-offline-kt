@@ -19,11 +19,11 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.LargeFlexibleTopAppBar
 import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.MediumExtendedFloatingActionButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarResult
@@ -61,7 +61,6 @@ import io.github.nesfeder.offlinetasks.R
 import io.github.nesfeder.offlinetasks.data.Task
 import io.github.nesfeder.offlinetasks.data.TaskFilter
 import io.github.nesfeder.offlinetasks.data.TaskQuery
-import io.github.nesfeder.offlinetasks.ui.status.relativeTime
 import io.github.nesfeder.offlinetasks.ui.components.EmptyState
 import io.github.nesfeder.offlinetasks.ui.components.segmentedScreenAppBarColors
 import io.github.nesfeder.offlinetasks.ui.feedback.AppSnackbarHost
@@ -72,6 +71,7 @@ import io.github.nesfeder.offlinetasks.ui.navigation.ShownTask
 import io.github.nesfeder.offlinetasks.ui.status.RollingText
 import io.github.nesfeder.offlinetasks.ui.status.SyncHeadline
 import io.github.nesfeder.offlinetasks.ui.status.SyncStatusBanner
+import io.github.nesfeder.offlinetasks.ui.status.relativeTime
 import kotlinx.coroutines.launch
 
 /** The test tag of the task list, so tests can scroll it. */
@@ -368,8 +368,8 @@ private fun TasksMenu(onMarkAllDone: () -> Unit) {
 }
 
 /**
- * Under the title after a pull to refresh: "Updated just now" when the server answered, "From
- * this device, 3 min ago" when it could not, and how many changes still wait.
+ * Under the title after a pull to refresh: "Updated just now" when the server answered, "From this
+ * device, 3 min ago" when it could not, and how many changes still wait.
  */
 @Composable
 private fun RefreshCaptionText(caption: RefreshCaption) {

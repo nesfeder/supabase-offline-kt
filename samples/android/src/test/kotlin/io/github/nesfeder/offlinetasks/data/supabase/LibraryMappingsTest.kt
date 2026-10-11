@@ -75,6 +75,7 @@ class LibraryMappingsTest {
         assertEquals("PGRST002", stopped.code)
         assertFalse(stopped.isConnectivityFailure)
     }
+
     // --8<-- [end:factories]
 
     @Test
@@ -208,7 +209,9 @@ class LibraryMappingsTest {
         val notQueueable =
             assertIs<WriteNeedsConnectionException>(
                 mutationNotQueueableException(IOException("offline"), "A grouped delete")
-                    .toAppFailure(LibraryCall.Write(Tables.TASKS, TaskMutationOperation.Delete, null))
+                    .toAppFailure(
+                        LibraryCall.Write(Tables.TASKS, TaskMutationOperation.Delete, null)
+                    )
             )
         assertEquals("A grouped delete", notQueueable.libraryMessage)
         val offline =

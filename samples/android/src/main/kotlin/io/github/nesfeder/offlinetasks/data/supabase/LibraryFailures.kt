@@ -75,7 +75,8 @@ internal fun Throwable.toAppFailure(call: LibraryCall): Throwable =
         // A cache-only read found nothing saved for its query.
         this is CacheMissException -> NotSavedOnDeviceException(this)
         // A write the queue cannot hold found no connection; nothing was queued.
-        this is MutationNotQueueableException -> WriteNeedsConnectionException(message.orEmpty(), this)
+        this is MutationNotQueueableException ->
+            WriteNeedsConnectionException(message.orEmpty(), this)
         // Why a replay stopped, writes still queued: the status and code, never the message.
         this is SyncFailedException ->
             SyncStoppedException(httpStatus, code, isNetworkOrConnectivityFailure(), this)
@@ -97,6 +98,7 @@ internal fun Throwable.toAppFailure(call: LibraryCall): Throwable =
         this is IllegalStateException -> ClientUnavailableException(this)
         else -> this // unexpected: reported as it is
     }
+
 // --8<-- [end:failure-mapping]
 
 /** PostgREST's refusal: of a write, the task it was for; of anything else, its status. */
@@ -127,12 +129,13 @@ private fun RestException.storageRefusal(call: LibraryCall): Exception =
 
 // --8<-- [start:reportable-failure]
 /**
- * A failure as one line for the app's log: its type, the HTTP status and whether the network
- * caused it. Never the message, which may carry a row, a filter value or a token.
+ * A failure as one line for the app's log: its type, the HTTP status and whether the network caused
+ * it. Never the message, which may carry a row, a filter value or a token.
  */
 internal fun Throwable.reportableDescription(): String =
     "${this::class.simpleName} status=${httpStatusOrNull()} " +
         "connectivity=${isNetworkOrConnectivityFailure()}"
+
 // --8<-- [end:reportable-failure]
 
 /** PostgREST's refusal as data: its status, the Postgres or PostgREST code and its text. */

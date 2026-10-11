@@ -71,10 +71,10 @@ import io.github.nesfeder.offlinetasks.data.TaskPhoto
 import io.github.nesfeder.offlinetasks.ui.components.shareJpeg
 import io.github.nesfeder.offlinetasks.ui.components.shareText
 import io.github.nesfeder.offlinetasks.ui.feedback.AppSnackbarHost
-import io.github.nesfeder.offlinetasks.ui.status.relativeTime
-import kotlinx.coroutines.launch
 import io.github.nesfeder.offlinetasks.ui.navigation.SharedElement
 import io.github.nesfeder.offlinetasks.ui.navigation.SharedKeys
+import io.github.nesfeder.offlinetasks.ui.status.relativeTime
+import kotlinx.coroutines.launch
 
 /** The largest zoom a pinch reaches. */
 private const val MAX_ZOOM = 5f
@@ -334,7 +334,10 @@ private fun PhotoDetailsSheet(details: PhotoDetails, onDismiss: () -> Unit) {
             modifier = Modifier.padding(start = 24.dp, end = 24.dp, bottom = 32.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Text(stringResource(R.string.photo_details), style = MaterialTheme.typography.titleLarge)
+            Text(
+                stringResource(R.string.photo_details),
+                style = MaterialTheme.typography.titleLarge,
+            )
             DetailLine(
                 R.string.photo_details_in_bucket,
                 stringResource(
@@ -348,7 +351,9 @@ private fun PhotoDetailsSheet(details: PhotoDetails, onDismiss: () -> Unit) {
                     stringResource(R.string.photo_details_bytes, details.sizeBytes),
                 )
                 details.contentType?.let { DetailLine(R.string.photo_details_type, it) }
-                details.updatedAt?.let { DetailLine(R.string.photo_details_updated, relativeTime(it)) }
+                details.updatedAt?.let {
+                    DetailLine(R.string.photo_details_updated, relativeTime(it))
+                }
                 details.etag?.let { DetailLine(R.string.photo_details_etag, it) }
             }
             DetailLine(R.string.photo_details_public_url, details.publicUrl)

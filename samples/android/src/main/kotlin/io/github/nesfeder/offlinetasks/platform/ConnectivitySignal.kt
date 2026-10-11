@@ -13,32 +13,31 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 
 // --8<-- [start:connectivity-signal]
 /**
- * Whether the device's default network reaches the internet, as Android has validated it: the
- * app's own connectivity signal, handed to the plugin as `networkAvailability`. An app with a
- * signal of its own passes it, so the app and the plugin never disagree about being online.
+ * Whether the device's default network reaches the internet, as Android has validated it: the app's
+ * own connectivity signal, handed to the plugin as `networkAvailability`. An app with a signal of
+ * its own passes it, so the app and the plugin never disagree about being online.
  */
-fun Context.validatedInternet(): Flow<Boolean> =
-    callbackFlow {
-            val connectivity = getSystemService(ConnectivityManager::class.java)
-            val callback =
-                object : ConnectivityManager.NetworkCallback() {
-                    override fun onCapabilitiesChanged(
-                        network: Network,
-                        capabilities: NetworkCapabilities,
-                    ) {
-                        trySend(capabilities.isValidatedInternet())
-                    }
+fun Context.validatedInternet(): Flow<Boolean> = callbackFlow {
+    val connectivity = getSystemService(ConnectivityManager::class.java)
+    val callback =
+        object : ConnectivityManager.NetworkCallback() {
+            override fun onCapabilitiesChanged(
+                network: Network,
+                capabilities: NetworkCapabilities,
+            ) {
+                trySend(capabilities.isValidatedInternet())
+            }
 
-                    override fun onLost(network: Network) {
-                        trySend(false)
-                    }
-                }
-            val current = connectivity.getNetworkCapabilities(connectivity.activeNetwork)
-            trySend(current?.isValidatedInternet() == true)
-            connectivity.registerDefaultNetworkCallback(callback)
-            awaitClose { connectivity.unregisterNetworkCallback(callback) }
+            override fun onLost(network: Network) {
+                trySend(false)
+            }
         }
-        .distinctUntilChanged()
+    val current = connectivity.getNetworkCapabilities(connectivity.activeNetwork)
+    trySend(current?.isValidatedInternet() == true)
+    connectivity.registerDefaultNetworkCallback(callback)
+    awaitClose { connectivity.unregisterNetworkCallback(callback) }
+}
+    .distinctUntilChanged()
 
 /** Whether this network has internet that Android has checked it can reach. */
 private fun NetworkCapabilities.isValidatedInternet(): Boolean =

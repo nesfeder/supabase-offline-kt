@@ -15,6 +15,7 @@ import io.github.nesfeder.offlinetasks.data.LiveUpdatesStatus
 import io.github.nesfeder.offlinetasks.data.NetworkSwitchedOffException
 import io.github.nesfeder.offlinetasks.data.NetworkUnavailableException
 import io.github.nesfeder.offlinetasks.data.NewTaskOutcome
+import io.github.nesfeder.offlinetasks.data.NotSavedOnDeviceException
 import io.github.nesfeder.offlinetasks.data.PhotoDetails
 import io.github.nesfeder.offlinetasks.data.PhotoFile
 import io.github.nesfeder.offlinetasks.data.PhotoListSnapshot
@@ -40,6 +41,7 @@ import io.github.nesfeder.offlinetasks.data.UserSession
 import io.github.nesfeder.offlinetasks.data.WaitingChange
 import io.github.nesfeder.offlinetasks.data.photoObjectPath
 import io.github.nesfeder.offlinetasks.data.takeCharacters
+import io.github.nesfeder.supabase.offline.CacheMissException
 import io.github.nesfeder.supabase.offline.FlowReadStrategy
 import io.github.nesfeder.supabase.offline.MutationOutcome
 import io.github.nesfeder.supabase.offline.MutationStrategy
@@ -47,8 +49,6 @@ import io.github.nesfeder.supabase.offline.NetworkStatus
 import io.github.nesfeder.supabase.offline.ReadStrategy
 import io.github.nesfeder.supabase.offline.offline
 import io.github.nesfeder.supabase.offline.rpc
-import io.github.nesfeder.offlinetasks.data.NotSavedOnDeviceException
-import io.github.nesfeder.supabase.offline.CacheMissException
 import java.io.File
 import java.security.MessageDigest
 import kotlin.coroutines.cancellation.CancellationException
@@ -159,6 +159,7 @@ class OfflineTaskRepository(
                     else FlowReadStrategy.CacheFirstThenNetwork // the default: the device first
                 taskList(query, strategy) { it }
             }
+
     // --8<-- [end:reactive-strategies]
 
     // --8<-- [start:row-from-list]
@@ -170,6 +171,7 @@ class OfflineTaskRepository(
         taskList(TaskQuery(), FlowReadStrategy.CacheFirstThenNetwork) { tasks ->
             tasks.filter { it.id == id }
         }
+
     // --8<-- [end:row-from-list]
 
     // --8<-- [start:cache-only-photos]
@@ -190,6 +192,7 @@ class OfflineTaskRepository(
                     photos.filter { it.taskId == taskId }.sortedBy { it.createdAt }
                 }
             }
+
     // --8<-- [end:cache-only-photos]
 
     override fun allPhotos(): Flow<PhotoListSnapshot> =
@@ -213,6 +216,7 @@ class OfflineTaskRepository(
                 }
         }
     }
+
     // --8<-- [end:photo-rows-in]
 
     // --8<-- [start:first-write]
@@ -235,30 +239,42 @@ class OfflineTaskRepository(
             is MutationOutcome.Queued -> NewTaskOutcome.SavedOnDevice // sent when it can be
         }
     }
+
     // --8<-- [end:first-write]
 
     // --8<-- [start:mutation-strategies]
     /** The "Needs a connection" switch: queued when offline (the default), or sent now or never. */
     private fun mutationStrategyFor(needsConnection: Boolean): MutationStrategy =
         if (needsConnection) MutationStrategy.OnlineOnly else MutationStrategy.QueueIfOffline
+
     // --8<-- [end:mutation-strategies]
 
     // --8<-- [start:typed-update]
     /** Autosave: the title and notes as one typed value; null notes clear them on the server. */
-    override suspend fun updateTask(id: String, title: String, notes: String?): TaskMutationOutcome =
+    override suspend fun updateTask(
+        id: String,
+        title: String,
+        notes: String?,
+    ): TaskMutationOutcome =
         write(Tables.TASKS, TaskMutationOperation.Update, title) {
-            offline.from(Tables.TASKS).update(TaskTextPatch(title, notes)) { filter { eq(ID, id) } }
-        }.toTaskMutationOutcome()
+                offline.from(Tables.TASKS).update(TaskTextPatch(title, notes)) {
+                    filter { eq(ID, id) }
+                }
+            }
+            .toTaskMutationOutcome()
+
     // --8<-- [end:typed-update]
 
     // --8<-- [start:body-update]
     /** The done switch: the change as a JSON body, one column. */
     override suspend fun setTaskDone(id: String, isDone: Boolean): TaskMutationOutcome =
         write(Tables.TASKS, TaskMutationOperation.Update, taskTitle = null) {
-            offline.from(Tables.TASKS).update(buildJsonObject { put(DONE, isDone) }) {
-                filter { eq(ID, id) }
+                offline.from(Tables.TASKS).update(buildJsonObject { put(DONE, isDone) }) {
+                    filter { eq(ID, id) }
+                }
             }
-        }.toTaskMutationOutcome()
+            .toTaskMutationOutcome()
+
     // --8<-- [end:body-update]
 
     // --8<-- [start:duplicate-task]
@@ -277,6 +293,7 @@ class OfflineTaskRepository(
         val stored = checkNotNull(outcome.resultOrNull()).decodeSingle<TaskRow>()
         return NewTaskOutcome.Saved(stored.toTask(pendingIds = emptySet()))
     }
+
     // --8<-- [end:duplicate-task]
 
     // --8<-- [start:bulk-insert]
@@ -284,9 +301,11 @@ class OfflineTaskRepository(
     override suspend fun addSampleTasks(): TaskMutationOutcome {
         val rows = SAMPLE_TITLES.map { title -> newTaskRow(title, notes = null) }
         return write(Tables.TASKS, TaskMutationOperation.Insert, rows.first().title) {
-            offline.from(Tables.TASKS).insert(rows)
-        }.toTaskMutationOutcome()
+                offline.from(Tables.TASKS).insert(rows)
+            }
+            .toTaskMutationOutcome()
     }
+
     // --8<-- [end:bulk-insert]
 
     // --8<-- [start:starter-list]
@@ -296,14 +315,18 @@ class OfflineTaskRepository(
      */
     override suspend fun importStarterList(): TaskMutationOutcome {
         val userId = signedInUserId()
-        val rows = STARTER_TITLES.mapIndexed { index, title -> newTaskRow(title, null, id = starterId(userId, index)) }
+        val rows = STARTER_TITLES.mapIndexed { index, title ->
+            newTaskRow(title, null, id = starterId(userId, index))
+        }
         return write(Tables.TASKS, TaskMutationOperation.Upsert, rows.first().title) {
-            offline.from(Tables.TASKS).upsert(rows) {
-                onConflict = ID // the column that decides a duplicate
-                ignoreDuplicates = true // keep the stored row, edited or not
+                offline.from(Tables.TASKS).upsert(rows) {
+                    onConflict = ID // the column that decides a duplicate
+                    ignoreDuplicates = true // keep the stored row, edited or not
+                }
             }
-        }.toTaskMutationOutcome()
+            .toTaskMutationOutcome()
     }
+
     // --8<-- [end:starter-list]
 
     // --8<-- [start:json-insert]
@@ -318,9 +341,11 @@ class OfflineTaskRepository(
             }
         }
         return write(Tables.TASKS, TaskMutationOperation.Insert, taskTitle = null) {
-            offline.from(Tables.TASKS).insert(body)
-        }.toTaskMutationOutcome()
+                offline.from(Tables.TASKS).insert(body)
+            }
+            .toTaskMutationOutcome()
     }
+
     // --8<-- [end:json-insert]
 
     // --8<-- [start:grouped-delete]
@@ -331,14 +356,19 @@ class OfflineTaskRepository(
     override suspend fun deleteThisWeeksDoneTasks(): TaskMutationOutcome {
         val week = recentWindow(clock.now())
         return write(Tables.TASKS, TaskMutationOperation.Delete, taskTitle = null) {
-            offline.from(Tables.TASKS).delete {
-                filter {
-                    eq(DONE, true)
-                    and { gte(CREATED_AT, week.from.toString()); lt(CREATED_AT, week.until.toString()) }
+                offline.from(Tables.TASKS).delete {
+                    filter {
+                        eq(DONE, true)
+                        and {
+                            gte(CREATED_AT, week.from.toString())
+                            lt(CREATED_AT, week.until.toString())
+                        }
+                    }
                 }
             }
-        }.toTaskMutationOutcome()
+            .toTaskMutationOutcome()
     }
+
     // --8<-- [end:grouped-delete]
 
     // --8<-- [start:delete-task]
@@ -346,7 +376,8 @@ class OfflineTaskRepository(
     override suspend fun deleteTask(id: String): TaskMutationOutcome = detached {
         val photos = cachedPhotosOf(id)
         // Files first, and only online: Storage writes are never queued, so offline they stay.
-        if (canReachNetwork()) deleteFiles(photos?.map { it.objectPath } ?: photoPathsOnServer(TASK_ID, id))
+        if (canReachNetwork())
+            deleteFiles(photos?.map { it.objectPath } ?: photoPathsOnServer(TASK_ID, id))
         // The server's cascade would delete the photo rows, but the cache never sees a cascade.
         if (photos == null || photos.isNotEmpty()) {
             write(Tables.TASK_PHOTOS, TaskMutationOperation.Delete, taskTitle = null) {
@@ -354,9 +385,11 @@ class OfflineTaskRepository(
             }
         }
         write(Tables.TASKS, TaskMutationOperation.Delete, taskTitle = null) {
-            offline.from(Tables.TASKS).delete { filter { eq(ID, id) } }
-        }.toTaskMutationOutcome()
+                offline.from(Tables.TASKS).delete { filter { eq(ID, id) } }
+            }
+            .toTaskMutationOutcome()
     }
+
     // --8<-- [end:delete-task]
 
     override fun attachPhoto(taskId: String, photo: EncodedPhoto): Flow<PhotoUpload> = channelFlow {
@@ -382,8 +415,9 @@ class OfflineTaskRepository(
         requireNetwork()
         deleteFiles(listOf(photo.objectPath))
         write(Tables.TASK_PHOTOS, TaskMutationOperation.Delete, taskTitle = null) {
-            offline.from(Tables.TASK_PHOTOS).delete { filter { eq(ID, photo.id) } }
-        }.toTaskMutationOutcome()
+                offline.from(Tables.TASK_PHOTOS).delete { filter { eq(ID, photo.id) } }
+            }
+            .toTaskMutationOutcome()
     }
 
     override suspend fun cachedPhotoFile(photo: TaskPhoto): PhotoFile? =
@@ -419,31 +453,36 @@ class OfflineTaskRepository(
 
     // --8<-- [start:move-photo]
     /** The file moves to the other task's folder first, then the row follows it, in one update. */
-    override suspend fun movePhoto(photo: TaskPhoto, taskId: String): TaskMutationOutcome = detached {
-        requireNetwork()
-        val newPath = photoObjectPath(photo.userId, taskId, photo.id)
-        storage(photo.objectPath) { files.move(photo.objectPath, newPath) }
-        write(Tables.TASK_PHOTOS, TaskMutationOperation.Update, taskTitle = null) {
-            offline.from(Tables.TASK_PHOTOS).update({
-                set(TASK_ID, taskId)
-                set(OBJECT_PATH, newPath) // the schema ties the path to the task
-            }) {
-                filter { eq(ID, photo.id) }
-            }
-        }.toTaskMutationOutcome()
-    }
+    override suspend fun movePhoto(photo: TaskPhoto, taskId: String): TaskMutationOutcome =
+        detached {
+            requireNetwork()
+            val newPath = photoObjectPath(photo.userId, taskId, photo.id)
+            storage(photo.objectPath) { files.move(photo.objectPath, newPath) }
+            write(Tables.TASK_PHOTOS, TaskMutationOperation.Update, taskTitle = null) {
+                    offline.from(Tables.TASK_PHOTOS).update({
+                        set(TASK_ID, taskId)
+                        set(OBJECT_PATH, newPath) // the schema ties the path to the task
+                    }) {
+                        filter { eq(ID, photo.id) }
+                    }
+                }
+                .toTaskMutationOutcome()
+        }
+
     // --8<-- [end:move-photo]
 
     // --8<-- [start:copy-photo]
     /** A copy of the file in the other task's folder, under a new id, then a row for it. */
-    override suspend fun copyPhoto(photo: TaskPhoto, taskId: String): TaskMutationOutcome = detached {
-        requireNetwork()
-        val copyId = newId()
-        val copyPath = photoObjectPath(photo.userId, taskId, copyId)
-        storage(photo.objectPath) { files.copy(photo.objectPath, copyPath) }
-        insertPhotoRow(copyId, photo.userId, taskId, copyPath, photo.width, photo.height)
-        TaskMutationOutcome.Applied
-    }
+    override suspend fun copyPhoto(photo: TaskPhoto, taskId: String): TaskMutationOutcome =
+        detached {
+            requireNetwork()
+            val copyId = newId()
+            val copyPath = photoObjectPath(photo.userId, taskId, copyId)
+            storage(photo.objectPath) { files.copy(photo.objectPath, copyPath) }
+            insertPhotoRow(copyId, photo.userId, taskId, copyPath, photo.width, photo.height)
+            TaskMutationOutcome.Applied
+        }
+
     // --8<-- [end:copy-photo]
 
     override suspend fun listBucket(offset: Int): BucketListing {
@@ -471,6 +510,7 @@ class OfflineTaskRepository(
     // --8<-- [start:pending-count]
     /** The queue's size, read once: the badge has it before the status's first update. */
     override suspend fun pendingMutationCountNow(): Int = offline.pendingMutationCount()
+
     // --8<-- [end:pending-count]
 
     // --8<-- [start:pending]
@@ -482,6 +522,7 @@ class OfflineTaskRepository(
     override suspend fun discardWaitingChange(id: Long) {
         offline.discardPendingMutation(id)
     }
+
     // --8<-- [end:pending]
 
     override fun rejectedMutations(): Flow<List<RejectedTaskMutation>> =
@@ -494,6 +535,7 @@ class OfflineTaskRepository(
     /** The refused writes as they stand now: the Tasks tab's alert at launch reads them once. */
     override suspend fun rejectedMutationsNow(): List<RejectedTaskMutation> =
         offline.rejectedMutations().first().asReversed().map { it.toRejectedTaskMutation() }
+
     // --8<-- [end:first-rejection]
 
     // --8<-- [start:rejected-actions]
@@ -510,12 +552,14 @@ class OfflineTaskRepository(
             throw notRetryable.toAppFailure(LibraryCall.Sync) // its body was too long to keep
         }
     }
+
     // --8<-- [end:rejected-actions]
 
     // --8<-- [start:sync-now]
     /** Sync now: sends what waits, in order, and reports every count of what happened. */
     override suspend fun syncPendingMutations(): TaskSyncReport =
         offline.syncPendingMutations().toTaskSyncReport() // returns promptly offline
+
     // --8<-- [end:sync-now]
 
     // --8<-- [start:network-first]
@@ -523,15 +567,15 @@ class OfflineTaskRepository(
      * Pull to refresh: the server's answer when it can be reached, else the device's copy if it is
      * a day old at most; the answer says which it was.
      */
-    override suspend fun refreshTasks(): ReadProvenance =
-        read {
-            offline
-                .from(Tables.TASKS)
-                .select(readStrategy = ReadStrategy.NetworkFirst(maxAge = REFRESH_MAX_AGE)) {
-                    tasksMatching(TaskQuery(), recentWindow(clock.now())) // the list's own query
-                }
-                .toReadProvenance()
-        }
+    override suspend fun refreshTasks(): ReadProvenance = read {
+        offline
+            .from(Tables.TASKS)
+            .select(readStrategy = ReadStrategy.NetworkFirst(maxAge = REFRESH_MAX_AGE)) {
+                tasksMatching(TaskQuery(), recentWindow(clock.now())) // the list's own query
+            }
+            .toReadProvenance()
+    }
+
     // --8<-- [end:network-first]
 
     // --8<-- [start:cache-first]
@@ -558,16 +602,18 @@ class OfflineTaskRepository(
             if (appFailure is NetworkUnavailableException) null else throw appFailure
         }
     }
+
     // --8<-- [end:cache-first]
 
     // --8<-- [start:rpc-no-parameters]
     /**
-     * Mark all done: one database function, on the server. Its changes reach the device's lists
-     * as any other device's do: through Live updates, or the next refresh.
+     * Mark all done: one database function, on the server. Its changes reach the device's lists as
+     * any other device's do: through Live updates, or the next refresh.
      */
     override suspend fun markAllDone(): Int = read {
         offline.rpc("complete_all_tasks").decodeAs<Int>() // how many it changed
     }
+
     // --8<-- [end:rpc-no-parameters]
 
     // --8<-- [start:rpc-parameters]
@@ -576,19 +622,29 @@ class OfflineTaskRepository(
         val since = recentWindow(clock.now()).from
         ServerCounts(
             // Typed parameters, encoded by the client's serializer; null counts every task.
-            done = offline.rpc("tasks_done_count", DoneCountParameters(createdSince = null)).decodeAs(),
+            done =
+                offline
+                    .rpc("tasks_done_count", DoneCountParameters(createdSince = null))
+                    .decodeAs(),
             total = countTasks(),
             // The same function with parameters as JSON.
             doneThisWeek =
                 offline
-                    .rpc("tasks_done_count", buildJsonObject { put("created_since", since.toString()) })
+                    .rpc(
+                        "tasks_done_count",
+                        buildJsonObject { put("created_since", since.toString()) },
+                    )
                     .decodeAs(),
         )
     }
+
     // --8<-- [end:rpc-parameters]
 
     // --8<-- [start:count]
-    /** How many tasks the server holds for the user: a count is never cached, so it needs the server. */
+    /**
+     * How many tasks the server holds for the user: a count is never cached, so it needs the
+     * server.
+     */
     private suspend fun countTasks(): Int =
         offline
             .from(Tables.TASKS)
@@ -598,6 +654,7 @@ class OfflineTaskRepository(
             }
             .countOrNull()
             ?.toInt() ?: 0
+
     // --8<-- [end:count]
 
     // --8<-- [start:operator-filter]
@@ -613,6 +670,7 @@ class OfflineTaskRepository(
             .countOrNull()
             ?.toInt() ?: 0
     }
+
     // --8<-- [end:operator-filter]
 
     // --8<-- [start:two-filters-refused]
@@ -631,6 +689,7 @@ class OfflineTaskRepository(
             }
         }
     }
+
     // --8<-- [end:two-filters-refused]
 
     // --8<-- [start:network-switch]
@@ -640,6 +699,7 @@ class OfflineTaskRepository(
         // The library's status is current when the call returns; this one follows it.
         syncStatus.first { (it.network == AppNetworkStatus.Disabled) != enabled }
     }
+
     // --8<-- [end:network-switch]
 
     // --8<-- [start:clear-local-data]
@@ -647,6 +707,7 @@ class OfflineTaskRepository(
     override suspend fun clearLocalData() {
         offline.clearLocalData() // an open list fetches again by itself once the network allows
     }
+
     // --8<-- [end:clear-local-data]
 
     // --8<-- [start:start-over]
@@ -661,6 +722,7 @@ class OfflineTaskRepository(
             session.signInAsNewUser()
         }
     }
+
     // --8<-- [end:start-over]
 
     override fun setPreferFreshData(prefer: Boolean) {
@@ -697,7 +759,8 @@ class OfflineTaskRepository(
                 try {
                     updates.applyChangesUntilCanceled { connected ->
                         liveUpdatesState.value =
-                            if (connected) LiveUpdatesStatus.Connected else LiveUpdatesStatus.Connecting
+                            if (connected) LiveUpdatesStatus.Connected
+                            else LiveUpdatesStatus.Connecting
                     }
                 } catch (cancellation: CancellationException) {
                     throw cancellation
@@ -729,6 +792,7 @@ class OfflineTaskRepository(
             }
         }
     }
+
     // --8<-- [end:first-observed-read]
 
     // --8<-- [start:paged-photos]
@@ -737,20 +801,22 @@ class OfflineTaskRepository(
         strategy: FlowReadStrategy,
         page: Int?,
         shown: (List<TaskPhoto>) -> List<TaskPhoto>,
-    ): Flow<PhotoListSnapshot> = whileSignedIn(before = nothingYet()) {
-        combine(
-            offline.from(Tables.TASK_PHOTOS).selectAsFlow(readStrategy = strategy) {
-                newestFirst()
-                if (page != null) range(0L, page - 1L) // each page size is a query of its own
-            },
-            pendingRowIds(Tables.TASK_PHOTOS),
-        ) { snapshot, pending ->
-            snapshot.toRowsSnapshot { result ->
-                val photos = result.decodeList<TaskPhotoRow>().map { it.toTaskPhoto(pending) }
-                shown(photos.sortedByDescending { it.createdAt })
+    ): Flow<PhotoListSnapshot> =
+        whileSignedIn(before = nothingYet()) {
+            combine(
+                offline.from(Tables.TASK_PHOTOS).selectAsFlow(readStrategy = strategy) {
+                    newestFirst()
+                    if (page != null) range(0L, page - 1L) // each page size is a query of its own
+                },
+                pendingRowIds(Tables.TASK_PHOTOS),
+            ) { snapshot, pending ->
+                snapshot.toRowsSnapshot { result ->
+                    val photos = result.decodeList<TaskPhotoRow>().map { it.toTaskPhoto(pending) }
+                    shown(photos.sortedByDescending { it.createdAt })
+                }
             }
         }
-    }
+
     // --8<-- [end:paged-photos]
 
     /** [read] while there is a session; before, [before] alone, and nothing is sent. */
@@ -764,6 +830,7 @@ class OfflineTaskRepository(
     /** The ids of [table]'s rows a queued write touches, from each write's row keys. */
     private fun pendingRowIds(table: String): Flow<Set<String>> =
         offline.pendingMutations(table).map { mutations -> mutations.rowIds() }
+
     // --8<-- [end:pending-marks]
 
     /** Runs [write] and puts its failure in the app's terms. */
@@ -818,8 +885,8 @@ class OfflineTaskRepository(
         )
 
     /**
-     * Writes the row of a photo whose file is in the bucket. A refusal at once (its task deleted
-     * on the server meanwhile, say) leaves a file no row will name, so the file goes too.
+     * Writes the row of a photo whose file is in the bucket. A refusal at once (its task deleted on
+     * the server meanwhile, say) leaves a file no row will name, so the file goes too.
      */
     private suspend fun insertPhotoRow(
         photoId: String,
@@ -887,6 +954,7 @@ class OfflineTaskRepository(
         } catch (missing: CacheMissException) {
             null // nothing saved for the query
         }
+
     // --8<-- [end:cache-only]
 
     // --8<-- [start:network-only]
@@ -913,6 +981,7 @@ class OfflineTaskRepository(
             if (page.isEmpty()) return paths
         }
     }
+
     // --8<-- [end:network-only]
 
     /** Deletes the files at [paths] from the bucket; a missing file is no error. */
@@ -927,7 +996,9 @@ class OfflineTaskRepository(
         deleteFiles(photoPathsOnServer(USER_ID, userId))
         // Sent now or not at all: queued, they would outlive the user they are for.
         write(Tables.TASK_PHOTOS, TaskMutationOperation.Delete, taskTitle = null) {
-            offline.from(Tables.TASK_PHOTOS).delete(mutationStrategy = MutationStrategy.OnlineOnly) {
+            offline.from(Tables.TASK_PHOTOS).delete(
+                mutationStrategy = MutationStrategy.OnlineOnly
+            ) {
                 filter { eq(USER_ID, userId) }
             }
         }
@@ -937,6 +1008,7 @@ class OfflineTaskRepository(
             }
         }
     }
+
     // --8<-- [end:delete-my-data]
 
     /** Whether the library may reach the network: not switched off, and not known to be offline. */
@@ -1003,10 +1075,11 @@ private fun <T> nothingYet(): RowsSnapshot<T> =
 private fun List<Task>.newestFirst(): List<Task> = sortedByDescending { it.createdAt }
 
 /**
- * The id of the starter list's [index]th task for [userId]: the same every time, so a second
- * import finds the first one's rows; a UUID made from a digest of the two.
+ * The id of the starter list's [index]th task for [userId]: the same every time, so a second import
+ * finds the first one's rows; a UUID made from a digest of the two.
  */
 private fun starterId(userId: String, index: Int): String {
-    val digest = MessageDigest.getInstance("SHA-256").digest("starter/$userId/$index".encodeToByteArray())
+    val digest =
+        MessageDigest.getInstance("SHA-256").digest("starter/$userId/$index".encodeToByteArray())
     return Uuid.fromByteArray(digest.copyOf(Uuid.SIZE_BYTES)).toString()
 }

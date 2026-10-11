@@ -384,7 +384,10 @@ private fun RejectedRow(
                 )
                 if (rejection.rowKeys.isNotEmpty()) {
                     SmallText(
-                        stringResource(R.string.sync_rejected_rows, rejection.rowKeys.joinToString())
+                        stringResource(
+                            R.string.sync_rejected_rows,
+                            rejection.rowKeys.joinToString(),
+                        )
                     )
                 }
                 if (!rejection.isRetryable) {
@@ -521,7 +524,13 @@ private fun LazyListScope.developerGroup(state: SyncUiState.Ready, actions: Sync
         )
     items.forEachIndexed { index, action ->
         item(key = "try-${action.name}") {
-            TryItRow(index = index, count = items.size, action = action, state = state, actions = actions)
+            TryItRow(
+                index = index,
+                count = items.size,
+                action = action,
+                state = state,
+                actions = actions,
+            )
         }
     }
 }
@@ -537,9 +546,10 @@ private fun TryItRow(
 ) {
     // Every action needs its user, so before the first sign-in there is nothing to try.
     val signedIn = state.session == SessionState.SignedIn
-    val offline = state.status.network.let {
-        it == AppNetworkStatus.Offline || it == AppNetworkStatus.Disabled
-    }
+    val offline =
+        state.status.network.let {
+            it == AppNetworkStatus.Offline || it == AppNetworkStatus.Disabled
+        }
     // The grouped delete is about being offline: online it would delete this week's done tasks.
     val enabled =
         signedIn &&

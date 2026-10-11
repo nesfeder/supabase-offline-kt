@@ -116,7 +116,8 @@ internal sealed interface QueuedMutation {
         override fun applyTo(rows: DeviceRows): DeviceRows {
             val photo = rows.photos[photoId] ?: return rows
             return rows.copy(
-                photos = rows.photos + (photoId to photo.copy(taskId = taskId, objectPath = objectPath))
+                photos =
+                    rows.photos + (photoId to photo.copy(taskId = taskId, objectPath = objectPath))
             )
         }
     }

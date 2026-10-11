@@ -27,8 +27,8 @@ fun interface PhotoEncoder {
 data class PhotoFile(val path: String, val fetchedAt: Instant, val sizeBytes: Long)
 
 /**
- * Everything the app can say about one photo's file: Storage's own record of it, its links, and
- * the copy on this device.
+ * Everything the app can say about one photo's file: Storage's own record of it, its links, and the
+ * copy on this device.
  *
  * @property existsInBucket whether Storage has the file now.
  * @property sizeBytes the file's size in the bucket.

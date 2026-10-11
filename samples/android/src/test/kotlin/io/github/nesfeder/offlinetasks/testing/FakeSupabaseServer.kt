@@ -111,6 +111,7 @@ class FakeSupabaseServer {
             install(Storage) { resumable { cache = MemoryResumableCache() } }
             install(Offline) { inMemory(Clock.System) } // the cache and the queue in memory
         }
+
     // --8<-- [end:in-memory-client]
 
     /** Adds [row] to [table] as the server stores it, as if another device had sent it. */
@@ -278,7 +279,8 @@ class FakeSupabaseServer {
             when {
                 index < 0 -> rows += row
                 "resolution=ignore-duplicates" in prefer -> continue
-                "resolution=merge-duplicates" in prefer -> rows[index] = JsonObject(rows[index] + row)
+                "resolution=merge-duplicates" in prefer ->
+                    rows[index] = JsonObject(rows[index] + row)
                 else -> rows += row
             }
             written += row
@@ -293,7 +295,9 @@ class FakeSupabaseServer {
             when (name) {
                 "complete_all_tasks" -> {
                     val open = tasks.indices.filter { tasks[it]["done"] == JsonPrimitive(false) }
-                    open.forEach { tasks[it] = JsonObject(tasks[it] + ("done" to JsonPrimitive(true))) }
+                    open.forEach {
+                        tasks[it] = JsonObject(tasks[it] + ("done" to JsonPrimitive(true)))
+                    }
                     open.size
                 }
                 "tasks_done_count" -> tasks.count { it["done"] == JsonPrimitive(true) }

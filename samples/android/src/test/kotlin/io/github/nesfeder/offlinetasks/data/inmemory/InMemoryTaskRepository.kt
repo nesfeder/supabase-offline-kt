@@ -179,7 +179,10 @@ class InMemoryTaskRepository(
         val search = query.search.trim()
         return observe {
             it.taskSnapshot(
-                rows = { task -> task.matches(query.filter, since) && task.title.contains(search, ignoreCase = true) },
+                rows = { task ->
+                    task.matches(query.filter, since) &&
+                        task.title.contains(search, ignoreCase = true)
+                },
                 writes = { true },
             )
         }
@@ -233,8 +236,10 @@ class InMemoryTaskRepository(
     }
 
     override suspend fun duplicateTask(id: String): NewTaskOutcome {
-        val original = state.value.visibleRows()?.tasks?.get(id) ?: throw NotSavedOnDeviceException()
-        val copy = newTask("${original.title} (copy)", original.notes).copy(isDone = original.isDone)
+        val original =
+            state.value.visibleRows()?.tasks?.get(id) ?: throw NotSavedOnDeviceException()
+        val copy =
+            newTask("${original.title} (copy)", original.notes).copy(isDone = original.isDone)
         return when (write { QueuedMutation.InsertTask(it, copy) }) {
             TaskMutationOutcome.Applied -> NewTaskOutcome.Saved(copy)
             is TaskMutationOutcome.Queued -> NewTaskOutcome.SavedOnDevice
@@ -267,7 +272,10 @@ class InMemoryTaskRepository(
 
     override suspend fun deleteThisWeeksDoneTasks(): TaskMutationOutcome {
         unreachableServerError()?.let {
-            throw WriteNeedsConnectionException("A delete with a logical group cannot be queued", it)
+            throw WriteNeedsConnectionException(
+                "A delete with a logical group cannot be queued",
+                it,
+            )
         }
         val since = clock.now() - RECENT
         val done =
@@ -413,23 +421,33 @@ class InMemoryTaskRepository(
         photoFiles.delete(photo.fileName)
     }
 
-    override suspend fun movePhoto(photo: TaskPhoto, taskId: String): TaskMutationOutcome = detached {
-        unreachableServerError()?.let { throw it }
-        storageRefusal()?.let { throw it }
-        val newPath = photoObjectPath(photo.userId, taskId, photo.id)
-        if (!server.moveFile(photo.objectPath, newPath)) throw PhotoNotFoundException(photo.objectPath)
-        write { QueuedMutation.MovePhoto(it, photo.id, taskId, newPath) }
-    }
+    override suspend fun movePhoto(photo: TaskPhoto, taskId: String): TaskMutationOutcome =
+        detached {
+            unreachableServerError()?.let { throw it }
+            storageRefusal()?.let { throw it }
+            val newPath = photoObjectPath(photo.userId, taskId, photo.id)
+            if (!server.moveFile(photo.objectPath, newPath))
+                throw PhotoNotFoundException(photo.objectPath)
+            write { QueuedMutation.MovePhoto(it, photo.id, taskId, newPath) }
+        }
 
-    override suspend fun copyPhoto(photo: TaskPhoto, taskId: String): TaskMutationOutcome = detached {
-        unreachableServerError()?.let { throw it }
-        storageRefusal()?.let { throw it }
-        val copyId = newId()
-        val copyPath = photoObjectPath(photo.userId, taskId, copyId)
-        if (!server.copyFile(photo.objectPath, copyPath)) throw PhotoNotFoundException(photo.objectPath)
-        val copy = photo.copy(id = copyId, taskId = taskId, objectPath = copyPath, createdAt = clock.now())
-        write { QueuedMutation.InsertPhoto(it, copy) }
-    }
+    override suspend fun copyPhoto(photo: TaskPhoto, taskId: String): TaskMutationOutcome =
+        detached {
+            unreachableServerError()?.let { throw it }
+            storageRefusal()?.let { throw it }
+            val copyId = newId()
+            val copyPath = photoObjectPath(photo.userId, taskId, copyId)
+            if (!server.copyFile(photo.objectPath, copyPath))
+                throw PhotoNotFoundException(photo.objectPath)
+            val copy =
+                photo.copy(
+                    id = copyId,
+                    taskId = taskId,
+                    objectPath = copyPath,
+                    createdAt = clock.now(),
+                )
+            write { QueuedMutation.InsertPhoto(it, copy) }
+        }
 
     override suspend fun listBucket(offset: Int): BucketListing {
         unreachableServerError()?.let { throw it }
@@ -441,7 +459,13 @@ class InMemoryTaskRepository(
                     BucketFolder(
                         taskId,
                         files.map { (path, size) ->
-                            BucketFile(path.substringAfterLast('/'), size.toLong(), null, null, null)
+                            BucketFile(
+                                path.substringAfterLast('/'),
+                                size.toLong(),
+                                null,
+                                null,
+                                null,
+                            )
                         },
                     )
                 },
@@ -455,7 +479,8 @@ class InMemoryTaskRepository(
         val newest =
             state.value.visibleRows()?.photos?.values?.maxByOrNull { it.createdAt }
                 ?: return@detached null
-        val bytes = server.download(newest.objectPath) ?: throw PhotoNotFoundException(newest.objectPath)
+        val bytes =
+            server.download(newest.objectPath) ?: throw PhotoNotFoundException(newest.objectPath)
         val photoId = newId()
         val path = photoObjectPath(newest.userId, newest.taskId, photoId)
         server.upload(path, bytes)
@@ -463,6 +488,7 @@ class InMemoryTaskRepository(
         write { QueuedMutation.InsertPhoto(it, copy) }
         copy
     }
+
     override suspend fun downloadPhotoFile(photo: TaskPhoto): PhotoFile {
         photoFiles.find(photo.fileName)?.let {
             return it
@@ -540,7 +566,11 @@ class InMemoryTaskRepository(
         val before = state.value
         if (before.network != AppNetworkStatus.Online) {
             val fetchedAt = before.fetchedAt
-            if (before.cache == null || fetchedAt == null || clock.now() - fetchedAt > REFRESH_MAX_AGE) {
+            if (
+                before.cache == null ||
+                    fetchedAt == null ||
+                    clock.now() - fetchedAt > REFRESH_MAX_AGE
+            ) {
                 throw NetworkUnavailableException()
             }
             return ReadProvenance(true, fetchedAt, before.queue.isNotEmpty())

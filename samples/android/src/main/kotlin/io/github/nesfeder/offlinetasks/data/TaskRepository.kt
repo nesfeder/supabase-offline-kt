@@ -248,8 +248,7 @@ interface TaskRepository {
     fun waitingChanges(): Flow<List<WaitingChange>>
 
     /**
-     * Removes a waiting write without sending it: its rows show again as the server last sent
-     * them.
+     * Removes a waiting write without sending it: its rows show again as the server last sent them.
      */
     suspend fun discardWaitingChange(id: Long)
 

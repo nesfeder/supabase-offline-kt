@@ -56,6 +56,7 @@ class LiveUpdates(private val supabase: SupabaseClient) {
             withContext(NonCancellable) { supabase.realtime.removeChannel(channel) }
         }
     }
+
     // --8<-- [end:live-updates]
 
     // --8<-- [start:apply-records]
