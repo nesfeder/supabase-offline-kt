@@ -51,4 +51,3 @@ internal suspend fun forgetSessionOffline(supabase: SupabaseClient) {
     }
     // --8<-- [end:forget-session]
 }
-

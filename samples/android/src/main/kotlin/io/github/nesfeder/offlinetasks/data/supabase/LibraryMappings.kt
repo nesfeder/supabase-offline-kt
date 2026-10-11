@@ -101,6 +101,7 @@ internal fun SyncReport.toTaskSyncReport(): TaskSyncReport =
         alreadyOnServerCount = alreadyOnServerCount,
         heldBehindOtherTablesCount = heldBehindOtherTablesCount,
     )
+
 // --8<-- [end:sync-report]
 
 // --8<-- [start:waiting-change]

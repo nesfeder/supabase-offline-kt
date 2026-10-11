@@ -535,6 +535,7 @@ class OfflineTaskRepository(
         offline.rejectedMutations().map { list ->
             list.asReversed().map { it.toRejectedTaskMutation() }
         }
+
     // --8<-- [end:rejected-list]
 
     // --8<-- [start:first-rejection]
@@ -788,6 +789,7 @@ class OfflineTaskRepository(
             newestFirst() // the query of allPhotos()
         }
     }
+
     // --8<-- [end:read-again]
 
     // --8<-- [start:first-observed-read]
