@@ -147,3 +147,138 @@ struct PhotoTests {
         #expect(photo.height == 16)
     }
 }
+
+/// What the photo viewer and the Storage section do with a photo's file, through the offline bucket.
+@Suite("Photo actions on the offline client", .serialized)
+struct PhotoActionTests {
+
+    /// A started app with two tasks, the first with one photo.
+    private static func appWithPhoto() async throws -> (TestApp, TaskPhoto, TaskItem) {
+        let test = TestApp()
+        try await test.start()
+        try await test.addTask("Paint the door")
+        try await test.addTask("Sand the door")
+        let painted = try await test.task(titled: "Paint the door")
+        let sanded = try await test.task(titled: "Sand the door")
+        try await eventually("both reach the server") { await test.server.rows(of: Tables.tasks).count == 2 }
+        let photo = try await test.repository.attachPhoto(taskID: painted.id, photo: try await PhotoEncoder.encode(jpegFixture()))
+        return (test, photo, sanded)
+    }
+
+    @Test("Details read Storage's facts, both addresses and the device's copy")
+    func details() async throws {
+        // Given
+        let (test, photo, _) = try await Self.appWithPhoto()
+        _ = await test.repository.photoFile(for: photo)
+
+        // When
+        let details = await test.repository.photoDetails(for: photo)
+
+        // Then
+        #expect(details.inBucket?.name == photo.objectPath)
+        #expect(details.inBucket?.contentType == "image/jpeg")
+        #expect(details.inBucket?.metadata?["task_id"] == .string(photo.taskID))
+        #expect(details.existsInBucket == true)
+        #expect(details.authenticatedURL?.path().hasSuffix("/object/authenticated/task-photos/\(photo.objectPath)") == true)
+        #expect(details.publicURL?.path().hasSuffix("/object/public/task-photos/\(photo.objectPath)") == true)
+        #expect(details.onDevice?.sizeBytes == (await test.server.fileData(at: photo.objectPath))?.count)
+        try await test.stop()
+    }
+
+    @Test("Share link signs a resized copy, and Share all signs every photo in one request")
+    func shareLinks() async throws {
+        // Given
+        let (test, photo, _) = try await Self.appWithPhoto()
+
+        // When
+        let link = try await test.repository.shareLink(for: photo)
+        let links = try await test.repository.shareLinks(for: [photo])
+
+        // Then
+        #expect(link.path().contains("/object/sign/task-photos/\(photo.objectPath)"))
+        #expect(links.count == 1)
+        let signing = await test.server.requests.first { $0.path.hasSuffix("/object/sign/task-photos/\(photo.objectPath)") }
+        #expect(signing?.body.contains("\"width\":512") == true)
+        try await test.stop()
+    }
+
+    @Test("Replace writes over the file at its path, and the row takes the new size")
+    func replace() async throws {
+        // Given
+        let (test, photo, _) = try await Self.appWithPhoto()
+        let replacement = try await PhotoEncoder.encode(SamplePhoto.jpeg())
+
+        // When
+        try await test.repository.replacePhoto(photo, with: replacement)
+
+        // Then
+        #expect(await test.server.fileData(at: photo.objectPath) == replacement.jpeg)
+        try await eventually("the row has the new size") {
+            await test.server.rows(of: Tables.taskPhotos).first?["width"] == .int(replacement.width)
+        }
+        try await test.stop()
+    }
+
+    @Test("Move takes the file and the row to the other task; Duplicate adds a copy there")
+    func moveAndCopy() async throws {
+        // Given
+        let (test, photo, other) = try await Self.appWithPhoto()
+
+        // When
+        try await test.repository.copyPhoto(photo, toTask: other.id)
+        try await test.repository.movePhoto(photo, toTask: other.id)
+
+        // Then
+        let moved = PhotoPath.objectPath(userID: photo.userID, taskID: other.id, photoID: photo.id)
+        let paths = await test.server.objectPaths()
+        #expect(paths.count == 2)
+        #expect(paths.contains(moved))
+        #expect(!paths.contains(photo.objectPath))
+        try await eventually("both rows are the other task's") {
+            await test.server.rows(of: Tables.taskPhotos).allSatisfy { $0["task_id"] == .string(other.id) }
+        }
+        try await test.stop()
+    }
+
+    @Test("The bucket's listing pages, sorts and filters by name")
+    func bucketListing() async throws {
+        // Given
+        let (test, photo, _) = try await Self.appWithPhoto()
+
+        // When
+        let folders = try await test.repository.bucketEntries(in: "", page: BucketPage())
+        let files = try await test.repository.bucketEntries(in: photo.taskID, page: BucketPage(newestFirst: true))
+        let none = try await test.repository.bucketEntries(in: photo.taskID, page: BucketPage(search: "no such name"))
+
+        // Then
+        #expect(folders.map(\.name) == [photo.taskID])
+        #expect(folders.first?.id == nil)
+        #expect(files.map(\.name) == ["\(photo.id).jpg"])
+        #expect(files.first?.metadata?["mimetype"] == "image/jpeg")
+        #expect(none.isEmpty)
+        let listing = await test.server.requests.first { $0.path.hasSuffix("/object/list/task-photos") }
+        #expect(listing?.body.contains("\"limit\":20") == true)
+        try await test.stop()
+    }
+
+    @Test("Upload through a signed URL adds a photo to the newest task")
+    func signedUpload() async throws {
+        // Given
+        let test = TestApp()
+        try await test.start()
+        try await test.addTask("Paint the door")
+        let task = try await test.task(titled: "Paint the door")
+        try await eventually("it reaches the server") { await test.server.rows(of: Tables.tasks).count == 1 }
+
+        // When
+        test.app.sync.run(.signedUpload, newestTaskID: task.id)
+        try await eventually("Try it says so") { test.app.sync.tryItResults[.signedUpload] != nil }
+
+        // Then
+        #expect(test.app.sync.tryItResults[.signedUpload] == "Uploaded through a signed URL, and added to your newest task.")
+        #expect(await test.server.objectPaths().count == 1)
+        #expect(await test.server.requests.contains { $0.method == "PUT" && $0.path.contains("/object/upload/sign/task-photos/") })
+        try await eventually("its row is there") { await test.server.rows(of: Tables.taskPhotos).count == 1 }
+        try await test.stop()
+    }
+}

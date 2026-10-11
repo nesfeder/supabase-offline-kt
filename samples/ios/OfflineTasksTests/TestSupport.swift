@@ -30,11 +30,12 @@ final class TestApp {
     /// The live updates, stopped by ``stop()``.
     private var liveUpdates: Task<Void, Never>?
 
-    /// A fresh app on a fresh server, signed in as a new user whose sign-out takes `signOutDelay`,
-    /// on `clock`'s time when one is given.
-    init(server: DemoServer = DemoServer(), signOutDelay: Duration = .zero, clock: ManualClock? = nil) {
+    /// A fresh app on `server`, signed in as `session`'s user or a new one whose sign-out takes
+    /// `signOutDelay`, on `clock`'s time when one is given.
+    init(server: DemoServer = DemoServer(), session: DemoSession? = nil, signOutDelay: Duration = .zero, clock: ManualClock? = nil) {
         self.server = server
-        session = DemoSession(signOutDelay: signOutDelay)
+        let session = session ?? DemoSession(signOutDelay: signOutDelay)
+        self.session = session
         app = AppModel.demo(server: server, session: session, clock: clock)
     }
 
@@ -64,12 +65,11 @@ final class TestApp {
         ]
     }
 
-    /// Shows the list `query` asks for, as choosing a chip or searching does, and waits for it.
+    /// Shows the list `query` asks for, as choosing a chip or searching does; the test waits for
+    /// the rows it expects.
     func show(_ query: TaskQuery) async throws {
-        let app = app
         app.tasks.query = query
         startReads()
-        try await eventually("the list is read") { app.tasks.visibleRows != nil }
     }
 
     /// Starts Live updates, as the root view does, and waits until the server reports to it.

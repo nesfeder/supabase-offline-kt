@@ -461,7 +461,10 @@ actor DemoServer: ServerChangeSource {
             let rest = objectPath.dropFirst(folder.count)
             if let slash = rest.firstIndex(of: "/") {
                 let name = String(rest[..<slash])
-                entries[name] = ["name": .string(name), "id": .null, "updated_at": .null, "created_at": .null, "metadata": .null]
+                entries[name] = [
+                    "name": .string(name), "id": .null, "updated_at": .null, "created_at": .null,
+                    "last_accessed_at": .null, "metadata": .null,
+                ]
             } else {
                 entries[String(rest)] = Self.listing(of: file, named: String(rest))
             }

@@ -236,6 +236,9 @@ final class TaskRepository {
         }
         switch outcome {
         case .applied(let result):
+            // A write sent only straight to the server is never put into the device's lists:
+            // the app puts in the row the server stored, as it would a row Realtime reports.
+            if needsConnection { try await client.applyServerRecord(table: Tables.tasks, record: result.value) }
             return .saved(storedAt: result.value.createdAt)
         case .queued(let pendingMutation):
             return .savedOnDevice(pendingMutationID: pendingMutation.id)
@@ -324,10 +327,13 @@ final class TaskRepository {
         let userID = try signedInUserID()
         let createdAt = Date.now.formatted(.iso8601)
         let rows: [OfflineJSON] = StarterList.titles.enumerated().map { index, title in
+            // Every column the list reads: a queued row shows with only what it wrote.
             [
                 "id": .string(DeviceID.derived(from: "starter \(index) of \(userID)")),
                 "user_id": .string(userID),
                 "title": .string(title),
+                "notes": .null,
+                "done": false,
                 "created_at": .string(createdAt),
             ]
         }
@@ -347,6 +353,8 @@ final class TaskRepository {
             "id": .string(DeviceID.make()),
             "user_id": .string(try signedInUserID()),
             "title": .string(TaskRules.invalidTitle),
+            "notes": .null,
+            "done": false,
             "created_at": .string(Date.now.formatted(.iso8601)),
         ]
         return try await write(taskTitle: TaskRules.invalidTitle) {
