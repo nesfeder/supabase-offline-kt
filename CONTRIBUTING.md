@@ -407,18 +407,22 @@ Material for MkDocs prints a notice about MkDocs 2.0 on every run. Set
   `python3 scripts/check-spelling.py` checks every page, as CI does (see "Formatting").
 - Every page must be listed under `nav` in `mkdocs.yml`.
 - Some pages are pulled in from elsewhere in the repository when the site is built: this file,
-  `CHANGELOG.md`, and the sample schema in
-  `samples/supabase/migrations/20260930000000_offline_tasks.sql`. Edit those files, not the pages
-  that include them. Links inside them must be absolute URLs, because they are resolved
-  relative to the page that includes them.
-- Every Kotlin sample on the Getting started, Behaviors and Reference pages is a named section of
-  a source file the build compiles, in
-  `supabase-offline-kt/src/androidHostTest/kotlin/io/github/nesfeder/supabase/offline/docs/` (the
-  testing artifact's in its own `commonTest`), marked by start and end comments as the files
-  there show; a page includes the section by file and name, as it includes the root files. Edit
-  the sample there: `./gradlew :supabase-offline-kt:compileAndroidHostTest` compiles it, and the
-  strict build fails on a section that is gone. Gradle files, shell, SQL, XML and a sample that
-  needs a module the library does not bring stay inline in the page.
+  `CHANGELOG.md`, and the sample schema's migrations in `samples/supabase/migrations/`. Edit those
+  files, not the pages that include them. Links inside them must be absolute URLs, because they
+  are resolved relative to the page that includes them.
+- The code on the Getting started, Behaviors and Reference pages is the sample apps' own: a named
+  section of an Android or iOS sample source file, marked by start and end comments
+  (`// --8<-- [start:name]` … `// --8<-- [end:name]`), shown as an Android tab and an iOS tab
+  under a line linking the two files. A page includes a section by its path under the sample's
+  source root and its name (`data/supabase/OfflineTaskRepository.kt:first-write`), and one step
+  has the same name on both platforms. A section is one idea, about 25 lines at most, and a marker
+  never cuts a statement. Edit the code in the sample: its build and tests compile it, and the
+  strict build fails on a section a page names that is gone, which CI runs whenever a sample's
+  sources change. The few listings no sample makes (supabase-kt's side of the migration page's
+  contrasts, a dry run, a sign-out, a download to bytes, a no-backup data directory) are sections
+  of `supabase-offline-kt/src/androidHostTest/kotlin/io/github/nesfeder/supabase/offline/docs/`,
+  which `./gradlew :supabase-offline-kt:compileAndroidHostTest` compiles. Gradle files, shell,
+  SQL and XML stay inline in the page.
 - A page that has not been written yet opens with a "Not written yet" note. It is a plain Markdown
   blockquote, so it shows on GitHub as well as on the site. Remove the note when the page is
   written.

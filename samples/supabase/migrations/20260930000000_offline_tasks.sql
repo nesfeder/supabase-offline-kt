@@ -6,7 +6,7 @@
 --
 -- Before you run it, turn on anonymous sign-ins: Authentication > Sign In / Providers >
 -- "Allow anonymous sign-ins". Then paste this whole file into the SQL Editor and run it, or run
--- `supabase db push` from samples/, where this file is the one migration. Step by step:
+-- `supabase db push` from samples/, where this file is the first of the migrations. Step by step:
 -- https://nesfeder.github.io/supabase-offline-kt/samples/supabase-setup/
 --
 -- It can be run again. A second run changes nothing, and it puts back any policy, grant,

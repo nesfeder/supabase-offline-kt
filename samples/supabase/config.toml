@@ -1,7 +1,7 @@
 # A Supabase CLI project for the sample apps, so `supabase db push` can apply their schema to a
 # hosted project: run `supabase link --project-ref <your-project-ref>`, then `supabase db push`,
-# both from samples/. Its one migration is the whole schema, which can also be pasted into the
-# SQL Editor. Every setting left out takes the CLI's default. Step by step:
+# both from samples/. Its two migrations are the whole schema, which can also be pasted into the
+# SQL Editor, in order. Every setting left out takes the CLI's default. Step by step:
 # https://nesfeder.github.io/supabase-offline-kt/samples/supabase-setup/
 
 project_id = "offline-tasks"
