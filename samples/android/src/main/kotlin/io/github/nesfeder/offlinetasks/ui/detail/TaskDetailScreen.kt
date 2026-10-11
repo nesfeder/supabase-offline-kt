@@ -9,7 +9,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -17,7 +17,6 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -32,12 +31,10 @@ import androidx.compose.material3.FloatingToolbarDefaults
 import androidx.compose.material3.HorizontalFloatingToolbar
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearWavyProgressIndicator
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBarDefaults
@@ -61,6 +58,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import io.github.nesfeder.offlinetasks.R
+import io.github.nesfeder.offlinetasks.data.PendingPhotoState
 import io.github.nesfeder.offlinetasks.data.TASK_NOTES_MAX_LENGTH
 import io.github.nesfeder.offlinetasks.data.TASK_TITLE_MAX_LENGTH
 import io.github.nesfeder.offlinetasks.data.TaskPhoto
@@ -74,6 +72,7 @@ import io.github.nesfeder.offlinetasks.ui.navigation.ShownTask
 import io.github.nesfeder.offlinetasks.ui.newtask.LengthCounter
 import io.github.nesfeder.offlinetasks.ui.photos.PhotoFileState
 import io.github.nesfeder.offlinetasks.ui.photos.PhotoThumbnail
+import io.github.nesfeder.offlinetasks.ui.photos.failedUploadText
 
 /**
  * The task detail destination: the screen wired to its ViewModel and the photo picker.
@@ -93,7 +92,7 @@ fun TaskDetailRoute(
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val pickPhoto =
         rememberLauncherForActivityResult(PickVisualMedia()) { uri ->
-            uri?.let { viewModel.attachPhoto(it.toString()) }
+            uri?.let { viewModel.addPhoto(it.toString()) }
         }
     val context = LocalContext.current
     LaunchedEffect(viewModel) {
@@ -121,6 +120,8 @@ fun TaskDetailRoute(
         taskId = taskId,
         onDuplicate = viewModel::duplicate,
         onShareAllPhotos = viewModel::shareAllPhotos,
+        onRetryPhoto = viewModel::retryPhoto,
+        onRemovePhoto = viewModel::removePhoto,
     )
 }
 
@@ -145,6 +146,8 @@ fun TaskDetailScreen(
     modifier: Modifier = Modifier,
     onDuplicate: () -> Unit = {},
     onShareAllPhotos: () -> Unit = {},
+    onRetryPhoto: (TaskPhoto) -> Unit = {},
+    onRemovePhoto: (TaskPhoto) -> Unit = {},
 ) {
     val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
     var confirmingDelete by rememberSaveable { mutableStateOf(false) }
@@ -181,7 +184,8 @@ fun TaskDetailScreen(
                         if (editing != null) {
                             DetailMenu(
                                 canShareAll =
-                                    editing.canChangePhotos && editing.photos.isNotEmpty(),
+                                    editing.canChangePhotos &&
+                                        editing.photos.any { it.pendingUpload == null },
                                 onDuplicate = onDuplicate,
                                 onShareAllPhotos = onShareAllPhotos,
                             )
@@ -230,7 +234,15 @@ fun TaskDetailScreen(
                     onNotesChange = onNotesChange,
                     onDoneChange = onDoneChange,
                 ) {
-                    if (editing != null) PhotosSection(editing, onOpenPhoto, loadPhotoFile)
+                    if (editing != null) {
+                        PhotosSection(
+                            editing,
+                            onOpenPhoto,
+                            loadPhotoFile,
+                            onRetryPhoto,
+                            onRemovePhoto,
+                        )
+                    }
                 }
                 HorizontalFloatingToolbar(
                     expanded = true,
@@ -248,7 +260,8 @@ fun TaskDetailScreen(
                             contentDescription = stringResource(R.string.detail_done),
                         )
                     }
-                    IconButton(onClick = onAddPhoto, enabled = editing?.canChangePhotos == true) {
+                    // Online or offline: a photo waits on the device until it can upload.
+                    IconButton(onClick = onAddPhoto, enabled = editing != null) {
                         Icon(
                             painter = painterResource(R.drawable.ic_add_photo_alternate),
                             contentDescription = stringResource(R.string.detail_add_photo),
@@ -266,7 +279,8 @@ fun TaskDetailScreen(
     }
     if (confirmingDelete) {
         val canDeleteFiles = (state as? TaskDetailUiState.Editing)?.canChangePhotos == true
-        val hasPhotos = (state as? TaskDetailUiState.Editing)?.photos?.isNotEmpty() == true
+        val hasPhotos =
+            (state as? TaskDetailUiState.Editing)?.photos?.any { it.pendingUpload == null } == true
         AlertDialog(
             onDismissRequest = { confirmingDelete = false },
             title = { Text(stringResource(R.string.detail_delete_title)) },
@@ -409,12 +423,17 @@ private fun TaskFields(
     }
 }
 
-/** The photos row: thumbnails, then a wavy progress tile per upload. */
+/**
+ * The photos row: the server's photos and the ones waiting to upload, each marked with where it
+ * stands, then a line for each upload that failed, with Retry and Remove.
+ */
 @Composable
 private fun PhotosSection(
     state: TaskDetailUiState.Editing,
     onOpenPhoto: (photoId: String) -> Unit,
     loadPhotoFile: suspend (TaskPhoto) -> PhotoFileState,
+    onRetryPhoto: (TaskPhoto) -> Unit,
+    onRemovePhoto: (TaskPhoto) -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(
@@ -433,7 +452,7 @@ private fun PhotosSection(
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        if (state.photos.isEmpty() && state.uploads.isEmpty()) return@Column
+        if (state.photos.isEmpty()) return@Column
         val motion = MaterialTheme.motionScheme
         LazyRow(
             modifier = Modifier.fillMaxWidth().height(112.dp),
@@ -455,20 +474,35 @@ private fun PhotosSection(
                             .size(104.dp),
                 )
             }
-            items(state.uploads, key = { "upload-${it.id}" }) { upload ->
-                Surface(
-                    color = MaterialTheme.colorScheme.surfaceContainerHighest,
-                    shape = MaterialTheme.shapes.large,
-                    modifier = Modifier.animateItem().size(104.dp),
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        LinearWavyProgressIndicator(
-                            progress = { upload.fraction },
-                            modifier = Modifier.width(80.dp).fillMaxHeight(0.2f),
-                        )
-                    }
-                }
+        }
+        state.photos
+            .filter { it.pendingUpload?.state == PendingPhotoState.Failed }
+            .forEach { photo -> FailedUpload(photo, onRetryPhoto, onRemovePhoto) }
+    }
+}
+
+/** A photo whose upload failed: why, in the app's words, with Retry when another try may work. */
+@Composable
+private fun FailedUpload(
+    photo: TaskPhoto,
+    onRetryPhoto: (TaskPhoto) -> Unit,
+    onRemovePhoto: (TaskPhoto) -> Unit,
+) {
+    val upload = photo.pendingUpload ?: return
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            text = failedUploadText(upload),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.error,
+            modifier = Modifier.weight(1f),
+        )
+        if (upload.canRetry) {
+            TextButton(onClick = { onRetryPhoto(photo) }) {
+                Text(stringResource(R.string.action_retry))
             }
+        }
+        TextButton(onClick = { onRemovePhoto(photo) }) {
+            Text(stringResource(R.string.action_remove))
         }
     }
 }

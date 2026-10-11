@@ -31,7 +31,10 @@ sealed interface PhotosUiState {
     /** Nothing saved on this device yet; [isLoading] while the server is being asked. */
     data class NoDataYet(val isLoading: Boolean) : PhotosUiState
 
-    /** The first page or pages of photos, newest first; possibly none. */
+    /**
+     * The first page or pages of photos, newest first, with every photo still waiting to upload;
+     * possibly none.
+     */
     data class Loaded(
         val photos: List<TaskPhoto>,
         val canReachServer: Boolean,
@@ -66,7 +69,9 @@ class PhotosViewModel(
                 if (photos == null) {
                     PhotosUiState.NoDataYet(isLoading = online)
                 } else {
-                    PhotosUiState.Loaded(photos, online, hasMore = photos.size >= count)
+                    // A page counts the server's photos; the pending ones come on top of it.
+                    val stored = photos.count { it.pendingUpload == null }
+                    PhotosUiState.Loaded(photos, online, hasMore = stored >= count)
                 }
             }
             .stateIn(

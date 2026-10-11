@@ -14,12 +14,17 @@ import io.github.nesfeder.offlinetasks.data.EncodedPhoto
 import io.github.nesfeder.offlinetasks.data.LiveUpdatesStatus
 import io.github.nesfeder.offlinetasks.data.NetworkSwitchedOffException
 import io.github.nesfeder.offlinetasks.data.NetworkUnavailableException
+import io.github.nesfeder.offlinetasks.data.NEWEST_FIRST
 import io.github.nesfeder.offlinetasks.data.NewTaskOutcome
 import io.github.nesfeder.offlinetasks.data.NotSavedOnDeviceException
+import io.github.nesfeder.offlinetasks.data.OLDEST_FIRST
+import io.github.nesfeder.offlinetasks.data.PendingPhoto
+import io.github.nesfeder.offlinetasks.data.PendingPhotoDirectory
+import io.github.nesfeder.offlinetasks.data.PendingPhotoUpload
+import io.github.nesfeder.offlinetasks.data.PendingPhotoUploader
 import io.github.nesfeder.offlinetasks.data.PhotoDetails
 import io.github.nesfeder.offlinetasks.data.PhotoFile
 import io.github.nesfeder.offlinetasks.data.PhotoListSnapshot
-import io.github.nesfeder.offlinetasks.data.PhotoUpload
 import io.github.nesfeder.offlinetasks.data.ReadProvenance
 import io.github.nesfeder.offlinetasks.data.RejectedTaskMutation
 import io.github.nesfeder.offlinetasks.data.RowsSnapshot
@@ -41,6 +46,8 @@ import io.github.nesfeder.offlinetasks.data.UserSession
 import io.github.nesfeder.offlinetasks.data.WaitingChange
 import io.github.nesfeder.offlinetasks.data.photoObjectPath
 import io.github.nesfeder.offlinetasks.data.takeCharacters
+import io.github.nesfeder.offlinetasks.data.toTaskPhoto
+import io.github.nesfeder.offlinetasks.data.plusPendingPhotos
 import io.github.nesfeder.supabase.offline.CacheMissException
 import io.github.nesfeder.supabase.offline.FlowReadStrategy
 import io.github.nesfeder.supabase.offline.MutationOutcome
@@ -67,7 +74,6 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
-import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -76,7 +82,6 @@ import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -122,16 +127,23 @@ private val STARTER_TITLES =
  * Reads wait for a session: the schema refuses every request without a signed-in user, so until
  * [session] has one, each read shows nothing yet and sends nothing.
  *
- * @param scope where work runs that must finish even when its caller goes away, and Realtime.
+ * Photos are added to [pendingPhotos], the app's own queue on the device, and uploaded from there
+ * whenever the network allows: the library queues writes to tables, never to Storage.
+ *
+ * @param scope where work runs that must finish even when its caller goes away, Realtime, and the
+ *   pending photos' uploads.
  * @param liveUpdates applies other devices' changes; null leaves Live updates off for good.
+ * @param describeFailure the sentence a pending photo's failed upload is kept with.
  */
 class OfflineTaskRepository(
     private val supabase: SupabaseClient,
     private val session: UserSession,
     private val scope: CoroutineScope,
+    private val pendingPhotos: PendingPhotoDirectory,
     private val clock: Clock = Clock.System,
     private val newId: () -> String = { Uuid.random().toString() },
     private val liveUpdates: LiveUpdates? = LiveUpdates(supabase),
+    private val describeFailure: (Throwable) -> String = { it::class.simpleName.orEmpty() },
 ) : TaskRepository {
 
     private val offline = supabase.offline
@@ -148,8 +160,19 @@ class OfflineTaskRepository(
             .map { it.toAppSyncStatus() }
             .stateIn(scope, SharingStarted.Eagerly, offline.syncStatus.value.toAppSyncStatus())
 
+    private val uploader =
+        PendingPhotoUploader(
+            directory = pendingPhotos,
+            canUpload = photoUploadChances(),
+            upload = PendingPhotoUpload { photo, jpeg, onProgress ->
+                uploadPendingPhoto(photo, jpeg, onProgress)
+            },
+            describeFailure = describeFailure,
+        )
+
     init {
         scope.launch { keepLiveUpdatesRunning() }
+        uploader.start(scope)
     }
 
     // --8<-- [start:reactive-strategies]
@@ -180,13 +203,16 @@ class OfflineTaskRepository(
 
     // --8<-- [end:row-from-list]
 
+    override fun photos(taskId: String): Flow<PhotoListSnapshot> =
+        storedPhotos(taskId).withPendingPhotos(taskId, OLDEST_FIRST)
+
     // --8<-- [start:cache-only-photos]
     /**
-     * A task's photos, from the query of [allPhotos]. While Simulate offline is on, the read takes
-     * the device's copy alone and sends nothing; the screen says so.
+     * A task's photo rows, from the query of [allPhotos]. While Simulate offline is on, the read
+     * takes the device's copy alone and sends nothing; the screen says so.
      */
     @OptIn(ExperimentalCoroutinesApi::class)
-    override fun photos(taskId: String): Flow<PhotoListSnapshot> =
+    private fun storedPhotos(taskId: String): Flow<PhotoListSnapshot> =
         offline.syncStatus
             .map { it.network == NetworkStatus.DISABLED }
             .distinctUntilChanged()
@@ -203,23 +229,54 @@ class OfflineTaskRepository(
 
     override fun allPhotos(): Flow<PhotoListSnapshot> =
         photoList(FlowReadStrategy.CacheFirstThenNetwork, page = null) { it }
+            .withPendingPhotos(taskId = null, NEWEST_FIRST)
 
     override fun photoPage(count: Int): Flow<PhotoListSnapshot> =
         photoList(FlowReadStrategy.CacheFirstThenNetwork, page = count) { it }
+            .withPendingPhotos(taskId = null, NEWEST_FIRST)
+
+    // --8<-- [start:pending-photo-merge]
+    /**
+     * These photo rows with the app's pending photos of [taskId] (of every task when null), in
+     * [order]: a photo picked here shows at once, from its file on the device, with where its
+     * upload stands.
+     */
+    private fun Flow<PhotoListSnapshot>.withPendingPhotos(
+        taskId: String?,
+        order: Comparator<TaskPhoto>,
+    ): Flow<PhotoListSnapshot> =
+        combine(this, pendingPhotos.photos, uploader.progress) { snapshot, pending, progress ->
+            val ofTask = pending.filter { taskId == null || it.taskId == taskId }
+            val shown = ofTask.map { photo ->
+                photo.toTaskPhoto(pendingPhotos.fileOf(photo.photoId).path, progress[photo.photoId])
+            }
+            snapshot.plusPendingPhotos(shown, order) // each photo once: the pending one wins
+        }
+
+    // --8<-- [end:pending-photo-merge]
+
+    /** How many photos each of [taskIds] has, its rows' and its pending photos', each once. */
+    override fun photoCounts(taskIds: List<String>): Flow<Map<String, Int>> {
+        if (taskIds.isEmpty()) return flowOf(emptyMap())
+        return combine(photoRowsOf(taskIds), pendingPhotos.photos) { rows, pending ->
+            val taskOfPhoto =
+                rows.orEmpty().associate { it.id to it.taskId } +
+                    pending.filter { it.taskId in taskIds }.associate { it.photoId to it.taskId }
+            taskOfPhoto.values.groupingBy { it }.eachCount()
+        }
+    }
 
     // --8<-- [start:photo-rows-in]
     /**
-     * How many photos each of [taskIds] has: one live read of their rows, by `in` on `task_id`. A
-     * set of tasks never read online has no rows offline, so nothing is emitted for it.
+     * The photo rows of [taskIds]: one live read, by `in` on `task_id`. A set of tasks never read
+     * online has no rows offline, so it is null for it.
      */
-    override fun photoCounts(taskIds: List<String>): Flow<Map<String, Int>> {
-        if (taskIds.isEmpty()) return flowOf(emptyMap())
+    private fun photoRowsOf(taskIds: List<String>): Flow<List<PhotoTaskRow>?> {
         val ids = taskIds.sorted() // the same tasks, the same query, the same cached rows
-        return whileSignedIn(before = emptyMap()) {
+        return whileSignedIn(before = null) {
             offline[Tables.TASK_PHOTOS] // the same builder as from(Tables.TASK_PHOTOS)
                 .selectAsFlow(Columns.list(ID, TASK_ID)) { filter { isIn(TASK_ID, ids) } }
-                .mapNotNull { snapshot -> snapshot.result?.decodeList<PhotoTaskRow>() }
-                .map { rows -> rows.groupingBy { it.taskId }.eachCount() }
+                .map { snapshot -> snapshot.result?.decodeList<PhotoTaskRow>() }
         }
     }
 
@@ -246,7 +303,7 @@ class OfflineTaskRepository(
                 if (needsConnection) offline.applyServerRecord(Tables.TASKS, stored)
                 NewTaskOutcome.Saved(outcome.result.decodeSingle<TaskRow>().toTask(emptySet()))
             }
-            is MutationOutcome.Queued -> NewTaskOutcome.SavedOnDevice // sent when it can be
+            is MutationOutcome.Queued -> NewTaskOutcome.SavedOnDevice(row.id) // sent when it can be
         }
     }
 
@@ -299,7 +356,7 @@ class OfflineTaskRepository(
             write(Tables.TASKS, TaskMutationOperation.Upsert, title) {
                 offline.from(Tables.TASKS).upsert(copy) { select() }
             }
-        if (outcome.isQueued) return NewTaskOutcome.SavedOnDevice // no answer from the server yet
+        if (outcome.isQueued) return NewTaskOutcome.SavedOnDevice(copy.id) // no answer yet
         val stored = checkNotNull(outcome.resultOrNull()).decodeSingle<TaskRow>()
         return NewTaskOutcome.Saved(stored.toTask(pendingIds = emptySet()))
     }
@@ -384,6 +441,8 @@ class OfflineTaskRepository(
     // --8<-- [start:delete-task]
     /** A task's photo files (online only), then its photo rows, then the task itself. */
     override suspend fun deleteTask(id: String): TaskMutationOutcome = detached {
+        // Its photos still on this device go first, with no upload in flight to land after.
+        uploader.pausedWhile { pendingPhotos.removeTask(id) }
         val photos = cachedPhotosOf(id)
         // Files first, and only online: Storage writes are never queued, so offline they stay.
         if (canReachNetwork())
@@ -402,24 +461,99 @@ class OfflineTaskRepository(
 
     // --8<-- [end:delete-task]
 
-    override fun attachPhoto(taskId: String, photo: EncodedPhoto): Flow<PhotoUpload> = channelFlow {
-        // Storage writes are online-only: offline, fail at once rather than when the request does.
-        requireNetwork()
+    // --8<-- [start:pending-photo-add]
+    /**
+     * Add photo, online or offline: the photo is filed in the app's own queue on this device, under
+     * the path it will have in the bucket, and the uploader is told; nothing waits for the network.
+     */
+    override suspend fun addPhoto(taskId: String, photo: EncodedPhoto) {
         val userId = signedInUserId()
-        val photoId = newId()
-        val objectPath = photoObjectPath(userId, taskId, photoId)
-        // The file and its row together, in this repository's scope: a screen that closes between
-        // the two cannot leave a file with no row. Progress reaches the screen while it listens.
-        val attached = detached {
-            storage(objectPath) {
-                files.upload(objectPath, photo.jpeg) { fraction ->
-                    trySend(PhotoUpload.Uploading(fraction))
+        val photoId = newId() // the device's, so the path is known before the upload
+        val record =
+            PendingPhoto(
+                photoId = photoId,
+                taskId = taskId,
+                userId = userId,
+                objectPath = photoObjectPath(userId, taskId, photoId),
+                pickedAt = clock.now(),
+                width = photo.width,
+                height = photo.height,
+            )
+        pendingPhotos.add(record, photo.jpeg) // shown from here at once
+        uploader.uploadSoon() // offline, it waits for the network to come back
+    }
+
+    // --8<-- [end:pending-photo-add]
+
+    override suspend fun retryPendingPhoto(photoId: String) {
+        uploader.retry(photoId)
+    }
+
+    override suspend fun removePendingPhoto(photoId: String): Boolean =
+        uploader.pausedWhile { pendingPhotos.remove(photoId) }
+
+    // --8<-- [start:pending-photo-upload]
+    /**
+     * Uploads one pending photo: its file; then, only once Storage has it, its row, through the
+     * queue like any write; then its file into the library's cache, so it shows offline once the
+     * device's copy is deleted. A retry first asks whether an earlier try stored the file.
+     */
+    private suspend fun uploadPendingPhoto(
+        photo: PendingPhoto,
+        jpeg: ByteArray,
+        onProgress: (Float) -> Unit,
+    ) {
+        val path = photo.objectPath
+        val storedBefore = photo.attempts > 1 && storage(path) { files.exists(path) }
+        if (!storedBefore) storage(path) { files.upload(path, jpeg, onProgress) }
+        // Queued behind the task's own insert when that has not reached the server yet.
+        writePendingPhotoRow(photo)
+        // No call puts uploaded bytes in the cache, so this downloads what was just sent.
+        storage(path) { files.ensureCachedFile(path) }
+    }
+
+    // --8<-- [end:pending-photo-upload]
+
+    /**
+     * Writes the row of a pending photo whose file is in the bucket, so that writing it twice (a
+     * retry after a lost answer) changes nothing. A refusal at once (its task deleted meanwhile)
+     * leaves a file no row will name, so the file goes too.
+     */
+    private suspend fun writePendingPhotoRow(photo: PendingPhoto) {
+        val row =
+            NewTaskPhotoRow(
+                id = photo.photoId,
+                userId = photo.userId,
+                taskId = photo.taskId,
+                objectPath = photo.objectPath,
+                width = photo.width,
+                height = photo.height,
+                createdAt = photo.pickedAt.toString(), // where it sorts while it was pending
+            )
+        try {
+            write(Tables.TASK_PHOTOS, TaskMutationOperation.Upsert, taskTitle = null) {
+                offline.from(Tables.TASK_PHOTOS).upsert(row) {
+                    onConflict = ID
+                    ignoreDuplicates = true // a row an earlier try wrote stays as it is
                 }
             }
-            insertPhotoRow(photoId, userId, taskId, objectPath, photo.width, photo.height)
+        } catch (refused: TaskWriteRefusedException) {
+            deleteUploadedFile(photo.objectPath, refused)
+            throw refused
         }
-        send(PhotoUpload.Attached(attached))
     }
+
+    /**
+     * True each time the network is on, or changes while on, with a user signed in: a chance for
+     * the pending photos to upload. Simulate offline pauses them, as it pauses the mutation queue.
+     */
+    private fun photoUploadChances(): Flow<Boolean> =
+        combine(
+            offline.syncStatus.map { it.network }.distinctUntilChanged(),
+            session.userId,
+        ) { network, userId ->
+            userId != null && network != NetworkStatus.OFFLINE && network != NetworkStatus.DISABLED
+        }
 
     override suspend fun deletePhoto(photo: TaskPhoto): TaskMutationOutcome = detached {
         requireNetwork()
@@ -504,7 +638,8 @@ class OfflineTaskRepository(
     override suspend fun uploadThroughSignedUrl(): TaskPhoto? = detached {
         requireNetwork()
         signedInUserId() // a photo needs its user: before a session there is none to copy
-        val newest = allPhotos().first { it.value != null }.value?.firstOrNull()
+        val newest =
+            allPhotos().first { it.value != null }.value?.firstOrNull { it.pendingUpload == null }
         if (newest == null) return@detached null
         val copied = downloadPhotoFile(newest).path
         val jpeg = withContext(Dispatchers.IO) { File(copied).readBytes() }
@@ -718,10 +853,17 @@ class OfflineTaskRepository(
 
     // --8<-- [end:network-switch]
 
+    // --8<-- [start:pending-photo-clear]
     // --8<-- [start:clear-local-data]
-    /** Clear local cache: everything the library keeps here, queued writes included, never sent. */
+    /**
+     * Clear local cache: everything the library keeps here, queued writes included, never sent;
+     * then the app's pending photos, which `clearLocalData()` does not know of.
+     */
     override suspend fun clearLocalData() {
-        offline.clearLocalData() // an open list fetches again by itself once the network allows
+        uploader.pausedWhile { // no upload in flight to land after the clear
+            offline.clearLocalData() // an open list fetches again by itself once the network allows
+            pendingPhotos.removeAll() // the app's own directory, outside the library's data
+        }
     }
 
     // --8<-- [end:clear-local-data]
@@ -732,14 +874,20 @@ class OfflineTaskRepository(
         // A new anonymous user needs the server, so nothing is deleted or cleared without it.
         if (!canReachNetwork()) throw NetworkUnavailableException()
         detached {
-            val userId = session.userId.value
-            offline.clearLocalData() // stops a replay already running, and drops the queue
-            userId?.let { deleteEverythingOf(it) }
-            session.signInAsNewUser()
+            uploader.pausedWhile {
+                val userId = session.userId.value
+                offline.clearLocalData() // stops a replay already running, and drops the queue
+                userId?.let { deleteEverythingOf(it) }
+                // A pending photo's file may be in the bucket already, its row not written yet.
+                deleteFiles(pendingPhotos.photos.first().map { it.objectPath })
+                pendingPhotos.removeAll() // outside what clearLocalData() deletes
+                session.signInAsNewUser()
+            }
         }
     }
 
     // --8<-- [end:start-over]
+    // --8<-- [end:pending-photo-clear]
 
     override fun setPreferFreshData(prefer: Boolean) {
         switches.update { it.copy(preferFreshData = prefer) }

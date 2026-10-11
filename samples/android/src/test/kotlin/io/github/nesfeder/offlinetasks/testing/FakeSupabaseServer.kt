@@ -73,17 +73,17 @@ class FakeSupabaseServer {
     /** While false, every request fails at the transport, as it does with no network. */
     var isReachable: Boolean = true
 
+    /** While true, every upload to the bucket answers HTTP 500, as a failing Storage does. */
+    var isUploadFailing: Boolean = false
+
     /** The most rows one read returns, as a hosted project's row limit caps it. */
     var maxRows: Int = 1_000
 
     /**
-     * While set, an upload's answer waits for it once the file is stored, as a slow network would
-     * keep it: the file is in the bucket before the app hears so.
+     * While true, an upload's answer is lost once the file is stored, as a connection that drops on
+     * the way back would lose it: the file is in the bucket, and the app hears a network failure.
      */
-    var holdUploadAnswers: CompletableDeferred<Unit>? = null
-
-    /** How many uploads are stored and waiting on [holdUploadAnswers]. */
-    val uploadsHeld: MutableStateFlow<Int> = MutableStateFlow(0)
+    var loseUploadAnswers: Boolean = false
 
     /**
      * While set, a photo row's insert waits for it before the row is stored, and fails at the
@@ -148,10 +148,8 @@ class FakeSupabaseServer {
                     else -> error("FakeSupabaseServer has no route for $path")
                 }
             }
-        val hold = holdUploadAnswers
-        if (hold != null && request.method == HttpMethod.Post && path.startsWith(UPLOAD_PREFIX)) {
-            uploadsHeld.update { it + 1 }
-            hold.await()
+        if (loseUploadAnswers && request.method == HttpMethod.Post && path.startsWith(UPLOAD_PREFIX)) {
+            throw IOException("connection lost after the upload")
         }
         return response
     }
@@ -244,6 +242,18 @@ class FakeSupabaseServer {
                 prefixes.forEach { files.remove(it.jsonPrimitive.content) }
                 json("[]", HttpStatusCode.OK)
             }
+            request.method == HttpMethod.Head && segments.take(2) == listOf("object", BUCKET) -> {
+                // Storage answers a missing object with HTTP 400, which `exists` reads as false.
+                val objectPath = segments.drop(2).joinToString("/")
+                json("", if (objectPath in files) HttpStatusCode.OK else HttpStatusCode.BadRequest)
+            }
+            request.method == HttpMethod.Post &&
+                segments.take(2) == listOf("object", BUCKET) &&
+                isUploadFailing ->
+                json(
+                    """{"statusCode":"500","error":"internal","message":"failing on purpose"}""",
+                    HttpStatusCode.InternalServerError,
+                )
             request.method == HttpMethod.Post && segments.take(2) == listOf("object", BUCKET) -> {
                 val objectPath = segments.drop(2).joinToString("/")
                 if (objectPath in files) {

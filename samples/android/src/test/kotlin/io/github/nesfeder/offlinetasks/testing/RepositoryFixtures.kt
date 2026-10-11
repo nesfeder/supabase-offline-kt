@@ -4,7 +4,9 @@ package io.github.nesfeder.offlinetasks.testing
 
 import io.github.nesfeder.offlinetasks.data.AppNetworkStatus
 import io.github.nesfeder.offlinetasks.data.AppSyncStatus
+import io.github.nesfeder.offlinetasks.data.EncodedPhoto
 import io.github.nesfeder.offlinetasks.data.RowsSnapshot
+import io.github.nesfeder.offlinetasks.data.TaskPhoto
 import io.github.nesfeder.offlinetasks.data.TaskRepository
 import io.github.nesfeder.offlinetasks.data.inmemory.InMemoryTaskRepository
 import kotlinx.coroutines.flow.Flow
@@ -60,6 +62,25 @@ suspend fun TaskRepository.awaitServerTasks() =
  */
 suspend fun TaskRepository.awaitPendingCount(count: Int): AppSyncStatus = syncStatus.first {
     it.pendingMutationCount == count
+}
+
+/**
+ * Adds [photo] to the task [taskId] and waits until it has uploaded: listed for the task, no longer
+ * pending.
+ */
+suspend fun TaskRepository.addUploadedPhoto(
+    taskId: String,
+    photo: EncodedPhoto = EncodedPhoto(byteArrayOf(-1, -40, -1, -39), width = 4, height = 3),
+): TaskPhoto {
+    val before = photos(taskId).first { it.value != null }.value.orEmpty().map { it.id }.toSet()
+    addPhoto(taskId, photo)
+    return photos(taskId)
+        .first { snapshot ->
+            snapshot.value.orEmpty().any { it.id !in before && it.pendingUpload == null }
+        }
+        .value
+        .orEmpty()
+        .first { it.id !in before }
 }
 
 /** Waits until [count] refused writes are kept. */

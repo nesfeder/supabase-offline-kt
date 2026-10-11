@@ -91,7 +91,6 @@ class TaskDetailScreenTest {
             isDone = false,
             syncState = TaskDetailSyncState.Synced,
             photos = emptyList(),
-            uploads = emptyList(),
             canChangePhotos = true,
         )
 }

@@ -17,6 +17,7 @@ import androidx.compose.foundation.gestures.transformable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
@@ -66,6 +67,8 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import coil3.compose.AsyncImage
 import coil3.request.ImageRequest
 import io.github.nesfeder.offlinetasks.R
+import io.github.nesfeder.offlinetasks.data.PendingPhotoState
+import io.github.nesfeder.offlinetasks.data.PendingUpload
 import io.github.nesfeder.offlinetasks.data.PhotoDetails
 import io.github.nesfeder.offlinetasks.data.Task
 import io.github.nesfeder.offlinetasks.data.TaskPhoto
@@ -120,12 +123,16 @@ fun PhotoViewerRoute(
                 },
                 onMoveTo = viewModel::moveTo,
                 onCopyTo = viewModel::copyTo,
+                onRetryUpload = viewModel::retryUpload,
             ),
     )
     details?.let { shown -> PhotoDetailsSheet(shown, onDismiss = viewModel::hideDetails) }
 }
 
-/** What the viewer's bar and menu can ask for, beside closing and deleting. */
+/**
+ * What the viewer's bar and menu can ask for, beside closing and deleting; [onRetryUpload] for a
+ * photo whose upload failed.
+ */
 class PhotoActions(
     val onDetails: () -> Unit = {},
     val onShare: () -> Unit = {},
@@ -133,6 +140,7 @@ class PhotoActions(
     val onReplace: () -> Unit = {},
     val onMoveTo: (Task) -> Unit = {},
     val onCopyTo: (Task) -> Unit = {},
+    val onRetryUpload: () -> Unit = {},
 )
 
 /** Where the task picker takes the photo. */
@@ -190,11 +198,18 @@ fun PhotoViewerScreen(
                             contentDescription = stringResource(R.string.photo_share),
                         )
                     }
-                    IconButton(onClick = actions.onDetails, enabled = showing?.canChange == true) {
-                        Icon(
-                            painter = painterResource(R.drawable.ic_info),
-                            contentDescription = stringResource(R.string.photo_details),
-                        )
+                    // A photo waiting to upload has no file in the bucket: nothing to tell or change.
+                    val inBucket = showing?.isPending != true
+                    if (inBucket) {
+                        IconButton(
+                            onClick = actions.onDetails,
+                            enabled = showing?.canChange == true,
+                        ) {
+                            Icon(
+                                painter = painterResource(R.drawable.ic_info),
+                                contentDescription = stringResource(R.string.photo_details),
+                            )
+                        }
                     }
                     IconButton(onClick = onDelete, enabled = showing?.canDelete == true) {
                         Icon(
@@ -202,12 +217,14 @@ fun PhotoViewerScreen(
                             contentDescription = stringResource(R.string.photo_delete),
                         )
                     }
-                    PhotoMenu(
-                        canChange = showing?.canChange == true,
-                        hasOtherTasks = showing?.otherTasks?.isNotEmpty() == true,
-                        actions = actions,
-                        onPick = { picking = it },
-                    )
+                    if (inBucket) {
+                        PhotoMenu(
+                            canChange = showing?.canChange == true,
+                            hasOtherTasks = showing?.otherTasks?.isNotEmpty() == true,
+                            actions = actions,
+                            onPick = { picking = it },
+                        )
+                    }
                 },
                 colors =
                     TopAppBarDefaults.topAppBarColors(
@@ -241,16 +258,57 @@ fun PhotoViewerScreen(
                 onDismiss = { picking = null },
             )
         }
-        if (state is PhotoViewerUiState.Showing && !state.canDelete && chromeVisible) {
-            Text(
-                text = stringResource(R.string.photo_delete_offline),
-                color = Color.White.copy(alpha = 0.8f),
-                style = MaterialTheme.typography.bodySmall,
-                modifier =
-                    Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(16.dp),
-            )
+        if (state is PhotoViewerUiState.Showing && chromeVisible) {
+            val footer = Modifier.align(Alignment.BottomCenter).navigationBarsPadding()
+            val pending = state.photo.pendingUpload
+            when {
+                pending != null -> PendingFooter(pending, onDelete, actions.onRetryUpload, footer)
+                !state.canDelete -> FooterText(stringResource(R.string.photo_delete_offline), footer)
+            }
         }
     }
+}
+
+/**
+ * Under a photo still waiting to upload: why the bucket's actions are not offered yet, and, once
+ * its upload failed, why, with Retry (when another try may work) and Remove.
+ */
+@Composable
+private fun PendingFooter(
+    upload: PendingUpload,
+    onRemove: () -> Unit,
+    onRetry: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        if (upload.state == PendingPhotoState.Failed) {
+            FooterText(failedUploadText(upload))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (upload.canRetry) {
+                    TextButton(onClick = onRetry) {
+                        Text(stringResource(R.string.action_retry), color = Color.White)
+                    }
+                }
+                TextButton(onClick = onRemove) {
+                    Text(stringResource(R.string.action_remove), color = Color.White)
+                }
+            }
+        } else {
+            FooterText(stringResource(upload.state.label))
+        }
+        FooterText(stringResource(R.string.photo_pending_note))
+    }
+}
+
+/** One line of the viewer's footer, light on the black behind the photo. */
+@Composable
+private fun FooterText(text: String, modifier: Modifier = Modifier) {
+    Text(
+        text = text,
+        color = Color.White.copy(alpha = 0.8f),
+        style = MaterialTheme.typography.bodySmall,
+        modifier = modifier,
+    )
 }
 
 /** The viewer's menu: everything that changes or shares the photo's file beyond the bar. */
@@ -392,9 +450,16 @@ private fun ZoomablePhoto(
     version: Int,
     loadPhotoFile: suspend (TaskPhoto) -> PhotoFileState,
 ) {
-    // Read again when the file moves or is replaced: the cached copy went with the old one.
+    // Read again when the file moves or is replaced, the cached copy having gone with the old
+    // one, and once an upload finishes, when the device's own copy gives way to the cache's.
+    val isPending = photo.pendingUpload != null
     val file by
-        produceState<PhotoFileState>(PhotoFileState.Loading, photo.objectPath, version) {
+        produceState<PhotoFileState>(
+            PhotoFileState.Loading,
+            photo.objectPath,
+            version,
+            isPending,
+        ) {
             value = loadPhotoFile(photo)
         }
     var scale by remember { mutableFloatStateOf(1f) }
