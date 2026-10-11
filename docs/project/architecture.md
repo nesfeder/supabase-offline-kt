@@ -980,7 +980,9 @@ replay-token check) and the committed dry-run check beside the engine, and start
 connectivity, the session-settle trigger (it starts a new offline period whatever `autoSync` says,
 and asks for a pass only when it is on), the cache owner, and the sync status's, so `syncStatus`
 counts the queue from the start. A client without Auth, with `autoSync` on, also asks for one pass
-when writes an earlier run left are queued.
+when writes an earlier run left are queued. It holds the queue lock from the moment the client
+opens until it has read the queue, so a write made meanwhile waits and is sent by its own head send,
+never taken for one an earlier run left.
 
 **The operation gate.** Every public call and every flow passes the client's gate, which counts the
 calls in flight whoever's coroutine runs them. A flow is checked when it is collected and counted

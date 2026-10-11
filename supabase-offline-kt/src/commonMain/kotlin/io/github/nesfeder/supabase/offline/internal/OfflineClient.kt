@@ -84,6 +84,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
 import kotlinx.coroutines.NonCancellable
@@ -504,7 +505,13 @@ internal class OfflineClient(
      */
     private fun replayWhatAnEarlierRunLeft() {
         if (!autoSync || authPluginOrNull() != null) return
-        clientScope.launch { requestPassUnlessQueueEmpty(QueueIdentity.Anonymous, onEdge = false) }
+        // Undispatched, it holds the queue lock from open, so it reads before any write of this run
+        // is queued. A write it saw would have its pass race the write's own send
+        clientScope.launch(start = CoroutineStart.UNDISPATCHED) {
+            mutationQueue.holdingQueueLock {
+                requestPassUnlessQueueEmpty(QueueIdentity.Anonymous, onEdge = false)
+            }
+        }
     }
 
     /**

@@ -23,10 +23,13 @@ import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -428,6 +431,38 @@ class AutoSyncTest {
             rig.scope.cancel()
         }
     }
+
+    @Test
+    fun a_write_made_while_a_client_without_auth_opens_is_not_taken_for_one_an_earlier_run_left() =
+        runTest {
+            // Given — a client without Auth opening over an empty queue, its check for writes an
+            // earlier run left still reading
+            val mutationDao = FakeMutationDao()
+            val checkMayRead = CompletableDeferred<Unit>()
+            mutationDao.beforeWholeQueueCheck = { checkMayRead.await() }
+            val rig = rig(autoSync = true, mutationDao = mutationDao)
+            rig.server.answer = { okJson("[]") }
+
+            // When — the app writes online before the check has read the queue; the write starts
+            // at once, as an app's first call does, so only the check's own start and lock keep
+            // it from being queued first
+            val write =
+                async(start = CoroutineStart.UNDISPATCHED) {
+                    rig.client.from(TABLE).insert(row(1))
+                }
+            runCurrent()
+            val queuedBeforeTheCheckRead = mutationDao.insertCalls
+            mutationDao.beforeWholeQueueCheck = null
+            checkMayRead.complete(Unit)
+            settle()
+
+            // Then — the write waited for the check, which found nothing, so no pass took it from
+            // its own send: applied at once, and sent once
+            assertEquals(0, queuedBeforeTheCheckRead, "the write was queued before the check read")
+            assertIs<MutationOutcome.Applied>(write.await())
+            assertEquals(listOf(row(1).toString()), rig.writes)
+            rig.scope.cancel()
+        }
 
     private fun row(id: Int): JsonArray = buildJsonArray {
         add(
