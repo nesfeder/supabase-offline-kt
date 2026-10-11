@@ -115,6 +115,7 @@ final class TasksModel {
 
     // MARK: - Reading
 
+    // --8<-- [start:live-read]
     /// Follows every task of the signed-in user, the list the other screens share, until the
     /// calling task is canceled. Before there is a user it asks nothing: the schema refuses every
     /// request without one.
@@ -131,6 +132,7 @@ final class TasksModel {
             failures.report(error)
         }
     }
+    // --8<-- [end:live-read]
 
     /// Follows the list ``query`` asks for, read with `readStrategy`; the root view starts it
     /// again whenever either changes.
@@ -152,6 +154,7 @@ final class TasksModel {
         }
     }
 
+    // --8<-- [start:pending-marks]
     /// Follows which tasks have a write waiting in the mutation queue.
     func observePendingTasks() async {
         do {
@@ -164,6 +167,7 @@ final class TasksModel {
             failures.report(error)
         }
     }
+    // --8<-- [end:pending-marks]
 
     /// Follows how many photos each task on screen has, in one query for all of them.
     func observePhotoCounts(of taskIDs: [String]) async {

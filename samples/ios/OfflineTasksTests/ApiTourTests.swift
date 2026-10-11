@@ -15,6 +15,32 @@ struct ApiTourTests {
 
     // MARK: - Writes
 
+    // --8<-- [start:offline-test]
+    @Test("Offline, a new task waits in the queue on this device, and is sent once the network is back")
+    func offlineWriteWaits() async throws {
+        // Given
+        let test = TestApp()
+        try await test.start()
+        try await test.setOffline(true)
+
+        // When
+        let outcome = try await test.repository.addTask(title: "Buy milk", notes: nil)
+
+        // Then
+        if case .saved = outcome { Issue.record("It was sent while offline") }
+        #expect(try await test.repository.pendingMutationCountNow() == 1)
+        #expect(await test.writeRequests().isEmpty)
+
+        // When
+        try await test.setOffline(false)
+
+        // Then
+        try await eventually("it reaches the server") { await test.server.rows(of: Tables.tasks).count == 1 }
+        try await eventually("nothing waits") { test.app.syncStatus.pendingMutationCount == 0 }
+        try await test.stop()
+    }
+    // --8<-- [end:offline-test]
+
     @Test("New task says the time the server stored it; with Needs a connection, offline, nothing is kept")
     func newTaskOutcomes() async throws {
         // Given

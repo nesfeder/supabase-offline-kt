@@ -142,13 +142,13 @@ final class TaskRepository {
     }
     // --8<-- [end:rejected-list]
 
-    // --8<-- [start:sync-banner]
+    // --8<-- [start:sync-status]
     /// The network, the queue and the last sync, as one value: ``SyncStatusSequence/value`` now,
     /// or iterate it for each change.
     var syncStatus: SyncStatusSequence {
         client.syncStatus
     }
-    // --8<-- [end:sync-banner]
+    // --8<-- [end:sync-status]
 
     /// How many writes wait, read once: the Sync tab's badge at launch, before the first status.
     func pendingMutationCountNow() async throws -> Int {
@@ -382,9 +382,11 @@ final class TaskRepository {
                 try await client.from(Tables.taskPhotos).delete().eq("task_id", value: id).execute()
             }
         }
+        // --8<-- [start:delete-row]
         try await write(taskTitle: nil) {
             try await client.from(Tables.tasks).delete().eq("id", value: id).execute()
         }
+        // --8<-- [end:delete-row]
     }
 
     /// Deletes the done tasks made last week. Online, their photos' files and rows go first, as

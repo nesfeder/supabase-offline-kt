@@ -71,6 +71,16 @@ nonisolated extension SampleFailure {
         return SampleFailure.storageRefused(status: serverError.status, message: serverError.message)
     }
 
+    // --8<-- [start:reportable-failure]
+    /// A line about `error` that is safe to log or report: its code, the server's status and the
+    /// kind of failure underneath, never its message, which can hold a filter value, a row or a path.
+    static func reportable(_ error: OfflineError) -> String {
+        let status = error.httpStatus.map(String.init) ?? "none"
+        let underlying = error.underlyingError.map { String(describing: type(of: $0)) } ?? "none"
+        return "code=\(error.code) status=\(status) network=\(error.isNetworkOrConnectivityFailure) underlying=\(underlying)"
+    }
+    // --8<-- [end:reportable-failure]
+
     /// What to tell the user about `error`, whatever it is; never empty.
     static func message(for error: any Error) -> String {
         if let failure = error as? SampleFailure { return failure.message }

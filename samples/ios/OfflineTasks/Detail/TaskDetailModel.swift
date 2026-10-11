@@ -48,12 +48,14 @@ final class TaskDetailModel {
     /// The task shown.
     let taskID: String
 
+    // --8<-- [start:row-from-list]
     /// The task as the device holds it.
     var lookup: Lookup {
         guard let taskRows else { return .unknown }
         guard let row = taskRows.first(where: { $0.id == taskID }) else { return .missing }
         return .found(row.task(pendingIDs: isTaskPending ? [taskID] : []))
     }
+    // --8<-- [end:row-from-list]
 
     /// The rows of the list query; `nil` while nothing is known.
     private var taskRows: [TaskRow]?

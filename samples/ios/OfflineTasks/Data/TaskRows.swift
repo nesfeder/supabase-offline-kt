@@ -5,6 +5,7 @@ import Foundation
 // The rows as the tables hold them. They are `nonisolated` because the client decodes them off the
 // main actor, which is this target's default isolation.
 
+// --8<-- [start:row]
 /// A row of `tasks` as the server and the cache send it.
 nonisolated struct TaskRow: Codable, Sendable {
     let id: String
@@ -24,6 +25,7 @@ nonisolated struct TaskRow: Codable, Sendable {
         case createdAt = "created_at"
     }
 }
+// --8<-- [end:row]
 
 /// A new row of `tasks`. It carries its owner and its creation time, so a task made offline sorts
 /// where it belongs before the server has it; `updated_at` is the server's to set.
@@ -79,6 +81,7 @@ nonisolated struct ObjectPathRow: Decodable, Sendable {
     }
 }
 
+// --8<-- [start:off-main-actor]
 /// The text a task's screen edits, sent as one typed update. A cleared note is written as an
 /// explicit `null`, so the server's copy clears too, where a synthesized `Encodable` would leave
 /// the column out.
@@ -98,6 +101,7 @@ nonisolated struct TaskTextPatch: Encodable, Sendable {
         try container.encode(notes, forKey: .notes)
     }
 }
+// --8<-- [end:off-main-actor]
 
 /// A `tasks` row as Realtime reports it. Its times stay the text the server sent, as a cached
 /// answer from PostgREST keeps them, so the record is applied exactly as it arrived.

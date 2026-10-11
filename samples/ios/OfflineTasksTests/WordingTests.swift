@@ -46,6 +46,7 @@ struct WordingTests {
         #expect(Wording.change(.update, table: Tables.tasks, body: ["done": true]) == "Edited a task")
     }
 
+    // --8<-- [start:factories]
     @Test("A refused change says when it was made and refused, and which row it was for")
     func refusedChanges() {
         // Given
@@ -71,6 +72,7 @@ struct WordingTests {
         #expect(Wording.rowKeys([]) == "no row key")
         #expect(Wording.rowKeys([["id": "a"], ["id": "b"]]) == "2 rows")
     }
+    // --8<-- [end:factories]
 
     @Test("Sync now's report spells out every count")
     func syncReportLine() {

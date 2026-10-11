@@ -23,6 +23,7 @@ enum SyncHeadline: Equatable {
     /// The network is up but the server does not answer; the list shown is the saved one.
     case showingSavedData
 
+    // --8<-- [start:sync-banner]
     /// The headline for `status` and the task list's `refresh`, in order of what matters most.
     static func of(status: SyncStatus, refresh: RefreshState) -> SyncHeadline {
         let pending = status.pendingMutationCount
@@ -32,6 +33,7 @@ enum SyncHeadline: Equatable {
         if pending > 0 { return .waiting(pendingCount: pending) }
         return .upToDate
     }
+    // --8<-- [end:sync-banner]
 
     /// The status line above the tab bar; `nil` when there is nothing to say.
     var banner: String? {

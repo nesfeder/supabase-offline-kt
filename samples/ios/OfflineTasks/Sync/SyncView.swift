@@ -318,6 +318,7 @@ struct SyncView: View {
         return "Last synced \(date.formatted(.relative(presentation: .named)))"
     }
 
+    // --8<-- [start:refresh-state]
     /// The task list's refresh, in words.
     private var refreshText: String {
         guard app.session.userID != nil else { return "Waits for the first sign-in" }
@@ -328,6 +329,7 @@ struct SyncView: View {
         case .stalled: return "Can’t reach the server — showing saved data"
         }
     }
+    // --8<-- [end:refresh-state]
 
     /// The sign-in, in words.
     private var sessionText: String {

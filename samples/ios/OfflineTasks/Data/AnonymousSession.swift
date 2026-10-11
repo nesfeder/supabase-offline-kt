@@ -49,12 +49,14 @@ final class AnonymousSession: UserSession {
         }
     }
 
+    // --8<-- [start:forget-session]
     func signOut() async {
         state = .signingIn
         // Auth drops the session from the device before it calls the server, so the token is gone
         // even when that call fails; for an anonymous user nobody can sign in as again, that is all.
         try? await auth.signOut()
     }
+    // --8<-- [end:forget-session]
 
     func signIn() async throws {
         state = .signingIn

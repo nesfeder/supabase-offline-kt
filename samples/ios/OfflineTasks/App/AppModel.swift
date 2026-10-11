@@ -1,6 +1,7 @@
 // Copyright (c) 2026 nesfeder
 // SPDX-License-Identifier: MIT
 import Foundation
+import OSLog
 import SupabaseOffline
 import SupabaseOfflineTesting
 import SwiftUI
@@ -198,10 +199,16 @@ final class AppModel {
         failure = waitingFailures.isEmpty ? nil : waitingFailures.removeFirst()
     }
 
-    /// Shows `error` to the user, after any failure already showing.
+    /// Shows `error` to the user, after any failure already showing, and logs what is safe to log.
     func report(_ error: any Error) {
+        if let offline = error as? OfflineError {
+            Self.failureLog.error("\(SampleFailure.reportable(offline), privacy: .public)")
+        }
         show(FailureAlert(message: SampleFailure.message(for: error)))
     }
+
+    /// Where the app logs its failures, in the unified log.
+    private static let failureLog = Logger(subsystem: Bundle.main.bundleIdentifier ?? "OfflineTasks", category: "failures")
 
     /// Shows `alert` now, or after the one showing.
     private func show(_ alert: FailureAlert) {
@@ -365,6 +372,7 @@ extension AppModel {
         session: DemoSession = DemoSession(),
         clock: ManualClock? = nil
     ) -> AppModel {
+        // --8<-- [start:in-memory-client]
         let client = SupabaseOfflineClient.inMemory(
             config: ClientSettings.config(
                 accessToken: { await session.accessToken() },
@@ -374,6 +382,7 @@ extension AppModel {
             server: server.fakeServer,
             clock: clock
         )
+        // --8<-- [end:in-memory-client]
         let repository = TaskRepository(client: client, session: session, photoBytes: .bucketDownload)
         return AppModel(mode: mode, repository: repository, changeSource: server)
     }

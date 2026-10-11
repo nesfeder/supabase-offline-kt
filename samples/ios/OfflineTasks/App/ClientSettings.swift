@@ -19,9 +19,11 @@ nonisolated enum ClientSettings {
     static let photoCacheSize = SupabaseOfflineClient.CacheSize.bytes(256 * 1_024 * 1_024)
     // --8<-- [end:sizes]
 
+    // --8<-- [start:data-directory]
     /// Where the database and the photo cache live: `SupabaseOffline` in Application Support, the
     /// default. The library leaves both out of the device's backups.
     static let dataDirectory = URL.applicationSupportDirectory.appending(path: "SupabaseOffline", directoryHint: .isDirectory)
+    // --8<-- [end:data-directory]
 
     // --8<-- [start:log-level]
     /// What the library writes to the unified log, under the subsystem `SupabaseOffline`: from
