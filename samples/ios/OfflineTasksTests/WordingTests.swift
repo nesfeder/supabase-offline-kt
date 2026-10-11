@@ -66,7 +66,7 @@ struct WordingTests {
         // Then
         let made = (Self.now - 60).formatted(date: .omitted, time: .shortened)
         let refused = Self.now.formatted(date: .omitted, time: .shortened)
-        #expect(Wording.refusedChange(refusal) == "Made \(made) · refused \(refused) · row 3f2a…")
+        #expect(Wording.refusedChange(refusal) == "Added “(no title)” · made \(made) · refused \(refused) · row 3f2a…")
         #expect(refusal.reason == "The server refused it: a title can’t be blank or longer than 200 characters.")
         #expect(Wording.title(refusal.taskTitle) == "(no title)")
         #expect(Wording.rowKeys([]) == "no row key")

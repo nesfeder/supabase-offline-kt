@@ -222,6 +222,7 @@ struct PhotoDetailsSheet: View {
         Section("On this device") {
             if let file = model.details?.onDevice {
                 Text(Wording.deviceCopy(file, now: .now))
+                LabeledContent("Path") { Text(file.path).textSelection(.enabled) }
             } else if model.details != nil {
                 Text("Not on this device yet")
             } else {

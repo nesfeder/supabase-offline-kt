@@ -65,12 +65,13 @@ nonisolated extension Wording {
     }
 
     // --8<-- [start:refused-change]
-    /// When a refused write was made and refused, and the rows it was for: "Made 10:41 · refused
-    /// 10:42 · row 3f2a…".
+    /// What a refused write did, when it was made and refused, and the rows it was for: "Added
+    /// “Buy milk” · made 10:41 · refused 10:42 · row 3f2a…".
     static func refusedChange(_ rejection: RejectedMutation) -> String {
+        let what = change(rejection.operation, table: rejection.table, body: rejection.body)
         let made = rejection.createdAt.formatted(date: .omitted, time: .shortened)
         let refused = rejection.rejectedAt.formatted(date: .omitted, time: .shortened)
-        return "Made \(made) · refused \(refused) · \(rowKeys(rejection.rowKeys))"
+        return "\(what) · made \(made) · refused \(refused) · \(rowKeys(rejection.rowKeys))"
     }
     // --8<-- [end:refused-change]
 

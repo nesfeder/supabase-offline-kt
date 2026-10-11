@@ -166,8 +166,9 @@ final class SyncModel {
     private func result(of item: TryItItem, newestTaskID: String?) async throws -> String {
         switch item {
         case .invalidTitle:
+            // Applied has the server's answer; a queued write has none yet.
             let outcome = try await repository.queueInvalidTitle()
-            return outcome.isQueued
+            return outcome.result == nil
                 ? "Queued; the server refuses it when it syncs, and it shows under Refused changes."
                 : "Sent; the server took it."
         case .sampleTasks:

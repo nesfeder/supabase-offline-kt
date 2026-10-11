@@ -28,10 +28,11 @@ extension TaskRepository {
 
     // --8<-- [start:count]
     /// How many tasks the server holds for the user: an exact count, with no rows sent back. A
-    /// count is never cached, so it needs the network under every read strategy.
+    /// count is never cached, so under the default strategy, as under any but cache-only, it asks
+    /// the server, and offline it fails.
     func serverTaskCount() async throws -> Int {
         let response = try await client.from(Tables.tasks)
-            .select("id", head: true, count: .exact, readStrategy: .networkOnly)
+            .select("id", head: true, count: .exact)
             .execute()
         return response.count ?? 0
     }
