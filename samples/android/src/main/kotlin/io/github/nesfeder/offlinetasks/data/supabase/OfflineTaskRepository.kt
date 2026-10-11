@@ -521,6 +521,7 @@ class OfflineTaskRepository(
     /** Every write in the queue, in the order it will be sent, as rows of the Sync tab. */
     override fun waitingChanges(): Flow<List<WaitingChange>> =
         offline.pendingMutations().map { mutations -> mutations.map { it.toWaitingChange() } }
+
     // --8<-- [end:pending]
 
     // --8<-- [start:discard]
@@ -528,6 +529,7 @@ class OfflineTaskRepository(
     override suspend fun discardWaitingChange(id: Long) {
         offline.discardPendingMutation(id)
     }
+
     // --8<-- [end:discard]
 
     // --8<-- [start:rejected-list]

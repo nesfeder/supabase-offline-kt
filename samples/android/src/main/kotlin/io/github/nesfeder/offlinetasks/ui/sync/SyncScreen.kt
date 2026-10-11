@@ -771,7 +771,8 @@ private fun lastSyncText(state: SyncUiState.Ready): String {
 
 /** A waiting write in words: "Added “Buy milk”", "Deleted a photo". */
 private fun waitingChangeText(resources: Resources, change: WaitingChange): String {
-    val title = change.taskTitle?.takeIf { it.isNotBlank() }
+    val title =
+        change.taskTitle?.takeIf { it.isNotBlank() } ?: resources.getString(R.string.task_untitled)
     return when {
         change.table == Tables.TASK_PHOTOS ->
             resources.getString(
@@ -784,7 +785,9 @@ private fun waitingChangeText(resources: Resources, change: WaitingChange): Stri
             )
         change.operation == TaskMutationOperation.Delete ->
             resources.getString(R.string.waiting_task_deleted)
-        title == null -> resources.getString(R.string.waiting_task_changed)
+        // An update that sets no title, such as the done switch's, says which change it was not.
+        change.operation == TaskMutationOperation.Update && change.taskTitle == null ->
+            resources.getString(R.string.waiting_task_changed)
         change.operation == TaskMutationOperation.Update ->
             resources.getString(R.string.waiting_task_edited, title)
         else -> resources.getString(R.string.waiting_task_added, title)

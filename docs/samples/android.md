@@ -157,8 +157,9 @@ refuses and deletes nothing.
 - **Mark all done or the Server section fails, or Replace and Move photo are refused.** The second
   migration file is not applied: run it as [Set up Supabase](supabase-setup.md#apply-the-schema)
   says.
-- **Live updates says it could not connect, or changes from elsewhere never show.** Check that the
-  second migration file added `tasks` and `task_photos` to the `supabase_realtime` publication
-  (Database, Publications, in the dashboard).
+- **Live updates stays at "Connecting to Realtime…", or changes from elsewhere never show.** Check
+  that the second migration file added `tasks` and `task_photos` to the `supabase_realtime`
+  publication (Database, Publications, in the dashboard). Without it, Realtime refuses the
+  subscription and the app keeps trying to join again.
 - **The build asks for platform 37.** Install Android SDK Platform 37 in Android Studio's SDK
   Manager.
