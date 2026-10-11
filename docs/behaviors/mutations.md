@@ -116,7 +116,9 @@ never inserted twice:
   the server is replayed as an upsert that ignores duplicates, so a send whose answer was lost does
   not insert the row again. `SyncReport.alreadyOnServerCount` counts such rows.
 - An INSERT whose key the server makes is inserted twice when the answer to its first send was
-  lost, and can show twice in a cached list read while it is on the wire.
+  lost. It can show twice in a read of its table answered while it is on the wire and, unless it
+  asks for its rows back (`select()`), in that query's cached rows, across restarts, until they
+  are fetched again.
 - An UPSERT, an UPDATE and a DELETE replay as they were sent. They are idempotent, but a replay
   after a lost answer overwrites whatever another writer changed in between.
 

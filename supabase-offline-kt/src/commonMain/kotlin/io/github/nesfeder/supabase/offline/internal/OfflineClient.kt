@@ -266,7 +266,10 @@ internal class OfflineClient(
      */
     private val liveQueries = LiveQueries(clientScope, engineLogger)
 
-    /** The identity a write, a discard, a dismissal or a retry is for, read once per status. */
+    /**
+     * The identity a write, a discard, a dismissal, a retry or a read's overlay is for, read once
+     * per status.
+     */
     private val queueIdentityReader = QueueIdentityReader(supabaseClient)
 
     /** The identity the overlay and counts are for, read once per session status. */

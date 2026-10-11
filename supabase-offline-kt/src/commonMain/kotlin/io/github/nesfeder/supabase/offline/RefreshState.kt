@@ -17,8 +17,9 @@ public sealed interface RefreshState {
     /**
      * A refresh is running, or is about to be tried again soon after a failure, or waits for a
      * session that is still settling, which is not a failure. Under
-     * [ResponseTrust.AuthenticatedSessionOnly], a live read of an empty table made signed out or
-     * without Auth stays here, retried at most a minute apart, until a user signs in.
+     * [ResponseTrust.AuthenticatedSessionOnly], a live read of an empty table made signed out
+     * stays here, retried at most a minute apart, until the table has rows or a user signs in;
+     * without Auth, only rows end it.
      */
     public data object Refreshing : RefreshState
 

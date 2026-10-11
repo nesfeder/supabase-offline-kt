@@ -149,10 +149,10 @@ kotlinx.coroutines are held at the versions supabase-kt 3.6.0 was released with 
   is never queued. A hosted Supabase project commits a dry run all the same, unless it allows the
   rollback: see [the write path](architecture.md#the-write-path).
 - Storage object names containing `%`, `?` or `#`. supabase-kt 3.6.0 puts the name in the URL as
-  written: a `%` fails the request, and a `?` or `#` can fetch a different object (`x?y.png`
-  fetches `x`). The library downloads such a name as supabase-kt does but never caches it or
-  serves it from the cache, and `ensureCachedFile` refuses it. Keep such characters out of object
-  names until the pin moves.
+  written: a `%` fails the request, and a `?` or `#` can fetch or overwrite a different object
+  (`x?y.png` fetches `x`, and an upload of it writes `x`). The library downloads such a name as
+  supabase-kt does but never caches it or serves it from the cache, and `ensureCachedFile` refuses
+  it. Keep such characters out of object names until the pin moves.
 
 **What an app on supabase-kt 3.6 inherits from it.**
 

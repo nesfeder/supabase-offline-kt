@@ -10,11 +10,12 @@ import io.github.nesfeder.supabase.offline.internal.db.RESERVED_TABLE_NAME
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueue
 
 /**
- * Clears local data, or drops the caches for a new owner, in one transaction that records the
- * owner. The lock order, outermost first: the replayer's send lock, the file cache's (never with a
- * table lock), a table's ([TableWriteLocks]), the queue's ([MutationQueue]), the clear lock
- * ([CacheFreshness]), then the records' own. A clear takes no table lock: a write holding one
- * checks the watermarks under the clear lock. Eviction's and the read locks go alone.
+ * Clears local data, or drops the caches for a new owner, in one transaction recording the owner.
+ * Locks, outermost first: the replayer's send lock, the file cache's (never with a table lock), a
+ * table's snapshot lock ([QueryOverlay.holdingReadersOf]) and write lock ([TableWriteLocks]), the
+ * queue's ([MutationQueue]), the clear lock ([CacheFreshness]), then the records' own. A clear
+ * takes no table lock: a write holding one checks the watermarks under the clear lock. Eviction's
+ * lock goes alone; the queue's per-table read locks and the identity reader's lock are leaves.
  */
 internal class LocalData(
     private val queryCacheDao: PayloadWriteCountingDao,

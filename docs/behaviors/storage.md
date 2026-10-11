@@ -92,8 +92,9 @@ segment, a `\`, a control character) still downloads and writes, uncached, and
 `ensureCachedFile` refuses it with `IllegalArgumentException`.
 
 So does a name holding `%`, `?` or `#` on supabase-kt 3.6, which puts the name in the URL as
-written: a `%` fails the request, and a `?` or `#` can fetch a different object, so the library
-never caches it. Keep these characters out of object names.
+written: a `%` fails the request, and a `?` or `#` can fetch or overwrite a different object
+(`x?y.png` fetches `x`, and an upload of it writes `x`), so the library never caches it. Keep these
+characters out of object names.
 
 ## Whose files they are
 

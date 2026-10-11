@@ -20,6 +20,7 @@ public suspend fun OfflineBucketApi.ensureLocalPath(
  * [OfflineBucketApi.cachedFile]'s path. Never touches the network.
  *
  * @param path the object path within this bucket.
+ * @throws IllegalStateException when the client is closed.
  */
 @Throws(Throwable::class)
 public suspend fun OfflineBucketApi.localPathIfCached(path: String): String? =

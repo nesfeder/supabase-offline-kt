@@ -67,9 +67,10 @@ so nothing such a request returns is written to the cache, and the refresh reads
 until the session settles. The cached rows show meanwhile. If the session settles as another
 identity, the cache is dropped first and the read ends on the new identity's rows alone.
 
-Under `ResponseTrust.AuthenticatedSessionOnly`, a live read of an empty table made signed out, or
-without Auth, stays `Refreshing`, retried at most a minute apart, until a user signs in: under that
-rule an empty answer is written only for a signed-in user.
+Under `ResponseTrust.AuthenticatedSessionOnly`, a live read of an empty table made signed out
+stays `Refreshing`, retried at most a minute apart, until the table has rows or a user signs in
+(without Auth, only rows end it): under that rule an empty answer is written only for a signed-in
+user.
 
 ## An old answer never replaces a newer write
 

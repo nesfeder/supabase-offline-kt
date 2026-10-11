@@ -105,7 +105,7 @@ The settings:
 | Case | Rule |
 | --- | --- |
 | `SettledSession` (default) | A response replaces the cache when its request went out under a settled session (signed in, signed out, or a client without Auth) that had not changed when it answered. A session that is restoring, or whose refresh failed, never writes to the cache: supabase-kt then sends the anon key, and row-level security can answer with fewer rows, or none. |
-| `AuthenticatedSessionOnly` | An empty response is written only when the same user was signed in before and after the request; a response with rows is written signed out too, under the same exclusions. For an app that reads public rows signed out and must never see an empty signed-out answer replace them. |
+| `AuthenticatedSessionOnly` | An empty response is written only when the same user was signed in before and after the request; a response with rows is written signed out too, under the same exclusions. For an app that reads public rows signed out and must never see an empty signed-out answer replace them. Signed out, a live read of an empty table stays `Refreshing` ([Refresh lifecycle](../behaviors/refresh-lifecycle.md#cold-start-and-session-restore)). |
 
 **Installing.** PostgREST is required: `from` throws `IllegalStateException` without it. Storage is
 needed only for `storage`. Auth is optional. With it, the cache belongs to one user at a time and
@@ -450,13 +450,13 @@ cache, so the next read downloads them. Signed URLs, listings, `info`, `exists` 
 status always ask the server. An object path that cannot be mapped safely onto a file (a leading
 `/`, an empty, `.` or `..` segment, a `\`, a control character) still downloads and writes,
 uncached. So does one holding `%`, `?` or `#` while the pin is below 3.8: supabase-kt before 3.8
-puts the name in the URL as written, so its request can fetch a different object.
+puts the name in the URL as written, so its request can fetch or overwrite a different object.
 
 ### Local data and lifecycle
 
 | Member | What it does | Rule | Throws |
 | --- | --- | --- | --- |
-| `clearLocalData()` | Deletes everything the library keeps on the device: cached results, downloaded files, and every queued write, which is never sent, with the rejected list. | A pass in flight is canceled first, and nothing queued is sent once it has begun. Live reads open through it fetch again, as after a change of owner. Keeping the deleted rows out of the database's files is best effort: the database is rewritten without them, and its write-ahead log is emptied once no open read holds it. The clear waits up to a second for such reads; when one outlasts that, the library empties the log in the background as soon as the read ends, and once more at `close()`. It never fails the clear and never waits longer. The client stays usable. On sign-out, clear before `auth.signOut()` or in a `finally` around it: offline, `signOut()` throws and keeps the session. That order is safe with the Auth plugin, which tells the cache whose it is; with the app's own token provider and no Auth plugin, clear while no user's token is live (after the provider stops returning the outgoing user's), since a live read fetches again right after the clear with whatever token the provider returns then. | — |
+| `clearLocalData()` | Deletes everything the library keeps on the device: cached results, downloaded files, and every queued write, which is never sent, with the rejected list. | A pass in flight is canceled first, and nothing queued is sent once it has begun. Live reads open through it fetch again, as after a change of owner. Keeping the deleted rows out of the database's files is best effort: the database is rewritten without them, and its write-ahead log is emptied once no open read holds it. The clear waits up to a second for such reads; when one outlasts that, the library empties the log in the background within a few seconds of the read ending, and once more at `close()`. It never fails the clear and never waits longer. The client stays usable. On sign-out, clear before `auth.signOut()` or in a `finally` around it: offline, `signOut()` throws and keeps the session. That order is safe with the Auth plugin, which tells the cache whose it is; with the app's own token provider and no Auth plugin, clear while no user's token is live (after the provider stops returning the outgoing user's), since a live read fetches again right after the clear with whatever token the provider returns then. | — |
 | `applyServerRecord(table, record: JsonObject, primaryKeys = null, schema = null)`; reified `applyServerRecord(table, record: T, …)` | Applies a row the server reports, such as a Realtime INSERT or UPDATE record, to every cached query of the table. | The cached row with the same key is replaced, and a query that admits the row gains it. A record without its whole key is logged and dropped. `primaryKeys = null` is the table's key as `primaryKeys` gives it (`schema.table` for another schema), `id` when none is configured. | The reified form: `IllegalArgumentException` when `record` does not encode to a JSON object |
 | `applyServerDelete(table, oldRecord, primaryKeys = null, schema = null)` | Removes a row the server reports deleted from every cached query of the table. | As `applyServerRecord`. | — |
 | `rpc(function, request)`, `rpc(function, parameters: JsonObject, request)`; reified `rpc(function, parameters: T, request)` | Calls a database function, as `supabase.postgrest.rpc` does. | Network only: never cached, never queued, since a function may change data. | `NetworkDisabledException` while access is off; `IllegalStateException` without PostgREST; the reified form, `IllegalArgumentException` when `parameters` does not encode to a JSON object |
@@ -651,14 +651,16 @@ own locks.
 Outermost first: the replayer's send lock, then the file cache's lock, then a table's snapshot lock,
 then its write lock, then the queue lock, then the clear lock, then the owner record's and the
 query-shape records' own locks. A reader holds a table's snapshot lock only while it reads the
-table's queue and one payload, taking nothing else under it. Every commit, eviction, move and
+table's queue and one payload; under it, it takes only the queue's per-table read lock, a leaf,
+and reads the database. The head send takes the snapshot lock holding no other engine lock, since
+it releases the send lock before the answer is applied. Every commit, eviction, move and
 invalidation of a file takes the file cache's lock too, but only a clear or a drop holds it while
 taking the cache's and the queue's locks; its other users take none of them under it. A clear or a
 drop takes no table lock: a write that holds one checks the watermarks under the clear lock instead.
-The eviction lock and the queue's per-table read locks are taken with none of these held. The
-identity reader's lock, held while one read of the stored session runs, is a leaf: nothing is taken
-under it. No lock is held across a request: the send lock covers choosing a write and recording its
-outcome, and the queue lock short sections of database calls.
+The eviction lock is taken with none of these held. The identity reader's lock, held while one
+read of the stored session runs, is a leaf: nothing is taken under it. No lock is held across a
+request: the send lock covers choosing a write and recording its outcome, and the queue lock short
+sections of database calls.
 
 ### The read path
 
@@ -1158,7 +1160,7 @@ What the library promises, each with the tests that pin it:
 | No error answer from Storage is cached as a file. | `ChannelDownloadStatusTest`, `DownloadToFileStatusAndroidTest` |
 | A response whose request started before a write changed the cache, before a clear, or before a change of owner never lands in the cache. | `StaleRefreshWatermarkTest`, `CacheOwnershipTest`, `ClearLocalDataDuringWritesTest`, `StorageClearDuringDownloadTest` |
 | With Auth, one user's cached rows and files are never served to another. | `CacheBelongsToOneIdentityTest`, `CacheOwnershipTest` |
-| After `clearLocalData()`, the deleted rows cannot be read back from the database's files once no open read holds its write-ahead log: when the clear returns if none does within a second, otherwise as soon as the read ends while the client is open, or at `close()`. The clear never waits longer, and never fails for it. | `ClearLocalDataAndroidTest`, `ClearLocalDataIosTest`, `DatabaseScrubTest` |
+| After `clearLocalData()`, the deleted rows cannot be read back from the database's files once no open read holds its write-ahead log: when the clear returns if none does within a second, otherwise within a few seconds of the read ending while the client is open, or at `close()`. The clear never waits longer, and never fails for it. | `ClearLocalDataAndroidTest`, `ClearLocalDataIosTest`, `DatabaseScrubTest` |
 | Within one process, one database is open in one client at a time. | `OfflinePluginAndroidTest`, `OfflinePluginIosTest`, `IosClientLifecycleTest` |
 | `close()` returns within 10 seconds of real time and never throws, a clear that has begun completes, and a write whose answer arrives during it is applied and never sent again. A caller canceled while it runs gets its own cancellation. | `SupabaseOfflineClientCloseTest`, `PluginCloseTest`, `PluginCloseRaceAndroidTest`, `PluginCloseRaceIosTest`, `ClientCloseRaceAndroidTest`, `ClientCloseRaceIosTest`, `MutationQueueAcrossCloseTest` |
 | A failure in the library's background work never crashes the process, and one failed read of the database never turns an automatic trigger or the status off, nor fails a write the server answered. | `BackgroundFailureContainmentTest`, `QueueCheckFailureTest`, `SyncStatusTest` |
@@ -1175,7 +1177,7 @@ What it does not do yet, or does only so far:
 | The refusal of two top-level filters on one column cannot see a second top-level `or` group, or a text search after a filter on its column, which replace what came before and leave one value. Put those conditions in one group. | No change planned |
 | On a hosted project a dry run commits, unless the project lets a request choose the rollback. | No change planned |
 | An upload does not seed the file cache, so a file uploaded just before going offline is not available offline: the bytes are the caller's, and caching them needs a size and ownership policy. | 0.2.0 |
-| An INSERT whose key the server makes is inserted twice when its response is lost and it replays, and shows twice in a cached list when a read of its table is answered while it is on the wire, until the list is fetched again. Give rows their ids on the device. | No change planned |
+| An INSERT whose key the server makes is inserted twice when its response is lost and it replays, and shows twice in a read of its table answered while it is on the wire and, unless the INSERT asks for its rows back (`select()`), in that query's cached rows, across restarts, until they are fetched again. Give rows their ids on the device. | No change planned |
 | A replayed UPSERT, UPDATE or DELETE overwrites a change another writer made between the lost response and the replay. | No change planned |
 | A queued UPDATE or DELETE whose filter the engine cannot evaluate changes nothing on screen until it is sent and the list fetched again. | No change planned |
 | A queued row is appended past a list's order and limit, on every page it matches. | 0.2.0 |
