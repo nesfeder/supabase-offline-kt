@@ -47,6 +47,7 @@ import io.github.nesfeder.supabase.offline.MutationOutcome
 import io.github.nesfeder.supabase.offline.MutationStrategy
 import io.github.nesfeder.supabase.offline.NetworkStatus
 import io.github.nesfeder.supabase.offline.ReadStrategy
+import io.github.nesfeder.supabase.offline.applyServerRecord
 import io.github.nesfeder.supabase.offline.offline
 import io.github.nesfeder.supabase.offline.rpc
 import java.io.File
@@ -238,8 +239,12 @@ class OfflineTaskRepository(
                 }
             }
         return when (outcome) {
-            is MutationOutcome.Applied ->
+            is MutationOutcome.Applied -> {
+                val stored = outcome.result.decodeSingle<TaskRecord>()
+                // An online-only write is never patched into the cache: the stored row goes there.
+                if (needsConnection) offline.applyServerRecord(Tables.TASKS, stored)
                 NewTaskOutcome.Saved(outcome.result.decodeSingle<TaskRow>().toTask(emptySet()))
+            }
             is MutationOutcome.Queued -> NewTaskOutcome.SavedOnDevice // sent when it can be
         }
     }

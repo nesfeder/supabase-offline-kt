@@ -125,6 +125,18 @@ class OfflineTaskRepositoryTest {
     // --8<-- [end:offline-test]
 
     @Test
+    fun a_task_that_needs_a_connection_is_listed_at_once_when_it_is_saved() = runTest {
+        // Given — the list read once
+        repository.tasks().awaitValue { it.isEmpty() }
+
+        // When — sent now or never, which the library does not patch into its cache
+        repository.addTask("Call the plumber", notes = null, needsConnection = true)
+
+        // Then — the device's copy has the stored row, with nothing fetched again
+        assertEquals("Call the plumber", repository.cachedTasks()?.singleOrNull()?.title)
+    }
+
+    @Test
     fun a_task_that_needs_a_connection_is_refused_offline_and_never_queued() = runTest {
         // Given
         repository.setNetworkEnabled(false)

@@ -32,7 +32,7 @@ The list, open tasks first, with a search field and four chips above it.
 
 | What it shows | The calls | Explained on |
 | --- | --- | --- |
-| Title, notes, and **Needs a connection** | `insert(row, mutationStrategy) { select() }`: `QueueIfOffline`, the default, or `OnlineOnly` with the switch on | [Writes and the offline queue](../behaviors/mutations.md#the-two-strategies) |
+| Title, notes, and **Needs a connection** | `insert(row, mutationStrategy) { select() }`: `QueueIfOffline`, the default, or `OnlineOnly` with the switch on, whose stored row the app then puts in the cache with `applyServerRecord`, since an online-only write is never patched in | [Writes and the offline queue](../behaviors/mutations.md#the-two-strategies) |
 | "Saved at 10:42", or "saved on this device" | `MutationOutcome.Applied.result`, the row the server stored, or `Queued` | [Writes and the offline queue](../behaviors/mutations.md#what-a-write-returns) |
 
 ## Task detail
