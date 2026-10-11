@@ -41,6 +41,7 @@ import io
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -1193,6 +1194,10 @@ class Fixture:
             ("commit.gpgsign", "false"),
             ("tag.gpgsign", "false"),
             ("core.hooksPath", os.devnull),
+            # No automatic maintenance: a background gc still writing into the repository fails
+            # its deletion with "Directory not empty".
+            ("gc.auto", "0"),
+            ("maintenance.auto", "false"),
         ):
             self.git.run("config", key, value)
 
@@ -1226,10 +1231,13 @@ class Fixture:
 
 @contextlib.contextmanager
 def fixture() -> Iterator[Tuple[Fixture, str]]:
-    """A fresh Fixture and its baseline commit, deleted afterwards."""
-    with tempfile.TemporaryDirectory(prefix="api-compat-self-test.") as directory:
+    """A fresh Fixture and its baseline commit, deleted afterward as far as it can be."""
+    directory = tempfile.mkdtemp(prefix="api-compat-self-test.")
+    try:
         repository = Fixture(directory)
         yield repository, repository.baseline()
+    finally:
+        shutil.rmtree(directory, ignore_errors=True)
 
 
 def expect(condition: bool, message: str, failures: List[str]) -> None:
