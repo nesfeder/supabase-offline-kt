@@ -226,10 +226,11 @@ stored all the same and is downloaded when it is next shown.
 A failure marks the photo failed and keeps its file, to be tried again on the next online
 transition or on Retry; one for want of the network ends the pass, and the photos after it wait. A
 refusal no try can change (Storage's policies answering 403, say, or the row refused because its
-task is gone) stays failed until Remove. An answer lost on the way never sends anything twice: a
+task is gone) stays failed until Remove. An answer lost on the way never stores anything twice: a
 retry first asks Storage whether an earlier try stored the file, Storage's "already exists" counts
 as stored (the path names a photo id this device made), and the row is an `upsert` that ignores a
-duplicate. Uploads run while the app runs.
+duplicate. Against hosted Storage the `exists` check is what catches it: supabase-kt reports a
+duplicate there as HTTP 400, not 409. Uploads run while the app runs.
 
 **Deletes and clears.** Deleting a task deletes its pending photos, and Remove deletes one. Clear
 local cache and Start over delete the whole directory, which `clearLocalData()` never touches.

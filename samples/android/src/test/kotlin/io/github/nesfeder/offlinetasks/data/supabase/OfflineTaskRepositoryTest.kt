@@ -14,6 +14,7 @@ import io.github.nesfeder.offlinetasks.data.NetworkUnavailableException
 import io.github.nesfeder.offlinetasks.data.NewTaskOutcome
 import io.github.nesfeder.offlinetasks.data.PendingPhotoDirectory
 import io.github.nesfeder.offlinetasks.data.PendingPhotoState
+import io.github.nesfeder.offlinetasks.data.PhotoStorageException
 import io.github.nesfeder.offlinetasks.data.RowsSnapshot
 import io.github.nesfeder.offlinetasks.data.ServerUnreachableException
 import io.github.nesfeder.offlinetasks.data.Tables
@@ -654,6 +655,26 @@ class OfflineTaskRepositoryTest {
     }
 
     @Test
+    fun a_task_delete_storage_refuses_keeps_its_pending_photos() = runTest {
+        // Given — a task with an uploaded photo, and one whose upload failed, kept on the device
+        repository.addTask("Kept after all", notes = null)
+        val task = repository.tasks().awaitValue { it.isNotEmpty() }.single()
+        repository.addUploadedPhoto(task.id)
+        server.isUploadFailing = true
+        repository.addPhoto(task.id, EncodedPhoto(ByteArray(8), 4, 3))
+        repository.photos(task.id).awaitValue { it.hasFailedUpload() }
+        server.isDeleteRefused = true
+
+        // When — the delete fails at its files step
+        assertFailsWith<PhotoStorageException> { repository.deleteTask(task.id) }
+
+        // Then — nothing is deleted: the task, and the photo never uploaded, file and record
+        assertEquals(1, server.rows(Tables.TASKS).size)
+        assertEquals(2, pendingRoot.listFiles().orEmpty().size)
+        assertTrue(repository.photos(task.id).awaitValue { it.size == 2 }.any { it.hasPending() })
+    }
+
+    @Test
     fun clear_local_cache_and_start_over_delete_the_pending_photos() = runTest {
         // Given — a photo waiting offline
         val task = taskWithPhotosRead("Cleared")
@@ -805,6 +826,9 @@ class OfflineTaskRepositoryTest {
     private fun List<TaskPhoto>.hasFailedUpload(): Boolean = any {
         it.pendingUpload?.state == PendingPhotoState.Failed
     }
+
+    /** Whether this photo is still waiting in the app's queue. */
+    private fun TaskPhoto.hasPending(): Boolean = pendingUpload != null
 
     /** Whether these photos are listed and every one has finished uploading. */
     private fun List<TaskPhoto>.isUploaded(): Boolean =

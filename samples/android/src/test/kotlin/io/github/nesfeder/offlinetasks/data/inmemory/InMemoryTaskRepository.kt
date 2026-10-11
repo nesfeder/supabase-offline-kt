@@ -373,7 +373,6 @@ class InMemoryTaskRepository(
     }
 
     override suspend fun deleteTask(id: String): TaskMutationOutcome = detached {
-        pendingPhotos.removeTask(id)
         val photosOfTask =
             state.value.visibleRows()?.photos?.values?.filter { it.taskId == id }.orEmpty()
         if (photosOfTask.isNotEmpty()) {
@@ -386,6 +385,7 @@ class InMemoryTaskRepository(
             photosOfTask.forEach { photoFiles.delete(it.fileName) }
             enqueue { QueuedMutation.DeleteTaskPhotos(it, id) }
         }
+        pendingPhotos.removeTask(id) // only once the files step has not failed
         write { QueuedMutation.DeleteTask(it, id) }
     }
 

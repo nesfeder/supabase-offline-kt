@@ -137,8 +137,8 @@ interface TaskRepository {
     suspend fun setTaskDone(id: String, isDone: Boolean): TaskMutationOutcome
 
     /**
-     * Deletes a task: its pending photos on this device, its photo files (only when online; offline
-     * they stay in the bucket), then its photo rows, then the task.
+     * Deletes a task: its photo files (only when online; offline they stay in the bucket), then its
+     * pending photos on this device, its photo rows, and the task.
      *
      * @throws PhotoStorageException when Storage refuses to delete the files; nothing is deleted.
      * @throws TaskWriteRefusedException when it was sent at once and the server refused it.

@@ -158,8 +158,11 @@ refuses and deletes nothing.
   activity ([If the project pauses](supabase-setup.md#if-the-project-pauses)). The app tries
   again each time the network comes back; until then the list says it is not signed in yet.
 - **A photo will not upload.** Check that the `task-photos` bucket exists, private, as
-  [Set up Supabase](supabase-setup.md) creates it. The photo is marked "Upload failed" with
-  Storage's own answer; fix the cause and tap **Retry**.
+  [Set up Supabase](supabase-setup.md) creates it. The photo is marked "Upload failed" with the
+  app's sentence for Storage's answer. A missing bucket reads as "This photo's file is missing" and
+  is tried again once the bucket exists, on **Retry** or when the network next comes back. A photo
+  Storage's policies refused stays failed with Retry switched off: remove it, fix the policy, and
+  add it again.
 - **Mark all done or the Server section fails, or Replace and Move photo are refused.** The second
   migration file is not applied: run it as [Set up Supabase](supabase-setup.md#apply-the-schema)
   says.

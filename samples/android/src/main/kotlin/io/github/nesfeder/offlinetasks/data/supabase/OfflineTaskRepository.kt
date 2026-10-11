@@ -446,12 +446,12 @@ class OfflineTaskRepository(
     // --8<-- [start:delete-task]
     /** A task's photo files (online only), then its photo rows, then the task itself. */
     override suspend fun deleteTask(id: String): TaskMutationOutcome = detached {
-        // Its photos still on this device go first; one uploading now never gets its row.
-        pendingPhotos.removeTask(id)
         val photos = cachedPhotosOf(id)
         // Files first, and only online: Storage writes are never queued, so offline they stay.
         if (canReachNetwork())
             deleteFiles(photos?.map { it.objectPath } ?: photoPathsOnServer(TASK_ID, id))
+        // Then its photos still on this device: one whose upload has not returned yet gets no row.
+        pendingPhotos.removeTask(id)
         // The server's cascade would delete the photo rows, but the cache never sees a cascade.
         if (photos == null || photos.isNotEmpty()) {
             write(Tables.TASK_PHOTOS, TaskMutationOperation.Delete, taskTitle = null) {
@@ -541,7 +541,9 @@ class OfflineTaskRepository(
 
     /**
      * Uploads [jpeg] to [path]; a file already there counts as stored, since the path names a photo
-     * id this device made, so only an earlier try of this photo can have put it there.
+     * id this device made, so only an earlier try of this photo can have put it there. Hosted
+     * Storage answers a duplicate with HTTP 400 through supabase-kt, not 409: there the `exists`
+     * check before a retry is what catches it, so keep both.
      */
     private suspend fun uploadUnlessStored(
         path: String,

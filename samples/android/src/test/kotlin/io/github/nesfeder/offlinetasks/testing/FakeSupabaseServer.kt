@@ -76,6 +76,9 @@ class FakeSupabaseServer {
     /** While true, every upload to the bucket answers HTTP 500, as a failing Storage does. */
     var isUploadFailing: Boolean = false
 
+    /** While true, every delete from the bucket answers HTTP 403, as a refusing policy would. */
+    var isDeleteRefused: Boolean = false
+
     /** The most rows one read returns, as a hosted project's row limit caps it. */
     var maxRows: Int = 1_000
 
@@ -252,6 +255,13 @@ class FakeSupabaseServer {
                         HttpStatusCode.BadRequest,
                     )
             }
+            request.method == HttpMethod.Delete &&
+                segments == listOf("object", BUCKET) &&
+                isDeleteRefused ->
+                json(
+                    """{"statusCode":"403","error":"Unauthorized","message":"refused on purpose"}""",
+                    HttpStatusCode.Forbidden,
+                )
             request.method == HttpMethod.Delete && segments == listOf("object", BUCKET) -> {
                 val prefixes =
                     Json.parseToJsonElement(body.decodeToString())
