@@ -69,8 +69,8 @@ internal class LocalData(
     /**
      * Empties the cache for [owner], the identity it now belongs to: every cached query with its
      * shape record, and every Storage row, go in one transaction that records [owner]. The mutation
-     * queue and its records stay. No response or cache patch started before it lands afterward;
-     * the files of the Storage cache are its caller's to delete.
+     * queue and its records stay. No response or cache patch started before it lands afterward; the
+     * files of the Storage cache are its caller's to delete.
      */
     suspend fun dropCacheFor(owner: String) {
         // The locks and order of [clearLocalData], which this is but for the mutation queue

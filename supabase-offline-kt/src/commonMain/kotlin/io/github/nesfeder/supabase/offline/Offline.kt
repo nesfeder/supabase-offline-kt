@@ -410,8 +410,8 @@ public interface Offline : SupabasePlugin<Offline.Config> {
      *
      * The client stays usable afterward. A live read open through the clear that refreshes (any
      * strategy but [FlowReadStrategy.CacheOnly]) fetches again, as it does when the cache passes to
-     * another identity: at once online, and once the network is back offline,
-     * [RefreshState.Paused] meanwhile.
+     * another identity: at once online, and once the network is back offline, [RefreshState.Paused]
+     * meanwhile.
      *
      * @throws IllegalStateException when the client is closed.
      */

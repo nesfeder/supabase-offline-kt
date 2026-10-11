@@ -30,9 +30,9 @@ import okio.Path
 import okio.SYSTEM
 
 /**
- * A download whose caller is canceled leaves no file behind, wherever the cancellation lands:
- * while the cache is still creating the download's file, or while it is committing a finished one.
- * The caller returns only once that file is gone. Each way in: bytes, a channel, and
+ * A download whose caller is canceled leaves no file behind, wherever the cancellation lands: while
+ * the cache is still creating the download's file, or while it is committing a finished one. The
+ * caller returns only once that file is gone. Each way in: bytes, a channel, and
  * `ensureCachedFile`. The file system holds its operation until the caller's cancellation has
  * reached the call's own work, so the cancellation always lands there, however the threads run.
  */

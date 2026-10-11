@@ -181,8 +181,8 @@ internal object ClientCloseRaces {
         }
 
     /**
-     * A bucket and a count flow obtained before `close()` refuse afterward with the client's
-     * closed error, and nothing reaches the server.
+     * A bucket and a count flow obtained before `close()` refuse afterward with the client's closed
+     * error, and nothing reaches the server.
      */
     suspend fun objectsObtainedBeforeCloseRefuseAfterIt(
         directory: Path,

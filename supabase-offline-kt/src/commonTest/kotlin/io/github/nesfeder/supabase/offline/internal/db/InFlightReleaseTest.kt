@@ -27,9 +27,9 @@ import kotlinx.serialization.json.JsonArray
 /**
  * A pass marks each mutation in flight while it sends it, and releases the mark however the send
  * ends. A pass whose local store fails around a send — a full disk while it records the send — or
- * whose caller is canceled while the request is on the wire, which it then finishes, stops with
- * the mutation still queued when it was not applied, and the next pass, and the next write at the
- * head, send it.
+ * whose caller is canceled while the request is on the wire, which it then finishes, stops with the
+ * mutation still queued when it was not applied, and the next pass, and the next write at the head,
+ * send it.
  */
 class InFlightReleaseTest {
 
