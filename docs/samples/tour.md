@@ -56,7 +56,7 @@ The list, open tasks first, with a search field and four chips above it.
 | **Share** | `ensureLocalFile`, copied out of the cache for the share sheet | `ensureCachedFile`'s `CachedFile.url`, handed to the share sheet | [Storage caching](../behaviors/storage.md#cached-files) |
 | **Share link**: a copy 512 pixels wide, for an hour | `createSignedUrl` with an image transformation | `createSignedURL(path:expiresIn:transform:)` with an `ImageTransformation` | [Storage caching](../behaviors/storage.md#writes) |
 | **Replace photo**, **Move to another task**, **Duplicate to another task**, **Delete photo** | `update`, `move` with an `update` of the row, `copy` with an `insert`, `delete`; all online only | `update(_:data:options:)`, `move(from:to:)` with an `update` of the row, `copy(from:to:)` with an `insert`, `remove(paths:)` | [Storage caching](../behaviors/storage.md#writes) |
-| A photo waiting to upload: its own file, a line saying the bucket's actions wait for the upload, **Share**, and **Delete photo** (or **Retry** and **Remove** once it failed), offline too | No library call: the file and its record are the app's | Lands with the iOS sample's pull request | [Storage caching](../behaviors/storage.md#photos-picked-offline-the-apps-own-queue) |
+| A photo waiting to upload: its own file, a line saying the bucket's actions wait for the upload, **Share**, and **Remove** (not while it uploads), with **Retry** once it failed, offline too | No library call: the file and its record are the app's | Lands with the iOS sample's pull request | [Storage caching](../behaviors/storage.md#photos-picked-offline-the-apps-own-queue) |
 
 ## Photos
 
@@ -148,7 +148,7 @@ Simulate offline does not survive a restart, so use the device's airplane mode f
 3. Switch on **Simulate offline**, open **New task**, give it a title and **Add photo** (pick two),
    then save. Open the task: its photos show at once, from the device, each marked "Waiting to
    upload". The **Photos** tab has them too. Open one: the viewer shows it, and says why Details,
-   Share link, Replace, Move and Duplicate wait for the upload.
+   Share link, Replace, Move and Duplicate need the photo on the server.
 4. In the dashboard, the `task_photos` table and the bucket's folder for the task have nothing new:
    Storage writes are never queued, so the photos wait in the app's own queue.
 5. Switch **Simulate offline** off. The queued task is sent and the photos upload one at a time;

@@ -102,7 +102,7 @@ still shows offline: the Photos tab marks it available offline.
 The library never queues a Storage write, so the app keeps its own queue: a photo added offline
 (Simulate offline on, say) waits on the device, marked "Waiting to upload", and uploads when the
 network comes back, its row written only once Storage has the file. One that fails says why, with
-**Retry**, and **Remove** to give it up. Until it is uploaded, the viewer offers Share and Delete
+**Retry**, and **Remove** to give it up. Until it is uploaded, the viewer offers Share and Remove
 for it but not Details, Share link, Replace, Move or Duplicate. Those, and Delete for an uploaded
 photo, need the network: offline they are switched off.
 

@@ -209,7 +209,8 @@ it waits only a moment.
 **Shown from the device at once.** The task's photos and the Photos tab merge the library's
 `task_photos` rows with the directory's records, each photo once. A pending photo shows from its
 own file with a mark and a word for its state ("Waiting to upload", "Uploading", "Upload failed"),
-as a queued task carries its cloud mark, and a failed one offers **Retry** and **Remove**. The photo
+as a queued task carries its cloud mark. A failed one offers **Retry** (switched off when no try can
+succeed) and **Remove**, and a waiting one can be removed too, but not while it uploads. The photo
 viewer opens it from its file and hides Details, Share link, Replace, Move and Duplicate, which
 need the object in the bucket, with a line saying so.
 
@@ -219,17 +220,23 @@ in, it uploads the waiting photos one at a time, oldest first: `upload` of the f
 Storage has the object, the `task_photos` row through the library, a write the queue can hold like
 any other; then `ensureCachedFile`, so the library's cache holds the photo; then the app's file and
 record are deleted. The server never holds a row that names a missing object, and a row whose
-task's insert is still queued waits behind it, in order. A failure marks the photo failed and keeps
-its file, to be tried again on the next online transition or on Retry; a refusal no try can change
-(Storage's policies answering 403, say, or the row refused because its task is gone) stays failed
-until Remove. A retry first asks Storage whether an earlier try stored the file, and the row is an
-`upsert` that ignores a duplicate, so an answer lost on the way never sends anything twice. Uploads
-run while the app runs.
+task's insert is still queued waits behind it, in order. If `ensureCachedFile` fails, the photo is
+stored all the same and is downloaded when it is next shown.
+
+A failure marks the photo failed and keeps its file, to be tried again on the next online
+transition or on Retry; one for want of the network ends the pass, and the photos after it wait. A
+refusal no try can change (Storage's policies answering 403, say, or the row refused because its
+task is gone) stays failed until Remove. An answer lost on the way never sends anything twice: a
+retry first asks Storage whether an earlier try stored the file, Storage's "already exists" counts
+as stored (the path names a photo id this device made), and the row is an `upsert` that ignores a
+duplicate. Uploads run while the app runs.
 
 **Deletes and clears.** Deleting a task deletes its pending photos, and Remove deletes one. Clear
-local cache and Start over delete the whole directory, which `clearLocalData()` never touches;
-Start over's bracket runs as before, the directory cleared with the sign-out step. None of them
-runs while a photo is uploading.
+local cache and Start over delete the whole directory, which `clearLocalData()` never touches.
+A photo removed any of these ways while its upload is on the wire gets no row: once the upload
+returns, its file is deleted from the bucket. Start over's bracket runs as before, the directory
+cleared with the sign-out step; it first waits for an upload in progress and holds new ones, so
+none lands after its deletes.
 
 **What stays true.** Storage writes still need a connection, as [Writes](#writes) says: the
 uploader makes them only while the network is on.
