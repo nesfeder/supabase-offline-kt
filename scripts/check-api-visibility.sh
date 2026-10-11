@@ -451,7 +451,7 @@ check_tree() {
     while IFS="$(printf '\t')" read -r rule path line name detail; do
         [ -n "$rule" ] || continue
         key="$rule|$path|$name|"
-        if printf '%s\n' "$allow_list" | grep -F -q -- "$key"; then
+        if grep -F -q -- "$key" <<< "$allow_list"; then
             grandfathered=$((grandfathered + 1))
             echo "  grandfathered  $rule  $path:$line  $name"
         else
@@ -738,8 +738,8 @@ KOTLIN
         plant "$root" "$kind"
         status=0
         output="$(check_tree "$root" "" 2>&1)" || status=$?
-        if [ "$status" -ne 0 ] && printf '%s\n' "$output" | grep -F -q -- "VIOLATION      $expected_rule" \
-            && printf '%s\n' "$output" | grep -F -q -- "$expected_name"; then
+        if [ "$status" -ne 0 ] && grep -F -q -- "VIOLATION      $expected_rule" <<< "$output" \
+            && grep -F -q -- "$expected_name" <<< "$output"; then
             echo "ok   $kind: caught ($expected_rule, $expected_name)"
         else
             echo "FAIL $kind: not caught (exit $status)"
@@ -799,8 +799,8 @@ KOTLIN
     write_compliant_files "$clean"
     status=0
     output="$(check_tree "$clean" "" 2>&1)" || status=$?
-    if [ "$status" -eq 0 ] && printf '%s\n' "$output" | grep -F -q "Result: 0 violation(s)" \
-        && printf '%s\n' "$output" | grep -F -q "Scanned 12 top-level declarations"; then
+    if [ "$status" -eq 0 ] && grep -F -q "Result: 0 violation(s)" <<< "$output" \
+        && grep -F -q "Scanned 12 top-level declarations" <<< "$output"; then
         echo "ok   compliant tree: passes with all 12 top-level declarations seen"
     else
         echo "FAIL compliant tree: exit $status"
@@ -813,8 +813,8 @@ KOTLIN
         kind="$1"; expected_text="$2"
         status=0
         output="$(check_tree "$work/$kind" "" 2>&1)" || status=$?
-        if [ "$status" -eq 2 ] && printf '%s\n' "$output" | grep -F -q -- "nothing was checked" \
-            && printf '%s\n' "$output" | grep -F -q -- "$expected_text"; then
+        if [ "$status" -eq 2 ] && grep -F -q -- "nothing was checked" <<< "$output" \
+            && grep -F -q -- "$expected_text" <<< "$output"; then
             echo "ok   $kind: refused ($expected_text)"
         else
             echo "FAIL $kind: not refused (exit $status)"
