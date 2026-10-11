@@ -45,8 +45,8 @@ import kotlinx.coroutines.withTimeoutOrNull
 class ClientOperationGateTest {
 
     @Test
-    fun a_collection_whose_collector_is_cancelled_counts_until_its_work_has_ended() = runTest {
-        // Given — a live collection whose work, once cancelled, still has a moment to finish, as a
+    fun a_collection_whose_collector_is_canceled_counts_until_its_work_has_ended() = runTest {
+        // Given — a live collection whose work, once canceled, still has a moment to finish, as a
         // query does. The cancellation may land in emit, which returns once the collector is done
         val gate = ClientOperationGate()
         val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -222,8 +222,8 @@ class ClientOperationGateTest {
         // it are untouched; nothing reached the app's handler; and reading again finds the channel
         // completed, after whatever it still held
         assertEquals(false, holder.isCancelled, "the app's launch was failed by the closed error")
-        assertEquals(true, sibling.isActive, "the job beside it was cancelled")
-        assertEquals(true, appJob.isActive, "the app's scope was cancelled")
+        assertEquals(true, sibling.isActive, "the job beside it was canceled")
+        assertEquals(true, appJob.isActive, "the app's scope was canceled")
         assertEquals(
             emptyList(),
             uncaught.recorded(),
@@ -383,7 +383,7 @@ class ClientOperationGateTest {
 
         // Then — the app's launch and scope were not failed, and the reader got the closed error
         assertEquals(false, holder.isCancelled, "the app's launch was failed by the closed error")
-        assertEquals(true, appJob.isActive, "the app's scope was cancelled")
+        assertEquals(true, appJob.isActive, "the app's scope was canceled")
         assertEquals(
             emptyList(),
             uncaught.recorded(),

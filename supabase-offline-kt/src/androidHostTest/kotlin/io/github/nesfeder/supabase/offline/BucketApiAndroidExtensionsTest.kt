@@ -160,7 +160,7 @@ class BucketApiAndroidExtensionsTest {
 
     @Test
     fun `ensureLocalFile propagates cancellation`() = runTest {
-        // Given — a download that is in flight when its caller is cancelled
+        // Given — a download that is in flight when its caller is canceled
         fakeBucket.onDownload = { awaitCancellation() }
         var returned = false
         var caught: Throwable? = null
@@ -177,8 +177,8 @@ class BucketApiAndroidExtensionsTest {
         // When
         job.cancelAndJoin()
 
-        // Then — cancelled, not "not available"
-        assertFalse(returned, "ensureLocalFile returned after its caller was cancelled")
+        // Then — canceled, not "not available"
+        assertFalse(returned, "ensureLocalFile returned after its caller was canceled")
         assertTrue(caught is CancellationException, "expected CancellationException, got $caught")
     }
 }

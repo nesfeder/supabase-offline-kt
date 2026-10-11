@@ -36,7 +36,7 @@ internal constructor(
 
 /** What a [BridgeError] reports. A later build may add a kind; match the ones you handle. */
 public enum class BridgeErrorKind {
-    /** The caller cancelled the call through its [BridgeCancellable]. */
+    /** The caller canceled the call through its [BridgeCancellable]. */
     CANCELLED,
 
     /** The client is closed, or closed while the call ran. */

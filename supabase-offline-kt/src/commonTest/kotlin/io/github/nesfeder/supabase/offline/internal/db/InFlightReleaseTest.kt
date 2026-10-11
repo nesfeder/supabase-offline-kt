@@ -27,9 +27,9 @@ import kotlinx.serialization.json.JsonArray
 /**
  * A pass marks each mutation in flight while it sends it, and releases the mark however the send
  * ends. A pass whose local store fails around a send — a full disk while it records the send — or
- * whose caller is cancelled while the request is on the wire, which it then finishes, stops with
- * the mutation still queued when it was not applied, and the next pass, and the next write at the
- * head, send it.
+ * whose caller is canceled while the request is on the wire, which it then finishes, stops with the
+ * mutation still queued when it was not applied, and the next pass, and the next write at the head,
+ * send it.
  */
 class InFlightReleaseTest {
 
@@ -92,7 +92,7 @@ class InFlightReleaseTest {
     }
 
     @Test
-    fun a_pass_cancelled_while_its_request_is_on_the_wire_does_not_stop_the_next() = runTest {
+    fun a_pass_canceled_while_its_request_is_on_the_wire_does_not_stop_the_next() = runTest {
         // Given — a queued write whose first send is on the wire when its caller gives up; the pass
         // finishes that request, which then fails without an answer
         store.mutationQueue.enqueueOwnedBy(QueueIdentity.Anonymous.storedValue) {
@@ -105,11 +105,11 @@ class InFlightReleaseTest {
             unanswered.await()
             connectivityFailure()
         }
-        val cancelled = async { replayer.sync() }
+        val canceled = async { replayer.sync() }
         onTheWire.await()
-        cancelled.cancel()
+        canceled.cancel()
         unanswered.complete(Unit)
-        cancelled.join()
+        canceled.join()
 
         // When — the next pass runs
         server.answer = { okJson("[]") }
@@ -121,9 +121,9 @@ class InFlightReleaseTest {
     }
 
     @Test
-    fun a_keyed_insert_on_the_wire_when_its_pass_is_cancelled_is_recorded_and_not_sent_again() =
+    fun a_keyed_insert_on_the_wire_when_its_pass_is_canceled_is_recorded_and_not_sent_again() =
         runTest {
-            // Given — a pass cancelled while its keyed INSERT is on the wire; the server then
+            // Given — a pass canceled while its keyed INSERT is on the wire; the server then
             // accepts it
             cancelPassThenAccept("""[{"id":"k1","title":"Buy milk"}]""")
 
@@ -137,7 +137,7 @@ class InFlightReleaseTest {
         }
 
     @Test
-    fun a_keyless_insert_on_the_wire_when_its_pass_is_cancelled_is_recorded_and_not_sent_again() =
+    fun a_keyless_insert_on_the_wire_when_its_pass_is_canceled_is_recorded_and_not_sent_again() =
         runTest {
             // Given — the same, for an INSERT a resend would duplicate
             cancelPassThenAccept("""[{"title":"Buy milk"}]""")
@@ -166,11 +166,11 @@ class InFlightReleaseTest {
             accepted.await()
             okJson("[]")
         }
-        val cancelled = async { replayer.sync() }
+        val canceled = async { replayer.sync() }
         onTheWire.await()
-        cancelled.cancel()
+        canceled.cancel()
         accepted.complete(Unit)
-        cancelled.join()
+        canceled.join()
     }
 
     private fun rows(json: String): JsonArray = Json.parseToJsonElement(json) as JsonArray

@@ -63,14 +63,14 @@ internal class CacheFreshness(private val monotonicTick: () -> Long) {
     fun tickNow(): Long = monotonicTick()
 
     /**
-     * Advances [table]'s watermark to [tick], never backwards: a request already in flight for it
+     * Advances [table]'s watermark to [tick], never backward: a request already in flight for it
      * started before the write and cannot describe it. Taken at the write's start, so a request
      * that started just before is dropped too, which costs a fetch and never loses the write.
      */
     fun advanceLocalWriteWatermark(table: String, tick: Long = monotonicTick()) {
         lastLocalMutationTick.update { current ->
             val existing = current[table]
-            // Never move a watermark backwards: two writes racing here must leave the later tick.
+            // Never move a watermark backward: two writes racing here must leave the later tick.
             if (existing != null && existing >= tick) current else current + (table to tick)
         }
     }
@@ -108,10 +108,10 @@ internal class CacheFreshness(private val monotonicTick: () -> Long) {
 
     /**
      * Moves the drop watermark, and with [queueCleared] the clear watermark, to [tick], never
-     * backwards. Caller holds the clear lock.
+     * backward. Caller holds the clear lock.
      */
     fun markEmptied(tick: Long, queueCleared: Boolean) {
-        // Never move a watermark backwards: the earlier of two racing clears would re-admit
+        // Never move a watermark backward: the earlier of two racing clears would re-admit
         // responses the later one disqualified.
         if (queueCleared) cacheClearedTick.update { existing -> maxOf(existing, tick) }
         cacheDroppedTick.update { existing -> maxOf(existing, tick) }

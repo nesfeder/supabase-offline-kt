@@ -28,13 +28,13 @@ touch the server, and the client stays usable afterward.
 - A write already on the wire is neither applied to the cache nor queued when it answers. A
   Storage download in flight may still hand its bytes to its caller, but they are not written to
   the cache.
-- A live read open through the clear fetches again: at once online, and once the network is back
-  offline (`Paused` meanwhile).
+- A live read open through the clear that refreshes (any strategy but `CacheOnly`) fetches again:
+  at once online, and once the network is back offline (`Paused` meanwhile).
 - Keeping the deleted rows out of the database's files is best effort. The database is rewritten
   without them, and its write-ahead log, which still holds them, is emptied once no open read
   holds it: the clear waits up to a second for such reads, and when one outlasts that, the library
-  empties the log as soon as the read ends, and once more at `close()`. It never fails the clear
-  for it.
+  empties the log within a few seconds of the read ending, and once more at `close()`. It never
+  fails the clear for it.
 
 ## Order of operations
 
@@ -69,7 +69,8 @@ cache belong to one identity at a time: a signed-in user, or nobody signed in.
   change of user, since nothing the engine can read tells one user from another. An app whose own
   token provider serves more than one user must call `clearLocalData()` itself when its user
   changes, and only once the provider has stopped returning the outgoing user's token: a live read
-  open through the clear fetches again with whatever token the provider returns then.
+  open through the clear that refreshes fetches again with whatever token the provider returns
+  then.
 
 <small>`CacheBelongsToOneIdentityTest.a_signed_out_answer_is_never_served_to_the_user_who_signs_in_next`,
 `CacheBelongsToOneIdentityTest.signing_in_over_another_user_drops_the_cache_and_keeps_every_queued_write`,

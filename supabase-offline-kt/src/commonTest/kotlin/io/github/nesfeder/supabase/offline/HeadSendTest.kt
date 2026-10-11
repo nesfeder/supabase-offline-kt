@@ -211,7 +211,7 @@ class HeadSendTest {
         }
 
     @Test
-    fun a_write_whose_caller_is_cancelled_on_the_wire_stays_queued_and_asks_for_a_pass() = runTest {
+    fun a_write_whose_caller_is_canceled_on_the_wire_stays_queued_and_asks_for_a_pass() = runTest {
         // Given — the write is on the wire
         val parked = CompletableDeferred<Unit>()
         server.answer = {

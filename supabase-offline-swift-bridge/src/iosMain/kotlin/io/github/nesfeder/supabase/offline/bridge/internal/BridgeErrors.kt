@@ -54,8 +54,8 @@ internal fun bridgeError(
     )
 
 /** The error the caller's own cancellation reports. */
-internal fun cancelledError(): BridgeError =
-    bridgeError(BridgeErrorKind.CANCELLED, "The call was cancelled", "CancellationException")
+internal fun canceledError(): BridgeError =
+    bridgeError(BridgeErrorKind.CANCELLED, "The call was canceled", "CancellationException")
 
 /** The error a call reports once its client is closed. */
 internal fun clientClosedError(debugType: String = "ClientClosed"): BridgeError =

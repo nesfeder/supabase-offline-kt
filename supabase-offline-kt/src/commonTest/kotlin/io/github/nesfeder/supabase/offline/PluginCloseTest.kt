@@ -78,7 +78,7 @@ class PluginCloseTest {
     private fun oneRow() = buildJsonArray { add(buildJsonObject { put("id", 7) }) }
 
     @Test
-    fun a_caller_cancelled_while_supabase_close_runs_gets_its_own_cancellation() = runTest {
+    fun a_caller_canceled_while_supabase_close_runs_gets_its_own_cancellation() = runTest {
         // Given — a warm cache, so offline would answer, and a NetworkFirst read held on the wire
         val arrived = CompletableDeferred<Unit>()
         val calls = AtomicInt(0)
@@ -113,7 +113,7 @@ class PluginCloseTest {
             }
             withTimeout(5.seconds) { arrived.await() }
 
-            // When — supabase-kt closes, then the caller is cancelled
+            // When — supabase-kt closes, then the caller is canceled
             val closing = async { supabase.close() }
             withTimeout(5.seconds) {
                 while (runCatching { supabase.offline.from("todos") }.isSuccess) delay(1)
@@ -125,13 +125,13 @@ class PluginCloseTest {
             // Then — its own cancellation, neither the closed error nor an offline answer
             assertTrue(
                 failure is CancellationException,
-                "the cancelled caller saw ${failure ?: "a value"}, not its own cancellation",
+                "the canceled caller saw ${failure ?: "a value"}, not its own cancellation",
             )
         }
     }
 
     @Test
-    fun calls_made_while_supabase_close_runs_end_as_offline_or_closed_never_cancelled() = runTest {
+    fun calls_made_while_supabase_close_runs_end_as_offline_or_closed_never_canceled() = runTest {
         // Given — a warm cache, and a plugin installed before Offline whose close waits
         val server = RecordingPostgrestServer(answer = { okJson("""[{"id":1}]""") })
         val store = newTestStore()

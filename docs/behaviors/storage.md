@@ -93,10 +93,11 @@ segment, a `\`, a control character) still downloads and writes, uncached, and
 `ensureCachedFile` refuses it with `IllegalArgumentException`.
 
 So does a name holding `%`, `?` or `#` on supabase-kt 3.6, which puts the name in the URL as
-written: a `?` or `#` can fetch a different object, so the library never caches it. A `%` that does
-not begin a percent-escape (`100%.png`) cannot be put in a URL at all, so every call naming it
-throws `IllegalArgumentException` before anything is sent, rather than failing as if the network
-had. Keep these characters out of object names.
+written: a `?` or `#` can fetch or overwrite a different object (`x?y.png` fetches `x`, and an
+upload of it writes `x`), so the library never caches it. A `%` that does not begin a
+percent-escape (`100%.png`) cannot be put in a URL at all, so every call naming it throws
+`IllegalArgumentException` before anything is sent, rather than failing as if the network had.
+Keep these characters out of object names.
 
 ## Whose files they are
 

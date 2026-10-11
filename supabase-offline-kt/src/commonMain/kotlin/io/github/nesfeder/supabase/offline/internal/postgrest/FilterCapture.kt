@@ -18,7 +18,7 @@ import io.github.jan.supabase.postgrest.query.request.SelectRequestBuilder
  * column -> ["eq.value"]
  *
  * via PostgrestFilterBuilder’s `eq("column", value)` etc. Complex DSL usage (`and(...)`, `or(...)`,
- * foreign-table filters) is intentionally ignored so we don’t risk wrong offline behaviour.
+ * foreign-table filters) is intentionally ignored so we don’t risk wrong offline behavior.
  */
 internal fun captureFilter(
     defaultSchema: String,
@@ -125,7 +125,7 @@ internal fun captureFilterExactly(builder: PostgrestRequestBuilder): FilterDescr
 
     builder.params.forEach { (key, values) ->
         // `select` only shapes the representation the mutation returns, so a descriptor that omits
-        // it replays the identical write. It has to be recognised explicitly because its value is
+        // it replays the identical write. It has to be recognized explicitly because its value is
         // not `op.value` shaped (it carries "*"), and the operator check below would otherwise
         // reject an ordinary `update { filter { … }; select() }` — refusing to queue it, which
         // fails the user's offline write outright. Every other parameter keeps falling through to

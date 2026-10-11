@@ -2,7 +2,7 @@ name: Dependency submission
 
 # Sends the resolved Gradle dependency graph to GitHub, which cannot read a Gradle build on its
 # own. Dependabot alerts and security updates for Gradle dependencies are based on this graph, and
-# each package in it is labelled runtime or development (see the resolve step).
+# each package in it is labeled runtime or development (see the resolve step).
 # Runs on pushes to main that change the build, and by hand on main.
 #
 # Two jobs, so that the job running the build never holds a write token: `resolve` runs Gradle
@@ -22,7 +22,7 @@ on:
 
 permissions: {}
 
-# A later push waits for this run instead of cancelling it. Of several pushes queued behind it,
+# A later push waits for this run instead of canceling it. Of several pushes queued behind it,
 # only the newest runs: GitHub keeps one pending run per group, and only the latest graph matters.
 concurrency:
   group: dependency-submission
@@ -48,8 +48,8 @@ jobs:
 
       - name: Resolve every configuration and save the graph
         uses: gradle/actions/dependency-submission@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
-        # Each package is labelled `runtime` when a published module's shipping classpath resolves
-        # it, and `development` otherwise: build tools and tests stay in the graph, labelled. An
+        # Each package is labeled `runtime` when a published module's shipping classpath resolves
+        # it, and `development` otherwise: build tools and tests stay in the graph, labeled. An
         # include list, so a new tool configuration is `development` until someone says otherwise.
         env:
           # The Swift bridge module joins this pattern when it exists, because its framework ships.

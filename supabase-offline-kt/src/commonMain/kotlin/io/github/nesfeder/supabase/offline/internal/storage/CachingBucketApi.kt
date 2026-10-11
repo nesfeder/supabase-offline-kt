@@ -387,7 +387,7 @@ internal class CachingBucketApi(
 
     /**
      * Streams [fetch] into [file] for the entry [entryProvider] names, once bytes arrive. A failed
-     * or cancelled download leaves the file to [file]'s owner; a disk that refuses it deletes it at
+     * or canceled download leaves the file to [file]'s owner; a disk that refuses it deletes it at
      * once, cancels the download and reports [StreamedDownload.CacheRefused].
      */
     private suspend fun downloadToTemporaryFile(
@@ -465,7 +465,7 @@ internal class CachingBucketApi(
         var temporary: TemporaryDownload? = null
 
         /**
-         * Opens the file for [entry] and holds it; the cache hands it back even to a cancelled
+         * Opens the file for [entry] and holds it; the cache hands it back even to a canceled
          * caller.
          */
         suspend fun open(entry: FileCacheEntry?): TemporaryDownload? =

@@ -81,7 +81,7 @@ class ReactiveReadFailuresTest {
     }
 
     @Test
-    fun a_network_first_read_whose_request_is_cancelled_ends_with_that_cancellation() = runTest {
+    fun a_network_first_read_whose_request_is_canceled_ends_with_that_cancellation() = runTest {
         // Given — an interceptor that gives up on every read request with a cancellation
         val server =
             RecordingPostgrestServer(

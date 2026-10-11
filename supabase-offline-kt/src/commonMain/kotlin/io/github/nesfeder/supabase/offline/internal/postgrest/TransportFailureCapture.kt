@@ -76,7 +76,7 @@ private val TransportCaptureInstallation =
 /**
  * Installs, once per client, an interceptor next to the engine that counts, for requests sent
  * through [sendCapturingEngineFailure], each attempt and each one that provably never left the
- * device, and rethrows every failure unchanged. A response of any status, and an attempt cancelled
+ * device, and rethrows every failure unchanged. A response of any status, and an attempt canceled
  * or failed any other way, counts as one that may have left. An interceptor an app adds to
  * `HttpSend` after this one sits closer to the engine, and its own attempts are seen as one.
  */

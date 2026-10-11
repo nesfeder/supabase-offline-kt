@@ -148,7 +148,7 @@ class OfflineBucketApiTest {
         offlineApi.downloadAuthenticated(OBJECT_PATH)
         assertTrue(FileSystem.SYSTEM.exists(localFile), "precondition: object cached on disk")
 
-        // ... and a download that blocks in-flight until its coroutine is cancelled
+        // ... and a download that blocks in-flight until its coroutine is canceled
         fake.onDownload = { awaitCancellation() }
         var served: ByteArray? = null
         var caught: Throwable? = null
@@ -161,11 +161,11 @@ class OfflineBucketApiTest {
                 }
             }
 
-        // When the in-flight download is cancelled
+        // When the in-flight download is canceled
         job.cancelAndJoin()
 
         // Then cancellation propagates and the warm cache is NOT served
-        assertNull(served, "cancelled download must not serve cache bytes")
+        assertNull(served, "canceled download must not serve cache bytes")
         assertTrue(caught is CancellationException, "expected CancellationException, got $caught")
     }
 

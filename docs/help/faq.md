@@ -57,7 +57,8 @@ supabase-kt's schedule and then thrown, cached or not. See
 list is empty. A list that stays `null` with `refresh` at `Refreshing` is waiting: for the network,
 or for a stored session that is still restoring. A refresh that waits for a session never reads
 `Stalled`. Under `ResponseTrust.AuthenticatedSessionOnly`, a live read of an empty table made signed
-out stays `Refreshing` until a user signs in. See [Refresh lifecycle](../behaviors/refresh-lifecycle.md).
+out stays `Refreshing` until the table has rows or a user signs in (without Auth, only rows end
+it). See [Refresh lifecycle](../behaviors/refresh-lifecycle.md).
 
 ## Reading back a queued row
 

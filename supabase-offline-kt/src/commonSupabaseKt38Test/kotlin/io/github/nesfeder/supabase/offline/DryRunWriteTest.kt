@@ -25,7 +25,7 @@ import kotlinx.serialization.json.JsonElement
  * A write built with `dryRun()` asks PostgREST to roll the transaction back (`Prefer:
  * tx=rollback`). The engine never queues one — the queue does not carry `Prefer`, so a queued dry
  * run would replay as a real write — and does not overlay one the server says it rolled back
- * (`Preference-Applied: tx=rollback`). Here the server honours the preference, as a PostgREST that
+ * (`Preference-Applied: tx=rollback`). Here the server honors the preference, as a PostgREST that
  * allows the transaction override does.
  */
 class DryRunWriteTest {

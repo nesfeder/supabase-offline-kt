@@ -26,8 +26,8 @@ internal fun engineExceptionHandler(engineLogger: EngineLogger?): CoroutineExcep
 
 /**
  * A supervised engine scope carrying [engineExceptionHandler]: every scope the engine runs work in
- * is made here. With a [parent] it is the parent's child, on the parent's dispatcher, so cancelling
- * the parent stops it while cancelling it leaves the parent running; without one, it runs on
+ * is made here. With a [parent] it is the parent's child, on the parent's dispatcher, so canceling
+ * the parent stops it while canceling it leaves the parent running; without one, it runs on
  * [dispatcher].
  *
  * @param engineLogger where the handler logs.

@@ -125,7 +125,7 @@ class SupabaseOfflineClientCloseTest {
                 server.requests.size,
                 "the $strategy read sent a request after close()",
             )
-            assertTrue(callerJob.isActive, "close() cancelled the caller's scope")
+            assertTrue(callerJob.isActive, "close() canceled the caller's scope")
             assertEquals(
                 1,
                 releases.load(),
@@ -420,8 +420,8 @@ class SupabaseOfflineClientCloseTest {
                 "$name: the database was not released when close() returned",
             )
             assertEquals(false, holder.isCancelled, "$name: the app's launch was failed")
-            assertEquals(true, sibling.isActive, "$name: the job beside it was cancelled")
-            assertEquals(true, appJob.isActive, "$name: the app's scope was cancelled")
+            assertEquals(true, sibling.isActive, "$name: the job beside it was canceled")
+            assertEquals(true, appJob.isActive, "$name: the app's scope was canceled")
             assertEquals(
                 emptyList(),
                 uncaught.recorded(),

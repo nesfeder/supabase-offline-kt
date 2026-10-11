@@ -105,6 +105,8 @@ public class OfflinePostgrestQueryBuilder internal constructor(private val engin
      * @throws NetworkDisabledException while network access is off ([Offline.disableNetwork]) and
      *   the cache cannot answer the read.
      * @throws IllegalStateException when the client is closed.
+     * @throws IllegalArgumentException when two top-level filters name one column (see
+     *   [OfflinePostgrestQueryBuilder]).
      */
     @Throws(Throwable::class)
     public suspend fun select(
@@ -146,7 +148,8 @@ public class OfflinePostgrestQueryBuilder internal constructor(private val engin
      * @param readStrategy how the read starts and refreshes;
      *   [FlowReadStrategy.CacheFirstThenNetwork] by default.
      * @param request filters, order, range and the rest of the request, as in supabase-kt.
-     * @return the flow of emissions.
+     * @return the flow of emissions. It fails with [IllegalArgumentException] when two top-level
+     *   filters name one column (see [OfflinePostgrestQueryBuilder]).
      */
     public fun selectAsFlow(
         columns: Columns = Columns.ALL,
@@ -294,6 +297,8 @@ public class OfflinePostgrestQueryBuilder internal constructor(private val engin
      * @throws MutationNotQueueableException when a write the mutation queue cannot hold cannot be
      *   sent for want of a connection; see [MutationStrategy.QueueIfOffline].
      * @throws IllegalStateException when the client is closed.
+     * @throws IllegalArgumentException when two top-level filters name one column (see
+     *   [OfflinePostgrestQueryBuilder]).
      */
     @Throws(Throwable::class)
     public suspend fun update(
@@ -315,6 +320,8 @@ public class OfflinePostgrestQueryBuilder internal constructor(private val engin
      * @throws MutationNotQueueableException when a write the mutation queue cannot hold cannot be
      *   sent for want of a connection; see [MutationStrategy.QueueIfOffline].
      * @throws IllegalStateException when the client is closed.
+     * @throws IllegalArgumentException when two top-level filters name one column (see
+     *   [OfflinePostgrestQueryBuilder]).
      */
     @Throws(Throwable::class)
     public suspend fun update(
@@ -336,6 +343,8 @@ public class OfflinePostgrestQueryBuilder internal constructor(private val engin
      * @throws MutationNotQueueableException when a write the mutation queue cannot hold cannot be
      *   sent for want of a connection; see [MutationStrategy.QueueIfOffline].
      * @throws IllegalStateException when the client is closed.
+     * @throws IllegalArgumentException when two top-level filters name one column (see
+     *   [OfflinePostgrestQueryBuilder]).
      */
     @Throws(Throwable::class)
     public suspend inline fun <reified T : Any> update(
@@ -356,6 +365,8 @@ public class OfflinePostgrestQueryBuilder internal constructor(private val engin
      * @throws MutationNotQueueableException when a write the mutation queue cannot hold cannot be
      *   sent for want of a connection; see [MutationStrategy.QueueIfOffline].
      * @throws IllegalStateException when the client is closed.
+     * @throws IllegalArgumentException when two top-level filters name one column (see
+     *   [OfflinePostgrestQueryBuilder]).
      */
     @Throws(Throwable::class)
     public suspend fun delete(

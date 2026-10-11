@@ -65,6 +65,14 @@ kempt check     # read-only; what CI runs
 `kempt format` sees only files git tracks, so `git add` a new file before formatting it. If the
 check fails in CI, run `kempt format`, commit the result, and push.
 
+The same job checks spelling, on every pull request: everything a reader sees is spelled the
+American way (behavior, color, canceled, labeled, license, catalog, toward, `-ize`).
+`python3 scripts/check-spelling.py` reads every file git tracks of the kinds it knows: the prose of
+Markdown pages, the comments, doc comments, strings and names of Kotlin, Swift and Python sources,
+and every line of scripts, workflows and other text files. A name that mirrors a platform's keeps
+its spelling (`isCancelled`, GitHub Actions' `cancelled()`); the script's `ALLOWED` list holds each
+one with its reason, and fails on an entry that no longer matches anything.
+
 **Write nothing above a file's `package` line, or above a script's first `import` or `plugins`
 line.** kempt puts the license header there and deletes whatever it replaces, without a warning:
 in a `.kt` file, everything above the first `package` or `@file:` line; in a `.kts` script,
@@ -396,8 +404,7 @@ Material for MkDocs prints a notice about MkDocs 2.0 on every run. Set
 
 - Write American spelling: behavior, color, canceled, labeled, license, catalog, toward,
   `-ize`. Identifiers keep their platform's spelling, in inline code (`isCancelled`).
-  `python3 scripts/check-spelling.py` checks every tracked Markdown file and `mkdocs.yml`, as the
-  docs job does.
+  `python3 scripts/check-spelling.py` checks every page, as CI does (see "Formatting").
 - Every page must be listed under `nav` in `mkdocs.yml`.
 - Some pages are pulled in from elsewhere in the repository when the site is built: this file,
   `CHANGELOG.md`, and the sample schema in

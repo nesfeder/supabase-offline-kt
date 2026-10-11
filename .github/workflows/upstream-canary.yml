@@ -4,7 +4,7 @@ name: Upstream canary
 #
 # Every Monday it compares the pinned supabase-kt BOM with the newest release on Maven Central.
 # When upstream has a newer minor, it moves the pin in its own checkout only, builds and runs the
-# Android host tests of both modules against it, and opens or updates one issue labelled
+# Android host tests of both modules against it, and opens or updates one issue labeled
 # `upstream-pin` saying what came out and whether the library still builds and passes. Nothing is
 # committed and no pull request is opened: moving the pin is a decision, made in a pull request
 # that also moves the pass-through set and updates the compatibility page and the changelog
@@ -54,7 +54,7 @@ on:
 
 permissions: {}
 
-# One run at a time; a second waits instead of cancelling one that may be writing the issue.
+# One run at a time; a second waits instead of canceling one that may be writing the issue.
 concurrency:
   group: upstream-canary
   cancel-in-progress: false

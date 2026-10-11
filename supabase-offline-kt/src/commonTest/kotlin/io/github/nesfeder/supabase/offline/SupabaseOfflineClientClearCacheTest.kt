@@ -52,8 +52,8 @@ class SupabaseOfflineClientClearCacheTest {
     }
 
     @Test
-    fun a_clear_cancelled_under_its_locks_still_leaves_the_log_to_the_background() = runTest {
-        // Given — a read holds the write-ahead log, and the clear's caller is cancelled while the
+    fun a_clear_canceled_under_its_locks_still_leaves_the_log_to_the_background() = runTest {
+        // Given — a read holds the write-ahead log, and the clear's caller is canceled while the
         // rewrite runs under the clear's locks
         val held = AtomicBoolean(true)
         val emptied = AtomicBoolean(false)
@@ -85,9 +85,9 @@ class SupabaseOfflineClientClearCacheTest {
                 }
             }
 
-        // Then — the background emptied it, though the clear was cancelled
-        assertTrue(job.isCancelled, "the clear was not cancelled")
-        assertEquals(true, emptiedInTime, "nothing emptied the log after the cancelled clear")
+        // Then — the background emptied it, though the clear was canceled
+        assertTrue(job.isCancelled, "the clear was not canceled")
+        assertEquals(true, emptiedInTime, "nothing emptied the log after the canceled clear")
         client.close()
     }
 

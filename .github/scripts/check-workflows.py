@@ -83,7 +83,7 @@ It fails when:
        check, none of them skippable; no other job reads verify's outputs or checks out a ref of
        its own, so publish signs, and finish tags, the run's own commit.
      - How they start: release.yml and release-resume.yml are started by hand alone, grant nothing
-       by default and share the concurrency group `release`, never cancelled; release.yml's
+       by default and share the concurrency group `release`, never canceled; release.yml's
        dry_run input is a boolean defaulting to true, its publish steps each run in one mode only,
        and a job that can write (but the draft and the docs jobs above) needs the publish and
        never runs on a dry run. release-resume.yml exists beside it, runs no Gradle and reads no
@@ -783,7 +783,7 @@ def release_problems(name: str, document: dict) -> list[str]:
                             " not {}")
         if document.get("concurrency") != {"group": "release", "cancel-in-progress": False}:
             problems.append(f"{name}: its concurrency is {document.get('concurrency')!r}, not the"
-                            " group `release`, never cancelled")
+                            " group `release`, never canceled")
     if "toJSON(secrets)" in json.dumps(document.get("env", {})).replace(" ", ""):
         problems.append(f"{name}: its environment passes toJSON(secrets), every secret at once")
     for job_id, job in jobs.items():
@@ -1402,9 +1402,9 @@ CASES: list[tuple[str, str, str | None, str]] = [
      "not workflow_dispatch alone"),
     ("a release that cancels one in progress", "release.yml",
      COMPLIANT_RELEASE.replace("cancel-in-progress: false", "cancel-in-progress: true"),
-     "never cancelled"),
+     "never canceled"),
     ("releases in different concurrency groups", "release-resume.yml",
-     COMPLIANT_RESUME.replace("group: release", "group: resume"), "never cancelled"),
+     COMPLIANT_RESUME.replace("group: release", "group: resume"), "never canceled"),
     ("a release workflow granting permissions by default", "release.yml",
      COMPLIANT_RELEASE.replace("permissions: {}\n", "permissions: {contents: read}\n", 1),
      "its default permissions"),

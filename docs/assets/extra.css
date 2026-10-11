@@ -1,8 +1,8 @@
 /*
- * Site colours for the "custom" primary and accent in mkdocs.yml: greens in the family of
+ * Site colors for the "custom" primary and accent in mkdocs.yml: greens in the family of
  * Supabase's. Measured contrast ratios (WCAG 2) are in the pull request that set them; every text
- * colour here is at least 4.5:1 against the background it is drawn on, including the inactive
- * navigation tabs, which Material draws at 70% opacity on the header colour.
+ * color here is at least 4.5:1 against the background it is drawn on, including the inactive
+ * navigation tabs, which Material draws at 70% opacity on the header color.
  */
 
 [data-md-color-primary="custom"] {
@@ -15,7 +15,7 @@
 }
 
 [data-md-color-accent="custom"] {
-  /* Hover and focus colour. On white: 4.55:1; white text on it: 4.55:1. */
+  /* Hover and focus color. On white: 4.55:1; white text on it: 4.55:1. */
   --md-accent-fg-color: #00875a;
   --md-accent-fg-color--transparent: rgba(0, 135, 90, 0.1);
   --md-accent-bg-color: #ffffff;
@@ -37,10 +37,10 @@
 }
 
 [data-md-color-scheme="slate"] {
-  /* A green-grey dark background instead of the default blue-grey. */
+  /* A green-gray dark background instead of the default blue-gray. */
   --md-hue: 160deg;
   /*
-   * Secondary text and code comments at 66% instead of 56%, and lighter code highlight colours:
+   * Secondary text and code comments at 66% instead of 56%, and lighter code highlight colors:
    * Material's dark-mode defaults measure 3.99-4.42:1 on the code background, and the section
    * titles in the phone navigation drawer need 66% to clear 4.5:1 on their tinted background.
    */

@@ -3,7 +3,7 @@
 package io.github.nesfeder.supabase.offline
 
 /**
- * Marks API whose shape or behaviour may still change in a minor release.
+ * Marks API whose shape or behavior may still change in a minor release.
  *
  * Using it is an error until you opt in with `@OptIn(OfflineExperimental::class)`, once you have
  * read what the marked declaration says about how it may change. Marked API is left out of the
@@ -13,7 +13,7 @@ package io.github.nesfeder.supabase.offline
  */
 @RequiresOptIn(
     message =
-        "This supabase-offline-kt API is experimental: its behaviour may change in a minor " +
+        "This supabase-offline-kt API is experimental: its behavior may change in a minor " +
             "release. Read its documentation before relying on it.",
     level = RequiresOptIn.Level.ERROR,
 )

@@ -343,7 +343,7 @@ class CacheFirstWithParallelRefreshTest {
             val attemptsAtCancel = attemptCount
             assertEquals(4, attemptsAtCancel)
 
-            // When: the subscription is cancelled while stalled
+            // When: the subscription is canceled while stalled
             collector.cancelAndJoin()
             advanceTimeBy(120_000)
             runCurrent()

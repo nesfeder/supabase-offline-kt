@@ -668,7 +668,7 @@ internal class OfflineTable(
                     }
                 }
             } catch (cancellation: CancellationException) {
-                // Cancelled on the wire: whether the server got it is not known, so it stays
+                // Canceled on the wire: whether the server got it is not known, so it stays
                 // queued, and
                 // a pass sends it.
                 requestSync()

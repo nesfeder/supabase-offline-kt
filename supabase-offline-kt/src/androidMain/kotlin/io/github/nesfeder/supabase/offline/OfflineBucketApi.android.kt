@@ -18,7 +18,7 @@ public suspend fun OfflineBucketApi.ensureLocalFile(path: String, isPublic: Bool
 
 /**
  * The cached copy of the object at [path] as a `file:` [Uri], downloading it into the cache first
- * when none is cached: [ensureLocalFile] as a [Uri].
+ * when none is cached: [ensureLocalFile] as a [Uri]. It throws what that throws.
  *
  * @param path the object path within this bucket.
  * @param isPublic whether to download through the public URL rather than the authenticated one.
@@ -32,6 +32,7 @@ public suspend fun OfflineBucketApi.ensureLocalUri(path: String, isPublic: Boole
  * [OfflineBucketApi.cachedFile] as a [Uri]. Never touches the network.
  *
  * @param path the object path within this bucket.
+ * @throws IllegalStateException when the client is closed.
  */
 @Throws(Throwable::class)
 public suspend fun OfflineBucketApi.localUriIfCached(path: String): Uri? =

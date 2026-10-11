@@ -53,7 +53,7 @@ import kotlinx.coroutines.withTimeoutOrNull
  * identity is pending ahead of it, and only those passes send it. So the switch is at each trigger,
  * not in this class.
  *
- * @property scope Hosts the worker; cancelling it stops the trigger.
+ * @property scope Hosts the worker; canceling it stops the trigger.
  * @property engineLogger Where a pass that throws is logged.
  * @property initialBackoff The wait after the first failed pass.
  * @property maxBackoff The longest wait.

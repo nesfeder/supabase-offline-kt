@@ -434,7 +434,7 @@ internal fun newTestFileCache(
  *   engine scope of its own, as the client's is.
  * @param operationGate the gate every member passes; pass one to close it as the client's close
  *   does.
- * @param networkAccess the network switch the bucket honours; on by default.
+ * @param networkAccess the network switch the bucket honors; on by default.
  * @param requestSession the session a request sent now goes out under; settled, without Auth, by
  *   default.
  * @return the offline bucket.

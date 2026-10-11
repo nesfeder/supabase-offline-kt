@@ -500,7 +500,7 @@ def parent_is_implementable(parent_text: str, klib: bool) -> bool:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def normalise_swift(content: str) -> List[str]:
+def normalize_swift(content: str) -> List[str]:
     """A Swift interface record's lines, without its comments and blank lines."""
     return [line.rstrip() for line in content.splitlines() if line.strip() and not line.startswith("//")]
 
@@ -533,7 +533,7 @@ def classify_swift(
     if head is None:
         report.add(Finding("breaking", "swift-interface-removed", path))
         return
-    before, after = normalise_swift(base), normalise_swift(head)
+    before, after = normalize_swift(base), normalize_swift(head)
     before_platform, after_platform = swift_platform(before), swift_platform(after)
     if before_platform != after_platform:
         before_text, after_text = (".".join(map(str, version or ())) for version in (before_platform, after_platform))
@@ -1759,12 +1759,12 @@ def self_test() -> int:
         expect(quietly(command_check_release, repository.git,
                        argparse.Namespace(from_tag="0.1.0", version="0.1.1", head=head, swift_report=None)) == 0,
                "check-release accepts a patch when nothing changed", failures)
-        # A behavioural change marked Breaking by a person, with no record change, still needs a minor.
+        # A behavioral change marked Breaking by a person, with no record change, still needs a minor.
         repository.write("CHANGELOG.md", CHANGELOG_BASE.replace("### Added\n\n### Fixed", "### Breaking\n\n- Automatic replay is now on by default.\n\n### Added\n\n### Fixed", 1))
-        head = repository.commit("behaviour change")
+        head = repository.commit("behavior change")
         expect(quietly(command_check_release, repository.git,
                        argparse.Namespace(from_tag="0.1.0", version="0.1.1", head=head, swift_report=None)) == 1,
-               "check-release honours a Breaking bullet a person wrote", failures)
+               "check-release honors a Breaking bullet a person wrote", failures)
         # The same bullet once the release has renamed the section to its version and date.
         repository.write("CHANGELOG.md", CHANGELOG_BASE.replace(
             "## Unreleased\n\n### Added\n\n### Fixed",

@@ -72,7 +72,7 @@ struct SubscriptionStreamTests {
     }
 
     @Test func breakingOutCancelsTheSubscriptionOnceWhileTheSequenceIsStillHeld() async throws {
-        // Given a subscription that emits until it is cancelled
+        // Given a subscription that emits until it is canceled
         let handle = RecordingCallHandle()
         let sequence = SubscriptionSequence { endlessCounter(handle: handle) }
 
@@ -90,7 +90,7 @@ struct SubscriptionStreamTests {
         withExtendedLifetime(sequence) {}
     }
 
-    @Test func cancellingTheReadingTaskCancelsTheSubscription() async throws {
+    @Test func cancelingTheReadingTaskCancelsTheSubscription() async throws {
         // Given
         let handle = RecordingCallHandle()
         let reading = RecordingList<Int>()
@@ -109,7 +109,7 @@ struct SubscriptionStreamTests {
         #expect(await eventually { handle.cancelCount == 1 })
     }
 
-    @Test func aSubscriptionThatEndsByItselfIsNotCancelled() async throws {
+    @Test func aSubscriptionThatEndsByItselfIsNotCanceled() async throws {
         // Given
         let handle = RecordingCallHandle()
         let stream = subscriptionStream { (yield: @escaping @Sendable (Int) -> Void, finish) in
@@ -126,7 +126,7 @@ struct SubscriptionStreamTests {
         #expect(handle.cancelCount == 0)
     }
 
-    @Test func aSubscriptionStartedAfterTheReaderStoppedIsCancelledAtOnce() async throws {
+    @Test func aSubscriptionStartedAfterTheReaderStoppedIsCanceledAtOnce() async throws {
         // Given a subscription whose start has begun and waits for a gate
         let gate = Gate()
         let handle = RecordingCallHandle()

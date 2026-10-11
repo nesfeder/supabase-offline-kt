@@ -319,12 +319,13 @@ release.
   offline period and grows no wait. A wrong monitor costs nothing while requests reach the server;
   after one fails for want of a connection, queued writes wait for the monitor, the session or the
   app's sync. With `autoSync` on, a client without Auth sends what an earlier run left queued when
-  it opens. An app's connectivity
-  signal that ends while saying offline counts as unknown, as one that fails does.
+  it opens. An app's connectivity signal that ends while saying offline counts as unknown, as one
+  that fails does.
 - Keeping the rows `clearLocalData()` deleted out of the database's files is best effort, and
   never holds the clear: it waits at most a second for an open read holding the write-ahead log,
-  then empties the log in the background as soon as the read ends, and once more at `close()`. It
-  waited for up to about a minute, holding every send, and then only logged a warning.
+  then empties the log in the background within a few seconds of the read ending, and once more at
+  `close()`. It waited for up to about a minute, holding every send, and then only logged a
+  warning.
 - Being offline is logged at INFO at most: a write the queue cannot hold that fails for want of a
   connection was logged at ERROR, and a replay pass stopped by the network at WARNING. A write that
   asked for a rollback (`Prefer: tx=rollback`, what a dry run sends) and was committed, as hosted
@@ -403,7 +404,8 @@ release.
 - A read made while the stored session restores waits for it at most 10 seconds instead of waiting
   on a session store that hangs. Past that the cache is not served and the read goes out on the anon
   key: a one-shot read returns that answer uncached, which under row-level security can hold fewer
-  rows, or none, and a live read shows nothing (`Refreshing`) until the session settles.
+  rows, or none, and a live read shows none of the cached rows, only the queued writes it admits
+  (`Refreshing`), until the session settles.
 - A read the cache cannot answer, made while the connectivity monitor says the network is down, is
   sent once instead of after supabase-kt's retries.
 - One failed read of the database no longer turns automatic behavior off for the client's life,

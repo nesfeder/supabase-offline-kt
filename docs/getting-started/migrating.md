@@ -137,9 +137,10 @@ which lacks a few things 3.8 has:
   for the client's life. See [Writes and the offline queue](../behaviors/mutations.md#dry-runs).
 - **`maybeSingle()`**, the `isdistinct` filter operator and `purgeCache`.
 - **Storage object names with `%`, `?` or `#`.** supabase-kt 3.6 puts the name in the URL as
-  written: a `%` fails the request, and a `?` or `#` can fetch a different object. The library
-  downloads such a name as supabase-kt does but never caches it, and `ensureCachedFile` refuses
-  it. Keep these characters out of object names.
+  written: a `%` fails the request, and a `?` or `#` can fetch or overwrite a different object
+  (`x?y.png` fetches `x`, and an upload of it writes `x`). The library downloads such a name as
+  supabase-kt does but never caches it, and `ensureCachedFile` refuses it. Keep these characters
+  out of object names.
 
 ## What is never cached or queued
 

@@ -103,7 +103,7 @@ function takeAnnotations(text,    name, taken, depth, pos, len, ch) {
     return text
 }
 
-# Recognises a declaration head in `text` (annotations already removed). On a match sets
+# Recognizes a declaration head in `text` (annotations already removed). On a match sets
 # declKeyword, declName, declModifiers and declVisibility and returns 1.
 function readDeclaration(text,    head, previous, probe, depth, pos, len, ch, after) {
     declModifiers = " "
@@ -127,7 +127,7 @@ function readDeclaration(text,    head, previous, probe, depth, pos, len, ch, af
     # An unnamed object or function is an expression continuing the line above (`val x =` then
     # `object : T {` or `fun(value: Int) = ...`), but only when what follows the keyword proves
     # it: `:` or `{` after `object`, a parameter list NOT followed by `.` after `fun`. A
-    # parenthesised receiver (`fun (() -> Unit).name()`) is a declaration.
+    # parenthesized receiver (`fun (() -> Unit).name()`) is a declaration.
     probe = trim(head)
     if (declKeyword == "object" && (substr(probe, 1, 1) == ":" || substr(probe, 1, 1) == "{")) return 0
     if (declKeyword == "fun" && substr(probe, 1, 1) == "(") {
@@ -635,7 +635,7 @@ package io.example.internal.util
 public fun <T> (suspend () -> T).plantedRetrying(): Unit = Unit
 KOTLIN
                 ;;
-            receiver-parenthesised-type)
+            receiver-parenthesized-type)
                 cat > "$src/io/example/internal/util/Planted.kt" <<'KOTLIN'
 package io.example.internal.util
 
@@ -753,10 +753,10 @@ KOTLIN
     expect_failure public-in-internal-package-marker-only public-in-internal-package plantedMarkedButExported
     expect_failure public-in-internal-package-warning-marker public-in-internal-package plantedWarningLevelHook
     expect_failure public-object-in-internal-package public-in-internal-package PlantedPublicObject
-    # A parenthesised receiver is a declaration, not an anonymous function.
+    # A parenthesized receiver is a declaration, not an anonymous function.
     expect_failure receiver-function-type public-in-internal-package plantedReceiverHook
     expect_failure receiver-generic-suspend-function-type public-in-internal-package plantedRetrying
-    expect_failure receiver-parenthesised-type public-in-internal-package plantedShout
+    expect_failure receiver-parenthesized-type public-in-internal-package plantedShout
     expect_failure receiver-nullable-function-type public-in-internal-package plantedOrIdentity
     expect_failure internal-receiver-in-public-package internal-in-public-package plantedTwice
     # Kotlin allows a line break before the name; the check reports the declaration unnamed.
