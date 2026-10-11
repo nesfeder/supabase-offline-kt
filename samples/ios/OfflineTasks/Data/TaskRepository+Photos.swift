@@ -146,21 +146,20 @@ extension TaskRepository {
 
     // --8<-- [start:photo-details]
     /// What Storage and the device know about `photo`'s file. The bucket's own facts need the
-    /// network and are left out without it; the device's copy is read without asking.
+    /// network and are left out without it; the device's copy and the addresses need none.
     func photoDetails(for photo: TaskPhoto) async -> PhotoDetails {
-        let onDevice = try? await photoBucket.cachedFile(path: photo.objectPath)
-        guard canReachNetwork else { return PhotoDetails(onDevice: onDevice) }
-        async let details = photoBucket.info(path: photo.objectPath)
-        async let exists = photoBucket.exists(path: photo.objectPath)
-        async let publicURL = photoBucket.publicURL(path: photo.objectPath)
-        async let authenticatedURL = photoBucket.authenticatedURL(path: photo.objectPath)
-        return PhotoDetails(
-            inBucket: try? await details,
-            existsInBucket: try? await exists,
-            publicURL: try? await publicURL,
-            authenticatedURL: try? await authenticatedURL,
-            onDevice: onDevice
+        // The device's copy and the two addresses send nothing, so they are there offline too.
+        var details = PhotoDetails(
+            publicURL: try? await photoBucket.publicURL(path: photo.objectPath),
+            authenticatedURL: try? await photoBucket.authenticatedURL(path: photo.objectPath),
+            onDevice: try? await photoBucket.cachedFile(path: photo.objectPath)
         )
+        guard canReachNetwork else { return details }
+        async let info = photoBucket.info(path: photo.objectPath)
+        async let exists = photoBucket.exists(path: photo.objectPath)
+        details.inBucket = try? await info
+        details.existsInBucket = try? await exists
+        return details
     }
     // --8<-- [end:photo-details]
 

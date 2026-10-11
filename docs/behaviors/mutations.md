@@ -186,6 +186,10 @@ From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabas
     --8<-- "Data/TaskRepository.swift:same-column-write"
     ```
 
+    Swift sends two conditions on one column together, in one `and` group, so nothing is refused.
+    The group is a filter the queue cannot record, so this delete is sent at once, and offline it
+    fails with `mutationNotQueueable`.
+
 ## Dry runs
 
 A dry run is a write carrying `Prefer: tx=rollback`: supabase-kt 3.8's `dryRun()`, or on 3.6 the

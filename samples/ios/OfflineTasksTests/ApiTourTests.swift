@@ -291,6 +291,69 @@ struct ApiTourTests {
         try await test.stop()
     }
 
+    @Test("A live read that fails offline is said, and read again when the network comes back")
+    func failedLiveReadReadsAgain() async throws {
+        // Given: a done task on the server, and Prefer fresh data on
+        let session = DemoSession()
+        let userID = try #require(session.userID)
+        let server = DemoServer(tasks: [
+            TaskRow(id: DeviceID.make(), userID: userID, title: "Buy bread", notes: nil, done: true, createdAt: .now)
+        ])
+        let test = TestApp(server: server, session: session)
+        try await test.start()
+        test.app.prefersFreshData = true
+
+        // When: offline, a chip never read online, which the server must answer first
+        try await test.setOffline(true)
+        try await test.show(TaskQuery(filter: .done))
+
+        // Then: the failure is said in the app's words, and the list has nothing
+        try await eventually("the app says why") { test.app.failure != nil }
+        #expect(test.app.failure?.message == SampleFailure.sentence(for: networkDisabledError()))
+        #expect(test.app.tasks.visibleRows == nil)
+
+        // When: the network comes back, with no other change
+        test.app.dismissFailure()
+        try await test.setOffline(false)
+
+        // Then: the same read starts again and shows the server's rows
+        try await eventually("the list is read again") { test.app.tasks.tasks?.map(\.title) == ["Buy bread"] }
+        try await test.stop()
+    }
+
+    @Test("A live read the server fails is said, and read again on pull to refresh")
+    func failedLiveReadReadsAgainOnPull() async throws {
+        // Given: a done task on the server, Prefer fresh data on, and a server failing the Done list
+        let session = DemoSession()
+        let userID = try #require(session.userID)
+        let server = DemoServer(tasks: [
+            TaskRow(id: DeviceID.make(), userID: userID, title: "Buy bread", notes: nil, done: true, createdAt: .now)
+        ])
+        let test = TestApp(server: server, session: session)
+        try await test.start()
+        test.app.prefersFreshData = true
+        await server.intercept { request, _ in
+            let isDoneList = request.method == "GET" && request.url.query()?.contains("done=is.true") == true
+            return isDoneList ? .json(#"{"code":"XX000","message":"Internal error","details":null,"hint":null}"#, status: 500) : nil
+        }
+
+        // When
+        try await test.show(TaskQuery(filter: .done))
+
+        // Then: the failure is said, and the list has nothing
+        try await eventually("the app says why") { test.app.failure != nil }
+        #expect(test.app.tasks.visibleRows == nil)
+
+        // When: the server recovers, and the user pulls to refresh
+        test.app.dismissFailure()
+        await server.intercept(nil)
+        await test.app.tasks.refreshList()
+
+        // Then: the live read starts again and shows the server's rows
+        try await eventually("the list is read again") { test.app.tasks.tasks?.map(\.title) == ["Buy bread"] }
+        try await test.stop()
+    }
+
     @Test("Offline, pull to refresh answers from the device and says how old the list is")
     func pullToRefreshOffline() async throws {
         // Given: the list read online, then three minutes on the client's clock, offline

@@ -71,6 +71,9 @@ final class TasksModel {
     /// The search waiting for typing to pause.
     @ObservationIgnored private var pendingSearch: Task<Void, Never>?
 
+    /// Pull to refresh's requests that a live read which failed start again.
+    @ObservationIgnored private let readAgainRequests = ReadAgainRequests()
+
     /// Reads and writes.
     @ObservationIgnored private let repository: TaskRepository
 
@@ -127,14 +130,19 @@ final class TasksModel {
     func observeTasks() async {
         rows = nil
         guard repository.session.userID != nil else { return }
-        do {
-            for try await snapshot in repository.taskSnapshots() {
-                rows = snapshot.result
+        while !Task.isCancelled {
+            do {
+                for try await snapshot in repository.taskSnapshots() {
+                    rows = snapshot.result
+                }
+                return
+            } catch is CancellationError {
+                return
+            } catch {
+                // The shown list reports a failure; both read the same rows. Read again when it is
+                // worth it, so the list does not stop.
+                await untilWorthReadingAgain()
             }
-        } catch is CancellationError {
-            return
-        } catch {
-            failures.report(error)
         }
     }
     // --8<-- [end:live-read]
@@ -146,18 +154,47 @@ final class TasksModel {
         refresh = .idle
         provenance = nil
         guard repository.session.userID != nil else { return }
-        do {
-            for try await snapshot in repository.taskSnapshots(query, readStrategy: readStrategy) {
-                visibleRows = snapshot.result
-                refresh = snapshot.refresh
-                provenance = snapshot.result == nil ? nil : ListProvenance(snapshot)
+        while !Task.isCancelled {
+            do {
+                for try await snapshot in repository.taskSnapshots(query, readStrategy: readStrategy) {
+                    visibleRows = snapshot.result
+                    refresh = snapshot.refresh
+                    provenance = snapshot.result == nil ? nil : ListProvenance(snapshot)
+                }
+                return
+            } catch is CancellationError {
+                return
+            } catch {
+                // Said in the failure's own words, then read again when it is worth it, so a list
+                // that failed (offline, say, with nothing saved for it) does not stay stopped.
+                failures.report(error)
+                await untilWorthReadingAgain()
             }
-        } catch is CancellationError {
-            return
-        } catch {
-            failures.report(error)
         }
     }
+
+    // --8<-- [start:read-again-after-failure]
+    /// Returns once a live read that failed is worth starting again: the network's state changed
+    /// (back online, or Simulate offline switched off), or the user pulled to refresh. A server's
+    /// own error does not pass by itself.
+    private func untilWorthReadingAgain() async {
+        let network = repository.syncStatus.value.network
+        let statuses = repository.syncStatus
+        let requests = readAgainRequests
+        await withTaskGroup(of: Void.self) { group in
+            group.addTask {
+                do {
+                    for try await status in statuses where status.network != network { return }
+                } catch {
+                    // The status ends only when the client closes; nothing to read again then.
+                }
+            }
+            group.addTask { await requests.next() }
+            await group.next()
+            group.cancelAll()
+        }
+    }
+    // --8<-- [end:read-again-after-failure]
 
     // --8<-- [start:pending-marks]
     /// Follows which tasks have a write waiting in the mutation queue.
@@ -247,6 +284,7 @@ final class TasksModel {
     func refreshList() async {
         isRefreshing = true
         defer { isRefreshing = false }
+        readAgainRequests.send()
         await failures.perform { provenance = try await repository.refreshTasks(query) }
     }
 
@@ -261,5 +299,27 @@ final class TasksModel {
             _ = try await repository.refreshTasks(TaskQuery())
             if !query.isEverything { provenance = try await repository.refreshTasks(query) }
         }
+    }
+}
+
+/// Requests that the live reads waiting after a failure start again, delivered to every read
+/// waiting when one is sent.
+final class ReadAgainRequests {
+
+    /// The reads waiting, by an id each.
+    private var listeners: [UUID: AsyncStream<Void>.Continuation] = [:]
+
+    /// Returns at the next request, or when the calling task is canceled.
+    func next() async {
+        let id = UUID()
+        let (stream, continuation) = AsyncStream<Void>.makeStream()
+        continuation.onTermination = { _ in Task { @MainActor in self.listeners[id] = nil } }
+        listeners[id] = continuation
+        for await _ in stream { return }
+    }
+
+    /// Starts every read waiting now.
+    func send() {
+        listeners.values.forEach { $0.yield() }
     }
 }

@@ -19,6 +19,8 @@ From the samples: [TaskPhotoFiles.kt](https://github.com/nesfeder/supabase-offli
     --8<-- "Data/TaskRepository+Photos.swift:bucket"
     ```
 
+    The Swift package's bucket has no `setHeader`.
+
 `supabase.offline.storage.from(bucket)` is an `OfflineBucketApi`: every operation of supabase-kt's
 `BucketApi`, under its name, plus the file cache. Bucket management (creating, listing and
 emptying buckets) stays on `supabase.storage`.
