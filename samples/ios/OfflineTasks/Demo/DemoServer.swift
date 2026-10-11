@@ -197,8 +197,16 @@ actor DemoServer: ServerChangeSource {
             }
             return .status(204)
         case "tasks_done_count":
-            let done = ownRows(of: Tables.tasks, userID: userID).filter { $0["done"] == .bool(true) }.count
-            return .json(String(done))
+            var since: String?
+            if case .object(let parameters)? = Self.json(request.body), case .string(let createdSince)? = parameters["created_since"] {
+                since = createdSince
+            }
+            let done = ownRows(of: Tables.tasks, userID: userID).filter { row in
+                guard row["done"] == .bool(true) else { return false }
+                guard let since, case .string(let createdAt)? = row["created_at"] else { return true }
+                return Query.sortKey(createdAt) >= Query.sortKey(since)
+            }
+            return .json(String(done.count))
         default:
             return Self.postgrestError(status: 404, code: "PGRST202", message: "Could not find the function public.\(function)")
         }
@@ -946,7 +954,7 @@ nonisolated private struct Query {
 
     /// A sort key that orders UTC timestamps by time, whatever their fraction digits, and other
     /// text as text.
-    private static func sortKey(_ text: String) -> String {
+    fileprivate static func sortKey(_ text: String) -> String {
         let characters = Array(text)
         guard characters.count >= 19, characters[10] == "T", characters[13] == ":", characters[16] == ":" else {
             return text

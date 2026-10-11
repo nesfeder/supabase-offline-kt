@@ -19,10 +19,19 @@ extension TaskRepository {
     // --8<-- [end:rpc-no-params]
 
     // --8<-- [start:rpc-typed]
-    /// How many of the user's tasks the server holds as done, from the database function
-    /// `tasks_done_count()`, decoded as the number it returns.
-    func serverDoneCount() async throws -> Int {
-        try await client.rpc("tasks_done_count").execute(Int.self).value
+    /// How many of the user's tasks the server holds as done, in all and among those created
+    /// since `since`, from the database function `tasks_done_count`, each decoded as the number it
+    /// returns: its parameters once typed, once as JSON values.
+    func serverDoneCounts(since: Date) async throws -> (all: Int, since: Int) {
+        // A typed value, encoded as JSON; a nil date counts every task.
+        let all = try await client.rpc("tasks_done_count", params: DoneCountParameters(createdSince: nil))
+            .execute(Int.self)
+            .value
+        // The same function, its parameter written as a JSON value.
+        let recent = try await client.rpc("tasks_done_count", params: ["created_since": .string(since.formatted(.iso8601))])
+            .execute(Int.self)
+            .value
+        return (all, recent)
     }
     // --8<-- [end:rpc-typed]
 
@@ -52,6 +61,22 @@ extension TaskRepository {
         }
     }
     // --8<-- [end:apply-records]
+}
+
+/// The parameters of `tasks_done_count`: count only the tasks created since a moment, or all.
+nonisolated struct DoneCountParameters: Encodable, Sendable {
+    let createdSince: Date?
+
+    /// The function's parameter names.
+    enum CodingKeys: String, CodingKey {
+        case createdSince = "created_since"
+    }
+
+    func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        // Written as an explicit null, which the function reads as "every task".
+        try container.encode(createdSince, forKey: .createdSince)
+    }
 }
 
 extension [String: OfflineJSON] {

@@ -208,7 +208,7 @@ struct SyncView: View {
             Text("Server")
         } footer: {
             Text(
-                "Counts with an exact count and the database function tasks_done_count(). Neither is ever saved on the device, so they need the network."
+                "Counts with an exact count and the database function tasks_done_count, called twice with its parameter. Neither is ever saved on the device, so they need the network."
             )
         }
     }

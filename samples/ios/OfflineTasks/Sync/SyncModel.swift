@@ -140,9 +140,11 @@ final class SyncModel {
         Task {
             defer { isAskingServer = false }
             await failures.perform {
-                async let done = repository.serverDoneCount()
+                let week = TaskQuery.lastSevenDays(endingOn: .now)
+                async let done = repository.serverDoneCounts(since: week.start)
                 async let total = repository.serverTaskCount()
-                serverSummary = "On the server: \(try await done) of \(try await total) done"
+                let counts = try await done
+                serverSummary = "On the server: \(counts.all) of \(try await total) done · \(counts.since) this week"
             }
         }
     }

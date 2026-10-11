@@ -349,7 +349,7 @@ struct ApiTourTests {
         // Then
         try await eventually("the list shows them done") { test.app.tasks.tasks?.allSatisfy(\.isDone) == true }
         try await eventually("the server says so") { test.app.sync.serverSummary != nil }
-        #expect(test.app.sync.serverSummary == "On the server: 2 of 2 done")
+        #expect(test.app.sync.serverSummary == "On the server: 2 of 2 done · 2 this week")
         #expect(await test.server.requests.contains { $0.path == "/rest/v1/rpc/complete_all_tasks" })
 
         // When: offline
