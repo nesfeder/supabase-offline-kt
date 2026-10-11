@@ -53,10 +53,12 @@ of macOS (3.9) and on CI runners.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import importlib.util
 import json
 import os
 import re
+import shutil
 import stat
 import subprocess
 import sys
@@ -66,6 +68,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
+from typing import Iterator
 
 GRADLE_PROPERTIES = "gradle.properties"
 CHANGELOG = "CHANGELOG.md"
@@ -639,12 +642,36 @@ class RecordedGit:
             or re.fullmatch(r"-[A-Za-z]*f[A-Za-z]*", argument) for argument in call)]
 
 
+# Keeps git's automatic maintenance out of a throwaway repository: a background `gc` still writing
+# into it when it is deleted fails the clean-up with "Directory not empty".
+NO_AUTOMATIC_MAINTENANCE = (("gc.auto", "0"), ("maintenance.auto", "false"))
+
+
+def init_throwaway_repository(*arguments: str) -> None:
+    """`git init` with these arguments, the new repository (the last one) left without automatic
+    maintenance."""
+    subprocess.run(["git", "init", *arguments], check=True)
+    for key, value in NO_AUTOMATIC_MAINTENANCE:
+        subprocess.run(["git", "-C", arguments[-1], "config", key, value], check=True)
+
+
+@contextlib.contextmanager
+def throwaway_directory() -> Iterator[str]:
+    """A temporary directory, removed afterward as far as it can be: what cannot be removed is left
+    to the system's temporary-file sweep rather than failing the command that made it."""
+    directory = tempfile.mkdtemp()
+    try:
+        yield directory
+    finally:
+        shutil.rmtree(directory, ignore_errors=True)
+
+
 def make_repository(work: Path, name: str, files: dict[str, str]) -> Path:
     """A git repository with files committed on main, and a bare origin it has pushed to."""
     origin = work / f"{name}-origin.git"
     root = work / name
-    subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(origin)], check=True)
-    subprocess.run(["git", "init", "-q", "-b", "main", str(root)], check=True)
+    init_throwaway_repository("-q", "--bare", "-b", "main", str(origin))
+    init_throwaway_repository("-q", "-b", "main", str(root))
     for path, content in files.items():
         (root / path).parent.mkdir(parents=True, exist_ok=True)
         (root / path).write_text(content, encoding="utf-8")
@@ -681,7 +708,7 @@ def self_test() -> int:
         return False
 
     base = dict(FIXTURE_FILES, **{CHANGELOG: FIXTURE_CHANGELOG})
-    with tempfile.TemporaryDirectory() as directory:
+    with throwaway_directory() as directory:
         work = Path(directory)
 
         root = make_repository(work, "guards", base)

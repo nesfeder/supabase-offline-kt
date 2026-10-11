@@ -6,6 +6,7 @@ package io.github.nesfeder.supabase.offline.bridge
 
 import io.github.jan.supabase.exceptions.HttpRequestException
 import io.github.jan.supabase.postgrest.query.filter.FilterOperator
+import io.github.nesfeder.supabase.offline.bridge.internal.ILLEGAL_HEADER_MESSAGE
 import io.github.nesfeder.supabase.offline.bridge.internal.transportReason
 import io.ktor.client.request.HttpRequestBuilder
 import io.ktor.client.request.url
@@ -306,11 +307,15 @@ class BridgeErrorsTest {
             val report = assertNotNull(synced.awaitValue())
             val error = assertNotNull(client.currentSyncStatus().lastSyncError)
 
-            // Then — the status says so in the library's words, quoting nothing of the header
+            // Then — the status says so in the sentence a direct call reports, quoting nothing of
+            // the header
             assertEquals(1, report.remainingCount)
             assertEquals(BridgeErrorKind.SYNC_FAILED, error.kind)
             val message = error.message
-            assertTrue(message.contains("header cannot carry"), message)
+            assertEquals(
+                "$ILLEGAL_HEADER_MESSAGE; the queued writes stay queued for a later pass",
+                message,
+            )
             assertFalse(message.contains("Exception"), message)
             assertFalse(message.contains("Bearer"), message)
             assertFalse(message.contains("secret") || message.contains("eyJ"), message)

@@ -26,6 +26,8 @@ import io.github.nesfeder.supabase.offline.internal.isNetworkOrConnectivityFailu
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogLevel
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
 import io.github.nesfeder.supabase.offline.internal.network.NetworkAccess
+import io.github.nesfeder.supabase.offline.internal.postgrest.RequestSession
+import io.github.nesfeder.supabase.offline.internal.postgrest.settledIdentityOf
 import io.ktor.client.network.sockets.SocketTimeoutException
 import io.ktor.client.plugins.HttpRequestTimeoutException
 import io.ktor.utils.io.ByteChannel
@@ -64,6 +66,8 @@ private const val DOWNLOAD_BUFFER_BYTES: Int = 64 * 1024
  * @param backgroundScope the client's own scope, which closing the client cancels.
  * @param networkAccess the client's network switch: while it is off nothing is sent, a download is
  *   answered from the cache, and every other call throws `NetworkDisabledException`.
+ * @param requestSession the session a request sent now goes out under. While it is unsettled the
+ *   request carries the anon key, so Storage's "not found" may only mean the key cannot read it.
  */
 @OptIn(OfflineInternal::class)
 internal class CachingBucketApi(
@@ -76,6 +80,7 @@ internal class CachingBucketApi(
     /** Where a streamed download writes its file. */
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
     private val networkAccess: NetworkAccess = NetworkAccess(),
+    private val requestSession: () -> RequestSession = { RequestSession.WithoutAuth },
 ) : OfflineBucketApi, BucketApi by delegate {
 
     override fun setHeader(name: String, value: String): OfflineBucketApi =
@@ -88,6 +93,7 @@ internal class CachingBucketApi(
             renderImagePath,
             ioDispatcher,
             networkAccess,
+            requestSession,
         )
 
     override val resumable: ResumableClient by lazy {
@@ -111,8 +117,8 @@ internal class CachingBucketApi(
     /** [ensureCachedFile]'s body, run while the call holds the client's gate. */
     private suspend fun ensureCachedFileNow(path: String, isPublic: Boolean): CachedFile {
         require(isRequestedByItsOwnName(path)) {
-            "This object path cannot be cached on the device: it holds '%', '?' or '#', which this " +
-                "supabase-kt puts in the URL unencoded, so its request can reach another object"
+            "This object path cannot be cached on the device: it holds '%', '?' or '#', which go " +
+                "into the request's URL unencoded, so its request can reach another object"
         }
         val entry =
             cache.entryFor(bucketId, path)
@@ -124,6 +130,7 @@ internal class CachingBucketApi(
             return it
         }
         val generation = cache.currentGeneration()
+        val sentUnsettled = isSessionUnsettled()
         val file = OwnedTemporaryFile()
         try {
             val download =
@@ -137,7 +144,11 @@ internal class CachingBucketApi(
                     }
                 } catch (failure: Exception) {
                     currentCoroutineContext().ensureActive()
-                    if (failure.indicatesServerObjectMissing())
+                    if (
+                        failure.indicatesServerObjectMissing() &&
+                            !sentUnsettled &&
+                            !isSessionUnsettled()
+                    )
                         cache.invalidateObject(bucketId, path)
                     throw failure
                 }
@@ -220,6 +231,7 @@ internal class CachingBucketApi(
                 wrap: (DownloadOptionBuilder.() -> Unit) -> (DownloadOptionBuilder.() -> Unit)
             ) -> ByteArray,
     ): ByteArray {
+        requireUrlFor(path)
         engineLogger.debug { "Storage download $bucketId/$path attempting network" }
         if (!cachesDownloadsOf(path)) {
             networkAccess.ensureEnabled()
@@ -227,12 +239,15 @@ internal class CachingBucketApi(
         }
         val probe = DownloadRequestProbe(renderImagePath, beforeSend = networkAccess::ensureEnabled)
         val generation = cache.currentGeneration()
+        val sentUnsettled = isSessionUnsettled()
         val bytes =
             try {
                 fetch(probe::wrap)
             } catch (failure: Exception) {
                 currentCoroutineContext().ensureActive()
-                return recover(path, probe, failure) { entry -> cache.readBytes(entry) }
+                return recover(path, probe, failure, sentUnsettled) { entry ->
+                    cache.readBytes(entry)
+                }
             }
         probe.entryToStore(cache, bucketId, path)?.let { entry ->
             cache.write(entry, bytes, generation)
@@ -258,6 +273,7 @@ internal class CachingBucketApi(
             { target, wrappedOptions ->
                 checkingDownloadStatus { uncheckedFetch(target, wrappedOptions) }
             }
+        requireUrlFor(path)
         engineLogger.debug { "Storage download $bucketId/$path attempting network" }
         if (!cachesDownloadsOf(path)) {
             networkAccess.ensureEnabled()
@@ -266,6 +282,7 @@ internal class CachingBucketApi(
         }
         val probe = DownloadRequestProbe(renderImagePath, beforeSend = networkAccess::ensureEnabled)
         val generation = cache.currentGeneration()
+        val sentUnsettled = isSessionUnsettled()
         val file = OwnedTemporaryFile()
         try {
             val download =
@@ -278,7 +295,7 @@ internal class CachingBucketApi(
                     }
                 } catch (failure: Exception) {
                     currentCoroutineContext().ensureActive()
-                    recover(path, probe, failure) { entry ->
+                    recover(path, probe, failure, sentUnsettled) { entry ->
                         if (cache.copyTo(entry, channel)) Unit else null
                     }
                     channel.flushAndClose()
@@ -323,17 +340,19 @@ internal class CachingBucketApi(
 
     /**
      * What a failed download returns instead of its failure. When the server says the object is
-     * gone, nothing: its copies are dropped and the failure rethrown. Otherwise the cached copy of
-     * the variant asked for, or of the original when the request was never built. Offline, which is
-     * expected, is logged at INFO; any other failure at WARNING.
+     * gone, nothing: its copies are dropped and the failure rethrown, unless the session was
+     * unsettled ([sentUnsettled], or now), when the anon key may only lack access. Otherwise the
+     * cached copy of the variant asked for, or of the original when the request was never built.
+     * Offline, which is expected, is logged at INFO; any other failure at WARNING.
      */
     private suspend fun <T : Any> recover(
         path: String,
         probe: DownloadRequestProbe,
         failure: Exception,
+        sentUnsettled: Boolean,
         readCached: suspend (FileCacheEntry) -> T?,
     ): T {
-        if (failure.indicatesServerObjectMissing()) {
+        if (failure.indicatesServerObjectMissing() && !sentUnsettled && !isSessionUnsettled()) {
             cache.invalidateObject(bucketId, path)
             engineLogger.warning {
                 "Storage object in $bucketId no longer exists; dropped its cached copy"
@@ -578,6 +597,7 @@ internal class CachingBucketApi(
 
     override suspend fun createSignedUploadUrl(path: String, upsert: Boolean): UploadSignedUrl =
         operationGate.cancellableCall(backgroundScope) {
+            requireUrlFor(path)
             networkAccess.ensureEnabled()
             delegate.createSignedUploadUrl(path, upsert)
         }
@@ -588,6 +608,7 @@ internal class CachingBucketApi(
         builder: SignedUrlBuilder.() -> Unit,
     ): String =
         operationGate.cancellableCall(backgroundScope) {
+            requireUrlFor(path)
             networkAccess.ensureEnabled()
             delegate.createSignedUrl(path, expiresIn, builder)
         }
@@ -619,12 +640,14 @@ internal class CachingBucketApi(
 
     override suspend fun info(path: String): FileObjectV2 =
         operationGate.cancellableCall(backgroundScope) {
+            requireUrlFor(path)
             networkAccess.ensureEnabled()
             delegate.info(path)
         }
 
     override suspend fun exists(path: String): Boolean =
         operationGate.cancellableCall(backgroundScope) {
+            requireUrlFor(path)
             networkAccess.ensureEnabled()
             delegate.exists(path)
         }
@@ -644,13 +667,26 @@ internal class CachingBucketApi(
             isCacheableObjectPath(path) &&
             isRequestedByItsOwnName(path)
 
+    /** Refuses [path] when the request's URL cannot be built, which reads as a network failure. */
+    private fun requireUrlFor(path: String) {
+        require(canBuildTheUrlFor(path)) {
+            "This object path holds a '%' that does not begin a percent-escape, so the request's " +
+                "URL cannot be built"
+        }
+    }
+
+    /** Whether a request sent now goes out on the anon key because the session has not settled. */
+    private fun isSessionUnsettled(): Boolean = settledIdentityOf(requestSession()) == null
+
     /** An upload or update of [path] that drops its stale cached copies, stored or maybe stored. */
-    private suspend fun <T> invalidatingAfter(path: String, write: suspend () -> T): T =
-        storageWrite(
+    private suspend fun <T> invalidatingAfter(path: String, write: suspend () -> T): T {
+        requireUrlFor(path)
+        return storageWrite(
             write = write,
             applied = { cache.invalidateObject(bucketId, path) },
             uncertain = { cache.invalidateObject(bucketId, path) },
         )
+    }
 
     /**
      * Runs a Storage write that close() may stop, never queued; [applied] brings the cache in line.

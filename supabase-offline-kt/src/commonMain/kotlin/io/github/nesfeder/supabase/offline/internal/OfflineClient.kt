@@ -542,8 +542,9 @@ internal class OfflineClient(
                 } catch (failure: Exception) {
                     if (operationGate.isClosed) return@collect
                     engineLogger.error {
-                        "Could not drop the cache for the new session " +
-                            "(${failure::class.simpleName}); it is not served until it is"
+                        "Dropping the cache for the new session did not finish " +
+                            "(${failure::class.simpleName}); nothing another identity cached is " +
+                            "served, and files left behind go at the next clear or drop"
                     }
                 }
             }
@@ -554,9 +555,10 @@ internal class OfflineClient(
      * Makes the cache [identity]'s. A cache no identity owns is adopted by a user, and by nobody
      * signed in while it holds nothing; anything else another identity cached is dropped — the
      * cached queries and the Storage file cache, never the mutation queue — under
-     * [clearLocalData]'s locks in its order, and live queries fetch again. A crash after the rows
-     * are dropped and before the files are deleted leaves those files on disk with no row: no call
-     * reaches them, and the next clear or drop deletes them.
+     * [clearLocalData]'s locks in its order, and live queries fetch again once the drop has
+     * committed, even when a later step fails. A crash or failure after the rows are dropped and
+     * before the files are deleted leaves those files on disk with no row: no call reaches them,
+     * and the next clear or drop deletes them.
      */
     private suspend fun settleCacheOwner(identity: QueueIdentity) {
         if (
@@ -565,22 +567,28 @@ internal class OfflineClient(
         )
             return
         // The send lock alone: no pass is stopped, as none of the queue goes
+        var dropped = false
         try {
             mutationQueueReplayer.holdingSends {
                 fileCache.clear {
                     localData.dropCacheFor(identity.storedValue)
+                    dropped = true
                     databaseScrub.rewriteAfterDelete()
                 }
             }
         } finally {
+            // To a live read a committed drop, finished or cut short after it, is a change of
+            // owner: it fetches again. A drop that failed first changed nothing, and a fetch would
+            // only bring the reads back here. Asked first, as finishing the rewrite rethrows a
+            // cancellation
+            if (dropped) {
+                liveQueries.liveTables().forEach { table -> liveQueries.requestRefresh(table) }
+            }
             // Canceled too: what the rewrite left goes to the background
             databaseScrub.finishSoon()
         }
         engineLogger.info {
             "The session settled into another identity; the cache was emptied for it"
-        }
-        liveQueries.liveTables().forEach { table ->
-            liveQueries.requestRefresh(table)
         }
     }
 
@@ -667,6 +675,7 @@ internal class OfflineClient(
             renderImagePath = renderImagePath,
             ioDispatcher = ioDispatcher,
             networkAccess = networkAccess,
+            requestSession = ::requestSession,
         )
     }
 

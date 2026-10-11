@@ -50,7 +50,7 @@ What a write can throw:
 | `MutationNotQueueableException` | A write the queue cannot hold (a dry run, a filter it cannot record, another schema, an unknown user) could not be sent for want of a connection. Nothing was queued |
 | The connectivity failure itself | An `OnlineOnly` write could not be sent |
 | `NetworkDisabledException` | An `OnlineOnly` write was made while network access is off |
-| `IllegalArgumentException` | An UPDATE or DELETE named two top-level filters on one column; nothing was sent or queued |
+| `IllegalArgumentException` | An UPDATE or DELETE named two top-level filters on one column, or a pattern list the server would misread; nothing was sent or queued |
 
 A `QueueIfOffline` write that may not have run (no connection, no answer, a `503` or `520`, an
 expired token that could not be refreshed, a table or column PostgREST's schema cache does not
