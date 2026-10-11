@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<resources>
+<resources xmlns:tools="http://schemas.android.com/tools">
     <string name="app_name">Offline Tasks</string>
 
     <!-- Shared actions -->
@@ -88,6 +88,8 @@
     <string name="filter_recent">Recent</string>
     <string name="tasks_empty_search_title">No tasks match “%1$s”</string>
     <string name="tasks_empty_search_body">The server looks for the words anywhere in a title. Offline, only a search made online has results.</string>
+    <string name="tasks_query_not_saved_title">Not saved on this device</string>
+    <string name="tasks_query_not_saved_body">Each filter and search is saved on its own once it has been asked online. Connect, and it’s here offline from then on.</string>
     <string name="tasks_empty_recent_title">Nothing from the last week</string>
     <string name="tasks_empty_recent_body">Tasks made in the last seven days show here.</string>
     <string name="time_just_now">just now</string>
@@ -157,15 +159,14 @@
     <string name="photo_details_exists">Yes</string>
     <string name="photo_details_missing">No: the file is gone</string>
     <string name="photo_details_size">Size</string>
-    <string name="photo_details_bytes">%1$d bytes</string>
-    <string name="photo_details_type">Type</string>
+        <string name="photo_details_type">Type</string>
     <string name="photo_details_updated">Updated</string>
     <string name="photo_details_etag">ETag</string>
     <string name="photo_details_public_url">Public URL: the bucket is private, so it’s refused</string>
     <string name="photo_details_authenticated_url">Authenticated URL: it needs the user’s token</string>
     <string name="photo_details_on_device">On this device</string>
     <string name="photo_details_not_on_device">Not saved on this device yet</string>
-    <string name="photo_details_cached">%1$d bytes, fetched %2$s</string>
+    <string name="photo_details_cached">%1$s, fetched %2$s</string>
 
     <!-- Sync -->
     <string name="sync_title">Sync</string>
@@ -273,7 +274,8 @@
     <string name="sync_server_ask">Ask the server</string>
     <string name="sync_server_not_asked">On the server: not asked yet</string>
     <string name="sync_server_asking">Asking…</string>
-    <string name="sync_server_counts">On the server: %1$d of %2$d done · %3$d this week</string>
+    <!-- "Done" reads the same for one task or many. -->
+    <string name="sync_server_counts" tools:ignore="PluralsCandidate">On the server: %1$d of %2$d done · %3$d this week</string>
     <string name="sync_storage">Storage</string>
     <string name="sync_storage_body">Your folders in the task-photos bucket, ten at a time, with their files. A listing always asks the server.</string>
     <string name="sync_storage_list">List files</string>

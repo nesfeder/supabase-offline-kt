@@ -74,6 +74,7 @@ import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -202,7 +203,10 @@ class OfflineTaskRepository(
         photoList(FlowReadStrategy.CacheFirstThenNetwork, page = count) { it }
 
     // --8<-- [start:photo-rows-in]
-    /** How many photos each of [taskIds] has: one live read of their rows, by `in` on `task_id`. */
+    /**
+     * How many photos each of [taskIds] has: one live read of their rows, by `in` on `task_id`. A
+     * set of tasks never read online has no rows offline, so nothing is emitted for it.
+     */
     override fun photoCounts(taskIds: List<String>): Flow<Map<String, Int>> {
         if (taskIds.isEmpty()) return flowOf(emptyMap())
         val ids = taskIds.sorted() // the same tasks, the same query, the same cached rows
@@ -210,10 +214,8 @@ class OfflineTaskRepository(
             offline
                 .from(Tables.TASK_PHOTOS)
                 .selectAsFlow(Columns.list(ID, TASK_ID)) { filter { isIn(TASK_ID, ids) } }
-                .map { snapshot ->
-                    val rows = snapshot.result?.decodeList<PhotoTaskRow>().orEmpty()
-                    rows.groupingBy { it.taskId }.eachCount()
-                }
+                .mapNotNull { snapshot -> snapshot.result?.decodeList<PhotoTaskRow>() }
+                .map { rows -> rows.groupingBy { it.taskId }.eachCount() }
         }
     }
 
@@ -493,7 +495,7 @@ class OfflineTaskRepository(
 
     override suspend fun uploadThroughSignedUrl(): TaskPhoto? = detached {
         requireNetwork()
-        signedInUserId()
+        signedInUserId() // a photo needs its user: before a session there is none to copy
         val newest = allPhotos().first { it.value != null }.value?.firstOrNull()
         if (newest == null) return@detached null
         val copied = downloadPhotoFile(newest).path

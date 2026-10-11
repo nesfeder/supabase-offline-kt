@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.offlinetasks.ui.photos
 
+import android.text.format.Formatter
 import androidx.activity.compose.LocalActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
@@ -348,7 +349,7 @@ private fun PhotoDetailsSheet(details: PhotoDetails, onDismiss: () -> Unit) {
             if (details.existsInBucket) {
                 DetailLine(
                     R.string.photo_details_size,
-                    stringResource(R.string.photo_details_bytes, details.sizeBytes),
+                    Formatter.formatShortFileSize(LocalContext.current, details.sizeBytes),
                 )
                 details.contentType?.let { DetailLine(R.string.photo_details_type, it) }
                 details.updatedAt?.let {
@@ -365,7 +366,7 @@ private fun PhotoDetailsSheet(details: PhotoDetails, onDismiss: () -> Unit) {
                 else
                     stringResource(
                         R.string.photo_details_cached,
-                        cached.sizeBytes,
+                        Formatter.formatShortFileSize(LocalContext.current, cached.sizeBytes),
                         relativeTime(cached.fetchedAt),
                     ),
             )

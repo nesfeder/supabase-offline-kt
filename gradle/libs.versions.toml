@@ -178,6 +178,8 @@ robolectric = { module = "org.robolectric:robolectric", version.ref = "robolectr
 supabase-auth-kt = { module = "io.github.jan-tennert.supabase:auth-kt" }
 supabase-bom = { module = "io.github.jan-tennert.supabase:bom", version.ref = "supabase-bom" }
 supabase-postgrest-kt = { module = "io.github.jan-tennert.supabase:postgrest-kt" }
+# The Android sample's Live updates; nothing published depends on it.
+supabase-realtime-kt = { module = "io.github.jan-tennert.supabase:realtime-kt" }
 supabase-storage-kt = { module = "io.github.jan-tennert.supabase:storage-kt" }
 
 [plugins]

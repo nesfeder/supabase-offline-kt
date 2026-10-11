@@ -524,6 +524,15 @@ private fun NoSession(state: TasksUiState.NoSession) {
 
 @Composable
 private fun NoDataYet(state: TasksUiState.NoDataYet) {
+    // Each query is saved on its own: a chip or a search never asked online has nothing offline.
+    if (!state.isLoading && state.query != TaskQuery()) {
+        EmptyState(
+            icon = R.drawable.ic_cloud_off,
+            title = stringResource(R.string.tasks_query_not_saved_title),
+            body = stringResource(R.string.tasks_query_not_saved_body),
+        )
+        return
+    }
     if (state.isLoading) {
         EmptyState(
             icon = R.drawable.ic_cloud_sync,
