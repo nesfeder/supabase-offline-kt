@@ -96,6 +96,7 @@ class FakeSupabaseServer {
 
     private val lock = Any()
 
+    // --8<-- [start:in-memory-client]
     /**
      * A client of this server with PostgREST, Storage and the offline plugin keeping its data in
      * memory; no Auth, so every request is the one anonymous identity.
@@ -105,11 +106,12 @@ class FakeSupabaseServer {
             supabaseUrl = "https://sample.supabase.test",
             supabaseKey = "test-key",
         ) {
-            httpEngine = MockEngine { request -> answer(request) }
-            install(Postgrest) { maxRetries = 0 }
+            httpEngine = MockEngine { request -> answer(request) } // this fake server
+            install(Postgrest) { maxRetries = 0 } // a failed read fails now, not after retries
             install(Storage) { resumable { cache = MemoryResumableCache() } }
-            install(Offline) { inMemory(Clock.System) }
+            install(Offline) { inMemory(Clock.System) } // the cache and the queue in memory
         }
+    // --8<-- [end:in-memory-client]
 
     /** Adds [row] to [table] as the server stores it, as if another device had sent it. */
     fun insertRow(table: String, row: JsonObject) {
@@ -163,9 +165,11 @@ class FakeSupabaseServer {
                 """{"code":"XX000","message":"failing on purpose"}""",
                 HttpStatusCode.InternalServerError,
             )
+        if (table.startsWith("rpc/")) return function(table.removePrefix("rpc/"))
         val rows = tables.getValue(table)
         val filters = equalityFilters(request)
-        val wantsRows = request.headers["Prefer"].orEmpty().contains("return=representation")
+        val prefer = request.headers["Prefer"].orEmpty()
+        val wantsRows = prefer.contains("return=representation")
         return when (request.method) {
             HttpMethod.Get ->
                 json(JsonArray(select(rows, filters, request)).toString(), HttpStatusCode.OK)
@@ -176,8 +180,7 @@ class FakeSupabaseServer {
                     ?.let {
                         return it
                     }
-                val stored = inserted.map { stamped(it) }
-                rows += stored
+                val stored = upserted(rows, inserted.map { stamped(it) }, prefer)
                 json(if (wantsRows) JsonArray(stored).toString() else "", HttpStatusCode.Created)
             }
             HttpMethod.Patch -> {
@@ -258,6 +261,45 @@ class FakeSupabaseServer {
             else ->
                 error("FakeSupabaseServer has no Storage route for ${request.method.value} $route")
         }
+    }
+
+    /**
+     * Stores [incoming] in [rows], as an insert or, with a `resolution` preference, an upsert on
+     * the id: duplicates kept as stored, or merged. Returns the rows it wrote.
+     */
+    private fun upserted(
+        rows: MutableList<JsonObject>,
+        incoming: List<JsonObject>,
+        prefer: String,
+    ): List<JsonObject> {
+        val written = mutableListOf<JsonObject>()
+        for (row in incoming) {
+            val index = rows.indexOfFirst { it["id"] == row["id"] }
+            when {
+                index < 0 -> rows += row
+                "resolution=ignore-duplicates" in prefer -> continue
+                "resolution=merge-duplicates" in prefer -> rows[index] = JsonObject(rows[index] + row)
+                else -> rows += row
+            }
+            written += row
+        }
+        return written
+    }
+
+    /** The samples' two database functions, for the one anonymous identity. */
+    private fun MockRequestHandleScope.function(name: String): HttpResponseData {
+        val tasks = tables.getValue("tasks")
+        val result =
+            when (name) {
+                "complete_all_tasks" -> {
+                    val open = tasks.indices.filter { tasks[it]["done"] == JsonPrimitive(false) }
+                    open.forEach { tasks[it] = JsonObject(tasks[it] + ("done" to JsonPrimitive(true))) }
+                    open.size
+                }
+                "tasks_done_count" -> tasks.count { it["done"] == JsonPrimitive(true) }
+                else -> error("FakeSupabaseServer has no function $name")
+            }
+        return json(result.toString(), HttpStatusCode.OK)
     }
 
     /**

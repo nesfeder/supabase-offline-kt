@@ -5,6 +5,7 @@ package io.github.nesfeder.offlinetasks.ui.tasks
 import io.github.nesfeder.offlinetasks.data.EncodedPhoto
 import io.github.nesfeder.offlinetasks.data.PhotoStorageException
 import io.github.nesfeder.offlinetasks.data.ServerUnreachableException
+import io.github.nesfeder.offlinetasks.data.TaskFilter
 import io.github.nesfeder.offlinetasks.data.TaskRepository
 import io.github.nesfeder.offlinetasks.platform.SessionState
 import io.github.nesfeder.offlinetasks.testing.FailingReadsTaskRepository
@@ -75,7 +76,7 @@ class TasksViewModelTest {
         viewModel.setFilter(TaskFilter.Open)
 
         // Then
-        val state = viewModel.loaded { it.filter == TaskFilter.Open }
+        val state = viewModel.loaded { it.query.filter == TaskFilter.Open }
         assertTrue(state.doneTasks.isEmpty())
         assertEquals(3, state.openTasks.size)
         assertEquals(3, state.openCount)
@@ -153,8 +154,8 @@ class TasksViewModelTest {
     }
 
     @Test
-    fun pull_to_refresh_offline_says_the_network_is_needed() = runTest {
-        // Given
+    fun pull_to_refresh_offline_answers_from_the_device_and_says_so() = runTest {
+        // Given — the list loaded online, then the network switched off
         val repository = repositoryFixture(seedSampleTasks = true).repository
         val viewModel = tasksViewModel(repository)
         viewModel.loaded()
@@ -163,8 +164,38 @@ class TasksViewModelTest {
         // When
         viewModel.refresh()
 
+        // Then — the caption says the rows are this device's copy
+        val caption = viewModel.loaded { it.caption != null }.caption
+        assertTrue(caption?.provenance?.isFromCache == true)
+    }
+
+    @Test
+    fun pull_to_refresh_with_nothing_saved_says_the_network_is_needed() = runTest {
+        // Given — a first launch offline: nothing saved on the device
+        val viewModel = tasksViewModel(repositoryFixture(online = false).repository)
+
+        // When
+        viewModel.refresh()
+
         // Then
         assertEquals(TasksMessage.RefreshNeedsNetwork, viewModel.messages.first())
+    }
+
+    @Test
+    fun the_open_chip_asks_for_open_tasks_and_the_search_narrows_them() = runTest {
+        // Given
+        val viewModel = tasksViewModel(repositoryFixture(seedSampleTasks = true).repository)
+        val all = viewModel.loaded()
+        val title = all.openTasks.first().title
+
+        // When
+        viewModel.setFilter(TaskFilter.Open)
+        viewModel.setSearch(title)
+
+        // Then — only open tasks whose title holds the text
+        val state = viewModel.loaded { it.query.search == title && it.openTasks.size == 1 }
+        assertTrue(state.doneTasks.isEmpty())
+        assertEquals(title, state.openTasks.single().title)
     }
 
     @Test

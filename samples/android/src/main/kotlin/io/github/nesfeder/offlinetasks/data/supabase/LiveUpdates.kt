@@ -29,7 +29,7 @@ private const val SCHEMA = "public"
  * happen, through Realtime. It keeps the lists current between refreshes and never replaces them:
  * Realtime does not replay what happened while the app was away, so the lists still refresh.
  */
-internal class LiveUpdates(private val supabase: SupabaseClient) {
+class LiveUpdates(private val supabase: SupabaseClient) {
 
     private val offline = supabase.offline
 

@@ -25,6 +25,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -325,6 +326,7 @@ private fun TaskPicker(
 }
 
 /** The Details sheet: what Storage says about the file, its two links, and the copy here. */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun PhotoDetailsSheet(details: PhotoDetails, onDismiss: () -> Unit) {
     ModalBottomSheet(onDismissRequest = onDismiss) {

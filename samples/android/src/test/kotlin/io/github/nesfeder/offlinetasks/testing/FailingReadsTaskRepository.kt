@@ -32,6 +32,9 @@ class FailingReadsTaskRepository(
 
     override fun allPhotos(): Flow<PhotoListSnapshot> = loadedThenFailing(delegate.allPhotos())
 
+    override fun photoPage(count: Int): Flow<PhotoListSnapshot> =
+        loadedThenFailing(delegate.photoPage(count))
+
     override fun rejectedMutations(): Flow<List<RejectedTaskMutation>> = flow {
         emit(delegate.rejectedMutations().first())
         throw failure
