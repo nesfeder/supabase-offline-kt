@@ -550,6 +550,11 @@ different system SQLite versions under the suite's system-SQLite build. A failur
 one route only may be that difference: compare the runtime each run's simulator used before you
 look for anything else.
 
+In CI, only the self-hosted route runs the Swift package's tests (`scripts/test-swift-package.sh`):
+a run on GitHub's macOS runner, as every merge-queue and weekly run is, runs the Kotlin iOS tests
+alone, and the release runs the Swift tests once more against its own framework. So run the script
+yourself before review whenever you change the bridge or `swift/`.
+
 ### When a run fails on a download
 
 A job can fail because something it downloads is briefly unavailable. Each of these is covered:
