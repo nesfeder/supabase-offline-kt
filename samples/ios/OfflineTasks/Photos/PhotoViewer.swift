@@ -180,6 +180,13 @@ struct PhotoDetailsSheet: View {
                 if let updatedAt = object.updatedAt {
                     LabeledContent("Updated", value: updatedAt.formatted(date: .abbreviated, time: .shortened))
                 }
+                if let lastModified = object.lastModified {
+                    LabeledContent("Last modified", value: lastModified.formatted(date: .abbreviated, time: .shortened))
+                }
+                LabeledContent("Bucket", value: object.bucketId ?? "—")
+                LabeledContent("Version", value: object.version)
+                LabeledContent("ETag", value: object.etag ?? "—")
+                LabeledContent("Cache control", value: object.cacheControl ?? "—")
             }
             if let exists = model.details?.existsInBucket {
                 LabeledContent("In the bucket", value: exists ? "Yes" : "No")

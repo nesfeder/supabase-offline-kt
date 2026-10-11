@@ -133,9 +133,11 @@ extension TaskRepository {
     // --8<-- [end:share-link]
 
     // --8<-- [start:share-all-links]
-    /// Links to every photo of `photos`, each working for an hour, signed in one request.
+    /// Links to every photo of `photos`, each working for an hour, signed in one request; a photo
+    /// Storage could not sign is left out.
     func shareLinks(for photos: [TaskPhoto]) async throws -> [URL] {
         try await photoBucket.createSignedURLs(paths: photos.map(\.objectPath), expiresIn: Self.shareLinkLifetimeSeconds)
+            .filter { $0.error == nil }
             .map(\.signedURL)
     }
     // --8<-- [end:share-all-links]
@@ -265,9 +267,10 @@ extension TaskRepository {
         let userID = try signedInUserID()
         let photoID = DeviceID.make()
         let objectPath = PhotoPath.objectPath(userID: userID, taskID: taskID, photoID: photoID)
+        let uploaded: OfflineBucketApi.FileUploadResponse
         do {
             let upload = try await photoBucket.createSignedUploadURL(path: objectPath)
-            try await photoBucket.uploadToSignedURL(
+            uploaded = try await photoBucket.uploadToSignedURL(
                 upload.path,
                 token: upload.token,
                 data: photo.jpeg,
@@ -276,7 +279,8 @@ extension TaskRepository {
         } catch {
             throw SampleFailure.storage(error)
         }
-        try await insertRow(of: TaskPhotoRow(photoID: photoID, userID: userID, taskID: taskID, objectPath: objectPath, photo: photo))
+        // The row names the file where Storage says it put it.
+        try await insertRow(of: TaskPhotoRow(photoID: photoID, userID: userID, taskID: taskID, objectPath: uploaded.path, photo: photo))
     }
     // --8<-- [end:signed-upload]
 

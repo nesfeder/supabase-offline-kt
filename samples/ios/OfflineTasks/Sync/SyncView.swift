@@ -167,6 +167,10 @@ struct SyncView: View {
                         Text("The server answered HTTP \(serverError.status) · \(serverError.code ?? "no code")")
                             .font(.footnote)
                             .foregroundStyle(.secondary)
+                        // Postgres's details can hold the row's values: shown here, never logged.
+                        ForEach([serverError.details, serverError.hint].compactMap { $0 }, id: \.self) { note in
+                            Text(note).font(.footnote).foregroundStyle(.secondary)
+                        }
                     }
                     HStack {
                         Button("Retry") { app.sync.retry(rejection) }

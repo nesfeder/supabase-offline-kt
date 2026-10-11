@@ -296,6 +296,25 @@ struct ApiTourTests {
         try await test.stop()
     }
 
+    @Test("Offline, a saved list older than a day is not an answer: pull to refresh says why")
+    func pullToRefreshTooOld() async throws {
+        // Given: the list read online, then a day and a minute later on the client's clock, offline
+        let clock = ManualClock(now: Date(timeIntervalSince1970: 1_760_000_000))
+        let test = TestApp(clock: clock)
+        try await test.start()
+        await test.app.tasks.refreshList()
+        clock.set(to: clock.now + 86_460)
+        try await test.setOffline(true)
+
+        // When
+        await test.app.tasks.refreshList()
+
+        // Then
+        try await eventually("the app says why") { test.app.failure != nil }
+        #expect(test.app.failure?.message == SampleFailure.sentence(for: networkDisabledError()))
+        try await test.stop()
+    }
+
     @Test("The open count at launch is read from the device when it read the list in the last hour")
     func openCountAtLaunch() async throws {
         // Given: the open tasks read once, online
