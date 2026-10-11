@@ -251,21 +251,41 @@ final class TasksModel {
 
     // MARK: - Writing
 
-    /// Adds a task, sent only straight to the server when `needsConnection`. Returns what to tell
-    /// the user when it failed, so the sheet can say it; `nil` once it is saved.
-    func addTask(title: String, notes: String, needsConnection: Bool) async -> String? {
+    /// Adds a task, sent only straight to the server when `needsConnection`, then files `photos`
+    /// for it, to wait on the device and upload behind it. Returns what to tell the user when the
+    /// task failed, so the sheet can say it; `nil` once it is saved.
+    func addTask(title: String, notes: String, needsConnection: Bool, photos: [EncodedPhoto] = []) async -> String? {
         let notes = notes.trimmingCharacters(in: .whitespacesAndNewlines)
+        let taskID = DeviceID.make()
+        let result: NewTaskResult
         do {
-            let result = try await repository.addTask(
+            result = try await repository.addTask(
+                id: taskID,
                 title: title.trimmingCharacters(in: .whitespacesAndNewlines),
                 notes: notes.isEmpty ? nil : notes,
                 needsConnection: needsConnection
             )
-            failures.announce(Wording.newTaskResult(result))
-            return nil
         } catch {
             return SampleFailure.message(for: error)
         }
+        // Filed only once the task is saved: a photo's row is written after its task's insert.
+        var filed = 0
+        await failures.perform {
+            for photo in photos {
+                try await repository.filePhoto(photo, forTask: taskID)
+                filed += 1
+            }
+        }
+        failures.announce(Wording.newTaskResult(result, photoCount: filed))
+        return nil
+    }
+
+    /// How many photos task `taskID` has: its rows read so far, and the photos picked on this
+    /// device that wait to upload; `nil` while neither is known.
+    func photoCount(ofTask taskID: String) -> Int? {
+        let waiting = repository.pendingPhotos.photos(ofTask: taskID).count
+        guard let stored = photoCounts[taskID] else { return waiting > 0 ? waiting : nil }
+        return stored + waiting
     }
 
     /// Marks `task` done or open again.

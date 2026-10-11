@@ -29,6 +29,9 @@ nonisolated enum SampleFailure: Error, Equatable {
     /// Realtime's feed could not be reached, or sent a change the app could not read.
     case liveUpdatesStopped
 
+    /// The records of `count` photos waiting to upload could not be read from the device.
+    case pendingPhotoUnreadable(count: Int)
+
     /// What to tell the user, in a sentence or two.
     var message: String {
         switch self {
@@ -44,6 +47,8 @@ nonisolated enum SampleFailure: Error, Equatable {
             return "This photo’s file is missing."
         case .liveUpdatesStopped:
             return "Live updates stopped: the server’s change feed couldn’t be reached. Pull to refresh still works."
+        case .pendingPhotoUnreadable(let count):
+            return "\(Wording.count(count, "photo", "photos")) waiting to upload couldn’t be read on this device. Clear local cache removes them."
         }
     }
 }
@@ -69,6 +74,32 @@ nonisolated extension SampleFailure {
         guard let serverError = offline.serverError else { return error }
         if serverError.status == 404 || serverError.code == "not_found" { return SampleFailure.photoMissing }
         return SampleFailure.storageRefused(status: serverError.status, message: serverError.message)
+    }
+
+    /// An upload's failure: as ``storage(_:)``, but a "not found" is Storage's refusal (of a
+    /// missing bucket, say), since there is no photo yet to be missing.
+    static func upload(_ error: any Error) -> any Error {
+        guard let offline = error as? OfflineError else { return error }
+        if offline.isNetworkOrConnectivityFailure { return SampleFailure.needsNetwork }
+        guard let serverError = offline.serverError else { return error }
+        return SampleFailure.storageRefused(status: serverError.status, message: serverError.message)
+    }
+
+    /// Whether another attempt at what failed with `error` can succeed: not when the server
+    /// refused it for good (a 4xx but 408 and 429: a policy, a constraint, a missing task), nor
+    /// when the photo cannot be read.
+    static func isRetryable(_ error: any Error) -> Bool {
+        switch error as? SampleFailure {
+        case .storageRefused(let status, _)?: return isTransient(status: status)
+        case .writeRefused(_, let serverError)?: return isTransient(status: serverError.status)
+        case .photoUnreadable?: return false
+        default: return true
+        }
+    }
+
+    /// Whether the server's `status` says a later attempt may be answered differently.
+    private static func isTransient(status: Int) -> Bool {
+        status >= 500 || status == 408 || status == 429
     }
 
     // --8<-- [start:reportable-failure]

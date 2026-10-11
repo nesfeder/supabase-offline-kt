@@ -29,6 +29,9 @@ final class AppModel {
     /// Where the server's row changes come from, for Live updates.
     let changeSource: any ServerChangeSource
 
+    /// Uploads the photos picked on this device, as the network allows.
+    let photoUploader: PendingPhotoUploader
+
     /// Where the screens' models report failures, to be shown here.
     let failureSink: FailureSink
 
@@ -86,6 +89,7 @@ final class AppModel {
         tasks = TasksModel(repository: repository, failures: failures)
         sync = SyncModel(repository: repository, failures: failures)
         photos = PhotosModel(repository: repository, failures: failures)
+        photoUploader = PendingPhotoUploader(repository: repository, failures: failures)
         failures.model = self
     }
 
@@ -127,13 +131,14 @@ final class AppModel {
     // MARK: - Running
 
     /// Runs for as long as the app does: follows the sync status, signs in when the network allows,
-    /// and announces refused writes.
+    /// announces refused writes, and uploads the photos picked on this device.
     func run() async {
         await withDiscardingTaskGroup { group in
             group.addTask { await self.readPendingAtLaunch() }
             group.addTask { await self.followSyncStatus() }
             group.addTask { await self.session.signInWhenReachable(self.repository.syncStatus) }
             group.addTask { await self.announceRefusedWrites() }
+            group.addTask { await self.photoUploader.run() }
         }
     }
 
@@ -372,13 +377,16 @@ extension AppModel {
     }
 
     /// The app in demo mode, on the testing product's in-memory client and `server`, whose time is
-    /// `clock` when one is given; for previews and tests too.
+    /// `clock` when one is given, with the photos waiting to upload in `pendingPhotoFolder`; for
+    /// previews and tests too. By default that folder is a new one in the temporary directory, as
+    /// demo mode keeps nothing between launches.
     static func demo(
         mode: LaunchMode = .demo(reason: .requested),
         server: DemoServer = DemoServer(),
         session: DemoSession = DemoSession(),
         clock: ManualClock? = nil,
-        networkAvailability: @escaping @Sendable () -> AsyncStream<Bool> = { AsyncStream { $0.yield(true) } }
+        networkAvailability: @escaping @Sendable () -> AsyncStream<Bool> = { AsyncStream { $0.yield(true) } },
+        pendingPhotoFolder: URL = .temporaryDirectory.appending(path: "PendingPhotos-\(DeviceID.make())", directoryHint: .isDirectory)
     ) -> AppModel {
         // --8<-- [start:in-memory-client]
         let client = SupabaseOfflineClient.inMemory(
@@ -391,7 +399,12 @@ extension AppModel {
             clock: clock
         )
         // --8<-- [end:in-memory-client]
-        let repository = TaskRepository(client: client, session: session, photoBytes: .bucketDownload)
+        let repository = TaskRepository(
+            client: client,
+            session: session,
+            photoBytes: .bucketDownload,
+            pendingPhotos: PendingPhotoQueue(folder: pendingPhotoFolder)
+        )
         return AppModel(mode: mode, repository: repository, changeSource: server)
     }
 }

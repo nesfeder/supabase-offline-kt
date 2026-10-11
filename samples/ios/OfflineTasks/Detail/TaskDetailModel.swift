@@ -6,7 +6,7 @@ import SupabaseOffline
 import SwiftUI
 
 /// One task: its live row and photos, the title and notes saved as you type, the done switch,
-/// photo uploads and deletion.
+/// photos added (offline too: they wait on the device until they upload) and deletion.
 @Observable
 final class TaskDetailModel {
 
@@ -69,18 +69,20 @@ final class TaskDetailModel {
     /// The notes as typed; saved after a pause, and clearing them clears them.
     private(set) var draftNotes = ""
 
-    /// The task's photos, oldest first.
-    private(set) var photos: [TaskPhoto] = []
+    /// The task's photos, oldest first: the stored ones and the ones waiting to upload.
+    var photos: [TaskPhoto] {
+        TaskRepository.photos(ofTask: taskID, rows: photoRows, queuedRowIDs: queuedRowIDs, pending: repository.pendingPhotos.photos)
+    }
 
-    /// How many photos are on their way up.
-    private(set) var uploadCount = 0
+    /// How many picked photos are being read and re-encoded, before they are filed.
+    private(set) var preparingCount = 0
 
     /// Each photo's image, by photo id.
     private(set) var images: [String: PhotoImage] = [:]
 
     /// Every photo row the device holds, and which of them wait in the queue.
     private var photoRows: [TaskPhotoRow] = []
-    private var pendingPhotoIDs: Set<String> = []
+    private var queuedRowIDs: Set<String> = []
 
     /// The title and notes the device holds, which the draft is compared with.
     @ObservationIgnored private var stored: (title: String, notes: String)?
@@ -148,10 +150,14 @@ final class TaskDetailModel {
         }
     }
 
-    /// Loads `photo`'s image: from the device's copy, fetched first when there is none and the
-    /// server can be asked.
+    /// Loads `photo`'s image: from the device's own copy while it waits to upload, else from the
+    /// library's copy, fetched first when there is none and the server can be asked.
     func loadImage(for photo: TaskPhoto) async {
         if images[photo.id] == nil { images[photo.id] = .loading }
+        if let data = await repository.pendingPhotoData(of: photo) {
+            images[photo.id] = await Self.thumbnail(of: data).map(PhotoImage.loaded) ?? .unavailable
+            return
+        }
         switch await repository.photoFile(for: photo) {
         case .onDevice(let file):
             do {
@@ -202,24 +208,36 @@ final class TaskDetailModel {
         Task { await failures.perform { try await repository.deleteTask(id: taskID) } }
     }
 
-    /// Re-encodes the picked image as a JPEG and uploads it.
+    // --8<-- [start:pending-photo-add]
+    /// Re-encodes the picked image as a JPEG and files it for the task, to wait on the device until
+    /// it uploads: at once when online.
     func attach(_ item: PhotosPickerItem) {
-        uploadCount += 1
+        preparingCount += 1
         Task {
-            defer { uploadCount -= 1 }
+            defer { preparingCount -= 1 }
             await failures.perform {
                 guard let data = try await item.loadTransferable(type: Data.self) else {
                     throw SampleFailure.photoUnreadable
                 }
-                let photo = try await PhotoEncoder.encode(data)
-                try await repository.attachPhoto(taskID: taskID, photo: photo)
+                try await repository.filePhoto(try await PhotoEncoder.encode(data), forTask: taskID)
             }
         }
     }
+    // --8<-- [end:pending-photo-add]
 
-    /// Deletes `photo`'s file and then its row; online only.
+    /// Deletes `photo`: a stored one's file and then its row, online only; one waiting to upload,
+    /// from the device.
     func deletePhoto(_ photo: TaskPhoto) {
-        Task { await failures.perform { try await repository.deletePhoto(photo) } }
+        if photo.pendingUpload != nil {
+            Task { await failures.perform { try repository.removePendingPhoto(photo) } }
+        } else {
+            Task { await failures.perform { try await repository.deletePhoto(photo) } }
+        }
+    }
+
+    /// Retry on a photo whose upload failed: it waits again.
+    func retryUpload(of photo: TaskPhoto) {
+        Task { await failures.perform { try repository.retryUpload(of: photo) } }
     }
 
     /// Makes the task's copy, or brings its copy back in line with it, and says which happened.
@@ -287,7 +305,6 @@ final class TaskDetailModel {
             let readStrategy: SequenceReadStrategy = isSimulatingOffline ? .cacheOnly : .cacheFirstThenNetwork
             for try await snapshot in repository.photoSnapshots(readStrategy: readStrategy) {
                 photoRows = snapshot.result ?? []
-                updatePhotos()
             }
             // --8<-- [end:cache-only-photos]
         } catch is CancellationError {
@@ -301,22 +318,13 @@ final class TaskDetailModel {
     private func observePendingPhotos() async {
         do {
             for try await mutations in repository.pendingMutations(table: Tables.taskPhotos) {
-                pendingPhotoIDs = Set(mutations.flatMap(\.rowIDs))
-                updatePhotos()
+                queuedRowIDs = Set(mutations.flatMap(\.rowIDs))
             }
         } catch is CancellationError {
             return
         } catch {
             failures.report(error)
         }
-    }
-
-    /// This task's photos, oldest first, from the rows and the queue.
-    private func updatePhotos() {
-        photos = photoRows
-            .filter { $0.taskID == taskID }
-            .map { $0.photo(pendingIDs: pendingPhotoIDs) }
-            .sorted { $0.createdAt < $1.createdAt }
     }
 
     /// A thumbnail of the image in `data`, decoded off the main actor.

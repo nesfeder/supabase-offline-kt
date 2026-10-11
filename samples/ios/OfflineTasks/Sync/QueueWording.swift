@@ -45,6 +45,22 @@ nonisolated extension Wording {
         }
     }
 
+    /// The word a photo picked on this device carries while it waits to upload.
+    static func uploadState(_ state: PendingPhoto.State) -> String {
+        switch state {
+        case .waiting: "Waiting to upload"
+        case .uploading: "Uploading"
+        case .failed: "Upload failed"
+        }
+    }
+
+    /// What New task says when it filed `photoCount` photos with the task, after `result`'s words.
+    static func newTaskResult(_ result: NewTaskResult, photoCount: Int) -> String {
+        guard photoCount > 0 else { return newTaskResult(result) }
+        let photos = photoCount == 1 ? "its photo uploads" : "its \(photoCount) photos upload"
+        return "\(newTaskResult(result)); \(photos) when the network allows"
+    }
+
     // --8<-- [start:new-task-outcome]
     /// What New task says once its write returns: the time the server stored the task at, or that
     /// it waits on this device.

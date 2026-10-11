@@ -4,7 +4,7 @@ import Foundation
 import SupabaseOffline
 
 /// The Photos screen: every photo the user has, newest first, a page at a time, each marked once
-/// it is on this device.
+/// it is on this device; the photos picked here that wait to upload come first, marked as such.
 @Observable
 final class PhotosModel {
 
@@ -36,9 +36,9 @@ final class PhotosModel {
         images = PhotoImages(repository: repository, maxPixelSize: 360)
     }
 
-    /// The photos read so far, newest first.
+    /// The photos read so far and the ones waiting to upload, newest first.
     var photos: [TaskPhoto] {
-        (rows ?? []).map { $0.photo(pendingIDs: pendingIDs) }
+        TaskRepository.allPhotos(rows: rows ?? [], queuedRowIDs: pendingIDs, pending: repository.pendingPhotos.photos)
     }
 
     /// Whether the server may have more than the grid shows.

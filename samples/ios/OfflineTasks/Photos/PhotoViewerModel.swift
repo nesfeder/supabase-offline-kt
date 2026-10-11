@@ -6,7 +6,9 @@ import SupabaseOffline
 import SwiftUI
 
 /// One photo, full screen: its image, what Storage and the device know about it, and what can be
-/// done with it. Every change to the file needs the network.
+/// done with it. Every change to the file needs the network. A photo picked on this device that
+/// waits to upload has no file in the bucket yet: it can be shared from the device, retried or
+/// removed, and nothing else.
 @Observable
 final class PhotoViewerModel {
 
@@ -44,6 +46,12 @@ final class PhotoViewerModel {
         repository.canReachNetwork && repository.session.userID != nil
     }
 
+    /// Where the photo's upload stands while it waits on this device; `nil` once it is stored,
+    /// which it may become while the viewer is open.
+    var pendingUpload: PendingPhoto.State? {
+        repository.pendingPhotos.photo(id: photo.id)?.state
+    }
+
     /// Loads the image.
     func load() async {
         await images.load(photo)
@@ -54,11 +62,26 @@ final class PhotoViewerModel {
         details = await repository.photoDetails(for: photo)
     }
 
-    /// The file, for the share sheet; `nil` when it could not be had.
+    /// The file, for the share sheet: the app's own copy while it waits to upload; `nil` when it
+    /// could not be had.
     func shareableFile() async -> URL? {
+        if pendingUpload != nil { return repository.pendingPhotos.jpegURL(ofPhoto: photo.id) }
         var file: URL?
         await failures.perform { file = try await repository.shareableFile(for: photo) }
         return file
+    }
+
+    /// Retry on a photo whose upload failed: it waits again.
+    func retryUpload() {
+        Task { await failures.perform { try repository.retryUpload(of: photo) } }
+    }
+
+    /// Remove on a photo waiting to upload: deleted from the device, never sent; the viewer closes.
+    func removePendingPhoto() async {
+        await change("Photo removed") {
+            try repository.removePendingPhoto(photo)
+            isGone = true
+        }
     }
 
     /// A link to a 512-pixel-wide copy that works for an hour; `nil` when it could not be made.

@@ -16,6 +16,9 @@ import SupabaseOffline
 /// ``SampleFailure/writeRefused(taskTitle:serverError:)``; a write that waited in the queue never
 /// throws, and its refusal goes to the rejected list. Everything else arrives as the library threw
 /// it, an ``OfflineError``, which ``SampleFailure/sentence(for:)`` puts in words.
+///
+/// Photos are the one write the app queues itself: a picked photo waits in ``pendingPhotos`` until
+/// ``PendingPhotoUploader`` uploads it (`TaskRepository+PendingPhotos.swift`).
 final class TaskRepository {
 
     /// The app's one offline client.
@@ -26,6 +29,9 @@ final class TaskRepository {
 
     /// How a cached photo's bytes are read.
     let photoBytes: PhotoBytesSource
+
+    /// The photos picked on this device that wait to upload: the app's own queue.
+    let pendingPhotos: PendingPhotoQueue
 
     /// How many objects one Storage delete names at most.
     static let storageDeleteBatch = 100
@@ -40,11 +46,18 @@ final class TaskRepository {
     /// How old the saved list may be and still give the open count at launch, without asking.
     static let badgeMaxAge = Duration.seconds(60 * 60)
 
-    /// A repository over `client` for `session`'s user, reading cached photos as `photoBytes` says.
-    init(client: SupabaseOfflineClient, session: any UserSession, photoBytes: PhotoBytesSource = .cachedFile) {
+    /// A repository over `client` for `session`'s user, reading cached photos as `photoBytes` says,
+    /// with the photos waiting to upload in `pendingPhotos`.
+    init(
+        client: SupabaseOfflineClient,
+        session: any UserSession,
+        photoBytes: PhotoBytesSource = .cachedFile,
+        pendingPhotos: PendingPhotoQueue = PendingPhotoQueue()
+    ) {
         self.client = client
         self.session = session
         self.photoBytes = photoBytes
+        self.pendingPhotos = pendingPhotos
     }
 
     // MARK: - Live reads
@@ -231,12 +244,12 @@ final class TaskRepository {
     // MARK: - Task writes
 
     // --8<-- [start:first-write]
-    /// Adds a task with a new id, the signed-in user and the device's clock as its creation time,
-    /// and says what happened: the server stored it, at the `updated_at` it set and gives back, or
-    /// it waits in the queue on this device.
-    func addTask(title: String, notes: String?, needsConnection: Bool = false) async throws -> NewTaskResult {
+    /// Adds task `id` (a new one unless given) for the signed-in user, with the device's clock as
+    /// its creation time, and says what happened: the server stored it, at the `updated_at` it set
+    /// and gives back, or it waits in the queue on this device.
+    func addTask(id: String = DeviceID.make(), title: String, notes: String?, needsConnection: Bool = false) async throws -> NewTaskResult {
         let row = NewTaskRow(
-            id: DeviceID.make(),
+            id: id,
             userID: try signedInUserID(),
             title: title,
             notes: notes,
@@ -380,12 +393,14 @@ final class TaskRepository {
     }
     // --8<-- [end:json-insert]
 
-    /// Deletes a task: its photo files first (only online: Storage writes are never queued, so
-    /// offline they stay in the bucket), then its photo rows, then the task.
+    /// Deletes a task: its photos waiting to upload, then its photo files (only online: Storage
+    /// writes are never queued, so offline they stay in the bucket), then its photo rows, then the
+    /// task.
     ///
     /// - Throws: ``SampleFailure/storageRefused(status:message:)`` when Storage refuses to delete
-    ///   the files, before anything else is deleted.
+    ///   the files, before anything on the server is deleted.
     func deleteTask(id: String) async throws {
+        try pendingPhotos.removePhotos(ofTask: id)
         let photos = try await cachedPhotos(ofTask: id)
         if canReachNetwork {
             if let photos {
@@ -421,6 +436,7 @@ final class TaskRepository {
                 .value
                 .map(\.id)
             guard !taskIDs.isEmpty else { return }
+            for taskID in taskIDs { try pendingPhotos.removePhotos(ofTask: taskID) }
             try await deleteFiles(photoPathsOnServer { $0.in("task_id", values: taskIDs) })
             try await write(taskTitle: nil) {
                 try await client.from(Tables.taskPhotos).delete().in("task_id", values: taskIDs).execute()
@@ -478,22 +494,28 @@ final class TaskRepository {
     }
     // --8<-- [end:network-switch]
 
-    /// Deletes everything this device holds: cached rows and files, queued and refused writes.
-    /// Open lists then read their rows again from the server, once the network allows.
+    // --8<-- [start:pending-photo-clear]
+    /// Clear local cache: deletes everything this device holds, the library's cached rows and
+    /// files, queued and refused writes, and then the photos waiting to upload. Open lists then
+    /// read their rows again from the server, once the network allows. Start over clears the same.
     func clearLocalData() async throws {
         try await client.clearLocalData()
+        // The pending photos are the app's own files, outside the library's data directory, so
+        // its clearLocalData() leaves them: the app deletes them itself.
+        try pendingPhotos.removeAll()
     }
+    // --8<-- [end:pending-photo-clear]
 
     // --8<-- [start:start-over]
     /// Starts again as a new anonymous user with no tasks, in this order:
     ///
-    /// 1. This user's queued writes are discarded (a write already being sent is waited for), so
-    ///    none lands after the deletes.
+    /// 1. Photo uploads are held, the one in progress waited for, and this user's queued writes
+    ///    are discarded (a write already being sent is waited for), so none lands after the deletes.
     /// 2. Their photo files and rows are deleted from the server, with their token: an anonymous
     ///    user cannot sign back in to reach them.
     /// 3. The client's network is turned off, until the new user is signed in.
     /// 4. The app signs out, so the client's token closure returns `nil`.
-    /// 5. Local data is cleared.
+    /// 5. Local data is cleared: the library's, then the photos waiting to upload.
     /// 6. The app signs in as a new user, and the network is turned back on: open live reads then
     ///    fetch again, with the new user's token.
     ///
@@ -501,6 +523,8 @@ final class TaskRepository {
     ///   nothing is discarded, deleted or cleared.
     func startOver() async throws {
         guard canReachNetwork else { throw SampleFailure.needsNetwork }
+        await pendingPhotos.holdUploads()
+        defer { pendingPhotos.releaseUploads() }
         for mutation in try await client.pendingMutations().first() {
             try await client.discardPendingMutation(id: mutation.id)
         }
@@ -508,6 +532,7 @@ final class TaskRepository {
         try await client.disableNetwork()
         await session.signOut()
         try await client.clearLocalData()
+        try pendingPhotos.removeAll()
         do {
             try await session.signIn()
         } catch {

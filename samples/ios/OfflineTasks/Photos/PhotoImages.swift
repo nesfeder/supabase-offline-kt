@@ -3,8 +3,9 @@
 import SupabaseOffline
 import UIKit
 
-/// The images of the photos a screen shows, by photo id: read from the device's copy of each
-/// file, fetched and kept first when there is none and the server can be asked.
+/// The images of the photos a screen shows, by photo id: read from the app's own copy while a
+/// photo waits to upload, else from the library's copy of its file, fetched and kept first when
+/// there is none and the server can be asked.
 @Observable
 final class PhotoImages {
 
@@ -31,6 +32,10 @@ final class PhotoImages {
     /// Loads `photo`'s image; `forgetting` first drops the one shown, after the file changed.
     func load(_ photo: TaskPhoto, forgetting: Bool = false) async {
         if forgetting || images[photo.id] == nil { images[photo.id] = .loading }
+        if let data = await repository.pendingPhotoData(of: photo) {
+            images[photo.id] = await Self.image(of: data, maxPixelSize: maxPixelSize).map(TaskDetailModel.PhotoImage.loaded) ?? .unavailable
+            return
+        }
         switch await repository.photoFile(for: photo) {
         case .onDevice(let file):
             do {
