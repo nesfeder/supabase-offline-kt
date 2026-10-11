@@ -6,6 +6,7 @@ import io.github.nesfeder.offlinetasks.data.EncodedPhoto
 import io.github.nesfeder.offlinetasks.data.PhotoStorageException
 import io.github.nesfeder.offlinetasks.data.ServerUnreachableException
 import io.github.nesfeder.offlinetasks.data.TaskFilter
+import io.github.nesfeder.offlinetasks.data.TaskQuery
 import io.github.nesfeder.offlinetasks.data.TaskRepository
 import io.github.nesfeder.offlinetasks.platform.SessionState
 import io.github.nesfeder.offlinetasks.testing.FailingReadsTaskRepository
@@ -167,6 +168,40 @@ class TasksViewModelTest {
         // Then — the caption says the rows are this device's copy
         val caption = viewModel.loaded { it.caption != null }.caption
         assertTrue(caption?.provenance?.isFromCache == true)
+    }
+
+    @Test
+    fun pull_to_refresh_reads_again_the_list_the_chips_show() = runTest {
+        // Given — the Open chip chosen
+        val repository = repositoryFixture(seedSampleTasks = true).repository
+        val viewModel = tasksViewModel(repository)
+        viewModel.loaded()
+        viewModel.setFilter(TaskFilter.Open)
+        viewModel.loaded { it.query.filter == TaskFilter.Open }
+
+        // When
+        viewModel.refresh()
+
+        // Then — the open tasks' query, each query being cached on its own
+        val asked = repository.refreshedQueries.first { it.isNotEmpty() }
+        assertEquals(TaskQuery(TaskFilter.Open), asked.single())
+    }
+
+    @Test
+    fun mark_all_done_behind_a_chip_reads_again_that_list_and_the_whole_one() = runTest {
+        // Given — the Open chip chosen
+        val repository = repositoryFixture(seedSampleTasks = true).repository
+        val viewModel = tasksViewModel(repository)
+        viewModel.loaded()
+        viewModel.setFilter(TaskFilter.Open)
+        viewModel.loaded { it.query.filter == TaskFilter.Open }
+
+        // When
+        viewModel.markAllDone()
+
+        // Then — the list shown, then the whole list the open count is read from
+        val asked = repository.refreshedQueries.first { it.size == 2 }
+        assertEquals(listOf(TaskQuery(TaskFilter.Open), TaskQuery()), asked)
     }
 
     @Test

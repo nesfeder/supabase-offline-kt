@@ -123,6 +123,11 @@ class InMemoryTaskRepository(
     /** Held while one refresh from the server runs. */
     private val refreshLock = Mutex()
 
+    private val refreshQueries = MutableStateFlow(emptyList<TaskQuery>())
+
+    /** Each query [refreshTasks] was asked to read again, oldest first. */
+    val refreshedQueries: StateFlow<List<TaskQuery>> = refreshQueries.asStateFlow()
+
     /** Guards [runningReplay], so concurrent callers join one replay instead of starting two. */
     private val replayStartLock = Mutex()
     private var runningReplay: Deferred<TaskSyncReport>? = null
@@ -560,7 +565,8 @@ class InMemoryTaskRepository(
         }
     }
 
-    override suspend fun refreshTasks(): ReadProvenance {
+    override suspend fun refreshTasks(query: TaskQuery): ReadProvenance {
+        refreshQueries.update { it + query }
         // As a NetworkFirst select with a day's maxAge: off the network it answers from the
         // device's copy when it is a day old at most, and against a failing server it fails.
         val before = state.value

@@ -583,11 +583,11 @@ class OfflineTaskRepository(
      * Pull to refresh: the server's answer when it can be reached, else the device's copy if it is
      * a day old at most; the answer says which it was.
      */
-    override suspend fun refreshTasks(): ReadProvenance = read {
+    override suspend fun refreshTasks(query: TaskQuery): ReadProvenance = read {
         offline
             .from(Tables.TASKS)
             .select(readStrategy = ReadStrategy.NetworkFirst(maxAge = REFRESH_MAX_AGE)) {
-                tasksMatching(TaskQuery(), recentWindow(clock.now())) // the list's own query
+                tasksMatching(query, recentWindow(clock.now())) // the shown list's own query
             }
             .toReadProvenance()
     }

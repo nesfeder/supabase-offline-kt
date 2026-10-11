@@ -16,9 +16,11 @@ import io.github.nesfeder.offlinetasks.data.RowsSnapshot
 import io.github.nesfeder.offlinetasks.data.ServerUnreachableException
 import io.github.nesfeder.offlinetasks.data.Tables
 import io.github.nesfeder.offlinetasks.data.Task
+import io.github.nesfeder.offlinetasks.data.TaskFilter
 import io.github.nesfeder.offlinetasks.data.TaskListSnapshot
 import io.github.nesfeder.offlinetasks.data.TaskMutationOperation
 import io.github.nesfeder.offlinetasks.data.TaskMutationOutcome
+import io.github.nesfeder.offlinetasks.data.TaskQuery
 import io.github.nesfeder.offlinetasks.data.TaskRefreshState
 import io.github.nesfeder.offlinetasks.data.TaskWriteRefusedException
 import io.github.nesfeder.offlinetasks.data.WriteNeedsConnectionException
@@ -241,6 +243,22 @@ class OfflineTaskRepositoryTest {
         // Then
         assertTrue(provenance.isFromCache)
         assertNotNull(provenance.fetchedAt)
+    }
+
+    @Test
+    fun pull_to_refresh_reads_again_the_query_the_screen_shows() = runTest {
+        // Given — the open tasks read once, then one more added on another device
+        val open = TaskQuery(TaskFilter.Open)
+        server.insertRow(Tables.TASKS, serverOnlyTask("From before"))
+        repository.tasks(open).awaitValue { it.size == 1 }
+        server.insertRow(Tables.TASKS, serverOnlyTask("From elsewhere", id = OTHER_TASK_ID))
+
+        // When
+        repository.refreshTasks(open)
+
+        // Then — the device's copy of that query has both, with nothing asked of the server
+        repository.setNetworkEnabled(false)
+        assertEquals(2, repository.tasks(open).first().value?.size)
     }
 
     @Test
@@ -582,15 +600,16 @@ class OfflineTaskRepositoryTest {
     private fun now() = Clock.System.now()
 
     /** A task row as the server stores it, for one the app did not make. */
-    private fun serverOnlyTask(title: String): JsonObject = buildJsonObject {
-        put("id", "00000000-0000-4000-8000-0000000000aa")
-        put("user_id", FakeUserSession.FIRST_USER_ID)
-        put("title", title)
-        put("notes", JsonNull)
-        put("done", false)
-        put("created_at", "2026-10-01T08:00:00Z")
-        put("updated_at", "2026-10-01T08:00:00Z")
-    }
+    private fun serverOnlyTask(title: String, id: String = SERVER_TASK_ID): JsonObject =
+        buildJsonObject {
+            put("id", id)
+            put("user_id", FakeUserSession.FIRST_USER_ID)
+            put("title", title)
+            put("notes", JsonNull)
+            put("done", false)
+            put("created_at", "2026-10-01T08:00:00Z")
+            put("updated_at", "2026-10-01T08:00:00Z")
+        }
 
     /** The first non-null rows of this read that [matches], within a bounded wait. */
     private suspend fun <T> Flow<RowsSnapshot<List<T>>>.awaitValue(
@@ -610,6 +629,12 @@ class OfflineTaskRepositoryTest {
 
     private companion object {
         val WAIT = 10.seconds
+
+        /** The id of a task only the server has. */
+        const val SERVER_TASK_ID = "00000000-0000-4000-8000-0000000000aa"
+
+        /** The id of a second task only the server has. */
+        const val OTHER_TASK_ID = "00000000-0000-4000-8000-0000000000ab"
 
         /** How long a read is watched to show it sends nothing. */
         val NO_REQUEST_WAIT = 1.seconds

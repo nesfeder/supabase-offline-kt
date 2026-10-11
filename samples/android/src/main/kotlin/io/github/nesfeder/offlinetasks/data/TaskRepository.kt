@@ -283,10 +283,12 @@ interface TaskRepository {
      * Asks the server for the task list again, as pull-to-refresh does, and says where the rows
      * came from: the server, or the device's copy when the server could not be reached.
      *
+     * @param query the list to read again: each query is cached on its own, so it is the one the
+     *   screen shows.
      * @throws NetworkUnavailableException while the network is off and nothing is saved.
      * @throws ServerUnreachableException when the server does not answer and nothing is saved.
      */
-    suspend fun refreshTasks(): ReadProvenance
+    suspend fun refreshTasks(query: TaskQuery = TaskQuery()): ReadProvenance
 
     /**
      * How many open tasks the device holds, read once as the app starts, from the device's copy

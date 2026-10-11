@@ -276,7 +276,7 @@ class TasksViewModel(
         viewModelScope.launchReporting(failures) {
             isRefreshing.value = true
             try {
-                caption.value = repository.refreshTasks()
+                caption.value = repository.refreshTasks(uiState.value.query)
             } catch (offline: NetworkUnavailableException) {
                 messageChannel.trySend(TasksMessage.RefreshNeedsNetwork)
             } finally {
@@ -286,13 +286,16 @@ class TasksViewModel(
     }
 
     /**
-     * Marks every open task done on the server, says how many, and refreshes the list: a function's
-     * changes reach the device by a read.
+     * Marks every open task done on the server, says how many, and reads again the list shown and,
+     * behind a chip or a search, the whole list the counts come from: a function's changes reach
+     * the device by a read, and each query is cached on its own.
      */
     fun markAllDone() {
         commitScope.launchReporting(failures) {
             notices.post(Notice.MarkedDone(repository.markAllDone()))
-            caption.value = repository.refreshTasks()
+            val shown = uiState.value.query
+            caption.value = repository.refreshTasks(shown)
+            if (shown != TaskQuery()) repository.refreshTasks()
         }
     }
 
