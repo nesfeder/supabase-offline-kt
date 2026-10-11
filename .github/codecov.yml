@@ -45,7 +45,6 @@ ignore:
   - "**/src/*Test/**"
   - "Tests/"
   - "**/Tests/**"
-  - "iosApp/"
   - "samples/"
 
 # One flag per upload. Carry-forward keeps a flag's last coverage when its job did not run, so a

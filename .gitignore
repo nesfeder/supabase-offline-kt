@@ -17,7 +17,6 @@ captures
 !*.xcworkspace/contents.xcworkspacedata
 **/xcshareddata/WorkspaceSettings.xcsettings
 node_modules/
-/iosApp/Configuration/Secrets.xcconfig
 /samples/ios/Configuration/Secrets.xcconfig
 # No longer read by the build; still ignored, so an old local copy holding a token is never committed.
 github.properties

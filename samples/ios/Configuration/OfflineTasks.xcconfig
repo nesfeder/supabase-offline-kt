@@ -1,0 +1,32 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
+//
+// The app target's settings.
+
+// The project's URL without `https://` (an xcconfig reads `//` as a comment) and its publishable
+// key. Secrets.xcconfig, included by Shared.xcconfig below, sets them; left empty, the app opens
+// in demo mode.
+SUPABASE_URL =
+SUPABASE_PUBLISHABLE_KEY =
+
+#include "Shared.xcconfig"
+
+PRODUCT_NAME = OfflineTasks
+PRODUCT_BUNDLE_IDENTIFIER = $(OFFLINE_TASKS_BUNDLE_IDENTIFIER)
+MARKETING_VERSION = 1.0
+CURRENT_PROJECT_VERSION = 1
+
+// Info.plist carries the two keys above; Xcode generates the rest.
+INFOPLIST_FILE = Configuration/Info.plist
+GENERATE_INFOPLIST_FILE = YES
+INFOPLIST_KEY_CFBundleDisplayName = Offline Tasks
+INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES
+INFOPLIST_KEY_UILaunchScreen_Generation = YES
+INFOPLIST_KEY_UISupportedInterfaceOrientations = UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight
+INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight
+
+ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon
+ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor
+ENABLE_PREVIEWS = YES
+SWIFT_EMIT_LOC_STRINGS = YES
+LD_RUNPATH_SEARCH_PATHS = $(inherited) @executable_path/Frameworks

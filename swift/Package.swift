@@ -47,10 +47,12 @@ let package = Package(
 
 // MARK: Development only
 // Everything from the line above to the end is left out of the manifest a release publishes
-// (scripts/swift-release.py). With SUPABASE_OFFLINE_LOCAL_CORE=1 the framework is a local build
-// in LocalCore/ (CONTRIBUTING.md, "The Swift package"), and the tests are a target here only.
+// (scripts/swift-release.py). In a checkout the framework is the local build in LocalCore/
+// (scripts/prepare-local-swift-package.sh; CONTRIBUTING.md, "The Swift package"), whatever is on
+// disk, so the answer never depends on the folder; SUPABASE_OFFLINE_LOCAL_CORE=0 takes the
+// release's archive instead. The tests are a target here only.
 
-if Context.environment["SUPABASE_OFFLINE_LOCAL_CORE"] == "1",
+if Context.environment["SUPABASE_OFFLINE_LOCAL_CORE"] != "0",
     let index = package.targets.firstIndex(where: { $0.name == "SupabaseOfflineCore" })
 {
     package.targets[index] = .binaryTarget(
