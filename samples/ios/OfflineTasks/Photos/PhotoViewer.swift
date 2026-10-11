@@ -271,7 +271,8 @@ struct PendingUploadNote: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            PendingUploadMark(state: state)
+            Text(Wording.uploadState(state))
+                .font(.headline)
             if case .failed(let reason, let isRetryable) = state {
                 Text(isRetryable ? reason : "\(reason) Trying again won’t change that: remove it.")
                     .font(.footnote)

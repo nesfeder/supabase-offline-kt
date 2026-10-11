@@ -58,7 +58,8 @@ nonisolated extension Wording {
     static func newTaskResult(_ result: NewTaskResult, photoCount: Int) -> String {
         guard photoCount > 0 else { return newTaskResult(result) }
         let photos = photoCount == 1 ? "its photo uploads" : "its \(photoCount) photos upload"
-        return "\(newTaskResult(result)); \(photos) when the network allows"
+        let when = if case .saved = result { "now" } else { "when the network allows" }
+        return "\(newTaskResult(result)); \(photos) \(when)"
     }
 
     // --8<-- [start:new-task-outcome]

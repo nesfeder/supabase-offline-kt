@@ -251,10 +251,11 @@ final class TaskDetailModel {
         }
     }
 
-    /// Links to every photo of the task, each working for an hour; `nil` when they could not be made.
+    /// Links to every photo of the task that is on the server, each working for an hour; `nil`
+    /// when they could not be made.
     func shareLinks() async -> [URL]? {
         var links: [URL]?
-        await failures.perform { links = try await repository.shareLinks(for: photos) }
+        await failures.perform { links = try await repository.shareLinks(for: photos.filter { $0.pendingUpload == nil }) }
         return links
     }
 

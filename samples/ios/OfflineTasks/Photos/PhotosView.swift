@@ -119,24 +119,23 @@ struct PendingUploadMark: View {
     let state: PendingPhoto.State
 
     var body: some View {
-        Label {
-            Text(Wording.uploadState(state))
-        } icon: {
+        VStack(spacing: 2) {
             if state == .uploading {
                 ProgressView().controlSize(.mini)
             } else {
                 Image(systemName: state == .waiting ? "icloud.and.arrow.up" : "exclamationmark.icloud")
             }
+            Text(Wording.uploadState(state))
+                .multilineTextAlignment(.center)
+                .lineLimit(2)
         }
         .font(.caption2)
-        .labelStyle(.titleAndIcon)
-        .lineLimit(2)
-        .minimumScaleFactor(0.8)
         .foregroundStyle(state == .waiting || state == .uploading ? AnyShapeStyle(.primary) : AnyShapeStyle(.red))
-        .padding(.horizontal, 6)
-        .padding(.vertical, 3)
-        .background(.thinMaterial, in: .capsule)
         .padding(4)
+        .frame(maxWidth: .infinity)
+        .background(.thinMaterial, in: .rect(cornerRadius: 8))
+        .padding(4)
+        .accessibilityElement(children: .combine)
         .accessibilityIdentifier("pending-upload-mark")
     }
 }

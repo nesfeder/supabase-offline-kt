@@ -80,6 +80,13 @@ struct TaskDetailView: View {
             }
             Section {
                 photoGrid
+                // In the form, not the bottom bar: offline, the status above the tab bar widens the
+                // tab bar over the bottom bar's items, and Add photo works offline.
+                PhotosPicker(selection: $pickedPhoto, matching: .images) {
+                    Label("Add photo", systemImage: "photo.badge.plus")
+                }
+                .disabled(!canAddPhotos)
+                .accessibilityIdentifier("add-photo")
             } header: {
                 Text("Photos")
             } footer: {
@@ -87,13 +94,6 @@ struct TaskDetailView: View {
             }
         }
         .toolbar {
-            ToolbarItem(placement: .bottomBar) {
-                PhotosPicker(selection: $pickedPhoto, matching: .images) {
-                    Label("Add photo", systemImage: "photo.badge.plus")
-                }
-                .disabled(!canAddPhotos)
-                .accessibilityIdentifier("add-photo")
-            }
             ToolbarSpacer(.flexible, placement: .bottomBar)
             ToolbarItem(placement: .bottomBar) {
                 Button("Delete task", systemImage: "trash", role: .destructive) { isConfirmingDelete = true }
