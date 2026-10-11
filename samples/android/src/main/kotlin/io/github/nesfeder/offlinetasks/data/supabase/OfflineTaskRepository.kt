@@ -496,9 +496,8 @@ class OfflineTaskRepository(
 
     // --8<-- [start:pending-photo-upload]
     /**
-     * Uploads one pending photo: its file; then, only once Storage has it, its row, through the
-     * queue like any write; then its file into the library's cache, so it shows offline once the
-     * device's copy is deleted. A retry first asks whether an earlier try stored the file.
+     * Uploads one pending photo: its file; then, only once Storage has it, its row; then its file
+     * into the library's cache, so it shows offline once the device's copy is deleted.
      */
     private suspend fun uploadPendingPhoto(
         photo: PendingPhoto,
@@ -514,36 +513,25 @@ class OfflineTaskRepository(
         storage(path) { files.ensureCachedFile(path) }
     }
 
-    // --8<-- [end:pending-photo-upload]
-
     /**
-     * Writes the row of a pending photo whose file is in the bucket, so that writing it twice (a
-     * retry after a lost answer) changes nothing. A refusal at once (its task deleted meanwhile)
-     * leaves a file no row will name, so the file goes too.
+     * The photo's row, through the queue like any write, so that writing it again (a retry after a
+     * lost answer) changes nothing. A refusal at once leaves a file no row will name: it goes too.
      */
     private suspend fun writePendingPhotoRow(photo: PendingPhoto) {
-        val row =
-            NewTaskPhotoRow(
-                id = photo.photoId,
-                userId = photo.userId,
-                taskId = photo.taskId,
-                objectPath = photo.objectPath,
-                width = photo.width,
-                height = photo.height,
-                createdAt = photo.pickedAt.toString(), // where it sorts while it was pending
-            )
         try {
             write(Tables.TASK_PHOTOS, TaskMutationOperation.Upsert, taskTitle = null) {
-                offline.from(Tables.TASK_PHOTOS).upsert(row) {
+                offline.from(Tables.TASK_PHOTOS).upsert(photo.toNewTaskPhotoRow()) {
                     onConflict = ID
                     ignoreDuplicates = true // a row an earlier try wrote stays as it is
                 }
             }
         } catch (refused: TaskWriteRefusedException) {
-            deleteUploadedFile(photo.objectPath, refused)
+            deleteUploadedFile(photo.objectPath, refused) // its task is gone, say
             throw refused
         }
     }
+
+    // --8<-- [end:pending-photo-upload]
 
     /**
      * True each time the network is on, or changes while on, with a user signed in: a chance for
