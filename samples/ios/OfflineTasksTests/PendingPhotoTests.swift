@@ -307,6 +307,34 @@ struct PendingPhotoTests {
         try await test.stop()
     }
 
+    @Test("Start over waits for an upload on the wire, so nothing of the user it leaves lands after its deletes")
+    func startOverWaitsForTheUploadOnTheWire() async throws {
+        // Given: a photo's upload held on its way to the server
+        let test = TestApp()
+        try await test.start()
+        try await test.addTask("Rake the leaves")
+        let task = try await test.task(titled: "Rake the leaves")
+        try await eventually("the task reaches the server") { await test.server.rows(of: Tables.tasks).count == 1 }
+        await test.server.holdUploads()
+        try await test.repository.filePhoto(try await PhotoEncoder.encode(jpegFixture()), forTask: task.id)
+        try await eventually("the upload is on the wire") { await test.server.heldUploadCount() == 1 }
+
+        // When: Start over begins, and the upload is answered only later
+        let repository = test.repository
+        let startingOver = Task { try await repository.startOver() }
+        try await Task.sleep(for: .milliseconds(300))
+        let deletedWhileHeld = await test.server.requests.contains { $0.method == "DELETE" }
+        await test.server.releaseUploads()
+        try await startingOver.value
+
+        // Then: nothing was deleted while the upload was held, and nothing of that user is left
+        #expect(!deletedWhileHeld)
+        #expect(await test.server.objectPaths().isEmpty)
+        #expect(await test.server.rows(of: Tables.taskPhotos).isEmpty)
+        #expect(await test.server.rows(of: Tables.tasks).isEmpty)
+        try await test.stop()
+    }
+
     // MARK: - Helpers
 
     /// The user the queue tests' photos belong to.

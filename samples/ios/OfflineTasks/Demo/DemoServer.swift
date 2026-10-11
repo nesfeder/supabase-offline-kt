@@ -53,6 +53,9 @@ actor DemoServer: ServerChangeSource {
     /// answer.
     private var interception: (@Sendable (FakeServer.Request, String?) -> FakeServer.Response?)?
 
+    /// The photo uploads a test holds before they are answered; `nil` while uploads are not held.
+    private var heldUploads: [CheckedContinuation<Void, Never>]?
+
     /// The Realtime-like feeds open now, with the tables each follows.
     private var feeds: [UUID: (tables: Set<String>, continuation: AsyncThrowingStream<ServerFeedEvent, any Error>.Continuation)] = [:]
 
@@ -74,7 +77,10 @@ actor DemoServer: ServerChangeSource {
 
     /// The client's view of this server.
     nonisolated var fakeServer: FakeServer {
-        FakeServer { request in await self.response(to: request) }
+        FakeServer { request in
+            await self.holdIfUpload(request)
+            return await self.response(to: request)
+        }
     }
 
     /// The access token that signs requests in as `userID`.
@@ -85,6 +91,24 @@ actor DemoServer: ServerChangeSource {
     /// Puts `interception` in front of the server's answers; `nil` takes it away.
     func intercept(_ interception: (@Sendable (FakeServer.Request, String?) -> FakeServer.Response?)?) {
         self.interception = interception
+    }
+
+    /// Holds every photo upload from now on, unanswered, until ``releaseUploads()``: an upload a
+    /// test can catch on the wire.
+    func holdUploads() {
+        heldUploads = heldUploads ?? []
+    }
+
+    /// How many photo uploads are held now.
+    func heldUploadCount() -> Int {
+        heldUploads?.count ?? 0
+    }
+
+    /// Answers the held uploads, and holds no more.
+    func releaseUploads() {
+        let held = heldUploads ?? []
+        heldUploads = nil
+        held.forEach { $0.resume() }
     }
 
     /// The rows of `table` as the server holds them, whatever their owner.
@@ -147,6 +171,14 @@ actor DemoServer: ServerChangeSource {
     }
 
     // MARK: - Answering
+
+    /// Waits while uploads are held, when `request` is a photo upload.
+    private func holdIfUpload(_ request: FakeServer.Request) async {
+        guard heldUploads != nil, request.method == "POST",
+            request.url.path(percentEncoded: false).hasPrefix("/storage/v1/object/\(PhotoPath.bucket)/")
+        else { return }
+        await withCheckedContinuation { heldUploads?.append($0) }
+    }
 
     /// The answer to `request`.
     private func response(to request: FakeServer.Request) -> FakeServer.Response {
