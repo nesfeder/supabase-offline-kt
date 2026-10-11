@@ -115,9 +115,23 @@ or queued, for reads, updates and deletes. A read would show the wrong rows; a q
 replay later and remove more than you asked. Write the conditions as one `and { }` group, which
 supabase-kt sends whole:
 
-```kotlin
---8<-- "ReadExamples.kt:same-column"
-```
+From the samples: [TaskQueries.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/TaskQueries.kt) · [OfflineTaskRepository.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/OfflineTaskRepository.kt) · [TaskQuery.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskQuery.swift)
+
+=== "Android"
+
+    ```kotlin
+    --8<-- "data/supabase/TaskQueries.kt:same-column"
+
+    --8<-- "data/supabase/OfflineTaskRepository.kt:two-filters-refused"
+    ```
+
+=== "iOS"
+
+    ```swift
+    --8<-- "Data/TaskQuery.swift:same-column"
+    ```
+
+    Swift sends two conditions on one column together, in one `and` group, so nothing is refused.
 
 Two cases the library cannot see, because supabase-kt keeps one value by replacing the first
 rather than adding a second: two top-level `or { }` groups (only the last is sent), and a text
@@ -156,6 +170,29 @@ else goes to the server as supabase-kt sends it:
 - **Reads of another shape.** `single()`, a `count`, `head`, `csv()`, `geojson()`, `stripNulls()`
   and `explain()` go to the server; offline they fail. To read one row offline, read the list with
   its key and take the first row.
+
+The samples call two database functions, each network only, and say so offline: Mark all done
+with no parameters, and the Sync tab's Server section with parameters, typed and as JSON. A
+function's changes reach the device's lists as another device's do, through Realtime or the next
+read:
+
+From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/OfflineTaskRepository.kt) · [TaskRepository+Server.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository+Server.swift)
+
+=== "Android"
+
+    ```kotlin
+    --8<-- "data/supabase/OfflineTaskRepository.kt:rpc-no-params"
+
+    --8<-- "data/supabase/OfflineTaskRepository.kt:rpc-typed"
+    ```
+
+=== "iOS"
+
+    ```swift
+    --8<-- "Data/TaskRepository+Server.swift:rpc-no-params"
+
+    --8<-- "Data/TaskRepository+Server.swift:rpc-typed"
+    ```
 
 The full table is [Supported features](../reference/supported-features.md).
 

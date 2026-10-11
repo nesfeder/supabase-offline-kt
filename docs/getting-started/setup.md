@@ -88,18 +88,18 @@ kotlin {
 
 Build the supabase-kt client as you do today, and install the plugin last:
 
-*From the samples: [AppModel.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/App/AppModel.swift)*
+From the samples: [SampleSupabaseClient.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/platform/SampleSupabaseClient.kt) · [AppModel.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/App/AppModel.swift)
 
 === "Android"
 
     ```kotlin
-    --8<-- "GettingStartedExamples.kt:install"
+    --8<-- "platform/SampleSupabaseClient.kt:install"
     ```
 
 === "iOS"
 
     ```swift
-    --8<-- "samples/ios/OfflineTasks/App/AppModel.swift:install"
+    --8<-- "App/AppModel.swift:install"
     ```
 
 Import `io.github.nesfeder.supabase.offline.offline` to reach it as `supabase.offline`, the way
@@ -129,23 +129,24 @@ The settings go in the `install(Offline) { … }` block. Every one has a default
 
 ## First read
 
-*From the samples: [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift)*
+From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/OfflineTaskRepository.kt) · [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift)
 
 === "Android"
 
     ```kotlin
-    --8<-- "GettingStartedExamples.kt:first-read"
+    --8<-- "data/supabase/OfflineTaskRepository.kt:first-read"
     ```
 
 === "iOS"
 
     ```swift
-    --8<-- "samples/ios/OfflineTasks/Data/TaskRepository.swift:first-read"
+    --8<-- "Data/TaskRepository.swift:first-read"
     ```
 
-The call is supabase-kt's own, with its filters, order and range. Its read strategy defaults to
-`NetworkFirst`: the server answers, and the answer is kept on the device; when the server cannot
-be reached, the kept rows are served, with your queued writes laid over them. The first read must
+The call is supabase-kt's own, with its filters, order and range. `NetworkFirst` is the default
+read strategy; the sample names it only to give it a `maxAge`. The server answers, and the answer
+is kept on the device; when the server cannot be reached, the kept rows are served, with your
+queued writes laid over them, unless they are older than `maxAge`. The first read must
 reach the server: before it, nothing is kept. [One-shot reads](../behaviors/read-strategies.md)
 covers the four strategies.
 
@@ -154,20 +155,20 @@ covers the four strategies.
 `selectAsFlow` emits the rows as they change: when you write through the plugin, when a refresh
 from the server lands, and when a Realtime record is applied. It needs no Realtime channel.
 
-*From the samples: [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift) · [TasksModel.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Tasks/TasksModel.swift)*
+From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/OfflineTaskRepository.kt) · [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift) · [TasksModel.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Tasks/TasksModel.swift)
 
 === "Android"
 
     ```kotlin
-    --8<-- "GettingStartedExamples.kt:first-observed-read"
+    --8<-- "data/supabase/OfflineTaskRepository.kt:first-observed-read"
     ```
 
 === "iOS"
 
     ```swift
-    --8<-- "samples/ios/OfflineTasks/Data/TaskRepository.swift:first-observed-read"
+    --8<-- "Data/TaskRepository.swift:first-observed-read"
 
-    --8<-- "samples/ios/OfflineTasks/Tasks/TasksModel.swift:live-read"
+    --8<-- "Tasks/TasksModel.swift:live-read"
     ```
 
 Each emission is a `QuerySnapshot`: the rows (`null` while nothing is known yet), whether they are
@@ -176,18 +177,18 @@ refresh behind them stands. See [Reactive reads](../behaviors/reactive-reads.md)
 
 ## First write
 
-*From the samples: [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift)*
+From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/OfflineTaskRepository.kt) · [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift)
 
 === "Android"
 
     ```kotlin
-    --8<-- "GettingStartedExamples.kt:first-write"
+    --8<-- "data/supabase/OfflineTaskRepository.kt:first-write"
     ```
 
 === "iOS"
 
     ```swift
-    --8<-- "samples/ios/OfflineTasks/Data/TaskRepository.swift:first-write"
+    --8<-- "Data/TaskRepository.swift:first-write"
     ```
 
 **Make the row's id on the device.** A write made offline can then be shown, opened and edited
@@ -224,18 +225,22 @@ See [Signing out and switching users](../behaviors/sign-out.md).
 The plugin logs through supabase-kt's own logging, tagged `Supabase-Offline`, at the client's
 `defaultLogLevel` unless you give it a level of its own:
 
-*From the samples: [ClientSettings.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/App/ClientSettings.swift)*
+From the samples: [SampleSupabaseClient.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/platform/SampleSupabaseClient.kt) · [AppModel.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/App/AppModel.swift) · [ClientSettings.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/App/ClientSettings.swift)
 
 === "Android"
 
     ```kotlin
-    --8<-- "GettingStartedExamples.kt:logging"
+    --8<-- "platform/SampleSupabaseClient.kt:install"
+
+    --8<-- "platform/SampleSupabaseClient.kt:log-level"
     ```
 
 === "iOS"
 
     ```swift
-    --8<-- "samples/ios/OfflineTasks/App/ClientSettings.swift:log-level"
+    --8<-- "App/AppModel.swift:install"
+
+    --8<-- "App/ClientSettings.swift:log-level"
     ```
 
 Messages at `INFO` and above carry no rows, filter values, tokens or object paths. `DEBUG` carries
@@ -282,19 +287,9 @@ For Android 11 and earlier (`android:fullBackupContent`), put the same four `exc
 
 Or keep everything in a directory Android never backs up, and a new install needs no rules:
 
-*From the samples: [ClientSettings.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/App/ClientSettings.swift)*
-
-=== "Android"
-
-    ```kotlin
-    --8<-- "GettingStartedExamples.kt:no-backup-directory"
-    ```
-
-=== "iOS"
-
-    ```swift
-    --8<-- "samples/ios/OfflineTasks/App/ClientSettings.swift:data-directory"
-    ```
+```kotlin
+--8<-- "GettingStartedExamples.kt:no-backup-directory"
+```
 
 ### A data directory, and a second process
 

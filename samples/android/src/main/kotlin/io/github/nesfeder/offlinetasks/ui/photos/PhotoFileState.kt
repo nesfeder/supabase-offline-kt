@@ -14,8 +14,8 @@ sealed interface PhotoFileState {
     /** Looking on the device, or downloading. */
     data object Loading : PhotoFileState
 
-    /** On the device at [path]: it shows offline too. */
-    data class OnDevice(val path: String) : PhotoFileState
+    /** On the device, at the `file:` URI [uri]: it shows offline too. */
+    data class OnDevice(val uri: String) : PhotoFileState
 
     /** Not on the device, and the server is out of reach to fetch it. */
     data object NotOnDevice : PhotoFileState
@@ -34,8 +34,7 @@ sealed interface PhotoFileState {
  */
 suspend fun TaskRepository.loadPhotoFile(photo: TaskPhoto): PhotoFileState =
     try {
-        val file = cachedPhotoFile(photo) ?: downloadPhotoFile(photo)
-        PhotoFileState.OnDevice(file.path)
+        PhotoFileState.OnDevice(photoUriIfCached(photo) ?: photoUri(photo))
     } catch (cancellation: CancellationException) {
         throw cancellation
     } catch (offline: NetworkUnavailableException) {

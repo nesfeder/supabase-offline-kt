@@ -5,18 +5,18 @@ network fails, the kept copy is served instead. Writes (uploads, updates, delete
 copies) are online only and never queued, and one that reaches the server drops the cached copies
 it made stale.
 
-*From the samples: [TaskRepository+Photos.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository+Photos.swift)*
+From the samples: [TaskPhotoFiles.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/TaskPhotoFiles.kt) · [TaskRepository+Photos.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository+Photos.swift)
 
 === "Android"
 
     ```kotlin
-    --8<-- "StorageExamples.kt:bucket"
+    --8<-- "data/supabase/TaskPhotoFiles.kt:bucket"
     ```
 
 === "iOS"
 
     ```swift
-    --8<-- "samples/ios/OfflineTasks/Data/TaskRepository+Photos.swift:bucket"
+    --8<-- "Data/TaskRepository+Photos.swift:bucket"
     ```
 
 `supabase.offline.storage.from(bucket)` is an `OfflineBucketApi`: every operation of supabase-kt's
@@ -25,19 +25,9 @@ emptying buckets) stays on `supabase.storage`.
 
 ## Downloads
 
-*From the samples: [TaskRepository+Photos.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository+Photos.swift)*
-
-=== "Android"
-
-    ```kotlin
-    --8<-- "StorageExamples.kt:download"
-    ```
-
-=== "iOS"
-
-    ```swift
-    --8<-- "samples/ios/OfflineTasks/Data/TaskRepository+Photos.swift:download"
-    ```
+```kotlin
+--8<-- "StorageExamples.kt:download"
+```
 
 `downloadAuthenticated` and `downloadPublic`, to bytes or to a channel, go to the network first:
 
@@ -59,18 +49,20 @@ or handed on.
 
 ## Cached files
 
-*From the samples: [TaskRepository+Photos.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository+Photos.swift)*
+From the samples: [TaskPhotoFiles.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/TaskPhotoFiles.kt) · [LibraryMappings.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/LibraryMappings.kt) · [TaskRepository+Photos.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository+Photos.swift)
 
 === "Android"
 
     ```kotlin
-    --8<-- "StorageExamples.kt:cached-file"
+    --8<-- "data/supabase/TaskPhotoFiles.kt:cached-file"
+
+    --8<-- "data/supabase/LibraryMappings.kt:cached-file"
     ```
 
 === "iOS"
 
     ```swift
-    --8<-- "samples/ios/OfflineTasks/Data/TaskRepository+Photos.swift:cached-file"
+    --8<-- "Data/TaskRepository+Photos.swift:cached-file"
     ```
 
 `cachedFile(path)` returns the cached copy, or `null`, and never touches the network.
@@ -89,20 +81,24 @@ soon after you get it, or copy it if it must outlive those.
 your own rule, and download again when it is too old.
 
 On Android, three helpers on the offline bucket give the cached copy in the platform's terms, for
-an image loader:
+an image loader. The sample draws thumbnails from `localUriIfCached`, the photo viewer from
+`ensureLocalUri`, and Share copies the file from `ensureLocalFile` out of the cache, since another
+app reads it later and a `file:` URI cannot leave the app:
 
-*From the samples: [TaskRepository+Photos.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository+Photos.swift)*
+From the samples: [TaskPhotoFiles.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/TaskPhotoFiles.kt) · [Sharing.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/ui/components/Sharing.kt) · [TaskRepository+Photos.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository+Photos.swift)
 
 === "Android"
 
     ```kotlin
-    --8<-- "StorageExamples.kt:android-helpers"
+    --8<-- "data/supabase/TaskPhotoFiles.kt:android-helpers"
+
+    --8<-- "ui/components/Sharing.kt:share-photo"
     ```
 
 === "iOS"
 
     ```swift
-    --8<-- "samples/ios/OfflineTasks/Data/TaskRepository+Photos.swift:share-photo"
+    --8<-- "Data/TaskRepository+Photos.swift:share-photo"
     ```
 
 `ensureLocalUri` and `ensureLocalFile` are `ensureCachedFile` as a `Uri` or a `File`, and throw what
@@ -123,8 +119,71 @@ Uploads, updates, deletes, moves and copies are online only, and nothing is queu
 - **An upload does not put its bytes in the cache**, so the next read downloads them. A file
   uploaded just before the device goes offline is not available offline until it is downloaded.
 
+The sample uploads a photo with progress, replaces a file in place, and moves or copies one to
+another task's folder; a move and a copy also write the photo's row, since the schema ties a row to
+its path:
+
+From the samples: [TaskPhotoFiles.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/TaskPhotoFiles.kt) · [OfflineTaskRepository.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/OfflineTaskRepository.kt) · [TaskRepository+Photos.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository+Photos.swift)
+
+=== "Android"
+
+    ```kotlin
+    --8<-- "data/supabase/TaskPhotoFiles.kt:upload"
+
+    --8<-- "data/supabase/TaskPhotoFiles.kt:replace-photo"
+
+    --8<-- "data/supabase/OfflineTaskRepository.kt:move-photo"
+
+    --8<-- "data/supabase/OfflineTaskRepository.kt:copy-photo"
+    ```
+
+=== "iOS"
+
+    ```swift
+    --8<-- "Data/TaskRepository+Photos.swift:upload"
+
+    --8<-- "Data/TaskRepository+Photos.swift:replace-photo"
+
+    --8<-- "Data/TaskRepository+Photos.swift:move-photo"
+
+    --8<-- "Data/TaskRepository+Photos.swift:copy-photo"
+    ```
+
 Signed URLs, listings, `info` and `exists` always ask the server. `publicUrl` and the other URL
-builders send nothing.
+builders send nothing. The sample's photo Details sheet, its Share link and Share all photos of
+this task, and the Sync tab's Storage section make each of them. A signed URL with an image
+transform serves Storage's resized copy, which needs image transformations on the project (Pro
+plans and up on hosted Supabase); without them the link answers with an error.
+
+From the samples: [TaskPhotoFiles.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/TaskPhotoFiles.kt) · [TaskRepository+Photos.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository+Photos.swift)
+
+=== "Android"
+
+    ```kotlin
+    --8<-- "data/supabase/TaskPhotoFiles.kt:photo-details"
+
+    --8<-- "data/supabase/TaskPhotoFiles.kt:share-link"
+
+    --8<-- "data/supabase/TaskPhotoFiles.kt:share-all-links"
+
+    --8<-- "data/supabase/TaskPhotoFiles.kt:list-bucket"
+
+    --8<-- "data/supabase/TaskPhotoFiles.kt:signed-upload"
+    ```
+
+=== "iOS"
+
+    ```swift
+    --8<-- "Data/TaskRepository+Photos.swift:photo-details"
+
+    --8<-- "Data/TaskRepository+Photos.swift:share-link"
+
+    --8<-- "Data/TaskRepository+Photos.swift:share-all-links"
+
+    --8<-- "Data/TaskRepository+Photos.swift:list-bucket"
+
+    --8<-- "Data/TaskRepository+Photos.swift:signed-upload"
+    ```
 
 ## Paths that are never cached
 

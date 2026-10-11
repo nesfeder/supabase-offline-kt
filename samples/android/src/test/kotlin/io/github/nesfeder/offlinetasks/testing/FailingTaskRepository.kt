@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.offlinetasks.testing
 
-import io.github.nesfeder.offlinetasks.data.TaskMutationOutcome
+import io.github.nesfeder.offlinetasks.data.NewTaskOutcome
 import io.github.nesfeder.offlinetasks.data.TaskRepository
 import io.github.nesfeder.offlinetasks.data.TaskSyncReport
 
@@ -14,7 +14,11 @@ import io.github.nesfeder.offlinetasks.data.TaskSyncReport
 class FailingTaskRepository(delegate: TaskRepository, private val failure: Exception) :
     TaskRepository by delegate {
 
-    override suspend fun addTask(title: String, notes: String?): TaskMutationOutcome = throw failure
+    override suspend fun addTask(
+        title: String,
+        notes: String?,
+        needsConnection: Boolean,
+    ): NewTaskOutcome = throw failure
 
     override suspend fun syncPendingMutations(): TaskSyncReport = throw failure
 }

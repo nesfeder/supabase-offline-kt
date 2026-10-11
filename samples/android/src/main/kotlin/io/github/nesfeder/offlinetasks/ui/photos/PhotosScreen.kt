@@ -8,8 +8,10 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.MediumFlexibleTopAppBar
 import androidx.compose.material3.Scaffold
@@ -36,16 +38,25 @@ fun PhotosRoute(
     viewModel: PhotosViewModel = viewModel(factory = PhotosViewModel.Factory),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
-    PhotosScreen(state = state, onOpenPhoto = onOpenPhoto, loadPhotoFile = viewModel::photoFile)
+    PhotosScreen(
+        state = state,
+        onOpenPhoto = onOpenPhoto,
+        loadPhotoFile = viewModel::photoFile,
+        onShowMore = viewModel::showMore,
+    )
 }
 
-/** Every photo across tasks, newest first, each marked when it is available offline. */
+/**
+ * The photos across tasks, newest first, a page at a time, each marked when it is available
+ * offline.
+ */
 @Composable
 fun PhotosScreen(
     state: PhotosUiState,
     onOpenPhoto: (photoId: String) -> Unit,
     loadPhotoFile: suspend (TaskPhoto) -> PhotoFileState,
     modifier: Modifier = Modifier,
+    onShowMore: () -> Unit = {},
 ) {
     val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
     Scaffold(
@@ -100,7 +111,13 @@ fun PhotosScreen(
                         modifier = Modifier.padding(padding),
                     )
                 } else {
-                    PhotoGrid(state, onOpenPhoto, loadPhotoFile, Modifier.padding(padding))
+                    PhotoGrid(
+                        state,
+                        onOpenPhoto,
+                        loadPhotoFile,
+                        onShowMore,
+                        Modifier.padding(padding),
+                    )
                 }
         }
     }
@@ -111,6 +128,7 @@ private fun PhotoGrid(
     state: PhotosUiState.Loaded,
     onOpenPhoto: (photoId: String) -> Unit,
     loadPhotoFile: suspend (TaskPhoto) -> PhotoFileState,
+    onShowMore: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val motion = MaterialTheme.motionScheme
@@ -136,6 +154,13 @@ private fun PhotoGrid(
                         )
                         .aspectRatio(1f),
             )
+        }
+        if (state.hasMore) {
+            item(key = "show-more", span = { GridItemSpan(maxLineSpan) }) {
+                FilledTonalButton(onClick = onShowMore) {
+                    Text(stringResource(R.string.photos_show_more))
+                }
+            }
         }
     }
 }

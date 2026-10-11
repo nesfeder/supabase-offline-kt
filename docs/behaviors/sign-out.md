@@ -5,19 +5,9 @@ a time: when the session settles as someone else they are dropped, and nothing c
 is ever served to the next. Queued writes are different: they stay with the user who made them
 until you call `clearLocalData()`, which deletes everything the library keeps on the device.
 
-*From the samples: [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift)*
-
-=== "Android"
-
-    ```kotlin
-    --8<-- "QueueExamples.kt:sign-out"
-    ```
-
-=== "iOS"
-
-    ```swift
-    --8<-- "samples/ios/OfflineTasks/Data/TaskRepository.swift:start-over"
-    ```
+```kotlin
+--8<-- "QueueExamples.kt:sign-out"
+```
 
 ## Why it matters
 
@@ -59,19 +49,9 @@ touch the server, and the client stays usable afterward.
    exception reaches your code with the session kept. To end it on this device anyway, forget it
    without the server; the server-side session stays valid until it expires:
 
-    *From the samples: [AnonymousSession.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/AnonymousSession.swift)*
-
-    === "Android"
-
-        ```kotlin
-        --8<-- "QueueExamples.kt:forget-session"
-        ```
-
-    === "iOS"
-
-        ```swift
-        --8<-- "samples/ios/OfflineTasks/Data/AnonymousSession.swift:forget-session"
-        ```
+    ```kotlin
+    --8<-- "QueueExamples.kt:forget-session"
+    ```
 
 The example at the top does the first two.
 
@@ -140,20 +120,25 @@ sent once the token is refreshed.
 
 To delete a user's data on the server and then on the device, do it online, and clear the device
 first, so no queued write can be replayed after your deletes and leave a row behind. Send the
-deletes `OnlineOnly`: a queued delete could outlive the user it is for.
+deletes `OnlineOnly`: a queued delete could outlive the user it is for. The sample's Start over
+does this for its anonymous user, whom nobody could sign back in as, then signs in as a new one:
 
-*From the samples: [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift)*
+From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/OfflineTaskRepository.kt) · [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift)
 
 === "Android"
 
     ```kotlin
-    --8<-- "QueueExamples.kt:delete-my-data"
+    --8<-- "data/supabase/OfflineTaskRepository.kt:start-over"
+
+    --8<-- "data/supabase/OfflineTaskRepository.kt:delete-my-data"
     ```
 
 === "iOS"
 
     ```swift
-    --8<-- "samples/ios/OfflineTasks/Data/TaskRepository.swift:delete-my-data"
+    --8<-- "Data/TaskRepository.swift:start-over"
+
+    --8<-- "Data/TaskRepository.swift:delete-my-data"
     ```
 
 Delete the user's Storage objects too, through the bucket, before anything that deletes the user:

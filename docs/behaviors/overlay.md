@@ -4,18 +4,24 @@ What a read returns is the cached rows with the user's writes that have not reac
 on top, oldest first. So a write shows in every list at once, online or offline, and a list never
 loses it between the moment it is sent and the moment the list is fetched again.
 
-*From the samples: [TasksModel.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Tasks/TasksModel.swift)*
+From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/OfflineTaskRepository.kt) · [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift) · [TasksModel.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Tasks/TasksModel.swift)
 
 === "Android"
 
     ```kotlin
-    --8<-- "ReadExamples.kt:pending-marks"
+    --8<-- "data/supabase/OfflineTaskRepository.kt:first-observed-read"
+
+    --8<-- "data/supabase/OfflineTaskRepository.kt:pending-marks"
     ```
 
 === "iOS"
 
     ```swift
-    --8<-- "samples/ios/OfflineTasks/Tasks/TasksModel.swift:pending-marks"
+    --8<-- "Data/TaskRepository.swift:first-observed-read"
+
+    --8<-- "Tasks/TasksModel.swift:live-read"
+
+    --8<-- "Tasks/TasksModel.swift:pending-marks"
     ```
 
 A queued write changes the rows a read returns; `hasPendingMutations` on the result or the snapshot

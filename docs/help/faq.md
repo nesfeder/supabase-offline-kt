@@ -35,18 +35,18 @@ are none), even when another cached request of the same table holds the rows it 
 detail screen's row from the list a list screen already reads, with the same request, and pick it
 out on the device:
 
-*From the samples: [TaskDetailModel.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Detail/TaskDetailModel.swift)*
+From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/OfflineTaskRepository.kt) · [TaskDetailModel.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Detail/TaskDetailModel.swift)
 
 === "Android"
 
     ```kotlin
-    --8<-- "ReadExamples.kt:row-from-list"
+    --8<-- "data/supabase/OfflineTaskRepository.kt:row-from-list"
     ```
 
 === "iOS"
 
     ```swift
-    --8<-- "samples/ios/OfflineTasks/Detail/TaskDetailModel.swift:row-from-list"
+    --8<-- "Detail/TaskDetailModel.swift:row-from-list"
     ```
 
 And read each list online once: on the very first launch, before any read has reached the server,

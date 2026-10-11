@@ -42,6 +42,10 @@ data class TaskSyncReport(
     val rejected: List<RejectedTaskMutation>,
     /** Writes still queued, because the network went away or the server failed. */
     val remainingCount: Int,
+    /** Of [syncedCount], inserts the server already had from a send whose answer was lost. */
+    val alreadyOnServerCount: Int = 0,
+    /** Of [remainingCount], writes held back behind an earlier write to another table. */
+    val heldBehindOtherTablesCount: Int = 0,
 )
 
 /** The verbs of a queued write, in PostgREST's vocabulary. */
@@ -65,20 +69,92 @@ sealed interface TaskMutationOutcome {
  * A queued write the server refused when it was replayed. The device's copy has gone back to the
  * server's; the app shows it until the user dismisses or retries it.
  *
- * @property rowKey the id of the row the write was for, when known.
+ * @property rowKeys the ids of the rows the write was for, when known.
  * @property taskTitle the title the write carried, so the app can say which task it was.
  * @property serverError the server's answer, or null when the device refused the write itself.
+ * @property createdAt when the write was made, on this device.
+ * @property isRetryable false when the write can no longer be sent as it was made.
  */
 data class RejectedTaskMutation(
     val id: Long,
     val table: String,
     val operation: TaskMutationOperation,
-    val rowKey: String?,
+    val rowKeys: List<String>,
     val taskTitle: String?,
     val serverError: TaskServerError?,
     val message: String,
     val rejectedAt: Instant,
+    val createdAt: Instant = rejectedAt,
+    val isRetryable: Boolean = true,
 )
+
+/**
+ * One write waiting in the mutation queue, as the Sync tab lists it.
+ *
+ * @property id names the write; Discard takes it.
+ * @property rowKey the id of the row the write is for, when known.
+ * @property taskTitle the title the write carries, for an insert or an edit of a task.
+ */
+data class WaitingChange(
+    val id: Long,
+    val table: String,
+    val operation: TaskMutationOperation,
+    val createdAt: Instant,
+    val rowKey: String?,
+    val taskTitle: String?,
+)
+
+/** What became of a new task: on the server, or on this device until the queue sends it. */
+sealed interface NewTaskOutcome {
+    /** The server stored it; [task] is the row it answered with, its own times included. */
+    data class Saved(val task: Task) : NewTaskOutcome
+
+    /** It waits in the mutation queue, and is sent when the server can be reached. */
+    data object SavedOnDevice : NewTaskOutcome
+}
+
+/**
+ * Where a one-shot read's rows came from: the server, or the device's copy when the server could
+ * not be reached.
+ *
+ * @property isFromCache true when the rows are the device's copy.
+ * @property fetchedAt when the server last answered this query, or null if it never has.
+ * @property hasPendingMutations true when a queued write changes these rows.
+ */
+data class ReadProvenance(
+    val isFromCache: Boolean,
+    val fetchedAt: Instant?,
+    val hasPendingMutations: Boolean,
+)
+
+/** Where applying other devices' changes as they happen stands. */
+enum class LiveUpdatesStatus {
+    /** Switched off on the Sync tab. */
+    Off,
+
+    /** Waiting for a user, or for the app's network to be switched back on. */
+    Paused,
+
+    /** Joining the Realtime channel. */
+    Connecting,
+
+    /** Changes arrive as they happen. */
+    Connected,
+
+    /** The channel could not be joined; it is tried again when the switch or the network moves. */
+    Failed,
+}
+
+/** The Sync tab's two switches, kept for as long as the app runs. */
+data class SyncSettings(
+    /** Ask the server before showing the list, rather than show the device's copy first. */
+    val preferFreshData: Boolean = false,
+    /** Apply other devices' changes as they happen, through Realtime. */
+    val liveUpdates: Boolean = true,
+)
+
+/** What the server says about the user's tasks, from its database functions and a count. */
+data class ServerCounts(val done: Int, val total: Int, val doneThisWeek: Int)
 
 /** The server's answer to a refused write: the HTTP status and the Postgres error fields. */
 data class TaskServerError(

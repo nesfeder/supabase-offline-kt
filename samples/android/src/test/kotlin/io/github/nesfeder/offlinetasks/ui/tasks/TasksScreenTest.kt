@@ -12,7 +12,10 @@ import androidx.compose.ui.test.performClick
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import io.github.nesfeder.offlinetasks.R
+import io.github.nesfeder.offlinetasks.data.ReadProvenance
 import io.github.nesfeder.offlinetasks.data.Task
+import io.github.nesfeder.offlinetasks.data.TaskFilter
+import io.github.nesfeder.offlinetasks.data.TaskQuery
 import io.github.nesfeder.offlinetasks.ui.status.SYNC_BANNER_TAG
 import io.github.nesfeder.offlinetasks.ui.status.SyncHeadline
 import io.github.nesfeder.offlinetasks.ui.theme.OfflineTasksTheme
@@ -35,7 +38,7 @@ class TasksScreenTest {
     @Test
     fun a_first_launch_offline_says_nothing_is_saved_yet() {
         // Given — nothing cached and no network
-        show(TasksUiState.NoDataYet(SyncHeadline.Offline(0), TaskFilter.All, isLoading = false))
+        show(TasksUiState.NoDataYet(SyncHeadline.Offline(0), TaskQuery(), isLoading = false))
 
         // Then — a designed state, not a spinner, under the offline banner
         compose.onNodeWithText(text(R.string.tasks_no_data_title)).assertIsDisplayed()
@@ -45,7 +48,7 @@ class TasksScreenTest {
     @Test
     fun before_a_session_there_is_no_new_task_button() {
         // Given — not signed in yet, and offline
-        show(TasksUiState.NoSession(SyncHeadline.Offline(0), TaskFilter.All, isSigningIn = false))
+        show(TasksUiState.NoSession(SyncHeadline.Offline(0), TaskQuery(), isSigningIn = false))
 
         // Then — the designed state, nothing to add a task with, and no banner promising to save
         compose.onNodeWithText(text(R.string.tasks_no_session_title)).assertIsDisplayed()
@@ -79,6 +82,26 @@ class TasksScreenTest {
         compose.onNodeWithText(text(R.string.status_showing_saved_data)).assertIsDisplayed()
         compose.onNodeWithText("Water the tomatoes").assertIsDisplayed()
         compose.onNodeWithText("Renew the parking permit").assertIsDisplayed()
+    }
+
+    @Test
+    fun a_pull_to_refresh_answered_from_the_device_says_so_under_the_title() {
+        // Given — the last pull to refresh was answered from the device, with a change waiting
+        val fetched = Instant.parse("2026-10-01T09:00:00Z")
+        show(
+            loaded(open = listOf(task("One")), done = emptyList())
+                .copy(
+                    caption = RefreshCaption(ReadProvenance(true, fetched, true), pendingCount = 1)
+                )
+        )
+
+        // Then
+        compose
+            .onNodeWithText(
+                text(R.string.tasks_caption_from_device).substringBefore(" %"),
+                substring = true,
+            )
+            .assertIsDisplayed()
     }
 
     @Test
@@ -120,7 +143,7 @@ class TasksScreenTest {
     ) =
         TasksUiState.Loaded(
             headline = headline,
-            filter = TaskFilter.All,
+            query = TaskQuery(),
             openTasks = open,
             doneTasks = done,
             openCount = open.size,

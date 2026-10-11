@@ -6,7 +6,7 @@
 --
 -- Before you run it, turn on anonymous sign-ins: Authentication > Sign In / Providers >
 -- "Allow anonymous sign-ins". Then paste this whole file into the SQL Editor and run it, or run
--- `supabase db push` from samples/, where this file is the one migration. Step by step:
+-- `supabase db push` from samples/, where this file is the first of the migrations. Step by step:
 -- https://nesfeder.github.io/supabase-offline-kt/samples/supabase-setup/
 --
 -- It can be run again. A second run changes nothing, and it puts back any policy, grant,
@@ -64,7 +64,9 @@ begin
   where p.schemaname = 'storage'
     and p.tablename = 'objects'
     and p.policyname not in (
-      'task-photos: owner reads', 'task-photos: owner uploads', 'task-photos: owner deletes'
+      'task-photos: owner reads', 'task-photos: owner uploads', 'task-photos: owner deletes',
+      -- The later migration's own policy, so this file still runs again after it.
+      'task-photos: owner updates'
     )
     and concat(p.qual, ' ', p.with_check) like '%task-photos%';
   if other_policies is not null then
@@ -248,10 +250,11 @@ on conflict (id) do update set
   allowed_mime_types = excluded.allowed_mime_types;
 
 -- A file lives under "<user_id>/...", and only its owner may read, upload or delete there: the
--- first folder of the path must be the caller's id, in lower case. There is no update policy, so
--- a file is never replaced or moved: an upload to a path already taken is refused, with or
--- without upsert. A photo is replaced by deleting it and uploading a new one under a new id, so
--- no cached copy goes stale.
+-- first folder of the path must be the caller's id, in lower case. This file adds no update
+-- policy, so on its own a file is never replaced or moved, and an upload to a path already taken
+-- is refused, with or without upsert. The second migration,
+-- 20261011000000_functions_realtime_and_photo_updates.sql, adds the owner's update policy, which
+-- Storage's replace and move need.
 drop policy if exists "task-photos: owner reads" on storage.objects;
 create policy "task-photos: owner reads" on storage.objects
   for select to authenticated

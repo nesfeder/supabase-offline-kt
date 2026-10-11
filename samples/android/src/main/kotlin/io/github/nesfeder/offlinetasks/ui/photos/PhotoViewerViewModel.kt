@@ -8,19 +8,29 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import io.github.nesfeder.offlinetasks.data.AppNetworkStatus
+import io.github.nesfeder.offlinetasks.data.PhotoDetails
+import io.github.nesfeder.offlinetasks.data.PhotoEncoder
+import io.github.nesfeder.offlinetasks.data.Task
 import io.github.nesfeder.offlinetasks.data.TaskPhoto
 import io.github.nesfeder.offlinetasks.data.TaskRepository
 import io.github.nesfeder.offlinetasks.offlineTasksApplication
 import io.github.nesfeder.offlinetasks.ui.feedback.FailureReports
+import io.github.nesfeder.offlinetasks.ui.feedback.Notice
+import io.github.nesfeder.offlinetasks.ui.feedback.Notices
+import io.github.nesfeder.offlinetasks.ui.feedback.awaitNetworkChange
 import io.github.nesfeder.offlinetasks.ui.feedback.launchReporting
+import io.github.nesfeder.offlinetasks.ui.feedback.readingAgainAfterFailures
 import io.github.nesfeder.offlinetasks.ui.feedback.reportingFailures
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
 
 /** What the photo viewer shows. */
 sealed interface PhotoViewerUiState {
@@ -30,47 +40,79 @@ sealed interface PhotoViewerUiState {
     /** The photo is gone: deleted, or never synced. */
     data object Gone : PhotoViewerUiState
 
-    /** The photo; deleting it needs the server, for its file. */
-    data class Showing(val photo: TaskPhoto, val canDelete: Boolean) : PhotoViewerUiState
+    /**
+     * The photo. Everything that changes its file needs the server: [canChange] says whether it can
+     * be reached. [otherTasks] are where Move and Duplicate can take it; [version] changes when the
+     * file is replaced, so the image is read again.
+     */
+    data class Showing(
+        val photo: TaskPhoto,
+        val canChange: Boolean,
+        val otherTasks: List<Task> = emptyList(),
+        val version: Int = 0,
+    ) : PhotoViewerUiState {
+        /** Deleting the photo needs the server, for its file. */
+        val canDelete: Boolean
+            get() = canChange
+    }
 }
 
 /** Something the photo viewer says once. */
 sealed interface PhotoViewerMessage {
     /** The photo is deleted; the viewer closes. */
     data object Deleted : PhotoViewerMessage
+
+    /** The photo's file on this device, at [path], to hand to the share sheet. */
+    data class SharePhoto(val path: String) : PhotoViewerMessage
+
+    /** A link to the photo, to hand to the share sheet. */
+    data class ShareLink(val link: String) : PhotoViewerMessage
 }
 
 /**
- * One photo, full screen, with its deletion.
+ * One photo, full screen: its details, sharing it or a link to it, replacing its file, moving or
+ * copying it to another task, and deleting it.
  *
- * @param failures where a failed read or delete is reported, to be shown as a message.
+ * @param failures where a failed read or Storage call is reported, to be shown as a message.
+ * @param notices where a replace, move or copy says it is done.
  */
 class PhotoViewerViewModel(
     private val photoId: String,
     private val repository: TaskRepository,
     private val failures: FailureReports,
+    private val photoEncoder: PhotoEncoder? = null,
+    private val notices: Notices = Notices(),
 ) : ViewModel() {
-
     private val messageChannel = Channel<PhotoViewerMessage>(Channel.BUFFERED)
+    private val version = MutableStateFlow(0)
+    private val shownDetails = MutableStateFlow<PhotoDetails?>(null)
 
     /** One-off messages, each delivered once. */
     val messages: Flow<PhotoViewerMessage> = messageChannel.receiveAsFlow()
 
+    /** The Details sheet's contents while it is open. */
+    val details: StateFlow<PhotoDetails?> = shownDetails.asStateFlow()
+
     /** The screen's state. */
     val uiState: StateFlow<PhotoViewerUiState> =
-        combine(repository.allPhotos().reportingFailures(failures), repository.syncStatus) {
-                snapshot,
-                status ->
+        combine(
+                repository.allPhotos().reportingFailures(failures),
+                repository.tasks().readingAgainAfterFailures(failures) {
+                    repository.syncStatus.awaitNetworkChange()
+                },
+                repository.syncStatus,
+                version,
+            ) { snapshot, tasks, status, replaced ->
                 val photos = snapshot.value ?: return@combine PhotoViewerUiState.Loading
-                val photo = photos.firstOrNull { it.id == photoId }
-                if (photo == null) {
-                    PhotoViewerUiState.Gone
-                } else {
-                    PhotoViewerUiState.Showing(
-                        photo,
-                        canDelete = status.network == AppNetworkStatus.Online,
-                    )
-                }
+                val photo =
+                    photos.firstOrNull { it.id == photoId }
+                        ?: return@combine PhotoViewerUiState.Gone
+                PhotoViewerUiState.Showing(
+                    photo = photo,
+                    canChange = status.network == AppNetworkStatus.Online,
+                    otherTasks = tasks.value.orEmpty().filter { it.id != photo.taskId },
+                    version = replaced,
+                )
             }
             .stateIn(
                 viewModelScope,
@@ -80,6 +122,67 @@ class PhotoViewerViewModel(
 
     /** The device's copy of [photo], fetched first if needed. */
     suspend fun photoFile(photo: TaskPhoto): PhotoFileState = repository.loadPhotoFile(photo)
+
+    /** Opens the Details sheet: what Storage and this device know about the file. */
+    fun showDetails() {
+        val showing = uiState.value as? PhotoViewerUiState.Showing ?: return
+        viewModelScope.launchReporting(failures) {
+            shownDetails.value = repository.photoDetails(showing.photo)
+        }
+    }
+
+    /** Closes the Details sheet. */
+    fun hideDetails() {
+        shownDetails.value = null
+    }
+
+    /** Hands the photo itself to the share sheet, downloading it first if needed. */
+    fun share() {
+        val showing = uiState.value as? PhotoViewerUiState.Showing ?: return
+        viewModelScope.launchReporting(failures) {
+            val path = repository.photoFileToShare(showing.photo)
+            messageChannel.send(PhotoViewerMessage.SharePhoto(path))
+        }
+    }
+
+    /** Hands a link to a 512-wide copy, for an hour, to the share sheet. */
+    fun shareLink() {
+        val showing = uiState.value as? PhotoViewerUiState.Showing ?: return
+        viewModelScope.launchReporting(failures) {
+            messageChannel.send(
+                PhotoViewerMessage.ShareLink(repository.photoShareLink(showing.photo))
+            )
+        }
+    }
+
+    /** Re-encodes the image at [contentUri] and replaces the photo's file with it, in place. */
+    fun replace(contentUri: String) {
+        val showing = uiState.value as? PhotoViewerUiState.Showing ?: return
+        val encoder = photoEncoder ?: return
+        viewModelScope.launchReporting(failures) {
+            repository.replacePhoto(showing.photo, encoder.encode(contentUri))
+            version.update { it + 1 }
+            notices.post(Notice.PhotoReplaced)
+        }
+    }
+
+    /** Moves the photo to [task]: its file, then its row. */
+    fun moveTo(task: Task) {
+        val showing = uiState.value as? PhotoViewerUiState.Showing ?: return
+        viewModelScope.launchReporting(failures) {
+            repository.movePhoto(showing.photo, task.id)
+            notices.post(Notice.PhotoMoved(task.title))
+        }
+    }
+
+    /** Adds a copy of the photo to [task]. */
+    fun copyTo(task: Task) {
+        val showing = uiState.value as? PhotoViewerUiState.Showing ?: return
+        viewModelScope.launchReporting(failures) {
+            repository.copyPhoto(showing.photo, task.id)
+            notices.post(Notice.PhotoCopied(task.title))
+        }
+    }
 
     /**
      * Deletes the photo's file, then its row, and closes the viewer; a failure is reported and the
@@ -98,7 +201,13 @@ class PhotoViewerViewModel(
         fun factory(photoId: String): ViewModelProvider.Factory = viewModelFactory {
             initializer {
                 val application = offlineTasksApplication
-                PhotoViewerViewModel(photoId, application.repository, application.failures)
+                PhotoViewerViewModel(
+                    photoId = photoId,
+                    repository = application.repository,
+                    failures = application.failures,
+                    photoEncoder = application.photoEncoder,
+                    notices = application.notices,
+                )
             }
         }
     }

@@ -14,11 +14,12 @@ own idiom.
 - An iOS 26 simulator, or a device on iOS 26. Simulators run arm64 only: the project builds for
   Apple silicon simulators and leaves out Intel ones.
 - JDK 17, to build the package's prebuilt library from this checkout (see below).
-- A Supabase project with the samples' schema: [Set up Supabase](supabase-setup.md). The schema
-  includes the two database functions **Mark all done** and the Sync tab's **Server** section call,
-  `complete_all_tasks()` and `tasks_done_count()`, and puts `tasks` and `task_photos` in the
-  `supabase_realtime` publication, which **Live updates** needs; run its latest version. Without a
-  project, the app runs in [demo mode](#demo-mode).
+- A Supabase project with the samples' schema: [Set up Supabase](supabase-setup.md). Run both of
+  its migrations: the second adds the two database functions **Mark all done** and the Sync tab's
+  **Server** section call (`complete_all_tasks()` and `tasks_done_count(created_since)`), the
+  bucket policy **Replace photo** and **Move to another task** need, and `tasks` and `task_photos`
+  in the `supabase_realtime` publication, which **Live updates** needs. Without a project, the app
+  runs in [demo mode](#demo-mode).
 
 ## Add your keys
 
@@ -200,10 +201,11 @@ app without a refresh. Simulate offline pauses it, since it cuts the app off fro
 ### Ask the server
 
 The Sync tab's **Server** section asks the server how many of your tasks it holds and how many are
-done ("On the server: 7 of 12 done"), with an exact count and the database function
-`tasks_done_count()`. **Mark all done**, in the Tasks tab's menu, calls `complete_all_tasks()`, then
-reads the list again, since the device learns of a function's changes only by asking. Neither is
-ever saved on the device or queued, so offline both say they need the network.
+done, in all and this week ("On the server: 7 of 12 done · 3 this week"), with an exact count and
+the database function `tasks_done_count`, called with a typed parameter and with a JSON one.
+**Mark all done**, in the Tasks tab's menu, calls `complete_all_tasks()`, then reads the list
+again, since the device learns of a function's changes only by asking. Neither is ever saved on the
+device or queued, so offline both say they need the network.
 
 **Storage** opens **Browse photo files**: Storage's own listing of the bucket, a folder per task and
 a file per photo, searched by name, by name or newest first, a page at a time.
@@ -282,8 +284,8 @@ app's own sections.
   in yet.
 - **A photo will not upload.** Check that the `task-photos` bucket exists, private, as
   [Set up Supabase](supabase-setup.md) creates it. The app shows Storage's own answer.
-- **Mark all done or Ask the server fails online.** The project lacks the two database functions:
-  run the latest schema from [Set up Supabase](supabase-setup.md).
+- **Mark all done or Ask the server fails online, or Replace and Move are refused.** The project
+  lacks the second migration: run it from [Set up Supabase](supabase-setup.md).
 - **Live updates stopped.** The app could not subscribe: check that `tasks` and `task_photos` are in
   the `supabase_realtime` publication, as the schema puts them. Pull to refresh still works.
 - **A device build fails to sign.** Add `DEVELOPMENT_TEAM` and a bundle identifier of your own to

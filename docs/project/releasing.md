@@ -142,3 +142,5 @@ repositories {
 
 A snapshot can change or disappear at any time; use one only to try a fix before its release.
 There are no Swift package snapshots.
+
+=== "iOS"

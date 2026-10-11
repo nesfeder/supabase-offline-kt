@@ -9,6 +9,7 @@ import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import io.github.nesfeder.offlinetasks.data.AppNetworkStatus
 import io.github.nesfeder.offlinetasks.data.AppSyncStatus
+import io.github.nesfeder.offlinetasks.data.NewTaskOutcome
 import io.github.nesfeder.offlinetasks.data.PhotoEncoder
 import io.github.nesfeder.offlinetasks.data.PhotoUpload
 import io.github.nesfeder.offlinetasks.data.TASK_NOTES_MAX_LENGTH
@@ -19,6 +20,8 @@ import io.github.nesfeder.offlinetasks.data.TaskRepository
 import io.github.nesfeder.offlinetasks.data.takeCharacters
 import io.github.nesfeder.offlinetasks.offlineTasksApplication
 import io.github.nesfeder.offlinetasks.ui.feedback.FailureReports
+import io.github.nesfeder.offlinetasks.ui.feedback.Notice
+import io.github.nesfeder.offlinetasks.ui.feedback.Notices
 import io.github.nesfeder.offlinetasks.ui.feedback.launchReporting
 import io.github.nesfeder.offlinetasks.ui.feedback.reportingFailures
 import io.github.nesfeder.offlinetasks.ui.navigation.ShownTask
@@ -88,6 +91,8 @@ sealed interface TaskDetailUiState {
         val uploads: List<UploadProgress>,
         /** Photos are uploaded and deleted only when the server can be reached. */
         val canChangePhotos: Boolean,
+        /** Simulate offline is on, so the photos are read from this device alone. */
+        val photosFromDeviceOnly: Boolean = false,
     ) : TaskDetailUiState
 }
 
@@ -95,6 +100,9 @@ sealed interface TaskDetailUiState {
 sealed interface TaskDetailMessage {
     /** The task was deleted from this screen; it closes. */
     data object Deleted : TaskDetailMessage
+
+    /** Links to every photo of the task, to hand to the share sheet. */
+    data class ShareLinks(val links: List<String>) : TaskDetailMessage
 }
 
 /**
@@ -115,6 +123,7 @@ class TaskDetailViewModel(
     private val failures: FailureReports,
     shown: ShownTask? = null,
     autosaveDelay: Duration = AUTOSAVE_DELAY,
+    private val notices: Notices = Notices(),
 ) : ViewModel() {
 
     private val opening = TaskDetailUiState.Loading(shown)
@@ -199,6 +208,29 @@ class TaskDetailViewModel(
     /** The device's copy of [photo], fetched first if needed. */
     suspend fun photoFile(photo: TaskPhoto): PhotoFileState = repository.loadPhotoFile(photo)
 
+    /** Adds a copy of this task, under a new id, and says where it was saved. */
+    fun duplicate() {
+        val title = (uiState.value as? TaskDetailUiState.Editing)?.title ?: return
+        writeScope.launchReporting(failures) {
+            val notice =
+                when (repository.duplicateTask(taskId)) {
+                    is NewTaskOutcome.Saved -> Notice.TaskDuplicated(title, savedOnDevice = false)
+                    NewTaskOutcome.SavedOnDevice ->
+                        Notice.TaskDuplicated(title, savedOnDevice = true)
+                }
+            notices.post(notice)
+        }
+    }
+
+    /** Makes a link to each photo of this task, for an hour, and hands them to the share sheet. */
+    fun shareAllPhotos() {
+        val photos = (uiState.value as? TaskDetailUiState.Editing)?.photos.orEmpty()
+        if (photos.isEmpty()) return
+        viewModelScope.launchReporting(failures) {
+            messageChannel.send(TaskDetailMessage.ShareLinks(repository.photoShareLinks(photos)))
+        }
+    }
+
     /**
      * Deletes the task (its files first when online), and closes the screen at once. A refusal is
      * reported, and the task is back in the list.
@@ -261,6 +293,7 @@ class TaskDetailViewModel(
                     photos = photos,
                     uploads = uploads,
                     canChangePhotos = status.network == AppNetworkStatus.Online,
+                    photosFromDeviceOnly = status.network == AppNetworkStatus.Disabled,
                 )
             }
         }
@@ -301,6 +334,7 @@ class TaskDetailViewModel(
                         writeScope = application.applicationScope,
                         failures = application.failures,
                         shown = shown,
+                        notices = application.notices,
                     )
                 }
             }

@@ -170,18 +170,18 @@ than read or delete more rows than the call names, the library refuses such a re
 delete with `IllegalArgumentException` before anything is sent or queued. Write the two conditions
 as one group, which sends both:
 
-*From the samples: [TaskQuery.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskQuery.swift)*
+From the samples: [TaskQueries.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/TaskQueries.kt) · [TaskQuery.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskQuery.swift)
 
 === "Android"
 
     ```kotlin
-    --8<-- "ReadExamples.kt:same-column"
+    --8<-- "data/supabase/TaskQueries.kt:same-column"
     ```
 
 === "iOS"
 
     ```swift
-    --8<-- "samples/ios/OfflineTasks/Data/TaskQuery.swift:same-column"
+    --8<-- "Data/TaskQuery.swift:same-column"
     ```
 
 The refusal sees a parameter that holds two values. It cannot see the calls that replace one: a

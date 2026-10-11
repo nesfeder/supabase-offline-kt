@@ -4,18 +4,18 @@ Realtime stays on supabase-kt: the library never opens a channel. Hand each reco
 delivers to `applyServerRecord` or `applyServerDelete`, and every cached list of the table shows the
 change at once, without fetching again.
 
-*From the samples: [TaskRepository+Server.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository+Server.swift)*
+From the samples: [LiveUpdates.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/LiveUpdates.kt) · [TaskRepository+Server.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository+Server.swift)
 
 === "Android"
 
     ```kotlin
-    --8<-- "ConfigurationExamples.kt:apply-records"
+    --8<-- "data/supabase/LiveUpdates.kt:apply-records"
     ```
 
 === "iOS"
 
     ```swift
-    --8<-- "samples/ios/OfflineTasks/Data/TaskRepository+Server.swift:apply-records"
+    --8<-- "Data/TaskRepository+Server.swift:apply-records"
     ```
 
 ## Why
@@ -27,28 +27,31 @@ table emits the change.
 
 ## Wiring a channel
 
-With supabase-kt's Realtime plugin installed, collect the table's changes and apply each one. This
-sample needs `realtime-kt`, which the library does not bring, so it is not compiled with the
-others:
+With supabase-kt's Realtime plugin installed, collect the table's changes and apply each one. The
+sample subscribes to both of its tables behind its "Live updates" switch, on by default, and
+leaves the channel when the switch goes off, when nobody is signed in, and while the network is
+down or Simulate offline is on; it joins again when the network is back:
 
-```kotlin
-val channel = supabase.channel("todos")
-channel
-    .postgresChangeFlow<PostgresAction>(schema = "public") { table = "todos" }
-    .onEach { action ->
-        when (action) {
-            is PostgresAction.Insert -> supabase.offline.applyServerRecord("todos", action.record)
-            is PostgresAction.Update -> supabase.offline.applyServerRecord("todos", action.record)
-            is PostgresAction.Delete -> supabase.offline.applyServerDelete("todos", action.oldRecord)
-            else -> Unit
-        }
-    }
-    .launchIn(scope)
-channel.subscribe()
-```
+From the samples: [LiveUpdates.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/LiveUpdates.kt) · [ServerChanges.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/ServerChanges.swift) · [AppModel.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/App/AppModel.swift)
 
-Add `realtime-kt` from the same supabase-kt BOM as the rest; see
-[Project setup](../getting-started/setup.md#add-the-dependency). The library is built on
+=== "Android"
+
+    ```kotlin
+    --8<-- "data/supabase/LiveUpdates.kt:live-updates"
+    ```
+
+=== "iOS"
+
+    ```swift
+    --8<-- "Data/ServerChanges.swift:live-updates"
+
+    --8<-- "App/AppModel.swift:live-updates-apply"
+    ```
+
+Add `realtime-kt` from the same supabase-kt BOM as the rest, and install `Realtime` beside the
+other plugins; see [Project setup](../getting-started/setup.md#add-the-dependency). Each table must
+be in Supabase's `supabase_realtime` publication, or no change of it is sent:
+[Set up Supabase](../samples/supabase-setup.md) adds the samples' two. The library is built on
 supabase-kt 3.6 partly because of Realtime: 3.7.0 and 3.8.0 carry a Realtime crash
 ([why 3.6](../project/compatibility.md#why-36-not-38)).
 
@@ -63,6 +66,9 @@ supabase-kt 3.6 partly because of Realtime: 3.7.0 and 3.8.0 carry a Realtime cra
 Your user's queued writes are still laid over the result, so a change waiting to be sent keeps
 showing over the server's record until it is sent. A typed overload of `applyServerRecord` encodes
 the row with the client's PostgREST serializer; import `io.github.nesfeder.supabase.offline.applyServerRecord`.
+The sample applies `tasks` typed and `task_photos` as JSON. Its typed row has every column and no
+default values: the record replaces the cached row whole, and supabase-kt's serializer leaves a
+property at its default out of what it encodes.
 
 ## Primary keys
 
@@ -79,7 +85,22 @@ For a table in another schema, pass `schema`; its key is the one configured as `
 
 - **Realtime does not replay what happened while the device was disconnected.** Applying records
   keeps the cache current between fetches, never instead of them: read again after a reconnect,
-  for example with a `NetworkOnly` read of the same query.
+  for example with a `NetworkOnly` read of the same query, as the sample does each time its channel
+  connects:
+
+  From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/OfflineTaskRepository.kt) · [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift)
+
+  === "Android"
+
+      ```kotlin
+      --8<-- "data/supabase/OfflineTaskRepository.kt:read-again"
+      ```
+
+  === "iOS"
+
+      ```swift
+      --8<-- "Data/TaskRepository.swift:read-again"
+      ```
 - **A new row joins every cached list whose filters may admit it**, appended after the list's own
   rows, past its order and limit, as a queued row is; the list's order returns with its next
   fetch. See [Optimistic overlay](overlay.md#limits).

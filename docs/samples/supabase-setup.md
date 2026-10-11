@@ -3,10 +3,13 @@
 Creating a Supabase project for the sample apps and loading their schema into it. A free project
 is enough.
 
-The schema is one file,
-[`samples/supabase/migrations/20260930000000_offline_tasks.sql`](#the-schema). It creates two
-tables, `tasks` and `task_photos`, and a private Storage bucket, `task-photos`. Every row and every
-file belongs to one user, and the policies let a user reach only their own. The samples sign in
+The schema is two files, applied in order, in
+[`samples/supabase/migrations/`](#the-schema). The first,
+`20260930000000_offline_tasks.sql`, creates two tables, `tasks` and `task_photos`, and a private
+Storage bucket, `task-photos`. The second, `20261011000000_functions_realtime_and_photo_updates.sql`,
+adds two database functions, a Storage policy that lets a user replace and move their own photo
+files, and the two tables to Realtime's publication. Every row and every file belongs to one user,
+and the policies let a user reach only their own. The samples sign in
 anonymously, so each install is a user of its own and nobody types an email address or a
 password.
 
@@ -35,8 +38,8 @@ limits anonymous sign-ins to 30 an hour from each IP address by default.
 
 ## Apply the schema
 
-Either route applies the same file, and both can be repeated: a second run changes nothing. So the
-two also mix: a `db push` after the SQL Editor runs the file again, and nothing changes.
+Either route applies the same two files, and both can be repeated: a second run changes nothing.
+So the two also mix: a `db push` after the SQL Editor runs the files again, and nothing changes.
 
 ### In the SQL Editor
 
@@ -46,8 +49,11 @@ two also mix: a `db push` after the SQL Editor runs the file again, and nothing 
    **Run**.
 3. The editor warns that the query "includes destructive operations". The file drops and recreates
    its own policies so that it can run twice, and drops nothing else. Choose **Run query**.
+4. Start a new query, paste the whole of
+   `samples/supabase/migrations/20261011000000_functions_realtime_and_photo_updates.sql`, and run it
+   the same way.
 
-It finishes with "Success. No rows returned".
+Each finishes with "Success. No rows returned".
 
 ### With the Supabase CLI
 
@@ -58,10 +64,10 @@ installed, from the repository root:
 supabase login      # once: opens the browser to sign the CLI in
 cd samples
 supabase link       # pick the project; it may ask for the database password
-supabase db push    # lists the one migration and asks before applying it
+supabase db push    # lists the migrations not yet applied and asks before applying them
 ```
 
-`samples/` is a small CLI project, and the schema file is its only migration.
+`samples/` is a small CLI project, and the two schema files are its migrations.
 `supabase link --project-ref <ref>` skips the picker, and `-p <password>` answers the password
 prompt. The project ref is the part of the project URL before `.supabase.co`.
 
@@ -89,7 +95,11 @@ delete every file in `task-photos`. Deal with each as the hint says, then run th
 | Grants | Nothing for `anon`. `select`, `insert`, `update` and `delete` for `authenticated`, and for `service_role`, which the samples never use |
 | `updated_at` | Set by the server on every update, with the `moddatetime` extension, installed in the `extensions` schema |
 | Storage bucket `task-photos` | Private, JPEG only, 5 MB per file |
-| Storage policies | Read, upload and delete, each only under `<user id>/` in `task-photos`. No update, so a file is never replaced or moved |
+| Storage policies | Read, upload, update and delete, each only under `<user id>/` in `task-photos`. Update is the second file's: Storage's replace and move need it, and copy needs read and upload |
+| `public.complete_all_tasks()` | Marks every open task of the caller done, and returns how many it changed. The samples' **Mark all done** |
+| `public.tasks_done_count(created_since)` | How many of the caller's tasks are done, those created since `created_since` when it is given. The samples' **Server** section |
+| Functions' grants | `execute` for `authenticated` and `service_role` only. Both run as the caller (`security invoker`), so the tables' policies decide which rows they reach |
+| Realtime | `tasks` and `task_photos` in the `supabase_realtime` publication, so the samples' **Live updates** get their changes. An insert or an update reaches only the users whose policies let them read the row. A delete is not filtered: Supabase applies no row-level security to delete events, so every subscriber receives each deleted row's `id`, whoever owned it. Here an `id` is a random UUID and says nothing; a table whose keys mean something does not belong in the publication on these terms |
 
 The rules the sample apps build on:
 
@@ -125,8 +135,11 @@ The rules the sample apps build on:
   badge that marks a table without row-level security.
 - **Authentication**, then **Policies**, shows four policies on each table.
 - **Storage**, then **Files**, lists `task-photos` with no **Public** badge, a 5 MB file size
-  limit, `image/jpeg` as its only type, and **3** in its **Policies** column: this file's three,
+  limit, `image/jpeg` as its only type, and **4** in its **Policies** column: the two files' four,
   each for signed-in users only. A higher number means another policy also reaches the bucket.
+- **Database**, then **Functions**, lists `complete_all_tasks` and `tasks_done_count`.
+- **Database**, then **Publications**, shows `tasks` and `task_photos` under
+  `supabase_realtime`.
 
 ## Find the URL and the publishable key
 
@@ -161,6 +174,10 @@ The publishable key is public: anyone can take it out of an app. With this schem
 - A signed-in user, anonymous or not, reaches only the rows and files that carry their own id.
   Knowing another user's ids does not help: a read returns nothing, and an update or a delete
   changes nothing.
+- Through Realtime, a signed-in user hears of inserts and updates to their own rows only, but of
+  every deleted row, anyone's: Supabase applies no row-level security to a delete event, which
+  carries the row's primary key, its `id`, and no other column. The ids are random UUIDs, so they
+  say nothing about anyone.
 - A file is a JPEG of at most 5 MB, and none has a public URL.
 
 An anonymous user cannot sign back in: after signing out, or deleting the app, their tasks stay on
@@ -178,11 +195,13 @@ keep it from pausing. See
 
 ## When the schema changes
 
-The file above is the samples' first migration, and it is never edited once released. A later
-change to the schema is a new file in `samples/supabase/migrations/`, named for the time it was
-written so it sorts after this one. `supabase db push` applies each file once, in order, and never
-runs one it has applied again. In the SQL Editor, run each new file once, in the same order. The
-first file can still be run again at any time and changes nothing.
+The first file is the samples' first migration, and what it creates is never changed once
+released; it only learns the names of the later files' own Storage policies, so its check for
+other policies on the bucket lets it run again after them. A later change to the schema is a new
+file in `samples/supabase/migrations/`, named for the time it was written so it sorts after the
+others, as the second file is. `supabase db push` applies each file once, in order, and never
+runs one it has applied again. In the SQL Editor, run each new file once, in the same order. Either
+file can still be run again at any time and changes nothing.
 
 ## Cleaning up files and users
 
@@ -232,10 +251,10 @@ where is_anonymous
 
 ## Remove it all
 
-The end of the file has a commented-out "how to reset" section. Delete the `task-photos` bucket in
-**Storage** first (Supabase does not let SQL delete stored files), then run the section's `drop`
-statements. That removes everything the file created, and running the file again starts from
-empty.
+The end of each file has a commented-out "how to reset" section. Run the second file's first. Then
+delete the `task-photos` bucket in **Storage** (Supabase does not let SQL delete stored files), and
+run the first file's `drop` statements. That removes everything the files created, and running
+them again starts from empty.
 
 ## The schema
 
@@ -245,4 +264,10 @@ Included from the repository when the site is built:
 
     ```sql
     --8<-- "samples/supabase/migrations/20260930000000_offline_tasks.sql"
+    ```
+
+??? example "samples/supabase/migrations/20261011000000_functions_realtime_and_photo_updates.sql"
+
+    ```sql
+    --8<-- "samples/supabase/migrations/20261011000000_functions_realtime_and_photo_updates.sql"
     ```

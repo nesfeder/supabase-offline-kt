@@ -51,6 +51,15 @@ internal class InMemoryServer(initialTasks: List<Task> = emptyList()) {
                     photos = photos - mutation.photoId
                     ServerAnswer.Accepted(row = null)
                 }
+                is QueuedMutation.MovePhoto -> {
+                    val photo = photos[mutation.photoId]
+                    if (photo != null && photo.userId == userId) {
+                        val moved =
+                            photo.copy(taskId = mutation.taskId, objectPath = mutation.objectPath)
+                        photos = photos + (photo.id to moved)
+                    }
+                    ServerAnswer.Accepted(row = null)
+                }
                 is QueuedMutation.DeleteTaskPhotos -> {
                     photos = photos.filterValues {
                         !(it.taskId == mutation.taskId && it.userId == userId)
@@ -89,6 +98,45 @@ internal class InMemoryServer(initialTasks: List<Task> = emptyList()) {
             photos = photos.filterValues { it.userId != userId }
             files.keys.removeAll { it.startsWith("$userId/") }
         }
+    }
+
+    /** Marks every open task of [userId] done, as `complete_all_tasks` does; returns how many. */
+    suspend fun completeAllTasks(userId: String, now: Instant): Int = lock.withLock {
+        val open = tasks.values.filter { it.userId == userId && !it.isDone }
+        open.forEach { tasks = tasks + (it.id to it.copy(isDone = true, updatedAt = now)) }
+        open.size
+    }
+
+    /** Replaces the file at [objectPath] in place; false when there is none. */
+    suspend fun replaceFile(objectPath: String, bytes: ByteArray): Boolean = lock.withLock {
+        if (objectPath !in files) return@withLock false
+        files[objectPath] = bytes.copyOf()
+        true
+    }
+
+    /** Moves the file at [from] to [to]; false when there is none or [to] is taken. */
+    suspend fun moveFile(from: String, to: String): Boolean = lock.withLock {
+        val bytes = files[from]
+        if (bytes == null || to in files) return@withLock false
+        files.remove(from)
+        files[to] = bytes
+        true
+    }
+
+    /** Copies the file at [from] to [to]; false when there is none or [to] is taken. */
+    suspend fun copyFile(from: String, to: String): Boolean = lock.withLock {
+        val bytes = files[from]
+        if (bytes == null || to in files) return@withLock false
+        files[to] = bytes.copyOf()
+        true
+    }
+
+    /** The paths of [userId]'s files, by folder. */
+    suspend fun filesOf(userId: String): Map<String, List<Pair<String, Int>>> = lock.withLock {
+        files
+            .filterKeys { it.startsWith("$userId/") }
+            .map { (path, bytes) -> path to bytes.size }
+            .groupBy { (path, _) -> path.removePrefix("$userId/").substringBefore('/') }
     }
 
     /** Whether a file is stored at [objectPath], for tests. */

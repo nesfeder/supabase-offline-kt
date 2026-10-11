@@ -2,20 +2,22 @@
 
 The plugin's settings go in the `install(Offline) { … }` block, an `Offline.Config`. Every setting
 has a default that suits most apps; set only what you need. The plugin reads its settings once,
-when the client is created.
+when the client is created. The sample apps write every setting out, each at the default it would
+take anyway but the connectivity signal they supply and a debug build's log level, so each line
+says what it does:
 
-*From the samples: [ClientSettings.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/App/ClientSettings.swift)*
+From the samples: [SampleSupabaseClient.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/platform/SampleSupabaseClient.kt) · [ClientSettings.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/App/ClientSettings.swift)
 
 === "Android"
 
     ```kotlin
-    --8<-- "ConfigurationExamples.kt:every-setting"
+    --8<-- "platform/SampleSupabaseClient.kt:every-setting"
     ```
 
 === "iOS"
 
     ```swift
-    --8<-- "samples/ios/OfflineTasks/App/ClientSettings.swift:every-setting"
+    --8<-- "App/ClientSettings.swift:every-setting"
     ```
 
 ## The settings
@@ -40,18 +42,18 @@ not the size of the database file. Past it, the results fetched longest ago are 
 of up to 500 lists a live reader shows. Any other value below 4 KiB counts as 4 KiB. See
 [Cache size and eviction](../behaviors/eviction.md).
 
-*From the samples: [ClientSettings.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/App/ClientSettings.swift)*
+From the samples: [SampleSupabaseClient.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/platform/SampleSupabaseClient.kt) · [ClientSettings.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/App/ClientSettings.swift)
 
 === "Android"
 
     ```kotlin
-    --8<-- "ConfigurationExamples.kt:sizes"
+    --8<-- "platform/SampleSupabaseClient.kt:sizes"
     ```
 
 === "iOS"
 
     ```swift
-    --8<-- "samples/ios/OfflineTasks/App/ClientSettings.swift:sizes"
+    --8<-- "App/ClientSettings.swift:sizes"
     ```
 
 ### `fileCacheSizeBytes`
@@ -77,6 +79,20 @@ other was left behind, with its files
 ([Project setup](../getting-started/setup.md#a-data-directory-and-a-second-process)). On Android, a directory under `noBackupFilesDir` keeps the data out of backups; see
 [Project setup](../getting-started/setup.md#backups).
 
+From the samples: [SampleSupabaseClient.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/platform/SampleSupabaseClient.kt) · [ClientSettings.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/App/ClientSettings.swift)
+
+=== "Android"
+
+    ```kotlin
+    --8<-- "platform/SampleSupabaseClient.kt:data-directory"
+    ```
+
+=== "iOS"
+
+    ```swift
+    --8<-- "App/ClientSettings.swift:data-directory"
+    ```
+
 ### `networkAvailability`
 
 Your own connectivity signal, `true` while the device is online, in place of the platform's
@@ -100,18 +116,20 @@ A signal that fails or ends is no longer watched (a failure is logged), and the 
 `UNKNOWN`, which counts as online. To stop every request, use `disableNetwork()`: that switch is a
 gate. See [Replaying the queue](../behaviors/sync.md).
 
-*From the samples: [ClientSettings.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/App/ClientSettings.swift)*
+From the samples: [SampleSupabaseClient.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/platform/SampleSupabaseClient.kt) · [ConnectivitySignal.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/platform/ConnectivitySignal.kt) · [ClientSettings.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/App/ClientSettings.swift)
 
 === "Android"
 
     ```kotlin
-    --8<-- "ConfigurationExamples.kt:own-signal"
+    --8<-- "platform/SampleSupabaseClient.kt:own-signal"
+
+    --8<-- "platform/ConnectivitySignal.kt:connectivity-signal"
     ```
 
 === "iOS"
 
     ```swift
-    --8<-- "samples/ios/OfflineTasks/App/ClientSettings.swift:own-signal"
+    --8<-- "App/ClientSettings.swift:own-signal"
     ```
 
 ### `autoSync`
@@ -134,6 +152,20 @@ lands, which row a server record replaces, and which rows a queued write reports
 composite key, with `primaryKey("task_tags", "task_id", "tag")`. A key with no column throws
 `IllegalArgumentException`.
 
+From the samples: [SampleSupabaseClient.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/platform/SampleSupabaseClient.kt) · [ClientSettings.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/App/ClientSettings.swift)
+
+=== "Android"
+
+    ```kotlin
+    --8<-- "platform/SampleSupabaseClient.kt:primary-keys"
+    ```
+
+=== "iOS"
+
+    ```swift
+    --8<-- "App/ClientSettings.swift:primary-keys"
+    ```
+
 ### `responseTrust`
 
 Which answers from the server may replace what the cache holds. The question matters while the
@@ -145,6 +177,18 @@ supabase-kt sends the anon key, and row-level security can answer with fewer row
 | `ResponseTrust.SettledSession` (default) | An answer replaces the cache when its request went out under a settled session (signed in, signed out, or a client without Auth) that had not changed when it answered. A session that is restoring, or whose refresh failed, never writes to the cache |
 | `ResponseTrust.AuthenticatedSessionOnly` | An empty answer is written only when the same user was signed in before and after the request; an answer with rows is written signed out too, under the same exclusions. For an app that reads public rows signed out and must never see an empty signed-out answer replace them |
 
+From the samples: [SampleSupabaseClient.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/platform/SampleSupabaseClient.kt)
+
+=== "Android"
+
+    ```kotlin
+    --8<-- "platform/SampleSupabaseClient.kt:response-trust"
+    ```
+
+=== "iOS"
+
+    The Swift package's `Config` has no response-trust setting.
+
 ### `logLevel`
 
 The least severe level the plugin logs at. The plugin logs through supabase-kt's own logging: to
@@ -152,18 +196,18 @@ the logging processor the client was built with (`defaultLoggingFactory` in
 `createSupabaseClient`), tagged `Supabase-Offline`. `null` uses the client's `defaultLogLevel`, as
 supabase-kt's own plugins do. There is no second logging setup.
 
-*From the samples: [ClientSettings.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/App/ClientSettings.swift)*
+From the samples: [SampleSupabaseClient.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/platform/SampleSupabaseClient.kt) · [ClientSettings.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/App/ClientSettings.swift)
 
 === "Android"
 
     ```kotlin
-    --8<-- "ConfigurationExamples.kt:log-level"
+    --8<-- "platform/SampleSupabaseClient.kt:log-level"
     ```
 
 === "iOS"
 
     ```swift
-    --8<-- "samples/ios/OfflineTasks/App/ClientSettings.swift:log-level"
+    --8<-- "App/ClientSettings.swift:log-level"
     ```
 
 | Level | What the plugin logs | Carries row data |

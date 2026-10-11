@@ -3,16 +3,10 @@
 package io.github.nesfeder.offlinetasks.platform
 
 import io.github.jan.supabase.SupabaseClient
-import io.github.jan.supabase.auth.Auth
 import io.github.jan.supabase.auth.auth
 import io.github.jan.supabase.auth.status.SessionStatus
-import io.github.jan.supabase.createSupabaseClient
-import io.github.jan.supabase.logging.LogLevel
-import io.github.jan.supabase.postgrest.Postgrest
-import io.github.jan.supabase.storage.Storage
 import io.github.nesfeder.offlinetasks.data.UserSession
 import io.github.nesfeder.supabase.offline.NetworkStatus
-import io.github.nesfeder.supabase.offline.Offline
 import io.github.nesfeder.supabase.offline.offline
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -26,24 +20,6 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
-
-/**
- * The one [SupabaseClient] of the app, for the project in `local.properties`, or null when its URL
- * or key is missing (as on CI). Auth, PostgREST and Storage, then the offline plugin, installed
- * last so that no plugin after it can fail once it has claimed its database.
- */
-fun createSampleSupabaseClient(url: String, publishableKey: String): SupabaseClient? {
-    if (url.isBlank() || publishableKey.isBlank()) return null
-    return createSupabaseClient(supabaseUrl = url, supabaseKey = publishableKey) {
-        // Warnings and errors only: request logs name filter values.
-        defaultLogLevel = LogLevel.WARNING
-        install(Auth)
-        install(Postgrest)
-        install(Storage)
-        // The defaults: the platform's connectivity monitor, automatic replay, `id` as each key.
-        install(Offline)
-    }
-}
 
 /** Where the app's anonymous session stands. */
 sealed interface SessionState {

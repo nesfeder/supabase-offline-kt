@@ -100,6 +100,28 @@ internal sealed interface QueuedMutation {
             rows.copy(photos = rows.photos - photoId)
     }
 
+    /** `update task_photos set task_id, object_path where id`: a photo moved to another task. */
+    data class MovePhoto(
+        override val id: Long,
+        val photoId: String,
+        val taskId: String,
+        val objectPath: String,
+    ) : QueuedMutation {
+        override val table: String = Tables.TASK_PHOTOS
+        override val operation: TaskMutationOperation = TaskMutationOperation.Update
+        override val rowKey: String = photoId
+
+        override fun withId(newId: Long): QueuedMutation = copy(id = newId)
+
+        override fun applyTo(rows: DeviceRows): DeviceRows {
+            val photo = rows.photos[photoId] ?: return rows
+            return rows.copy(
+                photos =
+                    rows.photos + (photoId to photo.copy(taskId = taskId, objectPath = objectPath))
+            )
+        }
+    }
+
     /** `delete from task_photos where task_id`: one write for every photo of a task. */
     data class DeleteTaskPhotos(override val id: Long, val taskId: String) : QueuedMutation {
         override val table: String = Tables.TASK_PHOTOS
@@ -126,6 +148,7 @@ internal val QueuedMutation.taskTitle: String?
 internal fun QueuedMutation.concernsPhotosOf(taskId: String): Boolean =
     when (this) {
         is QueuedMutation.InsertPhoto -> photo.taskId == taskId
+        is QueuedMutation.MovePhoto -> true
         is QueuedMutation.DeleteTaskPhotos -> this.taskId == taskId
         // The row is gone from the device by the time it is queued, so its task is not known.
         is QueuedMutation.DeletePhoto -> true

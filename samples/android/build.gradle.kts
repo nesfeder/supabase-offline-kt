@@ -85,6 +85,8 @@ dependencies {
     implementation(platform(libs.supabase.bom))
     implementation(libs.supabase.auth.kt)
     implementation(libs.supabase.postgrest.kt)
+    // Live updates: other devices' changes, applied to the cache as they happen.
+    implementation(libs.supabase.realtime.kt)
     implementation(libs.supabase.storage.kt)
     implementation(libs.ktor.client.okhttp)
 

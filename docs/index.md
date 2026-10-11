@@ -19,20 +19,22 @@ not sent yet.
 
 ## An example
 
-*From the samples: [AppModel.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/App/AppModel.swift) · [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift)*
+From the samples: [SampleSupabaseClient.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/platform/SampleSupabaseClient.kt) · [OfflineTaskRepository.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/OfflineTaskRepository.kt) · [AppModel.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/App/AppModel.swift) · [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift)
 
 === "Android"
 
     ```kotlin
-    --8<-- "GettingStartedExamples.kt:home"
+    --8<-- "platform/SampleSupabaseClient.kt:install"
+
+    --8<-- "data/supabase/OfflineTaskRepository.kt:first-write"
     ```
 
 === "iOS"
 
     ```swift
-    --8<-- "samples/ios/OfflineTasks/App/AppModel.swift:install"
+    --8<-- "App/AppModel.swift:install"
 
-    --8<-- "samples/ios/OfflineTasks/Data/TaskRepository.swift:first-write"
+    --8<-- "Data/TaskRepository.swift:first-write"
     ```
 
 A write returns a `MutationOutcome` rather than the server's result, because a queued write has

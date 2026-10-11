@@ -11,7 +11,9 @@ Storage bucket, so what you do offline reaches your project when the network com
 - JDK 17.
 - The Android SDK with platform 37 (Android 17). Android Studio installs it.
 - A device or emulator on Android 7.0 (API 24) or later. Dynamic color needs Android 12.
-- A Supabase project with the samples' schema: [Set up Supabase](supabase-setup.md).
+- A Supabase project with the samples' schema, both migration files applied: [Set up
+  Supabase](supabase-setup.md). The second adds the two database functions, the Storage policy that
+  lets a photo be replaced or moved, and the tables' Realtime publication.
 
 ## Add your keys
 
@@ -58,16 +60,16 @@ mode would, until you switch it back or the app restarts; the rest of the device
 
 Now add a task, clear another's notes, tick one done and delete one. Each change shows at once.
 A cloud mark on a row means its change has not reached the server yet; the banner and the Sync
-tab's badge count the changes waiting. Pull to refresh, and the app says it is showing what is
-saved on the device. A task you have never opened still opens offline: it is read from the list
+tab's badge count the changes waiting. Pull to refresh, and the caption under the title says the
+list is from this device, and how old it is. A task you have never opened still opens offline: it is read from the list
 the device already holds.
 
 ![The task list offline: three tasks marked as not synced yet, and a banner counting five changes saved on the device](../assets/samples/android/offline-changes.png){ width="270" loading=lazy }
 
 ### Come back and watch it send
 
-The Sync tab lists the changes waiting, per table. **Sync now** needs the network, so offline it
-is switched off.
+The Sync tab counts the changes waiting per table and lists each one, with **Discard** to throw it
+away unsent. **Sync now** needs the network, so offline it is switched off.
 
 Switch **Simulate offline** off. The changes are sent in the order you made them, and the count
 drops to **Nothing waiting**. To see the server's copy, use **Clear local cache** under **Local
@@ -101,6 +103,40 @@ and the photos already on the device still show.
 
 ![A task's detail with one photo attached](../assets/samples/android/photo-attached.png){ width="270" loading=lazy }
 
+### Search, filter and refresh
+
+The search field and the All / Open / Done / Recent chips are filters the server applies, and each
+one is saved on the device on its own once it has been asked online. Offline, a search or a chip
+you never used online has nothing saved, and the list says so. On the Sync tab, **Prefer fresh
+data** makes the list ask the server first rather than show the device's copy first.
+
+### Live updates
+
+With **Live updates** on, the default, a change made elsewhere (in the Table Editor, say) shows in
+the list as it happens. The Sync tab says whether the Realtime channel is connected; Simulate
+offline and a lost network pause it, and it connects again when the network is back.
+
+### Photos, beyond the upload
+
+Open a photo. **Details** shows what Storage holds for it and the copy on this device. **Share**
+sends the photo, **Share link** a link to a 512-pixel copy (a project without image
+transformations answers that link with an error), and the menu replaces the photo, moves it to
+another task or adds a copy to one. The Sync tab's **Storage** section lists your folders in the
+bucket, and **Upload through a signed URL** copies your newest photo through one.
+
+### The server's side
+
+The Tasks menu's **Mark all done** and the Sync tab's **Server** section call the samples' two
+database functions; Server also counts your tasks. Functions and counts always ask the server:
+offline, the app says why they cannot run.
+
+### Try it
+
+Besides **Queue an invalid title**, the Sync tab's **Try it** adds five sample tasks in one write,
+imports a starter list that a second import leaves as it is, makes a grouped delete offline that
+the library refuses, makes a read with two filters on one column that it refuses too, and counts
+the open tasks on the server. Each says which call it made and what happened.
+
 ### Start over
 
 **Start over**, under **Local data**, deletes this user's photos, photo rows and tasks from your
@@ -118,5 +154,12 @@ refuses and deletes nothing.
   again each time the network comes back; until then the list says it is not signed in yet.
 - **A photo will not upload.** Check that the `task-photos` bucket exists, private, as
   [Set up Supabase](supabase-setup.md) creates it. The app shows Storage's own answer.
+- **Mark all done or the Server section fails, or Replace and Move photo are refused.** The second
+  migration file is not applied: run it as [Set up Supabase](supabase-setup.md#apply-the-schema)
+  says.
+- **Live updates stays at "Connecting to Realtime…", or changes from elsewhere never show.** Check
+  that the second migration file added `tasks` and `task_photos` to the `supabase_realtime`
+  publication (Database, Publications, in the dashboard). Without it, Realtime refuses the
+  subscription and the app keeps trying to join again.
 - **The build asks for platform 37.** Install Android SDK Platform 37 in Android Studio's SDK
   Manager.

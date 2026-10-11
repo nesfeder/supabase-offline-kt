@@ -5,6 +5,8 @@ package io.github.nesfeder.offlinetasks.ui.tasks
 import io.github.nesfeder.offlinetasks.data.EncodedPhoto
 import io.github.nesfeder.offlinetasks.data.PhotoStorageException
 import io.github.nesfeder.offlinetasks.data.ServerUnreachableException
+import io.github.nesfeder.offlinetasks.data.TaskFilter
+import io.github.nesfeder.offlinetasks.data.TaskQuery
 import io.github.nesfeder.offlinetasks.data.TaskRepository
 import io.github.nesfeder.offlinetasks.platform.SessionState
 import io.github.nesfeder.offlinetasks.testing.FailingReadsTaskRepository
@@ -24,8 +26,10 @@ import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import org.junit.Rule
 
@@ -75,7 +79,7 @@ class TasksViewModelTest {
         viewModel.setFilter(TaskFilter.Open)
 
         // Then
-        val state = viewModel.loaded { it.filter == TaskFilter.Open }
+        val state = viewModel.loaded { it.query.filter == TaskFilter.Open }
         assertTrue(state.doneTasks.isEmpty())
         assertEquals(3, state.openTasks.size)
         assertEquals(3, state.openCount)
@@ -153,8 +157,8 @@ class TasksViewModelTest {
     }
 
     @Test
-    fun pull_to_refresh_offline_says_the_network_is_needed() = runTest {
-        // Given
+    fun pull_to_refresh_offline_answers_from_the_device_and_says_so() = runTest {
+        // Given — the list loaded online, then the network switched off
         val repository = repositoryFixture(seedSampleTasks = true).repository
         val viewModel = tasksViewModel(repository)
         viewModel.loaded()
@@ -163,8 +167,72 @@ class TasksViewModelTest {
         // When
         viewModel.refresh()
 
+        // Then — the caption says the rows are this device's copy
+        val caption = viewModel.loaded { it.caption != null }.caption
+        assertTrue(caption?.provenance?.isFromCache == true)
+    }
+
+    @Test
+    fun pull_to_refresh_reads_again_the_list_the_chips_show() = runTest {
+        // Given — the Open chip chosen
+        val repository = repositoryFixture(seedSampleTasks = true).repository
+        val viewModel = tasksViewModel(repository)
+        viewModel.loaded()
+        viewModel.setFilter(TaskFilter.Open)
+        viewModel.loaded { it.query.filter == TaskFilter.Open }
+
+        // When
+        viewModel.refresh()
+
+        // Then — the open tasks' query, each query being cached on its own
+        val asked = repository.refreshedQueries.first { it.isNotEmpty() }
+        assertEquals(TaskQuery(TaskFilter.Open), asked.single())
+    }
+
+    @Test
+    fun mark_all_done_behind_a_chip_reads_again_that_list_and_the_whole_one() = runTest {
+        // Given — the Open chip chosen
+        val repository = repositoryFixture(seedSampleTasks = true).repository
+        val viewModel = tasksViewModel(repository)
+        viewModel.loaded()
+        viewModel.setFilter(TaskFilter.Open)
+        viewModel.loaded { it.query.filter == TaskFilter.Open }
+
+        // When
+        viewModel.markAllDone()
+
+        // Then — the list shown, then the whole list the open count is read from
+        val asked = repository.refreshedQueries.first { it.size == 2 }
+        assertEquals(listOf(TaskQuery(TaskFilter.Open), TaskQuery()), asked)
+    }
+
+    @Test
+    fun pull_to_refresh_with_nothing_saved_says_the_network_is_needed() = runTest {
+        // Given — a first launch offline: nothing saved on the device
+        val viewModel = tasksViewModel(repositoryFixture(online = false).repository)
+
+        // When
+        viewModel.refresh()
+
         // Then
         assertEquals(TasksMessage.RefreshNeedsNetwork, viewModel.messages.first())
+    }
+
+    @Test
+    fun the_open_chip_asks_for_open_tasks_and_the_search_narrows_them() = runTest {
+        // Given
+        val viewModel = tasksViewModel(repositoryFixture(seedSampleTasks = true).repository)
+        val all = viewModel.loaded()
+        val title = all.openTasks.first().title
+
+        // When
+        viewModel.setFilter(TaskFilter.Open)
+        viewModel.setSearch(title)
+
+        // Then — only open tasks whose title holds the text
+        val state = viewModel.loaded { it.query.search == title && it.openTasks.size == 1 }
+        assertTrue(state.doneTasks.isEmpty())
+        assertEquals(title, state.openTasks.single().title)
     }
 
     @Test
@@ -202,6 +270,30 @@ class TasksViewModelTest {
 
         // Then — the announcement waiting for the screen is dropped
         assertNull(withTimeoutOrNull(10.seconds) { viewModel.messages.first() })
+    }
+
+    @Test
+    fun a_failed_list_read_starts_again_when_the_network_changes() = runTest {
+        // Given — the screen up, its list read failing once it has loaded
+        val inMemory = repositoryFixture(seedSampleTasks = true).repository
+        val failure = IllegalStateException("A row the app cannot read")
+        val repository = FailingReadsTaskRepository(inMemory, failure)
+        val viewModel = tasksViewModel(repository)
+        backgroundScope.launch { viewModel.uiState.collect {} } // the screen stays up throughout
+        viewModel.loaded()
+        assertEquals(failure, failures.reported.first())
+
+        // When — reads work again, the network is switched off, and a task is added on the device
+        repository.failing.value = false
+        inMemory.setNetworkEnabled(false)
+        inMemory.addTask("Made after the failure", notes = null)
+
+        // Then — the list was read again, and keeps following the device's copy
+        withTimeout(30.seconds) {
+            viewModel.loaded { state ->
+                state.openTasks.any { it.title == "Made after the failure" }
+            }
+        }
     }
 
     @Test

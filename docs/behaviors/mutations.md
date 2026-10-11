@@ -5,58 +5,112 @@ once when nothing of the same user waits ahead of it; otherwise it waits and is 
 pass, in the order it was made. A write returns a `MutationOutcome`: `Applied` with the server's
 answer, or `Queued`, and every cached read shows it at once either way.
 
-*From the samples: [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift)*
+From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/OfflineTaskRepository.kt) · [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift)
 
 === "Android"
 
     ```kotlin
-    --8<-- "GettingStartedExamples.kt:first-write"
+    --8<-- "data/supabase/OfflineTaskRepository.kt:first-write"
     ```
 
 === "iOS"
 
     ```swift
-    --8<-- "samples/ios/OfflineTasks/Data/TaskRepository.swift:first-write"
+    --8<-- "Data/TaskRepository.swift:first-write"
     ```
 
-The verbs are supabase-kt's, with its overloads and request DSL:
+The verbs are supabase-kt's, with its overloads and request DSL. An update takes a typed value, a
+JSON body or the update DSL; the sample's autosave, done switch and Move to another task use one
+each:
 
-*From the samples: [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift)*
+From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/OfflineTaskRepository.kt) · [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift) · [TaskRepository+Photos.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository+Photos.swift)
 
 === "Android"
 
     ```kotlin
-    --8<-- "QueueExamples.kt:verbs"
+    --8<-- "data/supabase/OfflineTaskRepository.kt:typed-update"
+
+    --8<-- "data/supabase/OfflineTaskRepository.kt:body-update"
+
+    --8<-- "data/supabase/OfflineTaskRepository.kt:move-photo"
     ```
 
 === "iOS"
 
     ```swift
-    --8<-- "samples/ios/OfflineTasks/Data/TaskRepository.swift:insert-list"
+    --8<-- "Data/TaskRepository.swift:typed-update"
 
-    --8<-- "samples/ios/OfflineTasks/Data/TaskRepository.swift:duplicate-task"
+    --8<-- "Data/TaskRepository.swift:body-update"
 
-    --8<-- "samples/ios/OfflineTasks/Data/TaskRepository.swift:typed-update"
+    --8<-- "Data/TaskRepository+Photos.swift:move-photo"
+    ```
 
-    --8<-- "samples/ios/OfflineTasks/Data/TaskRepository.swift:body-update"
+An upsert of one typed row, and a delete that names its rows by filter. Duplicate task asks for
+the stored row back with `select()`, and reads it with `resultOrNull()` unless the write
+`isQueued`:
 
-    --8<-- "samples/ios/OfflineTasks/Data/TaskRepository.swift:delete-task"
+From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/OfflineTaskRepository.kt) · [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift)
+
+=== "Android"
+
+    ```kotlin
+    --8<-- "data/supabase/OfflineTaskRepository.kt:duplicate-task"
+
+    --8<-- "data/supabase/OfflineTaskRepository.kt:delete-task"
+    ```
+
+=== "iOS"
+
+    ```swift
+    --8<-- "Data/TaskRepository.swift:duplicate-task"
+
+    --8<-- "Data/TaskRepository.swift:delete-task"
+    ```
+
+Several rows go in one write, typed or as a JSON body, queued as one when offline. The starter
+list's ids are the same on every import, so `ignoreDuplicates` makes a second import change
+nothing:
+
+From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/OfflineTaskRepository.kt) · [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift)
+
+=== "Android"
+
+    ```kotlin
+    --8<-- "data/supabase/OfflineTaskRepository.kt:insert-list"
+
+    --8<-- "data/supabase/OfflineTaskRepository.kt:starter-list"
+
+    --8<-- "data/supabase/OfflineTaskRepository.kt:json-insert"
+    ```
+
+=== "iOS"
+
+    ```swift
+    --8<-- "Data/TaskRepository.swift:insert-list"
+
+    --8<-- "Data/TaskRepository.swift:starter-list"
+
+    --8<-- "Data/TaskRepository.swift:json-insert"
     ```
 
 ## The two strategies
 
-*From the samples: [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift)*
+From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/OfflineTaskRepository.kt) · [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift)
 
 === "Android"
 
     ```kotlin
-    --8<-- "QueueExamples.kt:mutation-strategies"
+    --8<-- "data/supabase/OfflineTaskRepository.kt:mutation-strategies"
+
+    --8<-- "data/supabase/OfflineTaskRepository.kt:delete-my-data"
     ```
 
 === "iOS"
 
     ```swift
-    --8<-- "samples/ios/OfflineTasks/Data/TaskRepository.swift:mutation-strategies"
+    --8<-- "Data/TaskRepository.swift:mutation-strategies"
+
+    --8<-- "Data/TaskRepository.swift:delete-my-data"
     ```
 
 - **`QueueIfOffline`**, the default, saves the write to the queue, so it keeps its place among the
@@ -114,20 +168,22 @@ supabase-kt's operators.
 An update or a delete with two top-level filters on one column throws `IllegalArgumentException`
 under either strategy, online or offline, before anything is sent or queued: supabase-kt would send
 only the first, and the write would reach more rows than it names, now or when the queue replays
-it. Write the conditions as one `and { }` group, which supabase-kt sends whole:
+it. Write the conditions as one `and { }` group, which supabase-kt sends whole. A group is a filter
+the queue cannot record, so such a write is sent at once: the sample's Try it makes one offline to
+show its `MutationNotQueueableException`.
 
-*From the samples: [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift)*
+From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/OfflineTaskRepository.kt) · [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift)
 
 === "Android"
 
     ```kotlin
-    --8<-- "QueueExamples.kt:same-column-write"
+    --8<-- "data/supabase/OfflineTaskRepository.kt:same-column-write"
     ```
 
 === "iOS"
 
     ```swift
-    --8<-- "samples/ios/OfflineTasks/Data/TaskRepository.swift:same-column-write"
+    --8<-- "Data/TaskRepository.swift:same-column-write"
     ```
 
 ## Dry runs
@@ -136,15 +192,9 @@ A dry run is a write carrying `Prefer: tx=rollback`: supabase-kt 3.8's `dryRun()
 header added by hand. It is never queued, since the queue would replay it as a real write: it is
 sent at once, and offline it throws `MutationNotQueueableException`.
 
-=== "Android"
-
-    ```kotlin
-    --8<-- "QueueExamples.kt:dry-run"
-    ```
-
-=== "iOS"
-
-    The Swift package sets no request header, so a Swift app has no dry run: every write it makes is applied, or queued.
+```kotlin
+--8<-- "QueueExamples.kt:dry-run"
+```
 
 PostgREST rolls a dry run back only when the project lets a request choose (`db-tx-end` set to
 `commit-allow-override` or `rollback-allow-override`). A hosted Supabase project does not by
@@ -156,7 +206,7 @@ the override, or do not rely on it.
 ## Upsert options
 
 `onConflict`, `ignoreDuplicates` and `defaultToNull` are kept with a queued write, so its replay
-sends what the call asked for. The cache merges an upsert by its `onConflict` columns, or by the
+sends what the call asked for (the starter list above sets the first two). The cache merges an upsert by its `onConflict` columns, or by the
 table's key (`id` unless configured): on a table without an `id` column, name the conflict
 columns. An upsert that ignores duplicates shows offline as though it landed, since the library
 cannot tell whether the server already holds the row. See [Optimistic overlay](overlay.md#limits).
@@ -214,22 +264,30 @@ configure the same request every time: no side effects, and no clock or counter 
 
 ## Seeing and dropping queued writes
 
-*From the samples: [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift) · [QueueWording.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Sync/QueueWording.swift)*
+From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/OfflineTaskRepository.kt) · [LibraryMappings.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/LibraryMappings.kt) · [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift) · [QueueWording.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Sync/QueueWording.swift)
 
 === "Android"
 
     ```kotlin
-    --8<-- "QueueExamples.kt:pending"
+    --8<-- "data/supabase/OfflineTaskRepository.kt:pending"
+
+    --8<-- "data/supabase/OfflineTaskRepository.kt:discard"
+
+    --8<-- "data/supabase/LibraryMappings.kt:waiting-change"
+
+    --8<-- "data/supabase/OfflineTaskRepository.kt:pending-count"
     ```
 
 === "iOS"
 
     ```swift
-    --8<-- "samples/ios/OfflineTasks/Data/TaskRepository.swift:pending"
+    --8<-- "Data/TaskRepository.swift:pending"
 
-    --8<-- "samples/ios/OfflineTasks/Data/TaskRepository.swift:discard"
+    --8<-- "Data/TaskRepository.swift:discard"
 
-    --8<-- "samples/ios/OfflineTasks/Sync/QueueWording.swift:waiting-change"
+    --8<-- "Sync/QueueWording.swift:waiting-change"
+
+    --8<-- "Data/TaskRepository.swift:pending-count"
     ```
 
 `pendingMutations(table)`, `pendingMutationCount(table)` and `pendingMutationCountFlow(table)` show

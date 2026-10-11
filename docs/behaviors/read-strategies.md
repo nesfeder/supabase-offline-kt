@@ -2,24 +2,29 @@
 
 A `select` reads its rows once, from the server or from the device's cache, as its read strategy
 says. Only a list of rows is cached, and every list the server returns is kept for the next read,
-with the user's queued writes laid over it whichever way it is answered.
+with the user's queued writes laid over it whichever way it is answered. The sample's pull to
+refresh, its launch badge and Start over's lookup each use a strategy of their own:
 
-*From the samples: [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift)*
+From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/OfflineTaskRepository.kt) · [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift)
 
 === "Android"
 
     ```kotlin
-    --8<-- "ReadExamples.kt:strategies"
+    --8<-- "data/supabase/OfflineTaskRepository.kt:first-read"
+
+    --8<-- "data/supabase/OfflineTaskRepository.kt:badge-read"
+
+    --8<-- "data/supabase/OfflineTaskRepository.kt:network-only"
     ```
 
 === "iOS"
 
     ```swift
-    --8<-- "samples/ios/OfflineTasks/Data/TaskRepository.swift:first-read"
+    --8<-- "Data/TaskRepository.swift:first-read"
 
-    --8<-- "samples/ios/OfflineTasks/Data/TaskRepository.swift:badge-read"
+    --8<-- "Data/TaskRepository.swift:badge-read"
 
-    --8<-- "samples/ios/OfflineTasks/Data/TaskRepository.swift:network-only"
+    --8<-- "Data/TaskRepository.swift:network-only"
     ```
 
 ## Choosing a strategy
@@ -57,18 +62,18 @@ again; when the server cannot be reached, the stale rows are served after all.
 It serves the cached rows and never sends a request. With nothing it may serve, it throws
 `CacheMissException`:
 
-*From the samples: [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift)*
+From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/OfflineTaskRepository.kt) · [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift)
 
 === "Android"
 
     ```kotlin
-    --8<-- "ReadExamples.kt:cache-only"
+    --8<-- "data/supabase/OfflineTaskRepository.kt:cache-only"
     ```
 
 === "iOS"
 
     ```swift
-    --8<-- "samples/ios/OfflineTasks/Data/TaskRepository.swift:cache-only"
+    --8<-- "Data/TaskRepository.swift:cache-only"
     ```
 
 ## `NetworkOnly`
@@ -85,22 +90,24 @@ to it does not make it younger: a day-old list with your edit laid over it is st
 ## Where the rows came from
 
 A result says whether it came from the cache, when its rows were fetched, and whether a queued
-write changed them, through three extension properties on supabase-kt's `PostgrestResult`:
+write changed them, through three extension properties on supabase-kt's `PostgrestResult`. The
+sample's pull to refresh turns them into the caption under the list's title ("Updated just now",
+"From this device, 3 minutes ago"):
 
-*From the samples: [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift) · [QueueWording.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Sync/QueueWording.swift)*
+From the samples: [LibraryMappings.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/LibraryMappings.kt) · [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift) · [QueueWording.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Sync/QueueWording.swift)
 
 === "Android"
 
     ```kotlin
-    --8<-- "ReadExamples.kt:provenance"
+    --8<-- "data/supabase/LibraryMappings.kt:provenance"
     ```
 
 === "iOS"
 
     ```swift
-    --8<-- "samples/ios/OfflineTasks/Data/TaskRepository.swift:provenance"
+    --8<-- "Data/TaskRepository.swift:provenance"
 
-    --8<-- "samples/ios/OfflineTasks/Sync/QueueWording.swift:provenance-caption"
+    --8<-- "Sync/QueueWording.swift:provenance-caption"
     ```
 
 A result supabase-kt returned itself reads `false`, `null` and `false`. The library stamps these
@@ -113,40 +120,65 @@ the server's own headers.
 first row; the [sample app](../samples/android.md) reads its list once and finds the row in it,
 so a task never opened before still opens offline.
 
-*From the samples: [TaskDetailModel.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Detail/TaskDetailModel.swift)*
+From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/OfflineTaskRepository.kt) · [TaskDetailModel.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Detail/TaskDetailModel.swift)
 
 === "Android"
 
     ```kotlin
-    --8<-- "ReadExamples.kt:one-row"
+    --8<-- "data/supabase/OfflineTaskRepository.kt:row-from-list"
     ```
 
 === "iOS"
 
     ```swift
-    --8<-- "samples/ios/OfflineTasks/Detail/TaskDetailModel.swift:row-from-list"
+    --8<-- "Detail/TaskDetailModel.swift:row-from-list"
     ```
 
 **A list with a total.** A read that asks for a `count` is never cached, rows and all, so a
-paginated screen with a total has nothing offline. Read the rows and the count separately.
+paginated screen with a total has nothing offline. Read the rows and the count separately. The
+samples ask for a count only where a connection is expected anyway: the Sync tab's Server section,
+and a Try it item with the generic `filter(column, operator, value)`:
 
-**Two filters on one column** are refused with an `IllegalArgumentException` before anything is
-sent: supabase-kt sends only the first, so the read would return every row the first admits.
-Write them as one `and { }` group:
-
-*From the samples: [TaskQuery.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskQuery.swift)*
+From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/OfflineTaskRepository.kt) · [TaskRepository+Server.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository+Server.swift) · [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift)
 
 === "Android"
 
     ```kotlin
-    --8<-- "ReadExamples.kt:same-column"
+    --8<-- "data/supabase/OfflineTaskRepository.kt:count"
+
+    --8<-- "data/supabase/OfflineTaskRepository.kt:operator-filter"
     ```
 
 === "iOS"
 
     ```swift
-    --8<-- "samples/ios/OfflineTasks/Data/TaskQuery.swift:same-column"
+    --8<-- "Data/TaskRepository+Server.swift:count"
+
+    --8<-- "Data/TaskRepository.swift:operator-filter"
     ```
+
+**Two filters on one column** are refused with an `IllegalArgumentException` before anything is
+sent: supabase-kt sends only the first, so the read would return every row the first admits.
+Write them as one `and { }` group, as the sample's Recent chip does; its Try it makes the refused
+read:
+
+From the samples: [TaskQueries.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/TaskQueries.kt) · [OfflineTaskRepository.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/OfflineTaskRepository.kt) · [TaskQuery.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskQuery.swift)
+
+=== "Android"
+
+    ```kotlin
+    --8<-- "data/supabase/TaskQueries.kt:same-column"
+
+    --8<-- "data/supabase/OfflineTaskRepository.kt:two-filters-refused"
+    ```
+
+=== "iOS"
+
+    ```swift
+    --8<-- "Data/TaskQuery.swift:same-column"
+    ```
+
+    Swift sends two conditions on one column together, in one `and` group, so nothing is refused.
 
 **While a stored session restores.** supabase-kt sends requests on the anon key until the stored
 session is restored, and row-level security can answer such a request with fewer rows, or none.

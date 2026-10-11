@@ -9,10 +9,14 @@ import androidx.lifecycle.viewmodel.CreationExtras
 import io.github.nesfeder.offlinetasks.data.PhotoEncoder
 import io.github.nesfeder.offlinetasks.data.TaskRepository
 import io.github.nesfeder.offlinetasks.data.supabase.OfflineTaskRepository
+import io.github.nesfeder.offlinetasks.data.supabase.reportableDescription
 import io.github.nesfeder.offlinetasks.platform.AnonymousSession
 import io.github.nesfeder.offlinetasks.platform.JpegPhotoEncoder
 import io.github.nesfeder.offlinetasks.platform.createSampleSupabaseClient
+import io.github.nesfeder.offlinetasks.platform.validatedInternet
 import io.github.nesfeder.offlinetasks.ui.feedback.FailureReports
+import io.github.nesfeder.offlinetasks.ui.feedback.Notices
+import io.github.nesfeder.offlinetasks.ui.feedback.launchReporting
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -35,12 +39,16 @@ class OfflineTasksApplication : Application() {
             SupervisorJob() +
                 Dispatchers.Default +
                 CoroutineExceptionHandler { _, error ->
-                    Log.e(TAG, "Background work failed", error)
+                    // Its type, status and cause only: a message may carry a row or a token.
+                    Log.e(TAG, "Background work failed: ${error.reportableDescription()}")
                 }
         )
 
     /** Where every screen reports a failure, to be shown on whichever screen is in front. */
     val failures: FailureReports = FailureReports()
+
+    /** Where every screen says what became of its work, to be shown on the screen in front. */
+    val notices: Notices = Notices()
 
     /**
      * False when `local.properties` names no Supabase project: the app then shows how to add one,
@@ -67,12 +75,25 @@ class OfflineTasksApplication : Application() {
             createSampleSupabaseClient(
                 url = BuildConfig.SUPABASE_URL,
                 publishableKey = BuildConfig.SUPABASE_PUBLISHABLE_KEY,
+                networkAvailability = validatedInternet(),
+                debugBuild = BuildConfig.DEBUG,
             ) ?: return
         session = AnonymousSession(supabase, applicationScope).also { it.start() }
         repository = OfflineTaskRepository(supabase, session, applicationScope)
         photoEncoder = JpegPhotoEncoder(contentResolver)
         isConfigured = true
     }
+
+    // --8<-- [start:foreground]
+    /**
+     * Sends what waits in the mutation queue as the app comes to the foreground: the library starts
+     * a replay by itself on a reconnection or a sign-in, and on nothing else.
+     */
+    fun syncInForeground() {
+        if (!isConfigured) return
+        applicationScope.launchReporting(failures) { repository.syncPendingMutations() }
+    }
+    // --8<-- [end:foreground]
 }
 
 /** The log tag of the app's own messages. */
