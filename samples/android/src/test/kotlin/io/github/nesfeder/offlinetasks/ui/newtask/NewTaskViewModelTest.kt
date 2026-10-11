@@ -120,7 +120,13 @@ class NewTaskViewModelTest {
     @Test
     fun the_title_stops_at_the_schema_limit() = runTest {
         // Given
-        val viewModel = NewTaskViewModel(repositoryFixture().repository, FakePhotoEncoder(), backgroundScope, failures)
+        val viewModel =
+            NewTaskViewModel(
+                repositoryFixture().repository,
+                FakePhotoEncoder(),
+                backgroundScope,
+                failures,
+            )
 
         // When
         viewModel.onTitleChange("x".repeat(TASK_TITLE_MAX_LENGTH + 20))

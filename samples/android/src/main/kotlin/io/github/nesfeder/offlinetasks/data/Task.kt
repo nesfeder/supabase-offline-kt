@@ -38,8 +38,8 @@ data class Task(
 /**
  * A photo of a task: a row of `task_photos`, one JPEG in the private `task-photos` bucket at
  * [objectPath], which is always `<user id>/<task id>/<photo id>.jpg` in lower case. With a
- * [pendingUpload], a photo picked on this device whose upload has not finished: it has no row or
- * no cached file yet, and it shows from the device's own copy.
+ * [pendingUpload], a photo picked on this device whose upload has not finished: it has no row or no
+ * cached file yet, and it shows from the device's own copy.
  */
 data class TaskPhoto(
     val id: String,

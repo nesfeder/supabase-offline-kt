@@ -27,8 +27,8 @@ private const val HTTP_SERVER_ERROR = 500
 /** Sends one pending photo: its file, then its row, then the file into the library's cache. */
 fun interface PendingPhotoUpload {
     /**
-     * Uploads [photo], whose JPEG is [jpeg], handing [onProgress] the fraction of the file sent.
-     * It returns once the upload is complete; a failure is thrown in the app's terms.
+     * Uploads [photo], whose JPEG is [jpeg], handing [onProgress] the fraction of the file sent. It
+     * returns once the upload is complete; a failure is thrown in the app's terms.
      */
     suspend fun send(photo: PendingPhoto, jpeg: ByteArray, onProgress: (Float) -> Unit)
 }
@@ -60,19 +60,18 @@ class PendingPhotoUploader(
     val progress: StateFlow<Map<String, Float>> = sent.asStateFlow()
 
     /** Starts watching [canUpload] and uploading, in [scope], until it is canceled. */
-    fun start(scope: CoroutineScope): Job =
-        scope.launch {
-            launch {
-                canUpload.collect { can ->
-                    allowed.value = can
-                    if (can) {
-                        directory.retryFailed()
-                        passes.trySend(Unit)
-                    }
+    fun start(scope: CoroutineScope): Job = scope.launch {
+        launch {
+            canUpload.collect { can ->
+                allowed.value = can
+                if (can) {
+                    directory.retryFailed()
+                    passes.trySend(Unit)
                 }
             }
-            for (pass in passes) uploadWaitingPhotos()
         }
+        for (pass in passes) uploadWaitingPhotos()
+    }
 
     /** Starts a pass soon, when uploading is allowed: a photo was just filed, or retried. */
     fun uploadSoon() {
@@ -82,7 +81,8 @@ class PendingPhotoUploader(
     /** Puts the failed photo [photoId] back to waiting, and starts a pass soon. */
     suspend fun retry(photoId: String) {
         directory.update(photoId) { photo ->
-            if (photo.state == PendingPhotoState.Failed) photo.copy(state = PendingPhotoState.Waiting)
+            if (photo.state == PendingPhotoState.Failed)
+                photo.copy(state = PendingPhotoState.Waiting)
             else photo
         }
         uploadSoon()
@@ -98,11 +98,10 @@ class PendingPhotoUploader(
     /** Uploads the waiting photos, oldest first, while uploading is allowed. */
     private suspend fun uploadWaitingPhotos() {
         while (allowed.value) {
-            val endsPass =
-                uploadLock.withLock {
-                    val next = directory.oldestWaiting() ?: return
-                    uploadOne(next)
-                }
+            val endsPass = uploadLock.withLock {
+                val next = directory.oldestWaiting() ?: return
+                uploadOne(next)
+            }
             if (endsPass) return
         }
     }

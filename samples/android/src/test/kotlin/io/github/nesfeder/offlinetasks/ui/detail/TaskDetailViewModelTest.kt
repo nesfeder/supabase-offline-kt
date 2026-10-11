@@ -205,7 +205,9 @@ class TaskDetailViewModelTest {
         // Then — the photo stays, marked failed with why
         val failed =
             viewModel
-                .editing { it.photos.singleOrNull()?.pendingUpload?.state == PendingPhotoState.Failed }
+                .editing {
+                    it.photos.singleOrNull()?.pendingUpload?.state == PendingPhotoState.Failed
+                }
                 .photos
                 .single()
         assertEquals("PhotoStorageException", failed.pendingUpload?.failureMessage)
@@ -229,7 +231,9 @@ class TaskDetailViewModelTest {
         viewModel.addPhoto("content://picked/1")
         val failed =
             viewModel
-                .editing { it.photos.singleOrNull()?.pendingUpload?.state == PendingPhotoState.Failed }
+                .editing {
+                    it.photos.singleOrNull()?.pendingUpload?.state == PendingPhotoState.Failed
+                }
                 .photos
                 .single()
 

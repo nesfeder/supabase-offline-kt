@@ -113,8 +113,8 @@ private val STARTER_TITLES = listOf("Water the plants", "Call the dentist", "Buy
  *   every screen.
  * @param photoFiles where the downloaded photo files are kept on the device.
  * @param pendingPhotos the app's pending-photo queue: by default a new temporary directory, its
- *   files read and written on the calling thread so virtual time stays in step, deleted when [scope]
- *   ends.
+ *   files read and written on the calling thread so virtual time stays in step, deleted when
+ *   [scope] ends.
  * @param networkAvailability whether the device has a network, as a connectivity monitor reports.
  * @param seedSampleTasks whether the first user starts with [sampleTasks] on the server.
  */
@@ -190,12 +190,16 @@ class InMemoryTaskRepository(
         PendingPhotoUploader(
             directory = pendingPhotos,
             canUpload =
-                publishedSyncStatus.map { it.network }.distinctUntilChanged().map {
-                    it == AppNetworkStatus.Online || it == AppNetworkStatus.Unknown
+                publishedSyncStatus
+                    .map { it.network }
+                    .distinctUntilChanged()
+                    .map {
+                        it == AppNetworkStatus.Online || it == AppNetworkStatus.Unknown
+                    },
+            upload =
+                PendingPhotoUpload { photo, jpeg, onProgress ->
+                    sendPendingPhoto(photo, jpeg, onProgress)
                 },
-            upload = PendingPhotoUpload { photo, jpeg, onProgress ->
-                sendPendingPhoto(photo, jpeg, onProgress)
-            },
             describeFailure = { it::class.simpleName.orEmpty() },
         )
 
@@ -227,15 +231,14 @@ class InMemoryTaskRepository(
         it.taskSnapshot(rows = { task -> task.id == id }, writes = { it.rowKey == id })
     }
 
-    override fun photos(taskId: String): Flow<PhotoListSnapshot> =
-        observe { current ->
-                current.photoSnapshot(
-                    newestFirst = false,
-                    rows = { it.taskId == taskId },
-                    writes = { it.concernsPhotosOf(taskId) },
-                )
-            }
-            .withPendingPhotos(taskId, OLDEST_FIRST)
+    override fun photos(taskId: String): Flow<PhotoListSnapshot> = observe { current ->
+        current.photoSnapshot(
+            newestFirst = false,
+            rows = { it.taskId == taskId },
+            writes = { it.concernsPhotosOf(taskId) },
+        )
+    }
+        .withPendingPhotos(taskId, OLDEST_FIRST)
 
     override fun allPhotos(): Flow<PhotoListSnapshot> =
         storedPhotos().withPendingPhotos(taskId = null, NEWEST_FIRST)
@@ -251,7 +254,9 @@ class InMemoryTaskRepository(
                     current.visibleRows()?.photos?.values.orEmpty().filter { it.taskId in taskIds }
                 val taskOfPhoto =
                     stored.associate { it.id to it.taskId } +
-                        pending.filter { it.taskId in taskIds }.associate { it.photoId to it.taskId }
+                        pending
+                            .filter { it.taskId in taskIds }
+                            .associate { it.photoId to it.taskId }
                 taskOfPhoto.values.groupingBy { it }.eachCount()
             }
             .distinctUntilChanged()
@@ -270,7 +275,9 @@ class InMemoryTaskRepository(
             val shown =
                 pending
                     .filter { taskId == null || it.taskId == taskId }
-                    .map { it.toTaskPhoto(pendingPhotos.fileOf(it.photoId).path, progress[it.photoId]) }
+                    .map {
+                        it.toTaskPhoto(pendingPhotos.fileOf(it.photoId).path, progress[it.photoId])
+                    }
             snapshot.plusPendingPhotos(shown, order)
         }
 
@@ -403,8 +410,9 @@ class InMemoryTaskRepository(
         uploader.retry(photoId)
     }
 
-    override suspend fun removePendingPhoto(photoId: String): Boolean =
-        uploader.pausedWhile { pendingPhotos.remove(photoId) }
+    override suspend fun removePendingPhoto(photoId: String): Boolean = uploader.pausedWhile {
+        pendingPhotos.remove(photoId)
+    }
 
     /**
      * Uploads a pending [photo] as the library-backed repository does: the file (unless an earlier

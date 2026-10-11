@@ -67,8 +67,8 @@ interface TaskRepository {
     fun allPhotos(): Flow<PhotoListSnapshot>
 
     /**
-     * The newest [count] photos the server has, a page of the Photos grid, with every pending photo;
-     * asking for more reads a new page.
+     * The newest [count] photos the server has, a page of the Photos grid, with every pending
+     * photo; asking for more reads a new page.
      */
     fun photoPage(count: Int): Flow<PhotoListSnapshot>
 
@@ -371,8 +371,9 @@ interface TaskRepository {
     /**
      * Starts again as a new anonymous user with no tasks: clears local data, which stops a replay
      * already running, then deletes the current user's own photo files and rows from the server, so
-     * nothing is left behind there, then deletes the pending photos, signs out and signs in again. If a delete fails, its
-     * failure is thrown: the device is cleared, the server keeps what was not deleted yet, and the
+     * nothing is left behind there, then deletes the pending photos, signs out and signs in again.
+     * No pending photo uploads meanwhile. If a delete fails, its failure is thrown: the library's
+     * data is cleared, the pending photos and what was not deleted on the server are kept, and the
      * same user stays signed in, so Start over can be tried again.
      *
      * @throws NetworkUnavailableException while the network is off; nothing is deleted or cleared.

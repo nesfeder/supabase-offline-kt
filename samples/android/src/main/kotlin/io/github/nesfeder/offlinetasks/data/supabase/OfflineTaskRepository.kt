@@ -12,9 +12,9 @@ import io.github.nesfeder.offlinetasks.data.AppSyncStatus
 import io.github.nesfeder.offlinetasks.data.BucketListing
 import io.github.nesfeder.offlinetasks.data.EncodedPhoto
 import io.github.nesfeder.offlinetasks.data.LiveUpdatesStatus
+import io.github.nesfeder.offlinetasks.data.NEWEST_FIRST
 import io.github.nesfeder.offlinetasks.data.NetworkSwitchedOffException
 import io.github.nesfeder.offlinetasks.data.NetworkUnavailableException
-import io.github.nesfeder.offlinetasks.data.NEWEST_FIRST
 import io.github.nesfeder.offlinetasks.data.NewTaskOutcome
 import io.github.nesfeder.offlinetasks.data.NotSavedOnDeviceException
 import io.github.nesfeder.offlinetasks.data.OLDEST_FIRST
@@ -45,9 +45,9 @@ import io.github.nesfeder.offlinetasks.data.TaskWriteRefusedException
 import io.github.nesfeder.offlinetasks.data.UserSession
 import io.github.nesfeder.offlinetasks.data.WaitingChange
 import io.github.nesfeder.offlinetasks.data.photoObjectPath
+import io.github.nesfeder.offlinetasks.data.plusPendingPhotos
 import io.github.nesfeder.offlinetasks.data.takeCharacters
 import io.github.nesfeder.offlinetasks.data.toTaskPhoto
-import io.github.nesfeder.offlinetasks.data.plusPendingPhotos
 import io.github.nesfeder.supabase.offline.CacheMissException
 import io.github.nesfeder.supabase.offline.FlowReadStrategy
 import io.github.nesfeder.supabase.offline.MutationOutcome
@@ -164,9 +164,10 @@ class OfflineTaskRepository(
         PendingPhotoUploader(
             directory = pendingPhotos,
             canUpload = photoUploadChances(),
-            upload = PendingPhotoUpload { photo, jpeg, onProgress ->
-                uploadPendingPhoto(photo, jpeg, onProgress)
-            },
+            upload =
+                PendingPhotoUpload { photo, jpeg, onProgress ->
+                    uploadPendingPhoto(photo, jpeg, onProgress)
+                },
             describeFailure = describeFailure,
         )
 
@@ -489,8 +490,9 @@ class OfflineTaskRepository(
         uploader.retry(photoId)
     }
 
-    override suspend fun removePendingPhoto(photoId: String): Boolean =
-        uploader.pausedWhile { pendingPhotos.remove(photoId) }
+    override suspend fun removePendingPhoto(photoId: String): Boolean = uploader.pausedWhile {
+        pendingPhotos.remove(photoId)
+    }
 
     // --8<-- [start:pending-photo-upload]
     /**

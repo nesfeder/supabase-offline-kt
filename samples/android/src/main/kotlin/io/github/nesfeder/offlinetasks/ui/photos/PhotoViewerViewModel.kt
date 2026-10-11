@@ -56,7 +56,7 @@ sealed interface PhotoViewerUiState {
         val isPending: Boolean
             get() = photo.pendingUpload != null
 
-        /** Deleting the photo needs the server, for its file; a pending one is only on the device. */
+        /** Deleting needs the server, for the file; a pending photo is only on this device. */
         val canDelete: Boolean
             get() = isPending || canChange
     }
@@ -150,8 +150,7 @@ class PhotoViewerViewModel(
         val showing = uiState.value as? PhotoViewerUiState.Showing ?: return
         viewModelScope.launchReporting(failures) {
             val path =
-                showing.photo.pendingUpload?.localPath
-                    ?: repository.photoFileToShare(showing.photo)
+                showing.photo.pendingUpload?.localPath ?: repository.photoFileToShare(showing.photo)
             messageChannel.send(PhotoViewerMessage.SharePhoto(path))
         }
     }

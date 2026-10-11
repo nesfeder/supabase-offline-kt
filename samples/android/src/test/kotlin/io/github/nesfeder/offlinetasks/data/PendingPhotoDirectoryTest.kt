@@ -61,7 +61,10 @@ class PendingPhotoDirectoryTest {
             add(photo, byteArrayOf(1))
             update(photo.photoId) { it.copy(state = PendingPhotoState.Uploading, attempts = 1) }
         }
-        val lone = File(root, "00000000-0000-4000-8000-0000000000ff.jpg").apply { writeBytes(byteArrayOf(2)) }
+        val lone =
+            File(root, "00000000-0000-4000-8000-0000000000ff.jpg").apply {
+                writeBytes(byteArrayOf(2))
+            }
 
         // When
         val reread = PendingPhotoDirectory(root).photos.first()
@@ -85,7 +88,10 @@ class PendingPhotoDirectoryTest {
 
         // Then
         assertEquals(listOf(kept), directory.photos.first())
-        assertEquals(setOf("$KEPT_PHOTO_ID.jpg", "$KEPT_PHOTO_ID.json"), root.list().orEmpty().toSet())
+        assertEquals(
+            setOf("$KEPT_PHOTO_ID.jpg", "$KEPT_PHOTO_ID.json"),
+            root.list().orEmpty().toSet(),
+        )
     }
 
     private fun testPendingPhoto(

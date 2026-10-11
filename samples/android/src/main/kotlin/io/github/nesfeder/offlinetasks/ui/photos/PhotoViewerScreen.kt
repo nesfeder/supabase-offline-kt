@@ -198,7 +198,7 @@ fun PhotoViewerScreen(
                             contentDescription = stringResource(R.string.photo_share),
                         )
                     }
-                    // A photo waiting to upload has no file in the bucket: nothing to tell or change.
+                    // A pending photo has no file in the bucket: nothing to tell or change.
                     val inBucket = showing?.isPending != true
                     if (inBucket) {
                         IconButton(
@@ -263,7 +263,8 @@ fun PhotoViewerScreen(
             val pending = state.photo.pendingUpload
             when {
                 pending != null -> PendingFooter(pending, onDelete, actions.onRetryUpload, footer)
-                !state.canDelete -> FooterText(stringResource(R.string.photo_delete_offline), footer)
+                !state.canDelete ->
+                    FooterText(stringResource(R.string.photo_delete_offline), footer)
             }
         }
     }

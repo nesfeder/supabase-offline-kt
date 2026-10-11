@@ -85,7 +85,10 @@ class PendingPhotoDirectory(
     }
 
     /** Deletes the photo [photoId], file and record; false when there was none. */
-    suspend fun remove(photoId: String): Boolean = removeWhere { it.photoId == photoId }.isNotEmpty()
+    suspend fun remove(photoId: String): Boolean {
+        val removed = removeWhere { it.photoId == photoId }
+        return removed.isNotEmpty()
+    }
 
     /** Deletes the pending photos of the task [taskId] and returns them. */
     suspend fun removeTask(taskId: String): List<PendingPhoto> = removeWhere { it.taskId == taskId }

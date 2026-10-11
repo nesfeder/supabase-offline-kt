@@ -148,7 +148,9 @@ class FakeSupabaseServer {
                     else -> error("FakeSupabaseServer has no route for $path")
                 }
             }
-        if (loseUploadAnswers && request.method == HttpMethod.Post && path.startsWith(UPLOAD_PREFIX)) {
+        if (
+            loseUploadAnswers && request.method == HttpMethod.Post && path.startsWith(UPLOAD_PREFIX)
+        ) {
             throw IOException("connection lost after the upload")
         }
         return response

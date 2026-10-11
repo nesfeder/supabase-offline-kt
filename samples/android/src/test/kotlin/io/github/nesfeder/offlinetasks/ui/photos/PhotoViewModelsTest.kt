@@ -71,7 +71,10 @@ class PhotoViewModelsTest {
         viewModel.delete()
 
         // Then — gone from the device
-        assertEquals(PhotoViewerUiState.Gone, viewModel.uiState.first { it == PhotoViewerUiState.Gone })
+        assertEquals(
+            PhotoViewerUiState.Gone,
+            viewModel.uiState.first { it == PhotoViewerUiState.Gone },
+        )
     }
 
     @Test

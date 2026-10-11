@@ -33,6 +33,7 @@ import io.github.nesfeder.offlinetasks.testing.FakeUserSession
 import io.github.nesfeder.offlinetasks.testing.addUploadedPhoto
 import io.github.nesfeder.supabase.offline.NetworkStatus
 import java.io.File
+import kotlin.io.path.createTempDirectory
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
@@ -43,7 +44,6 @@ import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
-import kotlin.io.path.createTempDirectory
 import kotlin.time.Clock
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
@@ -442,7 +442,10 @@ class OfflineTaskRepositoryTest {
         val pending = assertNotNull(photo.pendingUpload)
         assertEquals(PendingPhotoState.Waiting, pending.state)
         assertTrue(File(pending.localPath).isFile)
-        assertEquals("${FakeUserSession.FIRST_USER_ID}/${task.id}/${photo.id}.jpg", photo.objectPath)
+        assertEquals(
+            "${FakeUserSession.FIRST_USER_ID}/${task.id}/${photo.id}.jpg",
+            photo.objectPath,
+        )
         assertTrue(server.files.isEmpty())
     }
 
@@ -481,7 +484,8 @@ class OfflineTaskRepositoryTest {
         val photo = repository.addUploadedPhoto(task.id, EncodedPhoto(jpeg, 4, 3))
 
         // Then — the file reached Storage before the row reached the table
-        val upload = server.requests.indexOf("POST /storage/v1/object/task-photos/${photo.objectPath}")
+        val upload =
+            server.requests.indexOf("POST /storage/v1/object/task-photos/${photo.objectPath}")
         val row = server.requests.indexOf("POST /rest/v1/task_photos")
         assertTrue(upload in 0 until row, "not the file first, then the row: ${server.requests}")
         assertContentEquals(jpeg, server.files.getValue(photo.objectPath))
@@ -766,9 +770,11 @@ class OfflineTaskRepositoryTest {
     }
 
     /** Whether these photos are listed and every one has finished uploading. */
-    private fun List<TaskPhoto>.isUploaded(): Boolean = isNotEmpty() && all {
-        it.pendingUpload == null
-    }
+    private fun List<TaskPhoto>.isUploaded(): Boolean =
+        isNotEmpty() &&
+            all {
+                it.pendingUpload == null
+            }
 
     /** The time a Realtime change is stamped with; the library does not read it. */
     private fun now() = Clock.System.now()
