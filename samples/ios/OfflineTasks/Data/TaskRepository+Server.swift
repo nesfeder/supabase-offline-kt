@@ -31,9 +31,7 @@ extension TaskRepository {
     /// count is never cached, so under the default strategy, as under any but cache-only, it asks
     /// the server, and offline it fails.
     func serverTaskCount() async throws -> Int {
-        let response = try await client.from(Tables.tasks)
-            .select("id", head: true, count: .exact)
-            .execute()
+        let response = try await client.from(Tables.tasks).select("id", head: true, count: .exact).execute()
         return response.count ?? 0
     }
     // --8<-- [end:count]
