@@ -47,6 +47,7 @@ class OfflineClientPlacementAndroidTest {
     private val root: Path =
         File(context.cacheDir, "offline-placement-${Random.nextLong().toULong()}").toOkioPath()
     private val defaultDatabase: File = context.getDatabasePath("supabase_offline.db")
+    private val defaultFiles: Path = File(context.filesDir, "supabase_offline").toOkioPath()
 
     @BeforeTest
     fun setUp() {
@@ -54,6 +55,7 @@ class OfflineClientPlacementAndroidTest {
         listOf("", "-wal", "-shm", "-journal").forEach { suffix ->
             File("${defaultDatabase.path}$suffix").delete()
         }
+        FileSystem.SYSTEM.deleteRecursively(defaultFiles, mustExist = false)
     }
 
     @AfterTest
@@ -94,6 +96,28 @@ class OfflineClientPlacementAndroidTest {
             assertTrue(FileSystem.SYSTEM.exists(configured / "supabase_offline.db"))
             assertFalse(defaultDatabase.exists(), "the default database was left behind")
             assertFalse(File("${defaultDatabase.path}-wal").exists())
+        } finally {
+            client.close()
+        }
+    }
+
+    @Test
+    fun a_configured_directory_takes_the_default_file_cache_along() = runTest {
+        // Given — an install with a queued write and a downloaded file at the default location
+        queueOneWriteOffline()
+        val downloaded = defaultFiles / "storage" / "photos" / "a.jpg"
+        FileSystem.SYSTEM.createDirectories(defaultFiles / "storage" / "photos")
+        FileSystem.SYSTEM.write(downloaded) { writeUtf8("file") }
+        val configured = root / "configured"
+
+        // When — the app starts setting dataDirectory
+        val client = openAndroidClient(context, newTestSupabaseClient(), configIn(configured))
+
+        // Then — the file is where clearLocalData() reaches it, and gone from the default one
+        try {
+            val moved = configured / "storage" / "photos" / "a.jpg"
+            assertEquals("file", FileSystem.SYSTEM.read(moved) { readUtf8() })
+            assertFalse(FileSystem.SYSTEM.exists(downloaded), "the download was left behind")
         } finally {
             client.close()
         }

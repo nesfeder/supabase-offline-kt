@@ -93,7 +93,7 @@ The settings:
 | --- | --- | --- |
 | `cacheSizeBytes: Long` | 100 MiB | The most the cached query results may hold, counted as the summed length of the cached responses, not the database file. Past it, the results fetched longest ago are evicted, never one of up to 500 queries a live reader shows. Any other value below 4 KiB counts as 4 KiB; `CACHE_SIZE_UNLIMITED` turns eviction off. |
 | `fileCacheSizeBytes: Long` | 256 MiB | The most the Storage file cache may hold. Past it, the least recently used files are deleted, never one being read or used in the last 30 seconds. Any other value below zero counts as zero; `CACHE_SIZE_UNLIMITED` turns eviction off. |
-| `dataDirectory: String?` | `null` | Where the database, `supabase_offline.db`, and the file cache live. `null` is the platform's place: the app's database directory and `<filesDir>/supabase_offline` on Android, `Library/Application Support` on iOS, where a database found in `Documents`, an earlier default, is first moved with its files. When this directory has no database and the default place has one no client holds, the first client moves it here, unsent writes included; when it cannot, it opens the one it can without leaving queued writes behind, and logs a warning. |
+| `dataDirectory: String?` | `null` | Where the database, `supabase_offline.db`, and the file cache live. `null` is the platform's place: the app's database directory and `<filesDir>/supabase_offline` on Android, `Library/Application Support` on iOS, where a database found in `Documents`, an earlier default, is first moved with its files. When this directory has no database and the default place has one no client holds, the first client moves it here, unsent writes included, and then its file cache; when it cannot, it opens the one it can without leaving queued writes behind, and logs a warning. |
 | `networkAvailability: Flow<Boolean>?` | `null` | The app's own connectivity signal, `true` while online, in place of the platform's monitor. `null` uses the monitor. |
 | `autoSync: Boolean` | `true` | Whether the library sends queued writes by itself when the session settles and when the network comes back. |
 | `primaryKeys`, `primaryKey(table, vararg columns)` | `id` | Each table's key columns, by its name in the default schema and as `schema.table` in another: how the cache recognizes a row. `primaryKey` throws `IllegalArgumentException` for no column. |
@@ -968,8 +968,9 @@ On iOS, a database in `Documents`, where an earlier default kept it, first moves
 place in `Library/Application Support` with its side files and its file cache, unless another client
 holds it or the default place already has a database (then it is left, and a warning logged); a file
 cache that cannot move is deleted, so no cached file outlives a clear. With `dataDirectory` set, a
-database at the default place moves there when that directory has none and nothing holds the default
-one. Room then opens the database on the bundled SQLite, and the client is built over it: every
+database at the default place moves there, with its side files and then its file cache, when that
+directory has none and nothing holds the default one; a file cache that cannot move is deleted
+there too, unless the two directories overlap. Room then opens the database on the bundled SQLite, and the client is built over it: every
 setting of `Offline.Config` reaches the engine in that one function, read once (the opener also
 reads `dataDirectory`, and the version check `logLevel`). The client installs its request-pipeline
 phases once (the dry-run check, the read-shape check, the transport-failure capture and the

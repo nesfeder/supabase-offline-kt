@@ -420,3 +420,7 @@ release.
   the user's cached copy and is answered from it. The download went out on the anon key, and
   Storage answers an object that key may not read as "not found", so the copy was dropped and an
   app opening a private file at launch lost it until the next download.
+- A client that opens with `dataDirectory` newly set, and moves the database from the default
+  location, moves the downloaded files with it; one that cannot move is deleted, to be downloaded
+  again. They stayed in the default directory, where `clearLocalData()` no longer reached them and,
+  on Android, Auto Backup still included them.

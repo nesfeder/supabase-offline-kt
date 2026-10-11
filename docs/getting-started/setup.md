@@ -236,14 +236,10 @@ Or keep everything in a directory Android never backs up, and a new install need
 ### A data directory, and a second process
 
 When `dataDirectory` names a directory that holds no database yet, and the default location holds
-one, the first client moves the database there, with its unsent writes; the downloaded files stay
-where they were. When it cannot, it keeps using the default one and logs a warning.
-
-So an app that already shipped with the default, and then sets `dataDirectory`, keeps its old
-downloads in `<filesDir>/supabase_offline/` (Android) or
-`Library/Application Support/supabase_offline/` (iOS), where `clearLocalData()` no longer reaches
-them and Android's Auto Backup still includes them. Delete that directory yourself once the client
-has opened on the new one, and keep its backup `exclude` line until then.
+one, the first client moves the database there, with its unsent writes, and then the downloaded
+files. A downloaded file that cannot move is deleted, to be downloaded again, so none is left where
+`clearLocalData()` no longer reaches it. When the database cannot move, the client keeps using the
+default one and logs a warning.
 
 The claim on the database is per process. If your app runs code in a second process (a service or
 a WorkManager worker declared with `android:process`), do not install the plugin there: two

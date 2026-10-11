@@ -22,8 +22,8 @@ import okio.SYSTEM
 /**
  * Opens [config]'s client over Room. The database is `supabase_offline.db` and downloaded files
  * live under `supabase_offline`, both in `Library/Application Support`, or both in
- * [Offline.Config.dataDirectory] when it is set; a database at the default location moves there,
- * and one in `Documents`, an earlier default, first moves to the default location with its files.
+ * [Offline.Config.dataDirectory] when it is set; a database at the default location moves there
+ * with its files, and one in `Documents`, an earlier default, first moves to the default location.
  * Both are excluded from iCloud and device backups.
  */
 internal actual fun openPlatformClient(
@@ -59,7 +59,7 @@ internal actual fun openPlatformClient(
                     .addCallback(BackupExclusionCallback(databasePath))
             )
         },
-        defaultDatabasePath = defaultPath.takeIf { configuredDirectory != null },
+        defaultLocation = defaultLocation.takeIf { configuredDirectory != null },
         platformNetworkAvailability = pathMonitorNetworkAvailability(),
     )
 }
