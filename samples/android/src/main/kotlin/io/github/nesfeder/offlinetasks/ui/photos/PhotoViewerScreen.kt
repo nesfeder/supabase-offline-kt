@@ -83,6 +83,9 @@ import kotlinx.coroutines.launch
 /** The largest zoom a pinch reaches. */
 private const val MAX_ZOOM = 5f
 
+/** The dark the bar and the footer fade from, so white reads over any photo. */
+private val ScrimColor = Color.Black.copy(alpha = 0.6f)
+
 /** The photo viewer destination, wired to its ViewModel; it closes when the photo goes. */
 @Composable
 fun PhotoViewerRoute(
@@ -234,11 +237,7 @@ fun PhotoViewerScreen(
                     ),
                 modifier =
                     Modifier.fillMaxWidth()
-                        .background(
-                            Brush.verticalGradient(
-                                listOf(Color.Black.copy(alpha = 0.6f), Color.Transparent)
-                            )
-                        ),
+                        .background(Brush.verticalGradient(listOf(ScrimColor, Color.Transparent))),
             )
         }
         AppSnackbarHost(Modifier.align(Alignment.BottomCenter).navigationBarsPadding())
@@ -259,7 +258,13 @@ fun PhotoViewerScreen(
             )
         }
         if (state is PhotoViewerUiState.Showing && chromeVisible) {
-            val footer = Modifier.align(Alignment.BottomCenter).navigationBarsPadding()
+            // Dark behind the words, as behind the bar, so they read over a light photo too.
+            val footer =
+                Modifier.align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .background(Brush.verticalGradient(listOf(Color.Transparent, ScrimColor)))
+                    .navigationBarsPadding()
+                    .padding(16.dp)
             val pending = state.photo.pendingUpload
             when {
                 pending != null -> PendingFooter(pending, onDelete, actions.onRetryUpload, footer)
@@ -281,7 +286,7 @@ private fun PendingFooter(
     onRetry: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Column(modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
         if (upload.state == PendingPhotoState.Failed) {
             FooterText(failedUploadText(upload))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
