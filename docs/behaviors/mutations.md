@@ -64,7 +64,7 @@ From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabas
 === "Android"
 
     ```kotlin
-    --8<-- "data/supabase/OfflineTaskRepository.kt:bulk-insert"
+    --8<-- "data/supabase/OfflineTaskRepository.kt:insert-list"
 
     --8<-- "data/supabase/OfflineTaskRepository.kt:starter-list"
 
@@ -155,7 +155,7 @@ From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabas
 === "Android"
 
     ```kotlin
-    --8<-- "data/supabase/OfflineTaskRepository.kt:grouped-delete"
+    --8<-- "data/supabase/OfflineTaskRepository.kt:same-column-write"
     ```
 
 === "iOS"
@@ -246,6 +246,8 @@ From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabas
 
     ```kotlin
     --8<-- "data/supabase/OfflineTaskRepository.kt:pending"
+
+    --8<-- "data/supabase/OfflineTaskRepository.kt:discard"
 
     --8<-- "data/supabase/LibraryMappings.kt:waiting-change"
 

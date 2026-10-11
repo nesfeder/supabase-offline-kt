@@ -10,9 +10,9 @@ From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabas
 === "Android"
 
     ```kotlin
-    --8<-- "data/supabase/OfflineTaskRepository.kt:network-first"
+    --8<-- "data/supabase/OfflineTaskRepository.kt:first-read"
 
-    --8<-- "data/supabase/OfflineTaskRepository.kt:cache-first"
+    --8<-- "data/supabase/OfflineTaskRepository.kt:badge-read"
 
     --8<-- "data/supabase/OfflineTaskRepository.kt:network-only"
     ```

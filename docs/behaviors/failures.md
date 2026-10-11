@@ -13,7 +13,7 @@ From the samples: [LibraryFailures.kt](https://github.com/nesfeder/supabase-offl
 === "Android"
 
     ```kotlin
-    --8<-- "data/supabase/LibraryFailures.kt:failure-mapping"
+    --8<-- "data/supabase/LibraryFailures.kt:failure-codes"
     ```
 
 === "iOS"

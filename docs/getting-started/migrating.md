@@ -177,9 +177,9 @@ From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabas
 === "Android"
 
     ```kotlin
-    --8<-- "data/supabase/OfflineTaskRepository.kt:rpc-no-parameters"
+    --8<-- "data/supabase/OfflineTaskRepository.kt:rpc-no-params"
 
-    --8<-- "data/supabase/OfflineTaskRepository.kt:rpc-parameters"
+    --8<-- "data/supabase/OfflineTaskRepository.kt:rpc-typed"
     ```
 
 === "iOS"

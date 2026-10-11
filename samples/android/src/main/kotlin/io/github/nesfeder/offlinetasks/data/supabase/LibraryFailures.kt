@@ -63,7 +63,7 @@ internal sealed interface LibraryCall {
     data class Storage(val objectPath: String) : LibraryCall
 }
 
-// --8<-- [start:failure-mapping]
+// --8<-- [start:failure-codes]
 /**
  * Every failure a library call can throw, in the app's terms: one branch for each kind, each with a
  * sentence of its own on screen. The library's own types come first, then supabase-kt's, which the
@@ -103,7 +103,7 @@ internal fun Throwable.toAppFailure(call: LibraryCall): Throwable =
         else -> this // unexpected: reported as it is
     }
 
-// --8<-- [end:failure-mapping]
+// --8<-- [end:failure-codes]
 
 /** PostgREST's refusal: of a write, the task it was for; of anything else, its status. */
 private fun PostgrestRestException.serverRefusal(call: LibraryCall): Exception =

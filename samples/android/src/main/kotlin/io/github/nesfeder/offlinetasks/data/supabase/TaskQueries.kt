@@ -68,7 +68,7 @@ internal fun PostgrestRequestBuilder.tasksMatching(query: TaskQuery, recent: Rec
     newestFirst()
 }
 
-// --8<-- [start:filters]
+// --8<-- [start:filter-chips]
 /** The chips as filters the server applies; the overlay evaluates `eq` and `is` offline too. */
 private fun PostgrestFilterBuilder.chip(filter: TaskFilter, recent: RecentWindow) {
     when (filter) {
@@ -79,7 +79,7 @@ private fun PostgrestFilterBuilder.chip(filter: TaskFilter, recent: RecentWindow
     }
 }
 
-// --8<-- [end:filters]
+// --8<-- [end:filter-chips]
 
 // --8<-- [start:same-column]
 /**

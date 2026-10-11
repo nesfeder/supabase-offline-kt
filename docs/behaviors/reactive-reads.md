@@ -105,13 +105,13 @@ From the samples: [TaskQueries.kt](https://github.com/nesfeder/supabase-offline-
 === "Android"
 
     ```kotlin
-    --8<-- "data/supabase/TaskQueries.kt:filters"
+    --8<-- "data/supabase/TaskQueries.kt:filter-chips"
 
     --8<-- "data/supabase/TaskQueries.kt:search"
 
     --8<-- "data/supabase/OfflineTaskRepository.kt:photo-rows-in"
 
-    --8<-- "data/supabase/OfflineTaskRepository.kt:paged-photos"
+    --8<-- "data/supabase/OfflineTaskRepository.kt:photos-page"
     ```
 
 === "iOS"

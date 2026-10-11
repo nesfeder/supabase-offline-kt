@@ -300,7 +300,7 @@ class OfflineTaskRepository(
 
     // --8<-- [end:duplicate-task]
 
-    // --8<-- [start:bulk-insert]
+    // --8<-- [start:insert-list]
     /** Five tasks in one write: one request online, one queued write offline. */
     override suspend fun addSampleTasks(): TaskMutationOutcome {
         val rows = SAMPLE_TITLES.map { title -> newTaskRow(title, notes = null) }
@@ -310,7 +310,7 @@ class OfflineTaskRepository(
             .toTaskMutationOutcome()
     }
 
-    // --8<-- [end:bulk-insert]
+    // --8<-- [end:insert-list]
 
     // --8<-- [start:starter-list]
     /**
@@ -352,7 +352,7 @@ class OfflineTaskRepository(
 
     // --8<-- [end:json-insert]
 
-    // --8<-- [start:grouped-delete]
+    // --8<-- [start:same-column-write]
     /**
      * This week's done tasks, deleted with one grouped filter. The queue cannot record a group, so
      * the write is sent at once, and refused with no connection rather than queued.
@@ -373,7 +373,7 @@ class OfflineTaskRepository(
             .toTaskMutationOutcome()
     }
 
-    // --8<-- [end:grouped-delete]
+    // --8<-- [end:same-column-write]
 
     // --8<-- [start:delete-task]
     /** A task's photo files (online only), then its photo rows, then the task itself. */
@@ -521,13 +521,14 @@ class OfflineTaskRepository(
     /** Every write in the queue, in the order it will be sent, as rows of the Sync tab. */
     override fun waitingChanges(): Flow<List<WaitingChange>> =
         offline.pendingMutations().map { mutations -> mutations.map { it.toWaitingChange() } }
+    // --8<-- [end:pending]
 
+    // --8<-- [start:discard]
     /** Discard: the write is never sent, and its rows show again as the server last sent them. */
     override suspend fun discardWaitingChange(id: Long) {
         offline.discardPendingMutation(id)
     }
-
-    // --8<-- [end:pending]
+    // --8<-- [end:discard]
 
     // --8<-- [start:rejected-list]
     /** The refused writes, newest first (the library lists the oldest first), until dismissed. */
@@ -569,7 +570,7 @@ class OfflineTaskRepository(
 
     // --8<-- [end:sync-now]
 
-    // --8<-- [start:network-first]
+    // --8<-- [start:first-read]
     /**
      * Pull to refresh: the server's answer when it can be reached, else the device's copy if it is
      * a day old at most; the answer says which it was.
@@ -583,9 +584,9 @@ class OfflineTaskRepository(
             .toReadProvenance()
     }
 
-    // --8<-- [end:network-first]
+    // --8<-- [end:first-read]
 
-    // --8<-- [start:cache-first]
+    // --8<-- [start:badge-read]
     /**
      * The open-task badge at launch: from the device's copy when it is a day old at most, so it
      * shows at once, and from the server otherwise; null when neither can answer.
@@ -610,9 +611,9 @@ class OfflineTaskRepository(
         }
     }
 
-    // --8<-- [end:cache-first]
+    // --8<-- [end:badge-read]
 
-    // --8<-- [start:rpc-no-parameters]
+    // --8<-- [start:rpc-no-params]
     /**
      * Mark all done: one database function, on the server. Its changes reach the device's lists as
      * any other device's do: through Live updates, or the next refresh.
@@ -621,9 +622,9 @@ class OfflineTaskRepository(
         offline.rpc("complete_all_tasks").decodeAs<Int>() // how many it changed
     }
 
-    // --8<-- [end:rpc-no-parameters]
+    // --8<-- [end:rpc-no-params]
 
-    // --8<-- [start:rpc-parameters]
+    // --8<-- [start:rpc-typed]
     /** The Server section: a count, and a database function called with its parameters twice. */
     override suspend fun serverCounts(): ServerCounts = read {
         val since = recentWindow(clock.now()).from
@@ -645,7 +646,7 @@ class OfflineTaskRepository(
         )
     }
 
-    // --8<-- [end:rpc-parameters]
+    // --8<-- [end:rpc-typed]
 
     // --8<-- [start:count]
     /**
@@ -817,7 +818,7 @@ class OfflineTaskRepository(
 
     // --8<-- [end:first-observed-read]
 
-    // --8<-- [start:paged-photos]
+    // --8<-- [start:photos-page]
     /** The user's photos, newest first: all of them, or the first [page] when the grid pages. */
     private fun photoList(
         strategy: FlowReadStrategy,
@@ -839,7 +840,7 @@ class OfflineTaskRepository(
             }
         }
 
-    // --8<-- [end:paged-photos]
+    // --8<-- [end:photos-page]
 
     /** [read] while there is a session; before, [before] alone, and nothing is sent. */
     @OptIn(ExperimentalCoroutinesApi::class)
