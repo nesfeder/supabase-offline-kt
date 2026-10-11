@@ -105,6 +105,10 @@ release.
   same user to another table: it stops at the first write with an earlier one still queued
   elsewhere, and `SyncReport.heldBehindOtherTablesCount` counts what it held back. Sync every table
   to send them in order.
+- On Swift, the requirement of `OfflineFilterValue` is `offlineFilterText`, where it was
+  `filterText`, a name that showed in completion on `String`, `Int`, `Date`, `UUID` and every other
+  standard type that conforms, and could collide with one an app declares. A type of your own that
+  conforms declares `var offlineFilterText: String`.
 
 ### Added
 
