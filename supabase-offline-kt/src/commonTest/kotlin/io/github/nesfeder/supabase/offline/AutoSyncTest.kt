@@ -25,6 +25,7 @@ import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.SupervisorJob
@@ -442,8 +443,13 @@ class AutoSyncTest {
             val rig = rig(autoSync = true, mutationDao = mutationDao)
             rig.server.answer = { okJson("[]") }
 
-            // When — the app writes online before the check has read the queue
-            val write = async { rig.client.from(TABLE).insert(row(1)) }
+            // When — the app writes online before the check has read the queue; the write starts
+            // at once, as an app's first call does, so only the check's own start and lock keep
+            // it from being queued first
+            val write =
+                async(start = CoroutineStart.UNDISPATCHED) {
+                    rig.client.from(TABLE).insert(row(1))
+                }
             runCurrent()
             val queuedBeforeTheCheckRead = mutationDao.insertCalls
             mutationDao.beforeWholeQueueCheck = null

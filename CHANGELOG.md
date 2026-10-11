@@ -403,8 +403,8 @@ release.
   status follows the queue again, and a write the server applied (or refused), or a discard that
   happened, is reported as it happened rather than as the failed read.
 - A sync that `clearLocalData()` cut short reports the writes it had sent before.
-- A write made as a client without Auth opens is sent at once and returns `Applied`. The pass that
-  client starts for writes an earlier run left could find the new write in the queue and send it
-  itself, so the write returned `Queued` with the network up and nothing ahead of it; it was still
-  sent once, and never twice.
+- A write made as a client without Auth opens, with `autoSync` on, is sent at once and returns
+  `Applied`. The pass that client starts for writes an earlier run left could find the new write in
+  the queue and send it itself, so the write returned `Queued` with the network up and nothing
+  ahead of it; it was still sent once, and never twice.
 - While a stored session restores, reads and writes read it once between them, not once each.
