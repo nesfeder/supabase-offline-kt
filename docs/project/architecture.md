@@ -1139,6 +1139,7 @@ The decisions that shaped the API and the engine, with the date each was settled
 | 2026-10-04 | On iOS the data lives in `Library/Application Support`; a database found in `Documents` moves there. | `Documents` is the user's own files: with file sharing on, the Files app shows the queue of unsent writes, and the user can delete it. |
 | 2026-10-04 | The testing artifact's published metadata pins the library to its own version. | It calls into the library outside the API records; a mismatch should fail resolution, not a test with a missing method. |
 | 2026-10-04 | The platform file helpers extend `OfflineBucketApi` and return non-null. | On the offline bucket they needed a `!!`, and on supabase-kt's own they compiled and silently returned `null`. |
+| 2026-10-05 | A pattern list the server would read as another list (empty, or a pattern that is empty, `NULL`, edged with white space or holding a brace) is refused, before anything is sent or queued. | supabase-kt quotes a pattern only when it holds one of `,.:()`, and `LIKE ALL` over no pattern matches every row, so a queued delete with `likeAll(column, listOf(""))` reached every row the user's policies admit. As with two filters on one column, the request is refused rather than rewritten, so it stays supabase-kt's own; a test pins what supabase-kt sends, so the canary shows the day it quotes these. |
 
 ### What it deliberately does not do
 
