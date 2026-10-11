@@ -61,7 +61,8 @@ class InvalidRequestException(val libraryMessage: String, cause: Throwable? = nu
     Exception(libraryMessage, cause)
 
 /** A row from the server did not decode into the app's type, or a value did not encode. */
-class RowUnreadableException(cause: Throwable? = null) : Exception("A row could not be read", cause)
+class RowFormatException(cause: Throwable? = null) :
+    Exception("A row could not be read or written", cause)
 
 /** The Supabase client is closed, or was built without a plugin the call needs. */
 class ClientUnavailableException(cause: Throwable? = null) :

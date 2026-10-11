@@ -88,9 +88,19 @@ kotlin {
 
 Build the supabase-kt client as you do today, and install the plugin last:
 
-```kotlin
---8<-- "GettingStartedExamples.kt:install"
-```
+From the samples: [SampleSupabaseClient.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/platform/SampleSupabaseClient.kt) · [AppModel.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/App/AppModel.swift)
+
+=== "Android"
+
+    ```kotlin
+    --8<-- "platform/SampleSupabaseClient.kt:install"
+    ```
+
+=== "iOS"
+
+    ```swift
+    --8<-- "swift/Tests/SupabaseOfflineTests/DocumentationListings/GettingStartedListings.swift:client"
+    ```
 
 Import `io.github.nesfeder.supabase.offline.offline` to reach it as `supabase.offline`, the way
 `supabase.postgrest` is reached.
@@ -119,13 +129,24 @@ The settings go in the `install(Offline) { … }` block. Every one has a default
 
 ## First read
 
-```kotlin
---8<-- "GettingStartedExamples.kt:first-read"
-```
+From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/OfflineTaskRepository.kt) · [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift)
 
-The call is supabase-kt's own, with its filters, order and range. Its read strategy defaults to
-`NetworkFirst`: the server answers, and the answer is kept on the device; when the server cannot
-be reached, the kept rows are served, with your queued writes laid over them. The first read must
+=== "Android"
+
+    ```kotlin
+    --8<-- "data/supabase/OfflineTaskRepository.kt:network-first"
+    ```
+
+=== "iOS"
+
+    ```swift
+    --8<-- "swift/Tests/SupabaseOfflineTests/DocumentationListings/GettingStartedListings.swift:first-read"
+    ```
+
+The call is supabase-kt's own, with its filters, order and range. `NetworkFirst` is the default
+read strategy; the sample names it only to give it a `maxAge`. The server answers, and the answer
+is kept on the device; when the server cannot be reached, the kept rows are served, with your
+queued writes laid over them, unless they are older than `maxAge`. The first read must
 reach the server: before it, nothing is kept. [One-shot reads](../behaviors/read-strategies.md)
 covers the four strategies.
 
@@ -134,9 +155,19 @@ covers the four strategies.
 `selectAsFlow` emits the rows as they change: when you write through the plugin, when a refresh
 from the server lands, and when a Realtime record is applied. It needs no Realtime channel.
 
-```kotlin
---8<-- "GettingStartedExamples.kt:first-observed-read"
-```
+From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/OfflineTaskRepository.kt) · [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift)
+
+=== "Android"
+
+    ```kotlin
+    --8<-- "data/supabase/OfflineTaskRepository.kt:first-observed-read"
+    ```
+
+=== "iOS"
+
+    ```swift
+    --8<-- "swift/Tests/SupabaseOfflineTests/DocumentationListings/GettingStartedListings.swift:live-read"
+    ```
 
 Each emission is a `QuerySnapshot`: the rows (`null` while nothing is known yet), whether they are
 the device's copy, when they were fetched, whether a queued write changed them, and how the
@@ -144,9 +175,19 @@ refresh behind them stands. See [Reactive reads](../behaviors/reactive-reads.md)
 
 ## First write
 
-```kotlin
---8<-- "GettingStartedExamples.kt:first-write"
-```
+From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/OfflineTaskRepository.kt) · [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift)
+
+=== "Android"
+
+    ```kotlin
+    --8<-- "data/supabase/OfflineTaskRepository.kt:first-write"
+    ```
+
+=== "iOS"
+
+    ```swift
+    --8<-- "swift/Tests/SupabaseOfflineTests/DocumentationListings/GettingStartedListings.swift:queued-write"
+    ```
 
 **Make the row's id on the device.** A write made offline can then be shown, opened and edited
 before it reaches the server, and a write that is sent again after its answer was lost carries the
@@ -182,9 +223,19 @@ See [Signing out and switching users](../behaviors/sign-out.md).
 The plugin logs through supabase-kt's own logging, tagged `Supabase-Offline`, at the client's
 `defaultLogLevel` unless you give it a level of its own:
 
-```kotlin
---8<-- "GettingStartedExamples.kt:logging"
-```
+From the samples: [SampleSupabaseClient.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/platform/SampleSupabaseClient.kt) · [AppModel.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/App/AppModel.swift)
+
+=== "Android"
+
+    ```kotlin
+    --8<-- "platform/SampleSupabaseClient.kt:install"
+
+    --8<-- "platform/SampleSupabaseClient.kt:log-level"
+    ```
+
+=== "iOS"
+
+    The iOS sample's section lands with its pull request.
 
 Messages at `INFO` and above carry no rows, filter values, tokens or object paths. `DEBUG` carries
 request bodies and responses: keep it out of release builds. See

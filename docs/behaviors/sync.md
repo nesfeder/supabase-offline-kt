@@ -5,9 +5,19 @@ back and when a user's session settles, and `syncPendingMutations()` sends them 
 happened. A pass sends one user's writes one at a time, in the order they were made, across
 tables, and stops at the first failure that may pass, so no write overtakes an earlier one.
 
-```kotlin
---8<-- "QueueExamples.kt:sync-now"
-```
+From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/OfflineTaskRepository.kt) · [LibraryMappings.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/LibraryMappings.kt) · [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift)
+
+=== "Android"
+
+    ```kotlin
+    --8<-- "data/supabase/OfflineTaskRepository.kt:sync-now"
+
+    --8<-- "data/supabase/LibraryMappings.kt:sync-report"
+    ```
+
+=== "iOS"
+
+    The iOS sample's section lands with its pull request.
 
 ## When the library sends by itself
 
@@ -60,11 +70,20 @@ once and moves no wait.
   that may pass, the library's own next pass waits up to a minute, or as long as a server's
   `Retry-After` asks. To send at once when the user returns:
 
-    ```kotlin
-    --8<-- "QueueExamples.kt:foreground"
-    ```
+    From the samples: [OfflineTasksApplication.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/OfflineTasksApplication.kt) · [AppModel.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/App/AppModel.swift)
 
-    On iOS, do the same when `UIApplication.willEnterForegroundNotification` is posted.
+    === "Android"
+
+        ```kotlin
+        --8<-- "OfflineTasksApplication.kt:foreground"
+        ```
+
+    === "iOS"
+
+        The iOS sample's section lands with its pull request.
+
+    The sample's activity calls it from `onStart`. On iOS, do the same when
+    `UIApplication.willEnterForegroundNotification` is posted.
 
 - **Before a user signs out for good**, to send what can still be sent; see
   [Signing out and switching users](sign-out.md).
@@ -130,9 +149,17 @@ the original message.
 
 `syncStatus` is one `StateFlow<SyncStatus>` to draw a sync banner from:
 
-```kotlin
---8<-- "QueueExamples.kt:sync-banner"
-```
+From the samples: [LibraryMappings.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/LibraryMappings.kt) · [SyncHeadline.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/App/SyncHeadline.swift)
+
+=== "Android"
+
+    ```kotlin
+    --8<-- "data/supabase/LibraryMappings.kt:sync-banner"
+    ```
+
+=== "iOS"
+
+    The iOS sample's section lands with its pull request.
 
 | Field | Meaning |
 | --- | --- |
@@ -152,9 +179,17 @@ left queued. It is the same flow whether or not the client is open, and it never
 client only; `enableNetwork()` turns it back on, and with `autoSync` queued writes are sent. The
 switch is not kept: a new client starts with access on.
 
-```kotlin
---8<-- "QueueExamples.kt:network-switch"
-```
+From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/OfflineTaskRepository.kt) · [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift)
+
+=== "Android"
+
+    ```kotlin
+    --8<-- "data/supabase/OfflineTaskRepository.kt:network-switch"
+    ```
+
+=== "iOS"
+
+    The iOS sample's section lands with its pull request.
 
 While access is off nothing is sent: reads are answered from the cache as offline, live reads read
 `Paused`, writes that can be queued are queued, passes send nothing, and a Storage download is

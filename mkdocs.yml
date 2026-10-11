@@ -8,10 +8,12 @@
 #
 # Some pages pull files from the repository root in at build time with pymdownx.snippets
 # (`--8<-- "CHANGELOG.md"`), so nothing is copied into docs/. Snippet paths are relative to the
-# directory mkdocs runs in, which must be the repository root. Every Kotlin sample on the
-# Getting started, Behaviors and Reference pages is a section of a test source file the Gradle
-# build compiles (`// --8<-- [start:name]` … `// --8<-- [end:name]`), so a sample cannot drift
-# from the API.
+# directory mkdocs runs in, which must be the repository root. The code on the Getting started,
+# Behaviors and Reference pages is the sample apps' own: sections of their sources, which their
+# builds compile and test (`// --8<-- [start:name]` … `// --8<-- [end:name]`), shown as Android
+# and iOS tabs. The few listings no sample makes (supabase-kt's side of the migration contrasts)
+# are sections of a test source file the library's build compiles. A section renamed or removed
+# fails the strict build, so a page cannot drift from the code.
 #
 # Keep this file within the dialect Zensical also reads: no hooks, no not_in_nav, no exclude_docs
 # and no third-party plugins. Switching to Zensical is then a change of pins, not of this file.
@@ -122,12 +124,17 @@ markdown_extensions:
   - pymdownx.inlinehilite
   - pymdownx.keys
   - pymdownx.snippets:
-      # The repository root, for the root files; then the compiled sources the Kotlin samples come
-      # from, so a page names a sample as `--8<-- "ReadExamples.kt:section"`.
+      # The repository root, for the root files; then the two samples' source roots, so a page
+      # names a section as `--8<-- "data/supabase/OfflineTaskRepository.kt:first-write"` or
+      # `--8<-- "Data/TaskRepository.swift:first-write"`, the same name on both for the same
+      # step; then the library's compiled listings (`--8<-- "GettingStartedExamples.kt:before"`).
       base_path:
         - "."
+        - samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks
+        - samples/android/src/test/kotlin/io/github/nesfeder/offlinetasks
+        - samples/ios/OfflineTasks
+        - samples/ios/OfflineTasksTests
         - supabase-offline-kt/src/androidHostTest/kotlin/io/github/nesfeder/supabase/offline/docs
-        - supabase-offline-kt-testing/src/commonTest/kotlin/io/github/nesfeder/supabase/offline/testing/docs
       check_paths: true
       # A sample's lines are indented as its function body is; the page shows them unindented.
       dedent_subsections: true

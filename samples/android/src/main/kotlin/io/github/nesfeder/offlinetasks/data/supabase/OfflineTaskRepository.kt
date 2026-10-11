@@ -86,6 +86,9 @@ import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
+/** The schema both tables live in, the client's default. */
+private const val SCHEMA = "public"
+
 /** How many photo rows one read of their object paths asks for. */
 private const val PATH_PAGE_SIZE = 1_000
 
@@ -211,8 +214,7 @@ class OfflineTaskRepository(
         if (taskIds.isEmpty()) return flowOf(emptyMap())
         val ids = taskIds.sorted() // the same tasks, the same query, the same cached rows
         return whileSignedIn(before = emptyMap()) {
-            offline
-                .from(Tables.TASK_PHOTOS)
+            offline[Tables.TASK_PHOTOS] // the same builder as from(Tables.TASK_PHOTOS)
                 .selectAsFlow(Columns.list(ID, TASK_ID)) { filter { isIn(TASK_ID, ids) } }
                 .mapNotNull { snapshot -> snapshot.result?.decodeList<PhotoTaskRow>() }
                 .map { rows -> rows.groupingBy { it.taskId }.eachCount() }
@@ -527,11 +529,13 @@ class OfflineTaskRepository(
 
     // --8<-- [end:pending]
 
+    // --8<-- [start:rejected-list]
+    /** The refused writes, newest first (the library lists the oldest first), until dismissed. */
     override fun rejectedMutations(): Flow<List<RejectedTaskMutation>> =
-        // The library lists them oldest first; the app shows the newest first.
         offline.rejectedMutations().map { list ->
             list.asReversed().map { it.toRejectedTaskMutation() }
         }
+    // --8<-- [end:rejected-list]
 
     // --8<-- [start:first-rejection]
     /** The refused writes as they stand now: the Tasks tab's alert at launch reads them once. */
@@ -649,7 +653,7 @@ class OfflineTaskRepository(
      */
     private suspend fun countTasks(): Int =
         offline
-            .from(Tables.TASKS)
+            .from(SCHEMA, Tables.TASKS) // the default schema named: from(table) is the same
             .select(Columns.list(ID)) {
                 head = true // the count alone, no rows
                 count(Count.EXACT)
@@ -662,8 +666,7 @@ class OfflineTaskRepository(
     // --8<-- [start:operator-filter]
     /** Try it: a count with the generic filter, naming its operator, `eq`, as a value. */
     override suspend fun countOpenTasksOnServer(): Int = read {
-        offline
-            .from(Tables.TASKS)
+        offline[SCHEMA, Tables.TASKS] // from(SCHEMA, Tables.TASKS), as an index
             .select(Columns.list(ID)) {
                 head = true
                 count(Count.EXACT)
@@ -760,9 +763,11 @@ class OfflineTaskRepository(
                 if (wanted != LiveUpdatesStatus.Connecting) return@collectLatest
                 try {
                     updates.applyChangesUntilCanceled { connected ->
+                        val wasConnected = liveUpdatesState.value == LiveUpdatesStatus.Connected
                         liveUpdatesState.value =
                             if (connected) LiveUpdatesStatus.Connected
                             else LiveUpdatesStatus.Connecting
+                        if (connected && !wasConnected) scope.launch { readListsAgain() }
                     }
                 } catch (cancellation: CancellationException) {
                     throw cancellation
@@ -771,6 +776,19 @@ class OfflineTaskRepository(
                 }
             }
     }
+
+    // --8<-- [start:read-again]
+    /**
+     * Reads both lists from the server once more: Realtime does not replay what happened while it
+     * was not connected, so each new connection catches up this way.
+     */
+    private suspend fun readListsAgain() {
+        refreshTasks()
+        offline.from(Tables.TASK_PHOTOS).select(readStrategy = ReadStrategy.NetworkOnly) {
+            newestFirst() // the query of allPhotos()
+        }
+    }
+    // --8<-- [end:read-again]
 
     // --8<-- [start:first-observed-read]
     /** The user's tasks that [query] selects, as a live read mapped to the app's snapshot. */

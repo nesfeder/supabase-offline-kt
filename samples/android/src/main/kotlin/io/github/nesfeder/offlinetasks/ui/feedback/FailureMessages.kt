@@ -12,7 +12,7 @@ import io.github.nesfeder.offlinetasks.data.NotSavedOnDeviceException
 import io.github.nesfeder.offlinetasks.data.PhotoNotFoundException
 import io.github.nesfeder.offlinetasks.data.PhotoStorageException
 import io.github.nesfeder.offlinetasks.data.PhotoUnreadableException
-import io.github.nesfeder.offlinetasks.data.RowUnreadableException
+import io.github.nesfeder.offlinetasks.data.RowFormatException
 import io.github.nesfeder.offlinetasks.data.ServerRefusedException
 import io.github.nesfeder.offlinetasks.data.ServerUnreachableException
 import io.github.nesfeder.offlinetasks.data.SessionExpiredException
@@ -45,7 +45,7 @@ fun failureMessage(resources: Resources, failure: Throwable): String =
             resources.getString(R.string.failure_server_refused, failure.status, failure.message)
         is InvalidRequestException ->
             resources.getString(R.string.failure_invalid_request, failure.libraryMessage)
-        is RowUnreadableException -> resources.getString(R.string.failure_row_unreadable)
+        is RowFormatException -> resources.getString(R.string.failure_row_format)
         is ClientUnavailableException -> resources.getString(R.string.failure_client_unavailable)
         is UnknownLibraryFailureException -> resources.getString(R.string.failure_unknown_library)
         is PhotoStorageException ->

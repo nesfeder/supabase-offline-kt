@@ -91,6 +91,7 @@ internal fun SyncStatus.toAppSyncStatus(): AppSyncStatus =
 
 // --8<-- [end:sync-banner]
 
+// --8<-- [start:sync-report]
 /** What one replay did, every count of it. */
 internal fun SyncReport.toTaskSyncReport(): TaskSyncReport =
     TaskSyncReport(
@@ -100,6 +101,7 @@ internal fun SyncReport.toTaskSyncReport(): TaskSyncReport =
         alreadyOnServerCount = alreadyOnServerCount,
         heldBehindOtherTablesCount = heldBehindOtherTablesCount,
     )
+// --8<-- [end:sync-report]
 
 // --8<-- [start:waiting-change]
 /** A queued write as a row of the Sync tab: what it does, to which row, and since when. */
@@ -115,7 +117,7 @@ internal fun PendingMutation.toWaitingChange(): WaitingChange =
 
 // --8<-- [end:waiting-change]
 
-// --8<-- [start:rejected-list]
+// --8<-- [start:rejected-row]
 /** A refused write as the Sync tab shows it: when it was made and refused, and why. */
 internal fun RejectedMutation.toRejectedTaskMutation(): RejectedTaskMutation =
     RejectedTaskMutation(
@@ -132,7 +134,7 @@ internal fun RejectedMutation.toRejectedTaskMutation(): RejectedTaskMutation =
         isRetryable = isRetryable, // false when its body was too long to keep
     )
 
-// --8<-- [end:rejected-list]
+// --8<-- [end:rejected-row]
 
 /** The server's answer to a refused write, kept as data so it survives a restart. */
 internal fun ServerError.toTaskServerError(): TaskServerError =

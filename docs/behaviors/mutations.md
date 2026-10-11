@@ -5,21 +5,91 @@ once when nothing of the same user waits ahead of it; otherwise it waits and is 
 pass, in the order it was made. A write returns a `MutationOutcome`: `Applied` with the server's
 answer, or `Queued`, and every cached read shows it at once either way.
 
-```kotlin
---8<-- "GettingStartedExamples.kt:first-write"
-```
+From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/OfflineTaskRepository.kt) · [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift)
 
-The verbs are supabase-kt's, with its overloads and request DSL:
+=== "Android"
 
-```kotlin
---8<-- "QueueExamples.kt:verbs"
-```
+    ```kotlin
+    --8<-- "data/supabase/OfflineTaskRepository.kt:first-write"
+    ```
+
+=== "iOS"
+
+    The iOS sample's section lands with its pull request.
+
+The verbs are supabase-kt's, with its overloads and request DSL. An update takes a typed value, a
+JSON body or the update DSL; the sample's autosave, done switch and Move to another task use one
+each:
+
+From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/OfflineTaskRepository.kt) · [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift)
+
+=== "Android"
+
+    ```kotlin
+    --8<-- "data/supabase/OfflineTaskRepository.kt:typed-update"
+
+    --8<-- "data/supabase/OfflineTaskRepository.kt:body-update"
+
+    --8<-- "data/supabase/OfflineTaskRepository.kt:move-photo"
+    ```
+
+=== "iOS"
+
+    The iOS sample's section lands with its pull request.
+
+An upsert of one typed row, and a delete that names its rows by filter. Duplicate task asks for
+the stored row back with `select()`, and reads it with `resultOrNull()` unless the write
+`isQueued`:
+
+From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/OfflineTaskRepository.kt) · [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift)
+
+=== "Android"
+
+    ```kotlin
+    --8<-- "data/supabase/OfflineTaskRepository.kt:duplicate-task"
+
+    --8<-- "data/supabase/OfflineTaskRepository.kt:delete-task"
+    ```
+
+=== "iOS"
+
+    The iOS sample's section lands with its pull request.
+
+Several rows go in one write, typed or as a JSON body, queued as one when offline. The starter
+list's ids are the same on every import, so `ignoreDuplicates` makes a second import change
+nothing:
+
+From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/OfflineTaskRepository.kt) · [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift)
+
+=== "Android"
+
+    ```kotlin
+    --8<-- "data/supabase/OfflineTaskRepository.kt:bulk-insert"
+
+    --8<-- "data/supabase/OfflineTaskRepository.kt:starter-list"
+
+    --8<-- "data/supabase/OfflineTaskRepository.kt:json-insert"
+    ```
+
+=== "iOS"
+
+    The iOS sample's section lands with its pull request.
 
 ## The two strategies
 
-```kotlin
---8<-- "QueueExamples.kt:mutation-strategies"
-```
+From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/OfflineTaskRepository.kt) · [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift)
+
+=== "Android"
+
+    ```kotlin
+    --8<-- "data/supabase/OfflineTaskRepository.kt:mutation-strategies"
+
+    --8<-- "data/supabase/OfflineTaskRepository.kt:delete-my-data"
+    ```
+
+=== "iOS"
+
+    The iOS sample's section lands with its pull request.
 
 - **`QueueIfOffline`**, the default, saves the write to the queue, so it keeps its place among the
   user's writes in every table, and keeps it there until the server has accepted or refused it.
@@ -76,11 +146,21 @@ supabase-kt's operators.
 An update or a delete with two top-level filters on one column throws `IllegalArgumentException`
 under either strategy, online or offline, before anything is sent or queued: supabase-kt would send
 only the first, and the write would reach more rows than it names, now or when the queue replays
-it. Write the conditions as one `and { }` group, which supabase-kt sends whole:
+it. Write the conditions as one `and { }` group, which supabase-kt sends whole. A group is a filter
+the queue cannot record, so such a write is sent at once: the sample's Try it makes one offline to
+show its `MutationNotQueueableException`.
 
-```kotlin
---8<-- "QueueExamples.kt:same-column-write"
-```
+From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/OfflineTaskRepository.kt) · [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift)
+
+=== "Android"
+
+    ```kotlin
+    --8<-- "data/supabase/OfflineTaskRepository.kt:grouped-delete"
+    ```
+
+=== "iOS"
+
+    The iOS sample's section lands with its pull request.
 
 ## Dry runs
 
@@ -102,7 +182,7 @@ the override, or do not rely on it.
 ## Upsert options
 
 `onConflict`, `ignoreDuplicates` and `defaultToNull` are kept with a queued write, so its replay
-sends what the call asked for. The cache merges an upsert by its `onConflict` columns, or by the
+sends what the call asked for (the starter list above sets the first two). The cache merges an upsert by its `onConflict` columns, or by the
 table's key (`id` unless configured): on a table without an `id` column, name the conflict
 columns. An upsert that ignores duplicates shows offline as though it landed, since the library
 cannot tell whether the server already holds the row. See [Optimistic overlay](overlay.md#limits).
@@ -160,9 +240,21 @@ configure the same request every time: no side effects, and no clock or counter 
 
 ## Seeing and dropping queued writes
 
-```kotlin
---8<-- "QueueExamples.kt:pending"
-```
+From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/OfflineTaskRepository.kt) · [LibraryMappings.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/LibraryMappings.kt) · [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift)
+
+=== "Android"
+
+    ```kotlin
+    --8<-- "data/supabase/OfflineTaskRepository.kt:pending"
+
+    --8<-- "data/supabase/LibraryMappings.kt:waiting-change"
+
+    --8<-- "data/supabase/OfflineTaskRepository.kt:pending-count"
+    ```
+
+=== "iOS"
+
+    The iOS sample's section lands with its pull request.
 
 `pendingMutations(table)`, `pendingMutationCount(table)` and `pendingMutationCountFlow(table)` show
 the current user's queued writes, of one table or of all, in the order they will be sent. Each is a

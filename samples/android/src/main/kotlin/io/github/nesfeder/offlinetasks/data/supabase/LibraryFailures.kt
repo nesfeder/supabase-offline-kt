@@ -2,8 +2,10 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.offlinetasks.data.supabase
 
+import io.github.jan.supabase.auth.exception.TokenExpiredException
 import io.github.jan.supabase.exceptions.NotFoundRestException
 import io.github.jan.supabase.exceptions.RestException
+import io.github.jan.supabase.exceptions.SupabaseEncodingException
 import io.github.jan.supabase.postgrest.exception.PostgrestRestException
 import io.github.nesfeder.offlinetasks.data.ClientUnavailableException
 import io.github.nesfeder.offlinetasks.data.InvalidRequestException
@@ -12,7 +14,7 @@ import io.github.nesfeder.offlinetasks.data.NetworkUnavailableException
 import io.github.nesfeder.offlinetasks.data.NotSavedOnDeviceException
 import io.github.nesfeder.offlinetasks.data.PhotoNotFoundException
 import io.github.nesfeder.offlinetasks.data.PhotoStorageException
-import io.github.nesfeder.offlinetasks.data.RowUnreadableException
+import io.github.nesfeder.offlinetasks.data.RowFormatException
 import io.github.nesfeder.offlinetasks.data.ServerRefusedException
 import io.github.nesfeder.offlinetasks.data.ServerUnreachableException
 import io.github.nesfeder.offlinetasks.data.SessionExpiredException
@@ -82,8 +84,9 @@ internal fun Throwable.toAppFailure(call: LibraryCall): Throwable =
             SyncStoppedException(httpStatus, code, isNetworkOrConnectivityFailure(), this)
         // A kind of failure a later release of the library adds.
         this is OfflineException -> UnknownLibraryFailureException(this)
-        // The token expired and could not be refreshed.
-        httpStatusOrNull() == HTTP_UNAUTHORIZED -> SessionExpiredException(this)
+        // The session's token expired and could not be refreshed, here or on the server.
+        this is TokenExpiredException || httpStatusOrNull() == HTTP_UNAUTHORIZED ->
+            SessionExpiredException(this)
         // PostgREST refused it: a write's refusal names the task, anything else its status.
         this is PostgrestRestException -> serverRefusal(call)
         // Storage refused it, or has no such file.
@@ -91,7 +94,8 @@ internal fun Throwable.toAppFailure(call: LibraryCall): Throwable =
         // No connection, or no answer in time: the network, not the server.
         isNetworkOrConnectivityFailure() -> NetworkUnavailableException(this)
         // A row that does not decode into the app's type, or a value that does not encode.
-        this is SerializationException -> RowUnreadableException(this)
+        this is SerializationException || this is SupabaseEncodingException ->
+            RowFormatException(this)
         // Two top-level filters on one column, or a retry of a write that cannot be retried.
         this is IllegalArgumentException -> InvalidRequestException(message.orEmpty(), this)
         // The client is closed, or was built without a plugin the call needs.

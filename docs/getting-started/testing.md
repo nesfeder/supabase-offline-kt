@@ -3,11 +3,20 @@
 The testing artifact builds the client the way your app builds it, with
 `install(Offline) { inMemory() }`: the cache, the mutation queue and the file cache live in the
 client's memory, and nothing touches the disk. Its factories build the library's value types, for
-your own test doubles.
+your own test doubles. The sample apps' tests use both: the client over a fake of the samples'
+project, and the factories for the library's values.
 
-```kotlin
---8<-- "TestingExamples.kt:in-memory-client"
-```
+From the samples: [FakeSupabaseServer.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/test/kotlin/io/github/nesfeder/offlinetasks/testing/FakeSupabaseServer.kt) · [TestSupport.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasksTests/TestSupport.swift)
+
+=== "Android"
+
+    ```kotlin
+    --8<-- "testing/FakeSupabaseServer.kt:in-memory-client"
+    ```
+
+=== "iOS"
+
+    The iOS sample's section lands with its pull request.
 
 ## Add the test artifact
 
@@ -64,11 +73,20 @@ it a read the cache cannot answer waits out those retries, about seven seconds, 
 
 Call `disableNetwork()`: reads are answered from the cache and writes are queued, as on a device in
 airplane mode, until `enableNetwork()`. To see how your app meets a server that fails or a
-connection that drops, fail the requests in the mock engine instead.
+connection that drops, fail the requests in the mock engine instead. The sample's test goes
+through its own repository, whose Simulate offline is `disableNetwork()`:
 
-```kotlin
---8<-- "TestingExamples.kt:offline-test"
-```
+From the samples: [OfflineTaskRepositoryTest.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/test/kotlin/io/github/nesfeder/offlinetasks/data/supabase/OfflineTaskRepositoryTest.kt) · [OfflineTaskTests.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasksTests/OfflineTaskTests.swift)
+
+=== "Android"
+
+    ```kotlin
+    --8<-- "data/supabase/OfflineTaskRepositoryTest.kt:offline-test"
+    ```
+
+=== "iOS"
+
+    The iOS sample's section lands with its pull request.
 
 ## Waiting for the client
 
@@ -82,12 +100,21 @@ change, so wait for the value you expect there too.
 
 ## Values for your own test doubles
 
-The library's value types have no public constructors, so a fake of your own repository builds
-them with the testing artifact's factories:
+The library's value types have no public constructors, so a test of code that reads them, or a
+fake of your own repository, builds them with the testing artifact's factories. The sample tests
+the mappings from the library's values to its own screens' this way:
 
-```kotlin
---8<-- "TestingExamples.kt:factories"
-```
+From the samples: [LibraryMappingsTest.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/test/kotlin/io/github/nesfeder/offlinetasks/data/supabase/LibraryMappingsTest.kt) · [SyncHeadlineTests.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasksTests/SyncHeadlineTests.swift)
+
+=== "Android"
+
+    ```kotlin
+    --8<-- "data/supabase/LibraryMappingsTest.kt:factories"
+    ```
+
+=== "iOS"
+
+    The iOS sample's section lands with its pull request.
 
 | Factory | Builds |
 | --- | --- |

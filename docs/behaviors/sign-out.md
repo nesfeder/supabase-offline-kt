@@ -120,11 +120,22 @@ sent once the token is refreshed.
 
 To delete a user's data on the server and then on the device, do it online, and clear the device
 first, so no queued write can be replayed after your deletes and leave a row behind. Send the
-deletes `OnlineOnly`: a queued delete could outlive the user it is for.
+deletes `OnlineOnly`: a queued delete could outlive the user it is for. The sample's Start over
+does this for its anonymous user, whom nobody could sign back in as, then signs in as a new one:
 
-```kotlin
---8<-- "QueueExamples.kt:delete-my-data"
-```
+From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/OfflineTaskRepository.kt) · [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift)
+
+=== "Android"
+
+    ```kotlin
+    --8<-- "data/supabase/OfflineTaskRepository.kt:start-over"
+
+    --8<-- "data/supabase/OfflineTaskRepository.kt:delete-my-data"
+    ```
+
+=== "iOS"
+
+    The iOS sample's section lands with its pull request.
 
 Delete the user's Storage objects too, through the bucket, before anything that deletes the user:
 Supabase refuses to delete a user who still owns objects, and deleting a row never deletes its

@@ -207,9 +207,11 @@ jobs:
               # Every other Markdown file: the docs job builds the site and checks its listings.
               docs/* | mkdocs.yml | *.md | samples/supabase/*)
                 docs=true ;;
-              # The site's Kotlin samples: the Kotlin jobs compile them, the docs build includes them.
+              # The code the site shows: the sample apps' sources and the library's compiled listings.
+              # The build jobs compile them; the docs build includes their sections, and fails when
+              # a section a page names is renamed or gone.
               supabase-offline-kt/src/androidHostTest/kotlin/io/github/nesfeder/supabase/offline/docs/* \
-                | supabase-offline-kt-testing/src/commonTest/kotlin/io/github/nesfeder/supabase/offline/testing/docs/*)
+                | samples/android/src/* | samples/ios/OfflineTasks/* | samples/ios/OfflineTasksTests/*)
                 kotlin=true; docs=true ;;
               # scripts/check-spelling.py runs in formatting, on every run.
               .github/* | LICENSE | .gitignore | .editorconfig | .git-blame-ignore-revs \
