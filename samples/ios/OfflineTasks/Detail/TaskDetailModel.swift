@@ -282,14 +282,14 @@ final class TaskDetailModel {
     /// Follows every photo row the device holds; this task's are picked out.
     private func observePhotoRows(isSimulatingOffline: Bool) async {
         do {
-            // --8<-- [start:sequence-cache-only]
+            // --8<-- [start:cache-only-photos]
             // Simulate offline: the device's rows only, without a request the switch would refuse.
             let readStrategy: SequenceReadStrategy = isSimulatingOffline ? .cacheOnly : .cacheFirstThenNetwork
             for try await snapshot in repository.photoSnapshots(readStrategy: readStrategy) {
                 photoRows = snapshot.result ?? []
                 updatePhotos()
             }
-            // --8<-- [end:sequence-cache-only]
+            // --8<-- [end:cache-only-photos]
         } catch is CancellationError {
             return
         } catch {

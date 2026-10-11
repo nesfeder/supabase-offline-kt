@@ -19,7 +19,7 @@ with the user's queued writes laid over it whichever way it is answered.
 
     --8<-- "samples/ios/OfflineTasks/Data/TaskRepository.swift:badge-read"
 
-    --8<-- "samples/ios/OfflineTasks/Data/TaskRepository.swift:network-only-read"
+    --8<-- "samples/ios/OfflineTasks/Data/TaskRepository.swift:network-only"
     ```
 
 ## Choosing a strategy

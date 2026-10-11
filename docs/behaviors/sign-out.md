@@ -16,7 +16,7 @@ until you call `clearLocalData()`, which deletes everything the library keeps on
 === "iOS"
 
     ```swift
-    --8<-- "samples/ios/OfflineTasks/Data/TaskRepository.swift:sign-out"
+    --8<-- "samples/ios/OfflineTasks/Data/TaskRepository.swift:start-over"
     ```
 
 ## Why it matters

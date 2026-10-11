@@ -25,6 +25,12 @@ nonisolated enum ClientSettings {
     static let dataDirectory = URL.applicationSupportDirectory.appending(path: "SupabaseOffline", directoryHint: .isDirectory)
     // --8<-- [end:data-directory]
 
+    // --8<-- [start:primary-keys]
+    /// How the cache tells rows apart: each table's key columns. `id`, the default for a table not
+    /// named, for both.
+    static let primaryKeys = [Tables.tasks: ["id"], Tables.taskPhotos: ["id"]]
+    // --8<-- [end:primary-keys]
+
     // --8<-- [start:log-level]
     /// What the library writes to the unified log, under the subsystem `SupabaseOffline`: from
     /// `.info` in a debug build, to follow each sync; from `.warning`, the default, otherwise.
@@ -74,7 +80,7 @@ nonisolated enum ClientSettings {
             // Queued writes are sent by themselves when the network comes back: true, the default.
             autoSync: true,
             // The columns that tell one row from another, per table: id, the default for a table not named.
-            primaryKeys: [Tables.tasks: ["id"], Tables.taskPhotos: ["id"]],
+            primaryKeys: primaryKeys,
             // What the library logs: more in a debug build than .warning, the default.
             logLevel: logLevel
         )

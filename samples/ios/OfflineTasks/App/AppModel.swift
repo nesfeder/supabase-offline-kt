@@ -141,7 +141,9 @@ final class AppModel {
     func followLiveUpdates() async {
         guard liveUpdatesKey.isOn, liveUpdatesKey.userID != nil else { return }
         do {
-            for try await change in changeSource.changes(of: [Tables.tasks, Tables.taskPhotos]) {
+            let changes = changeSource.changes(of: [Tables.tasks, Tables.taskPhotos])
+            if repository.canReachNetwork { try await repository.readListsAgain() }
+            for try await change in changes {
                 try await repository.apply(change)
             }
         } catch is CancellationError {

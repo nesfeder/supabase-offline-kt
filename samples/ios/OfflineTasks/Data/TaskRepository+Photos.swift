@@ -22,7 +22,7 @@ extension TaskRepository {
     }
     // --8<-- [end:bucket]
 
-    // --8<-- [start:upload-photo]
+    // --8<-- [start:upload]
     /// Uploads `photo` for the task, then writes its row. The file goes first, so a row never names
     /// a file that is not there; a row the server refuses at once takes its file with it.
     ///
@@ -53,7 +53,7 @@ extension TaskRepository {
         try await insertRow(of: row)
         return row.photo(pendingIDs: [])
     }
-    // --8<-- [end:upload-photo]
+    // --8<-- [end:upload]
 
     /// Deletes a photo's file, then its row. The file needs the network.
     func deletePhoto(_ photo: TaskPhoto) async throws {

@@ -150,10 +150,12 @@ final class TaskRepository {
     }
     // --8<-- [end:sync-status]
 
+    // --8<-- [start:pending-count]
     /// How many writes wait, read once: the Sync tab's badge at launch, before the first status.
     func pendingMutationCountNow() async throws -> Int {
         try await client.pendingMutationCount()
     }
+    // --8<-- [end:pending-count]
 
     // MARK: - One-shot reads
 
@@ -201,6 +203,7 @@ final class TaskRepository {
     }
     // --8<-- [end:cache-only]
 
+    // --8<-- [start:operator-filter]
     /// How many tasks the server holds with notes, through the generic filter that names its
     /// operator as text; it asks the server, so it needs the network.
     func tasksWithNotesOnServer() async throws -> Int {
@@ -211,6 +214,19 @@ final class TaskRepository {
             .value
             .count
     }
+    // --8<-- [end:operator-filter]
+
+    // --8<-- [start:read-again]
+    /// Reads both lists from the server once more: Realtime does not replay what happened while it
+    /// was not connected, so each new subscription catches up this way.
+    func readListsAgain() async throws {
+        _ = try await refreshTasks(TaskQuery())
+        try await client.from(Tables.taskPhotos)
+            .select(readStrategy: .networkOnly)
+            .order("created_at", ascending: false)
+            .execute()
+    }
+    // --8<-- [end:read-again]
 
     // MARK: - Task writes
 
@@ -345,6 +361,7 @@ final class TaskRepository {
     }
     // --8<-- [end:starter-list]
 
+    // --8<-- [start:json-insert]
     /// Adds a task whose title the server refuses, written as raw JSON, to show what a refused
     /// write looks like: online it is refused at once; offline when it syncs.
     @discardableResult
@@ -361,6 +378,7 @@ final class TaskRepository {
             try await client.from(Tables.tasks).insert(row).execute()
         }
     }
+    // --8<-- [end:json-insert]
 
     /// Deletes a task: its photo files first (only online: Storage writes are never queued, so
     /// offline they stay in the bucket), then its photo rows, then the task.
@@ -382,11 +400,11 @@ final class TaskRepository {
                 try await client.from(Tables.taskPhotos).delete().eq("task_id", value: id).execute()
             }
         }
-        // --8<-- [start:delete-row]
+        // --8<-- [start:delete-task]
         try await write(taskTitle: nil) {
             try await client.from(Tables.tasks).delete().eq("id", value: id).execute()
         }
-        // --8<-- [end:delete-row]
+        // --8<-- [end:delete-task]
     }
 
     /// Deletes the done tasks made last week. Online, their photos' files and rows go first, as
@@ -466,7 +484,7 @@ final class TaskRepository {
         try await client.clearLocalData()
     }
 
-    // --8<-- [start:sign-out]
+    // --8<-- [start:start-over]
     /// Starts again as a new anonymous user with no tasks, in this order:
     ///
     /// 1. This user's queued writes are discarded (a write already being sent is waited for), so
@@ -498,7 +516,7 @@ final class TaskRepository {
         }
         try await client.enableNetwork()
     }
-    // --8<-- [end:sign-out]
+    // --8<-- [end:start-over]
 
     // MARK: - Helpers
 
@@ -534,13 +552,13 @@ final class TaskRepository {
     ) async throws -> [String] {
         var paths: [String] = []
         while true {
-            // --8<-- [start:network-only-read]
+            // --8<-- [start:network-only]
             let page = try await filter(client.from(Tables.taskPhotos).select("object_path", readStrategy: .networkOnly))
                 .order("id", ascending: true)
                 .range(from: paths.count, to: paths.count + Self.pathPageSize - 1)
                 .execute([ObjectPathRow].self)
                 .value
-            // --8<-- [end:network-only-read]
+            // --8<-- [end:network-only]
             if page.isEmpty { return paths }
             paths += page.map(\.objectPath)
         }

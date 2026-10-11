@@ -36,7 +36,7 @@ strategy says.
     ```swift
     --8<-- "samples/ios/OfflineTasks/Data/TaskRepository.swift:reactive-strategies"
 
-    --8<-- "samples/ios/OfflineTasks/Detail/TaskDetailModel.swift:sequence-cache-only"
+    --8<-- "samples/ios/OfflineTasks/Detail/TaskDetailModel.swift:cache-only-photos"
     ```
 
 - **`CacheFirstThenNetwork`**, the default, emits the cached rows at once and asks the server in

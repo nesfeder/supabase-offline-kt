@@ -369,7 +369,12 @@ struct ApiTourTests {
         try await test.start()
         try await test.addTask("Buy milk")
         let task = try await test.task(titled: "Buy milk")
+        let photoReadsBefore = await test.server.requests.filter { $0.path == "/rest/v1/\(Tables.taskPhotos)" }.count
         try await test.startLiveUpdates()
+        // Starting reads both lists again, since Realtime does not replay what it missed.
+        try await eventually("the lists are read again") {
+            await test.server.requests.filter { $0.path == "/rest/v1/\(Tables.taskPhotos)" }.count > photoReadsBefore
+        }
         let readsBefore = await test.server.requests.filter { $0.method == "GET" }.count
 
         // When

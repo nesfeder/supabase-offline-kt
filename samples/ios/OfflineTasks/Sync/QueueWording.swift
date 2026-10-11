@@ -64,7 +64,7 @@ nonisolated extension Wording {
         outcome.isQueued ? "\(applied) on this device — it syncs when the server can be reached" : applied
     }
 
-    // --8<-- [start:refused-change]
+    // --8<-- [start:rejected-row]
     /// What a refused write did, when it was made and refused, and the rows it was for: "Added
     /// “Buy milk” · made 10:41 · refused 10:42 · row 3f2a…".
     static func refusedChange(_ rejection: RejectedMutation) -> String {
@@ -73,7 +73,7 @@ nonisolated extension Wording {
         let refused = rejection.rejectedAt.formatted(date: .omitted, time: .shortened)
         return "\(what) · made \(made) · refused \(refused) · \(rowKeys(rejection.rowKeys))"
     }
-    // --8<-- [end:refused-change]
+    // --8<-- [end:rejected-row]
 
     /// The rows a write was for, by the start of their keys: "row 3f2a…", "2 rows", "no row key".
     static func rowKeys(_ keys: [[String: OfflineJSON]]) -> String {

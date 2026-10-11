@@ -113,7 +113,7 @@ can be retried.
     ```swift
     --8<-- "samples/ios/OfflineTasks/Data/TaskRepository.swift:rejected-list"
 
-    --8<-- "samples/ios/OfflineTasks/Sync/QueueWording.swift:refused-change"
+    --8<-- "samples/ios/OfflineTasks/Sync/QueueWording.swift:rejected-row"
     ```
 
 *From the samples: [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift)*

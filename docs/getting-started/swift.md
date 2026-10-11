@@ -91,7 +91,7 @@ them, since its anonymous user leaves for good:
 *From the sample: [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift)*
 
 ```swift
---8<-- "samples/ios/OfflineTasks/Data/TaskRepository.swift:sign-out"
+--8<-- "samples/ios/OfflineTasks/Data/TaskRepository.swift:start-over"
 ```
 
 Why the network is off: a live read that refreshes fetches again right after the clear, with

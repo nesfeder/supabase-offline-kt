@@ -40,7 +40,7 @@ The verbs are supabase-kt's, with its overloads and request DSL:
 
     --8<-- "samples/ios/OfflineTasks/Data/TaskRepository.swift:body-update"
 
-    --8<-- "samples/ios/OfflineTasks/Data/TaskRepository.swift:delete-row"
+    --8<-- "samples/ios/OfflineTasks/Data/TaskRepository.swift:delete-task"
     ```
 
 ## The two strategies
