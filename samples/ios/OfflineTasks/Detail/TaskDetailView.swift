@@ -56,7 +56,9 @@ struct TaskDetailView: View {
         app.session.userID != nil
     }
 
-    /// The task's fields, done switch and photos, with Add photo and Delete below.
+    /// The task's fields, done switch and photos with Add photo, then Delete task. Both buttons sit
+    /// in the form, not the bottom bar: offline, the status above the tab bar widens the tab bar
+    /// over the bottom bar's items.
     private func form(_ task: TaskItem) -> some View {
         Form {
             Section {
@@ -80,8 +82,6 @@ struct TaskDetailView: View {
             }
             Section {
                 photoGrid
-                // In the form, not the bottom bar: offline, the status above the tab bar widens the
-                // tab bar over the bottom bar's items, and Add photo works offline.
                 PhotosPicker(selection: $pickedPhoto, matching: .images) {
                     Label("Add photo", systemImage: "photo.badge.plus")
                 }
@@ -92,12 +92,13 @@ struct TaskDetailView: View {
             } footer: {
                 Text(photosFooter)
             }
+            Section {
+                Button("Delete task", systemImage: "trash", role: .destructive) { isConfirmingDelete = true }
+                    .tint(.red)
+                    .accessibilityIdentifier("delete-task")
+            }
         }
         .toolbar {
-            ToolbarSpacer(.flexible, placement: .bottomBar)
-            ToolbarItem(placement: .bottomBar) {
-                Button("Delete task", systemImage: "trash", role: .destructive) { isConfirmingDelete = true }
-            }
             ToolbarItem(placement: .primaryAction) {
                 Menu("More", systemImage: "ellipsis") {
                     Button("Duplicate task", systemImage: "plus.square.on.square") { model.duplicate() }
