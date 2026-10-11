@@ -122,8 +122,8 @@ struct RequestRenderingFixtureTests {
             found.append("\(name): query \(request.queryParameters), expected \(query)")
         }
         if case .object(let headers) = expected["headers"] {
-            for (header, value) in headers where request.header(header) != value.filterText {
-                found.append("\(name): header \(header) is \(String(describing: request.header(header))), expected \(value.filterText)")
+            for (header, value) in headers where request.header(header) != value.offlineFilterText {
+                found.append("\(name): header \(header) is \(String(describing: request.header(header))), expected \(value.offlineFilterText)")
             }
         }
         let body = try? request.jsonBody
@@ -154,7 +154,7 @@ struct RequestRenderingFixtureTests {
         guard case .array(let pairs) = json else { return [] }
         return pairs.map { pair in
             guard case .array(let parts) = pair else { return [] }
-            return parts.map(\.filterText)
+            return parts.map(\.offlineFilterText)
         }
     }
 
@@ -247,7 +247,7 @@ struct RequestRenderingFixtureTests {
         "CSV": .chain { try await $0.from("todos").select(readStrategy: .networkOnly).csv().execute() },
         "another schema": .chain { try await $0.from(schema: "app", table: "todos").select(readStrategy: .networkOnly).execute() },
         "an insert of rows, sent at once": .chain {
-            try await $0.from("todos").insert([NamedRow(id: owner.filterText, title: "Buy milk", done: false)]).execute()
+            try await $0.from("todos").insert([NamedRow(id: owner.offlineFilterText, title: "Buy milk", done: false)]).execute()
         },
         "an insert of one object, returning a column": .chain {
             try await $0.from("todos").insert(TitledRow(id: 9_007_199_254_740_993, title: "Tea"), mutationStrategy: .onlineOnly)
@@ -264,7 +264,7 @@ struct RequestRenderingFixtureTests {
         },
         "a delete of listed rows": .chain { try await $0.from("todos").delete().in("id", values: [1, 2]).execute() },
         "a function call with arguments": .chain {
-            try await $0.rpc("add_points", params: AddPoints(user_id: owner.filterText, points: 5)).gt("total", value: 10).execute()
+            try await $0.rpc("add_points", params: AddPoints(user_id: owner.offlineFilterText, points: 5)).gt("total", value: 10).execute()
         },
         "a function call by GET with a count": .chain { try await $0.rpc("list_open", get: true, count: .planned).execute() },
         "a function call by HEAD without arguments": .chain { try await $0.rpc("count_open", head: true, count: .exact).execute() },
