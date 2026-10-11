@@ -135,7 +135,15 @@ From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabas
 
 === "iOS"
 
-    The iOS sample's section lands with its pull request.
+    ```swift
+    --8<-- "Data/TaskRepository.swift:start-over"
+
+    --8<-- "Data/TaskRepository.swift:delete-my-data"
+    ```
+
+    The iOS sample discards the queued writes first and clears after the sign-out, with the
+    client's network off in between: the order the Swift guide's
+    [When the user changes](../getting-started/swift.md#when-the-user-changes) gives, and why.
 
 Delete the user's Storage objects too, through the bucket, before anything that deletes the user:
 Supabase refuses to delete a user who still owns objects, and deleting a row never deletes its

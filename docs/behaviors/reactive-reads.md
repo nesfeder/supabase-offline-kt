@@ -5,7 +5,7 @@ over them, and emits again whenever a write, a refresh or a server record change
 no Realtime channel: it follows the device's cache, and refreshes the cache from the server as its
 strategy says.
 
-From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/OfflineTaskRepository.kt) · [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift)
+From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/OfflineTaskRepository.kt) · [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift) · [TasksModel.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Tasks/TasksModel.swift)
 
 === "Android"
 
@@ -16,7 +16,9 @@ From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabas
 === "iOS"
 
     ```swift
-    --8<-- "swift/Tests/SupabaseOfflineTests/DocumentationListings/GettingStartedListings.swift:live-read"
+    --8<-- "Data/TaskRepository.swift:first-observed-read"
+
+    --8<-- "Tasks/TasksModel.swift:live-read"
     ```
 
 ## The three strategies
@@ -24,7 +26,7 @@ From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabas
 The sample's list takes the first two from its "Prefer fresh data" switch, and a task's photos take
 the third while Simulate offline is on:
 
-From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/OfflineTaskRepository.kt) · [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift)
+From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/OfflineTaskRepository.kt) · [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift) · [TaskDetailModel.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Detail/TaskDetailModel.swift)
 
 === "Android"
 
@@ -36,7 +38,11 @@ From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabas
 
 === "iOS"
 
-    The iOS sample's section lands with its pull request.
+    ```swift
+    --8<-- "Data/TaskRepository.swift:reactive-strategies"
+
+    --8<-- "Detail/TaskDetailModel.swift:cache-only-photos"
+    ```
 
 - **`CacheFirstThenNetwork`**, the default, emits the cached rows at once and asks the server in
   parallel. A refresh that fails leaves the rows on screen and is tried again for as long as the
@@ -68,7 +74,7 @@ matters, and decode into a type whose server-filled fields are optional. Next to
 already shows, `refresh` says whether to show a note. The sample maps each snapshot to its own
 type in one place, and the refresh with it:
 
-From the samples: [LibraryMappings.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/LibraryMappings.kt) · [TasksModel.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Tasks/TasksModel.swift)
+From the samples: [LibraryMappings.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/LibraryMappings.kt) · [SyncView.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Sync/SyncView.swift)
 
 === "Android"
 
@@ -78,12 +84,14 @@ From the samples: [LibraryMappings.kt](https://github.com/nesfeder/supabase-offl
 
 === "iOS"
 
-    The iOS sample's section lands with its pull request.
+    ```swift
+    --8<-- "Sync/SyncView.swift:refresh-state"
+    ```
 
 To mark each row whose change has not reached the server yet, combine the read with
 `pendingMutations(table)` and its rows' keys, as the list's read above does:
 
-From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/OfflineTaskRepository.kt) · [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift)
+From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/OfflineTaskRepository.kt) · [TasksModel.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Tasks/TasksModel.swift)
 
 === "Android"
 
@@ -93,7 +101,9 @@ From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabas
 
 === "iOS"
 
-    The iOS sample's section lands with its pull request.
+    ```swift
+    --8<-- "Tasks/TasksModel.swift:pending-marks"
+    ```
 
 ## Filters, search and pages
 
@@ -101,7 +111,7 @@ A live read takes supabase-kt's whole request DSL, and each request is cached on
 sample's chips, its search and its Recent chip are filters the server applies; a task row's photo
 count reads the photos of the tasks shown with `in`; the Photos grid reads a page more each time:
 
-From the samples: [TaskQueries.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/TaskQueries.kt) · [OfflineTaskRepository.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/OfflineTaskRepository.kt) · [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift)
+From the samples: [TaskQueries.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/TaskQueries.kt) · [OfflineTaskRepository.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/OfflineTaskRepository.kt) · [TaskQuery.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskQuery.swift) · [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift)
 
 === "Android"
 
@@ -117,7 +127,15 @@ From the samples: [TaskQueries.kt](https://github.com/nesfeder/supabase-offline-
 
 === "iOS"
 
-    The iOS sample's section lands with its pull request.
+    ```swift
+    --8<-- "Data/TaskQuery.swift:filter-chips"
+
+    --8<-- "Data/TaskQuery.swift:search"
+
+    --8<-- "Data/TaskRepository.swift:photo-rows-in"
+
+    --8<-- "Data/TaskRepository.swift:photos-page"
+    ```
 
 Offline, a query never asked online has nothing cached, so a search or a chip first tapped offline
 shows nothing; the sample says so. The overlay evaluates `eq`, `neq`, `in` and `is` exactly, so a

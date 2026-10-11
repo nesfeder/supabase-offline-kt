@@ -4,7 +4,7 @@ What a read returns is the cached rows with the user's writes that have not reac
 on top, oldest first. So a write shows in every list at once, online or offline, and a list never
 loses it between the moment it is sent and the moment the list is fetched again.
 
-From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/OfflineTaskRepository.kt) · [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift)
+From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/OfflineTaskRepository.kt) · [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift) · [TasksModel.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Tasks/TasksModel.swift)
 
 === "Android"
 
@@ -16,7 +16,13 @@ From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabas
 
 === "iOS"
 
-    The iOS sample's section lands with its pull request.
+    ```swift
+    --8<-- "Data/TaskRepository.swift:first-observed-read"
+
+    --8<-- "Tasks/TasksModel.swift:live-read"
+
+    --8<-- "Tasks/TasksModel.swift:pending-marks"
+    ```
 
 A queued write changes the rows a read returns; `hasPendingMutations` on the result or the snapshot
 says whether one did, and each `PendingMutation`'s `rowKeys` say which rows it touches.

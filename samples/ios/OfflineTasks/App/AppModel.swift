@@ -1,8 +1,10 @@
 // Copyright (c) 2026 nesfeder
 // SPDX-License-Identifier: MIT
 import Foundation
+import OSLog
 import SupabaseOffline
 import SupabaseOfflineTesting
+import SwiftUI
 
 /// The app's state above any one screen: the one offline client (inside ``repository``), the sync
 /// status every screen shows, the failures waiting to be shown, and the screens' own models.
@@ -20,6 +22,12 @@ final class AppModel {
 
     /// The Sync tab.
     let sync: SyncModel
+
+    /// The Photos tab.
+    let photos: PhotosModel
+
+    /// Where the server's row changes come from, for Live updates.
+    let changeSource: any ServerChangeSource
 
     /// Where the screens' models report failures, to be shown here.
     let failureSink: FailureSink
@@ -39,24 +47,45 @@ final class AppModel {
     /// Whether "All changes synced" is showing, for a moment after a sync.
     private(set) var showsJustSynced = false
 
+    /// What the last write reported, shown above the tab bar for a moment: "Saved", "Saved on this
+    /// device", "Added 5 tasks".
+    private(set) var notice: String?
+
+    /// How many writes waited when the app launched, read once, until the first status arrives.
+    private(set) var pendingAtLaunch: Int?
+
+    /// Settings → Prefer fresh data: the task list asks the server before showing anything.
+    var prefersFreshData = false
+
+    /// Settings → Live updates: rows changed elsewhere arrive from Realtime and are applied at once.
+    var isLiveUpdatesOn = true
+
     /// Failures reported while another was showing.
     @ObservationIgnored private var waitingFailures: [FailureAlert] = []
 
     /// Hides "All changes synced" again.
     @ObservationIgnored private var justSyncedTimer: Task<Void, Never>?
 
+    /// Hides the notice again.
+    @ObservationIgnored private var noticeTimer: Task<Void, Never>?
+
+    /// Whether the client has reported its status since launch.
+    @ObservationIgnored private var hasStatus = false
+
     /// The ids of the refused writes already announced.
     @ObservationIgnored private var announcedRejections: Set<Int64>?
 
-    /// The app over `repository`, running as `mode`.
-    init(mode: LaunchMode, repository: TaskRepository) {
+    /// The app over `repository`, running as `mode`, with Live updates from `changeSource`.
+    init(mode: LaunchMode, repository: TaskRepository, changeSource: any ServerChangeSource) {
         self.mode = mode
         self.repository = repository
+        self.changeSource = changeSource
         syncStatus = repository.syncStatus.value
         let failures = FailureSink()
         failureSink = failures
         tasks = TasksModel(repository: repository, failures: failures)
         sync = SyncModel(repository: repository, failures: failures)
+        photos = PhotosModel(repository: repository, failures: failures)
         failures.model = self
     }
 
@@ -76,15 +105,77 @@ final class AppModel {
         syncStatus.network == .disabled
     }
 
+    /// The Sync tab's badge: the writes waiting and the ones refused. At launch, before the
+    /// client's first status, the count read once.
+    var syncBadge: Int {
+        guard hasStatus else { return pendingAtLaunch ?? 0 }
+        return syncStatus.pendingMutationCount + syncStatus.rejectedMutationCount
+    }
+
+    /// The read strategy of the task list, as Settings → Prefer fresh data says.
+    var listReadStrategy: SequenceReadStrategy {
+        TaskRepository.readStrategy(prefersFreshData: prefersFreshData)
+    }
+
+    /// What Live updates follows: on, for the signed-in user, while the network can be reached. A
+    /// drop, real or Simulate offline, ends the subscription, and its return makes a new one.
+    var liveUpdatesKey: LiveUpdatesKey {
+        let isReachable = syncStatus.network == .online || syncStatus.network == .unknown
+        return LiveUpdatesKey(userID: session.userID, isOn: isLiveUpdatesOn && isReachable)
+    }
+
     // MARK: - Running
 
     /// Runs for as long as the app does: follows the sync status, signs in when the network allows,
     /// and announces refused writes.
     func run() async {
         await withDiscardingTaskGroup { group in
+            group.addTask { await self.readPendingAtLaunch() }
             group.addTask { await self.followSyncStatus() }
             group.addTask { await self.session.signInWhenReachable(self.repository.syncStatus) }
             group.addTask { await self.announceRefusedWrites() }
+        }
+    }
+
+    // --8<-- [start:live-updates-apply]
+    /// Applies the server's row changes as they arrive, for as long as the calling task runs: the
+    /// root view runs it while Live updates is on, a user is signed in and the network can be
+    /// reached. Each time the subscription joins, the lists are read again, to catch up with
+    /// what changed while it was not there.
+    func followLiveUpdates() async {
+        guard liveUpdatesKey.isOn, liveUpdatesKey.userID != nil else { return }
+        do {
+            for try await event in changeSource.changes(of: [Tables.tasks, Tables.taskPhotos]) {
+                switch event {
+                case .joined: try await repository.readListsAgain()
+                case .change(let change): try await repository.apply(change)
+                }
+            }
+        } catch is CancellationError {
+            return
+        } catch {
+            report(error)
+        }
+    }
+    // --8<-- [end:live-updates-apply]
+
+    // --8<-- [start:foreground]
+    /// Sends the queue as the app comes back to the foreground: the library sends it by itself
+    /// when the network comes back and as the session settles, but not on this.
+    func syncOnForeground() {
+        guard repository.canReachNetwork, session.userID != nil else { return }
+        Task { await perform { try await repository.syncPendingMutations() } }
+    }
+    // --8<-- [end:foreground]
+
+    /// Shows `text` above the tab bar for a few seconds, and reads it out with VoiceOver.
+    func showNotice(_ text: String) {
+        notice = text
+        AccessibilityNotification.Announcement(text).post()
+        noticeTimer?.cancel()
+        noticeTimer = Task {
+            try? await Task.sleep(for: .seconds(4))
+            if !Task.isCancelled { notice = nil }
         }
     }
 
@@ -115,10 +206,16 @@ final class AppModel {
         failure = waitingFailures.isEmpty ? nil : waitingFailures.removeFirst()
     }
 
-    /// Shows `error` to the user, after any failure already showing.
+    /// Shows `error` to the user, after any failure already showing, and logs what is safe to log.
     func report(_ error: any Error) {
+        if let offline = error as? OfflineError {
+            Self.failureLog.error("\(SampleFailure.reportable(offline), privacy: .public)")
+        }
         show(FailureAlert(message: SampleFailure.message(for: error)))
     }
+
+    /// Where the app logs its failures, in the unified log.
+    private static let failureLog = Logger(subsystem: Bundle.main.bundleIdentifier ?? "OfflineTasks", category: "failures")
 
     /// Shows `alert` now, or after the one showing.
     private func show(_ alert: FailureAlert) {
@@ -129,6 +226,15 @@ final class AppModel {
         }
     }
 
+    /// Reads how many writes wait, once, for the badge until the first status arrives.
+    private func readPendingAtLaunch() async {
+        do {
+            pendingAtLaunch = try await repository.pendingMutationCountNow()
+        } catch {
+            report(error)
+        }
+    }
+
     /// Follows the client's sync status, and holds "All changes synced" for a moment after a sync
     /// empties the queue.
     private func followSyncStatus() async {
@@ -136,6 +242,7 @@ final class AppModel {
             for try await status in repository.syncStatus {
                 let wasSyncing = syncStatus.isSyncing && syncStatus.pendingMutationCount > 0
                 syncStatus = status
+                hasStatus = true
                 if wasSyncing, status.pendingMutationCount == 0, !status.isSyncing { showJustSynced() }
             }
         } catch {
@@ -153,9 +260,11 @@ final class AppModel {
         }
     }
 
-    /// Announces each write the server refuses from now on; the older ones are on the Sync tab.
+    /// Announces each write the server refuses from now on; the ones refused before launch, read
+    /// once, are on the Sync tab.
     private func announceRefusedWrites() async {
         do {
+            announcedRejections = Set(try await repository.rejectedMutationsNow().map(\.id))
             for try await rejections in repository.rejectedMutations() {
                 let ids = Set(rejections.map(\.id))
                 if let announced = announcedRejections {
@@ -179,7 +288,18 @@ final class AppModel {
 /// The app's tabs.
 enum AppTab: Hashable {
     case tasks
+    case photos
     case sync
+}
+
+/// What Live updates depends on: the user, and whether it is on. A change restarts it.
+struct LiveUpdatesKey: Hashable {
+
+    /// The signed-in user; `nil` before there is one.
+    let userID: String?
+
+    /// Whether Live updates is on and the network can be reached.
+    let isOn: Bool
 }
 
 /// A failure to show the user, in an alert.
@@ -195,7 +315,7 @@ struct FailureAlert: Identifiable, Equatable {
     var opensRefusedChanges = false
 }
 
-/// Where a screen's model reports a failure: the app model, once it exists.
+/// Where a screen's model reports a failure, or what a write did: the app model, once it exists.
 final class FailureSink {
 
     /// The app model the failures go to.
@@ -204,6 +324,11 @@ final class FailureSink {
     /// Shows `error` to the user.
     func report(_ error: any Error) {
         model?.report(error)
+    }
+
+    /// Tells the user what a write did, above the tab bar for a moment.
+    func announce(_ text: String) {
+        model?.showNotice(text)
     }
 
     /// Runs `work`, showing its failure, if any.
@@ -225,39 +350,53 @@ extension AppModel {
         switch mode {
         case .project(let url, let publishableKey):
             let session = AnonymousSession(projectURL: url, publishableKey: publishableKey)
+            // --8<-- [start:install]
+            // The one client the app has, made at launch and shared: it learns who the user is
+            // from the token alone, and follows the app's own connectivity signal.
             let client = SupabaseOfflineClient(
                 supabaseURL: url,
                 supabaseKey: publishableKey,
-                // The client learns who the user is from this token alone.
-                config: SupabaseOfflineClient.Config(accessToken: { await session.accessToken() })
+                config: ClientSettings.config(
+                    accessToken: { await session.accessToken() },
+                    networkAvailability: ClientSettings.pathMonitorSignal
+                )
             )
-            return AppModel(mode: mode, repository: TaskRepository(client: client, session: session))
+            // --8<-- [end:install]
+            let changes = RealtimeChangeSource(projectURL: url, publishableKey: publishableKey) {
+                await session.accessToken()
+            }
+            return AppModel(mode: mode, repository: TaskRepository(client: client, session: session), changeSource: changes)
         case .demo:
             return demo(mode: mode)
         }
     }
 
-    /// The app in demo mode, on the testing product's in-memory client and `server`; for previews
-    /// and tests too.
+    /// The app in demo mode, on the testing product's in-memory client and `server`, whose time is
+    /// `clock` when one is given; for previews and tests too.
     static func demo(
         mode: LaunchMode = .demo(reason: .requested),
         server: DemoServer = DemoServer(),
-        session: DemoSession = DemoSession()
+        session: DemoSession = DemoSession(),
+        clock: ManualClock? = nil,
+        networkAvailability: @escaping @Sendable () -> AsyncStream<Bool> = { AsyncStream { $0.yield(true) } }
     ) -> AppModel {
+        // --8<-- [start:in-memory-client]
         let client = SupabaseOfflineClient.inMemory(
-            config: SupabaseOfflineClient.Config(
+            config: ClientSettings.config(
                 accessToken: { await session.accessToken() },
-                // The in-memory client watches no network monitor: say it is online.
-                networkAvailability: { AsyncStream { $0.yield(true) } }
+                // The in-memory client watches no network monitor: by default, say it is online.
+                networkAvailability: networkAvailability
             ),
-            server: server.fakeServer
+            server: server.fakeServer,
+            clock: clock
         )
+        // --8<-- [end:in-memory-client]
         let repository = TaskRepository(client: client, session: session, photoBytes: .bucketDownload)
-        return AppModel(mode: mode, repository: repository)
+        return AppModel(mode: mode, repository: repository, changeSource: server)
     }
 }
 
-extension RejectedMutation {
+nonisolated extension RejectedMutation {
 
     /// The title the refused write carried, so the app can say which task it was: its first
     /// row's for an insert, its value for an update.

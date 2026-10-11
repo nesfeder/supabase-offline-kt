@@ -77,7 +77,9 @@ From the samples: [LibraryFailures.kt](https://github.com/nesfeder/supabase-offl
 
 === "iOS"
 
-    The iOS sample's section lands with its pull request.
+    ```swift
+    --8<-- "Data/SampleFailure.swift:reportable-failure"
+    ```
 
 What the library builds itself is safe to report: `SyncStatus.lastSyncError` is a
 `SyncFailedException` that keeps the HTTP status and the PostgREST or Postgres code and nothing of

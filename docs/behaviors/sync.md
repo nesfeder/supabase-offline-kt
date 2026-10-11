@@ -5,7 +5,7 @@ back and when a user's session settles, and `syncPendingMutations()` sends them 
 happened. A pass sends one user's writes one at a time, in the order they were made, across
 tables, and stops at the first failure that may pass, so no write overtakes an earlier one.
 
-From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/OfflineTaskRepository.kt) · [LibraryMappings.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/LibraryMappings.kt) · [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift)
+From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/OfflineTaskRepository.kt) · [LibraryMappings.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/LibraryMappings.kt) · [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift) · [QueueWording.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Sync/QueueWording.swift)
 
 === "Android"
 
@@ -17,7 +17,11 @@ From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabas
 
 === "iOS"
 
-    The iOS sample's section lands with its pull request.
+    ```swift
+    --8<-- "Data/TaskRepository.swift:sync-now"
+
+    --8<-- "Sync/QueueWording.swift:sync-report"
+    ```
 
 ## When the library sends by itself
 
@@ -80,10 +84,12 @@ once and moves no wait.
 
     === "iOS"
 
-        The iOS sample's section lands with its pull request.
+        ```swift
+        --8<-- "App/AppModel.swift:foreground"
+        ```
 
-    The sample's activity calls it from `onStart`. On iOS, do the same when
-    `UIApplication.willEnterForegroundNotification` is posted.
+    The sample's activity calls it from `onStart`. On iOS, the sample's root view calls it when the
+    scene's phase becomes `.active`.
 
 - **Before a user signs out for good**, to send what can still be sent; see
   [Signing out and switching users](sign-out.md).
@@ -159,7 +165,9 @@ From the samples: [LibraryMappings.kt](https://github.com/nesfeder/supabase-offl
 
 === "iOS"
 
-    The iOS sample's section lands with its pull request.
+    ```swift
+    --8<-- "App/SyncHeadline.swift:sync-banner"
+    ```
 
 | Field | Meaning |
 | --- | --- |
@@ -189,7 +197,9 @@ From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabas
 
 === "iOS"
 
-    The iOS sample's section lands with its pull request.
+    ```swift
+    --8<-- "Data/TaskRepository.swift:network-switch"
+    ```
 
 While access is off nothing is sent: reads are answered from the cache as offline, live reads read
 `Paused`, writes that can be queued are queued, passes send nothing, and a Storage download is

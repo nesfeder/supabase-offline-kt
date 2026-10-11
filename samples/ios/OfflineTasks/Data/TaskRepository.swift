@@ -4,17 +4,18 @@ import Foundation
 import SupabaseOffline
 
 /// Everything the screens read and write, for the signed-in user: every call the app makes to the
-/// offline client is in this file.
+/// offline client is in this file and its two extensions, `TaskRepository+Photos.swift` (Storage)
+/// and `TaskRepository+Server.swift` (database functions and server-pushed rows).
 ///
 /// Reads are live: each is a sequence of snapshots served from the device first and refreshed from
 /// the server when it can be reached. Writes change the device's copy at once and wait in the
-/// mutation queue until the server has them, so they work offline. Photo uploads and deletes are
-/// the exception: Storage writes are never queued, so they need the network.
+/// mutation queue until the server has them, so they work offline. Storage writes, database
+/// functions and counts are the exceptions: they need the network.
 ///
 /// What throws: a write sent at once that the server refuses throws
 /// ``SampleFailure/writeRefused(taskTitle:serverError:)``; a write that waited in the queue never
-/// throws, and its refusal goes to the rejected list. A call that needs the server throws
-/// ``SampleFailure/needsNetwork`` offline. Everything else arrives as the library threw it.
+/// throws, and its refusal goes to the rejected list. Everything else arrives as the library threw
+/// it, an ``OfflineError``, which ``SampleFailure/sentence(for:)`` puts in words.
 final class TaskRepository {
 
     /// The app's one offline client.
@@ -24,14 +25,20 @@ final class TaskRepository {
     let session: any UserSession
 
     /// How a cached photo's bytes are read.
-    private let photoBytes: PhotoBytesSource
+    let photoBytes: PhotoBytesSource
 
     /// How many objects one Storage delete names at most.
-    private static let storageDeleteBatch = 100
+    static let storageDeleteBatch = 100
 
     /// How many photo rows one read of their paths asks for: a project answers at most its row
     /// limit (1,000 unless changed) to one request.
-    private static let pathPageSize = 1_000
+    static let pathPageSize = 1_000
+
+    /// How old a saved list may be and still answer a pull to refresh the server cannot.
+    static let refreshMaxAge = Duration.seconds(24 * 60 * 60)
+
+    /// How old the saved list may be and still give the open count at launch, without asking.
+    static let badgeMaxAge = Duration.seconds(60 * 60)
 
     /// A repository over `client` for `session`'s user, reading cached photos as `photoBytes` says.
     init(client: SupabaseOfflineClient, session: any UserSession, photoBytes: PhotoBytesSource = .cachedFile) {
@@ -40,32 +47,72 @@ final class TaskRepository {
         self.photoBytes = photoBytes
     }
 
-    /// The bucket every photo lives in.
-    private var photoBucket: OfflineBucketApi {
-        client.storage.from(PhotoPath.bucket)
-    }
-
     // MARK: - Live reads
 
-    /// The user's tasks, newest first. The detail screen reads this query too and picks its task
-    /// out: each query is cached on its own, and offline a query never fetched has nothing to show,
-    /// while the list is fetched as the app starts.
-    func taskSnapshots() -> QuerySnapshotSequence<[TaskRow]> {
+    // --8<-- [start:first-observed-read]
+    /// Every task of the user, newest first, as the device holds it and as the server refreshes
+    /// it: the list the other screens share. The task screen picks its task out of it, because
+    /// each query is cached on its own, and offline a query never fetched has nothing to show.
+    func taskSnapshots(readStrategy: SequenceReadStrategy = .cacheFirstThenNetwork) -> QuerySnapshotSequence<[TaskRow]> {
         client.from(Tables.tasks)
-            .selectAsSequence(as: [TaskRow].self)
+            .selectAsSequence(as: [TaskRow].self, readStrategy: readStrategy)
+            .order("created_at", ascending: false)
+    }
+    // --8<-- [end:first-observed-read]
+
+    // --8<-- [start:reactive-strategies]
+    /// How the task list reads, as Settings → Prefer fresh data says: the device's rows at once,
+    /// refreshed from the server alongside (the default), or the server's answer first, the
+    /// device's rows only when the server cannot be reached.
+    static func readStrategy(prefersFreshData: Bool) -> SequenceReadStrategy {
+        prefersFreshData ? .networkFirstThenCache : .cacheFirstThenNetwork
+    }
+    // --8<-- [end:reactive-strategies]
+
+    // --8<-- [start:task-query]
+    /// The tasks `query` picks, newest first: its chip and its search are filters the server
+    /// applies, and each combination is cached on its own, so offline the device shows the ones
+    /// it has read before.
+    func taskSnapshots(_ query: TaskQuery, readStrategy: SequenceReadStrategy) -> QuerySnapshotSequence<[TaskRow]> {
+        let tasks = client.from(Tables.tasks).selectAsSequence(as: [TaskRow].self, readStrategy: readStrategy)
+        return query.applied(to: tasks).order("created_at", ascending: false)
+    }
+    // --8<-- [end:task-query]
+
+    /// Every photo row the user has, newest first; each task's screen picks out its own, as with
+    /// ``taskSnapshots(readStrategy:)``.
+    func photoSnapshots(readStrategy: SequenceReadStrategy = .cacheFirstThenNetwork) -> QuerySnapshotSequence<[TaskPhotoRow]> {
+        client.from(Tables.taskPhotos)
+            .selectAsSequence(as: [TaskPhotoRow].self, readStrategy: readStrategy)
             .order("created_at", ascending: false)
     }
 
-    /// Every photo the user has, newest first; each task's screen picks out its own, as with
-    /// ``taskSnapshots()``.
-    func photoSnapshots() -> QuerySnapshotSequence<[TaskPhotoRow]> {
+    // --8<-- [start:photo-rows-in]
+    /// The photo rows of `taskIDs`, the tasks on screen, in one query: the list shows how many
+    /// photos each one has.
+    func photoSnapshots(ofTasks taskIDs: [String]) -> QuerySnapshotSequence<[TaskPhotoRow]> {
+        client.from(Tables.taskPhotos)
+            .selectAsSequence(as: [TaskPhotoRow].self)
+            .in("task_id", values: taskIDs)
+            .order("created_at", ascending: true)
+    }
+    // --8<-- [end:photo-rows-in]
+
+    // --8<-- [start:photos-page]
+    /// The user's newest `count` photos, for the Photos grid, which asks for a page more each
+    /// time it reaches the end.
+    func photoPage(count: Int) -> QuerySnapshotSequence<[TaskPhotoRow]> {
         client.from(Tables.taskPhotos)
             .selectAsSequence(as: [TaskPhotoRow].self)
             .order("created_at", ascending: false)
+            .limit(count)
     }
+    // --8<-- [end:photos-page]
 
-    /// The writes waiting in the mutation queue for `table`, as the queue changes.
-    func pendingMutations(table: String) -> PendingMutationSequence {
+    // --8<-- [start:pending]
+    /// The writes waiting in the mutation queue, of `table` or of every table, in the order they
+    /// will be sent, as the queue changes.
+    func pendingMutations(table: String? = nil) -> PendingMutationSequence {
         client.pendingMutations(table: table)
     }
 
@@ -73,23 +120,121 @@ final class TaskRepository {
     func pendingMutationCounts(table: String? = nil) -> PendingMutationCountSequence {
         client.pendingMutationCountSequence(table: table)
     }
+    // --8<-- [end:pending]
 
+    // --8<-- [start:discard]
+    /// Removes a waiting write without sending it: it is lost, and the rows it changed show again
+    /// as the server last sent them.
+    func discardPendingMutation(id: Int64) async throws {
+        try await client.discardPendingMutation(id: id)
+    }
+    // --8<-- [end:discard]
+
+    // --8<-- [start:rejected-list]
     /// The writes the server refused on replay, oldest first, until each is dismissed or retried.
     func rejectedMutations() -> RejectedMutationSequence {
         client.rejectedMutations()
     }
 
-    /// The network, the queue and the last sync, as one value: ``SyncStatusSequence/value`` now, or
-    /// iterate it for each change.
+    /// The refused writes as they are now, read once: the ones the app found at launch.
+    func rejectedMutationsNow() async throws -> [RejectedMutation] {
+        try await client.rejectedMutations().first()
+    }
+    // --8<-- [end:rejected-list]
+
+    // --8<-- [start:sync-status]
+    /// The network, the queue and the last sync, as one value: ``SyncStatusSequence/value`` now,
+    /// or iterate it for each change.
     var syncStatus: SyncStatusSequence {
         client.syncStatus
     }
+    // --8<-- [end:sync-status]
+
+    // --8<-- [start:pending-count]
+    /// How many writes wait, read once: the Sync tab's badge at launch, before the first status.
+    func pendingMutationCountNow() async throws -> Int {
+        try await client.pendingMutationCount()
+    }
+    // --8<-- [end:pending-count]
+
+    // MARK: - One-shot reads
+
+    // --8<-- [start:first-read]
+    /// Asks the server for `query`'s tasks again, as pull to refresh does: the same query as the
+    /// list's live read, so its answer replaces that query's cached rows and every reader of it
+    /// sees them. When the server cannot be reached, the saved rows answer, unless they are older
+    /// than ``refreshMaxAge``; either way the answer says where it came from.
+    func refreshTasks(_ query: TaskQuery) async throws -> ListProvenance {
+        let request = client.from(Tables.tasks).select(readStrategy: .networkFirst(maxAge: Self.refreshMaxAge))
+        let response = try await query.applied(to: request)
+            .order("created_at", ascending: false)
+            .execute([TaskRow].self)
+        return ListProvenance(response)
+    }
+    // --8<-- [end:first-read]
+
+    // --8<-- [start:badge-read]
+    /// How many tasks are open, for the Tasks tab's badge at launch: from the device when it read
+    /// them less than an hour ago, from the server otherwise.
+    func openTaskCountAtLaunch() async throws -> Int {
+        try await client.from(Tables.tasks)
+            .select("id", readStrategy: .cacheFirst(maxAge: Self.badgeMaxAge))
+            .eq("done", value: false)
+            .execute([RowKey].self)
+            .value
+            .count
+    }
+    // --8<-- [end:badge-read]
+
+    // --8<-- [start:cache-only]
+    /// The photo rows of task `taskID` the device holds, from the query ``photoSnapshots(readStrategy:)``
+    /// reads, without asking the server; `nil` when the device holds nothing for that query.
+    func cachedPhotos(ofTask taskID: String) async throws -> [TaskPhotoRow]? {
+        do {
+            return try await client.from(Tables.taskPhotos)
+                .select(readStrategy: .cacheOnly)
+                .order("created_at", ascending: false)
+                .execute([TaskPhotoRow].self)
+                .value
+                .filter { $0.taskID == taskID }
+        } catch OfflineError.cacheMiss {
+            return nil
+        }
+    }
+    // --8<-- [end:cache-only]
+
+    // --8<-- [start:operator-filter]
+    /// How many tasks the server holds with notes, through the generic filter that names its
+    /// operator as text; it asks the server, so it needs the network.
+    func tasksWithNotesOnServer() async throws -> Int {
+        try await client.from(Tables.tasks)
+            .select("id", readStrategy: .networkOnly)
+            .filter("notes", operator: "not.is", value: "null")
+            .execute([RowKey].self)
+            .value
+            .count
+    }
+    // --8<-- [end:operator-filter]
+
+    // --8<-- [start:read-again]
+    /// Reads both lists from the server once more: Realtime does not replay what happened while it
+    /// was not connected, so each new subscription catches up this way.
+    func readListsAgain() async throws {
+        _ = try await refreshTasks(TaskQuery())
+        try await client.from(Tables.taskPhotos)
+            .select(readStrategy: .networkOnly)
+            .order("created_at", ascending: false)
+            .execute()
+    }
+    // --8<-- [end:read-again]
 
     // MARK: - Task writes
 
-    /// Adds a task with a new id, the signed-in user and the device's clock as its creation time.
-    @discardableResult
-    func addTask(title: String, notes: String?) async throws -> MutationOutcome<Void> {
+    // --8<-- [start:first-write]
+    /// Adds a task with a new id, the signed-in user and the device's clock as its creation time,
+    /// and says what happened: the server stored it, at the `updated_at` it set and gives back, or
+    /// it waits in the queue on this device.
+    func addTask(title: String, notes: String?, needsConnection: Bool = false) async throws -> NewTaskResult {
         let row = NewTaskRow(
             id: DeviceID.make(),
             userID: try signedInUserID(),
@@ -98,28 +243,142 @@ final class TaskRepository {
             done: false,
             createdAt: .now
         )
-        return try await write(taskTitle: title) {
-            try await client.from(Tables.tasks).insert(row).execute()
+        let outcome = try await write(taskTitle: title) {
+            try await client.from(Tables.tasks)
+                .insert(row, mutationStrategy: Self.mutationStrategy(needsConnection: needsConnection))
+                .select()
+                .single()
+                .execute(StoredTaskRow.self)
+        }
+        switch outcome {
+        case .applied(let result):
+            // A write sent only straight to the server is never put into the device's lists:
+            // the app puts in the row the server stored, as it would a row Realtime reports.
+            if needsConnection { try await client.applyServerRecord(table: Tables.tasks, record: result.value) }
+            return .saved(storedAt: result.value.updatedAt)
+        case .queued(let pendingMutation):
+            return .savedOnDevice(pendingMutationID: pendingMutation.id)
         }
     }
+    // --8<-- [end:first-write]
 
-    /// Sets a task's title and notes; `nil` notes clears them on the server too.
+    // --8<-- [start:mutation-strategies]
+    /// How New task sends its row: through the queue, so it is kept while offline (the default),
+    /// or straight to the server only, failing offline, when Needs a connection is on.
+    static func mutationStrategy(needsConnection: Bool) -> MutationStrategy {
+        needsConnection ? .onlineOnly : .queueIfOffline
+    }
+    // --8<-- [end:mutation-strategies]
+
+    // --8<-- [start:typed-update]
+    /// Sets a task's title and notes, as one typed patch; `nil` notes clears them on the server
+    /// too.
     @discardableResult
-    func updateTask(id: String, title: String, notes: String?) async throws -> MutationOutcome<Void> {
-        // OfflineJSON, so a cleared note is sent as an explicit null rather than left out.
-        let values: [String: OfflineJSON] = ["title": .string(title), "notes": notes.map(OfflineJSON.string) ?? .null]
-        return try await write(taskTitle: title) {
-            try await client.from(Tables.tasks).update(values).eq("id", value: id).execute()
+    func updateTaskText(id: String, title: String, notes: String?) async throws -> MutationOutcome<Void> {
+        try await write(taskTitle: title) {
+            try await client.from(Tables.tasks)
+                .update(TaskTextPatch(title: title, notes: notes))
+                .eq("id", value: id)
+                .execute()
         }
     }
+    // --8<-- [end:typed-update]
 
-    /// Marks a task done, or open again.
+    // --8<-- [start:body-update]
+    /// Marks a task done, or open again, with the update's body written as JSON values.
     @discardableResult
     func setTaskDone(id: String, isDone: Bool) async throws -> MutationOutcome<Void> {
         try await write(taskTitle: nil) {
             try await client.from(Tables.tasks).update(["done": .bool(isDone)]).eq("id", value: id).execute()
         }
     }
+    // --8<-- [end:body-update]
+
+    // --8<-- [start:duplicate-task]
+    /// Makes the task's copy. The copy's id is made from the task's, so doing it again writes over
+    /// that copy rather than adding another: an upsert, merged by the table's key.
+    func duplicateTask(_ task: TaskItem) async throws -> MutationOutcome<Void> {
+        let copy = NewTaskRow(
+            id: DeviceID.derived(from: "copy of \(task.id)"),
+            userID: task.userID,
+            title: Wording.copyTitle(of: task.title),
+            notes: task.notes,
+            done: false,
+            createdAt: .now
+        )
+        return try await write(taskTitle: copy.title) {
+            try await client.from(Tables.tasks).upsert(copy).execute()
+        }
+    }
+    // --8<-- [end:duplicate-task]
+
+    // --8<-- [start:insert-list]
+    /// Adds five sample tasks in one insert of a list of rows: one write in the queue, sent as one
+    /// request.
+    func addSampleTasks() async throws -> MutationOutcome<Void> {
+        let userID = try signedInUserID()
+        let now = Date.now
+        let rows = SampleTasks.titles.enumerated().map { index, title in
+            NewTaskRow(
+                id: DeviceID.make(),
+                userID: userID,
+                title: title,
+                notes: nil,
+                done: false,
+                // A second apart, so they list in the order written.
+                createdAt: now - Double(SampleTasks.titles.count - index)
+            )
+        }
+        return try await write(taskTitle: nil) {
+            try await client.from(Tables.tasks).insert(rows).execute()
+        }
+    }
+    // --8<-- [end:insert-list]
+
+    // --8<-- [start:starter-list]
+    /// Adds the starter tasks, once: their ids are made from the user's, so importing again finds
+    /// them on the server and changes nothing, however they were edited since. The rows are JSON
+    /// values; `onConflict` names the key and `ignoreDuplicates` keeps the server's rows.
+    func importStarterList() async throws -> MutationOutcome<Void> {
+        let userID = try signedInUserID()
+        let createdAt = Date.now.formatted(.iso8601)
+        let rows: [OfflineJSON] = StarterList.titles.enumerated().map { index, title in
+            // Every column the list reads: a queued row shows with only what it wrote.
+            [
+                "id": .string(DeviceID.derived(from: "starter \(index) of \(userID)")),
+                "user_id": .string(userID),
+                "title": .string(title),
+                "notes": .null,
+                "done": false,
+                "created_at": .string(createdAt),
+            ]
+        }
+        return try await write(taskTitle: nil) {
+            try await client.from(Tables.tasks)
+                .upsert(.array(rows), onConflict: "id", ignoreDuplicates: true)
+                .execute()
+        }
+    }
+    // --8<-- [end:starter-list]
+
+    // --8<-- [start:json-insert]
+    /// Adds a task whose title the server refuses, written as raw JSON, to show what a refused
+    /// write looks like: online it is refused at once; offline when it syncs.
+    @discardableResult
+    func queueInvalidTitle() async throws -> MutationOutcome<Void> {
+        let row: OfflineJSON = [
+            "id": .string(DeviceID.make()),
+            "user_id": .string(try signedInUserID()),
+            "title": .string(TaskRules.invalidTitle),
+            "notes": .null,
+            "done": false,
+            "created_at": .string(Date.now.formatted(.iso8601)),
+        ]
+        return try await write(taskTitle: TaskRules.invalidTitle) {
+            try await client.from(Tables.tasks).insert(row).execute()
+        }
+    }
+    // --8<-- [end:json-insert]
 
     /// Deletes a task: its photo files first (only online: Storage writes are never queued, so
     /// offline they stay in the bucket), then its photo rows, then the task.
@@ -132,7 +391,7 @@ final class TaskRepository {
             if let photos {
                 try await deleteFiles(photos.map(\.objectPath))
             } else {
-                try await deleteFiles(photoPathsOnServer(column: "task_id", value: id))
+                try await deleteFiles(photoPathsOnServer { $0.eq("task_id", value: id) })
             }
         }
         // The server's cascade would delete the photo rows, but the cache never sees a cascade.
@@ -141,122 +400,61 @@ final class TaskRepository {
                 try await client.from(Tables.taskPhotos).delete().eq("task_id", value: id).execute()
             }
         }
+        // --8<-- [start:delete-task]
         try await write(taskTitle: nil) {
             try await client.from(Tables.tasks).delete().eq("id", value: id).execute()
         }
+        // --8<-- [end:delete-task]
     }
 
-    // MARK: - Photos
-
-    /// Uploads `photo` for the task, then writes its row. The file goes first, so a row never names
-    /// a file that is not there; a row the server refuses at once takes its file with it.
-    ///
-    /// - Throws: ``SampleFailure/needsNetwork`` at once while offline: uploads are never queued.
-    @discardableResult
-    func attachPhoto(taskID: String, photo: EncodedPhoto) async throws -> TaskPhoto {
-        guard canReachNetwork else { throw SampleFailure.needsNetwork }
-        let userID = try signedInUserID()
-        let photoID = DeviceID.make()
-        let objectPath = PhotoPath.objectPath(userID: userID, taskID: taskID, photoID: photoID)
-        do {
-            // No upsert: the bucket has no update policy, and a path is never reused.
-            try await photoBucket.upload(
-                objectPath,
-                data: photo.jpeg,
-                options: OfflineBucketApi.UploadOptions(contentType: "image/jpeg", upsert: false)
-            )
-        } catch {
-            throw SampleFailure.storage(error)
-        }
-        let row = TaskPhotoRow(
-            id: photoID,
-            userID: userID,
-            taskID: taskID,
-            objectPath: objectPath,
-            width: photo.width,
-            height: photo.height,
-            createdAt: .now
-        )
-        do {
+    /// Deletes the done tasks made last week. Online, their photos' files and rows go first, as
+    /// Delete task does; offline, the tasks' grouped delete is refused before anything is deleted.
+    func deleteLastWeeksDoneTasks(now: Date = .now) async throws {
+        let lastWeek = TaskQuery.week(before: now)
+        if canReachNetwork {
+            let taskIDs = try await client.from(Tables.tasks)
+                .select("id", readStrategy: .networkOnly)
+                .is("done", value: true)
+                .gte("created_at", value: lastWeek.start)
+                .lt("created_at", value: lastWeek.end)
+                .execute([RowKey].self)
+                .value
+                .map(\.id)
+            guard !taskIDs.isEmpty else { return }
+            try await deleteFiles(photoPathsOnServer { $0.in("task_id", values: taskIDs) })
             try await write(taskTitle: nil) {
-                try await client.from(Tables.taskPhotos).insert(row).execute()
-            }
-        } catch let refusal as SampleFailure {
-            // Refused at once (its task deleted on the server meanwhile, say): no row will ever name
-            // the file, so it goes too, as far as Storage allows. A row that is only queued keeps
-            // its file.
-            if case .writeRefused = refusal { try? await photoBucket.remove(paths: [objectPath]) }
-            throw refusal
-        }
-        return row.photo(pendingIDs: [])
-    }
-
-    /// Deletes a photo's file, then its row. The file needs the network.
-    func deletePhoto(_ photo: TaskPhoto) async throws {
-        guard canReachNetwork else { throw SampleFailure.needsNetwork }
-        try await deleteFiles([photo.objectPath])
-        try await write(taskTitle: nil) {
-            try await client.from(Tables.taskPhotos).delete().eq("id", value: photo.id).execute()
-        }
-    }
-
-    /// Where a photo's file stands on this device: kept, or fetched now and kept when it is not
-    /// and the server can be asked.
-    ///
-    /// A private file is asked for only once a user is signed in: without the user's token,
-    /// Storage answers "not found", which would drop a copy kept earlier.
-    func photoFile(for photo: TaskPhoto) async -> PhotoFileState {
-        do {
-            if let file = try await photoBucket.cachedFile(path: photo.objectPath) { return .onDevice(file) }
-            guard session.userID != nil, canReachNetwork else { return .notOnDevice }
-            return .onDevice(try await photoBucket.ensureCachedFile(path: photo.objectPath))
-        } catch {
-            switch SampleFailure.storage(error) as? SampleFailure {
-            case .needsNetwork?: return .notOnDevice
-            case .photoMissing?: return .missing
-            default: return .unavailable
+                try await client.from(Tables.taskPhotos).delete().in("task_id", values: taskIDs).execute()
             }
         }
+        try await deleteDoneTasks(createdWithin: lastWeek)
     }
 
-    /// The bytes of `file`, the device's copy of `photo`'s file.
-    func photoData(of file: CachedFile, for photo: TaskPhoto) async throws -> Data {
-        switch photoBytes {
-        case .cachedFile:
-            return try await Self.contents(of: file.url)
-        case .bucketDownload:
-            return try await photoBucket.download(path: photo.objectPath)
-        }
+    // --8<-- [start:same-column-write]
+    /// Deletes the done tasks created within `window`: two conditions on `created_at`, which the
+    /// client sends together in one group. The queue cannot record a group, so the delete is sent
+    /// at once rather than queued, and offline it fails with `mutationNotQueueable`.
+    func deleteDoneTasks(createdWithin window: DateInterval) async throws {
+        try await client.from(Tables.tasks)
+            .delete()
+            .is("done", value: true)
+            .gte("created_at", value: window.start)
+            .lt("created_at", value: window.end)
+            .execute()
     }
-
-    /// The contents of the file at `url`, read off the main actor.
-    @concurrent
-    nonisolated private static func contents(of url: URL) async throws -> Data {
-        try Data(contentsOf: url)
-    }
+    // --8<-- [end:same-column-write]
 
     // MARK: - Sync
 
-    /// Asks the server for the task list again, as pull to refresh does: the same query as
-    /// ``taskSnapshots()``, so its answer replaces that query's cached rows and every reader of it
-    /// sees them.
-    func refreshTasks() async throws {
-        do {
-            try await client.from(Tables.tasks)
-                .select(readStrategy: .networkOnly)
-                .order("created_at", ascending: false)
-                .execute()
-        } catch {
-            throw SampleFailure.read(error)
-        }
-    }
-
-    /// Sends the queued writes now, in the order they were made; returns at once offline.
+    // --8<-- [start:sync-now]
+    /// Sends the queued writes now, in the order they were made, and says what happened; returns
+    /// at once offline.
     @discardableResult
     func syncPendingMutations() async throws -> SyncReport {
         try await client.syncPendingMutations()
     }
+    // --8<-- [end:sync-now]
 
+    // --8<-- [start:rejected-actions]
     /// Forgets a refused write.
     func dismissRejectedMutation(id: Int64) async throws {
         try await client.dismissRejectedMutation(id: id)
@@ -267,7 +465,9 @@ final class TaskRepository {
     func retryRejectedMutation(id: Int64) async throws {
         try await client.retryRejectedMutation(id: id)
     }
+    // --8<-- [end:rejected-actions]
 
+    // --8<-- [start:network-switch]
     /// Switches the app's own network access off (Simulate offline) or back on.
     func setNetworkEnabled(_ isEnabled: Bool) async throws {
         if isEnabled {
@@ -276,6 +476,7 @@ final class TaskRepository {
             try await client.disableNetwork()
         }
     }
+    // --8<-- [end:network-switch]
 
     /// Deletes everything this device holds: cached rows and files, queued and refused writes.
     /// Open lists then read their rows again from the server, once the network allows.
@@ -283,6 +484,7 @@ final class TaskRepository {
         try await client.clearLocalData()
     }
 
+    // --8<-- [start:start-over]
     /// Starts again as a new anonymous user with no tasks, in this order:
     ///
     /// 1. This user's queued writes are discarded (a write already being sent is waited for), so
@@ -295,16 +497,8 @@ final class TaskRepository {
     /// 6. The app signs in as a new user, and the network is turned back on: open live reads then
     ///    fetch again, with the new user's token.
     ///
-    /// The network is off from before the sign-out until the new user is signed in, because a live
-    /// read fetches again right after a clear with whatever token the closure returns then: with
-    /// this user's, their rows would be back for the next user to see. And no queued write can go
-    /// out between the sign-out and the clear.
-    ///
     /// - Throws: ``SampleFailure/needsNetwork`` while offline, Simulate offline included, when
-    ///   nothing is discarded, deleted or cleared. A failed delete is thrown with the same user still
-    ///   signed in, so it can be tried again; their unsent changes are gone by then. A failed
-    ///   sign-in is thrown with nobody signed in, nothing of anyone's on the device and the network
-    ///   back on, so the app signs in again when it can.
+    ///   nothing is discarded, deleted or cleared.
     func startOver() async throws {
         guard canReachNetwork else { throw SampleFailure.needsNetwork }
         for mutation in try await client.pendingMutations().first() {
@@ -322,6 +516,7 @@ final class TaskRepository {
         }
         try await client.enableNetwork()
     }
+    // --8<-- [end:start-over]
 
     // MARK: - Helpers
 
@@ -332,17 +527,17 @@ final class TaskRepository {
     }
 
     /// The signed-in user's id; the app offers no write that needs one before there is a session.
-    private func signedInUserID() throws -> String {
+    func signedInUserID() throws -> String {
         guard let userID = session.userID else { throw SampleFailure.needsNetwork }
         return userID
     }
 
-    /// Runs `write` and names its failure in the app's terms.
+    /// Runs `write` and names a refusal of it in the app's terms.
     @discardableResult
-    private func write(
+    func write<Value>(
         taskTitle: String?,
-        _ write: () async throws -> MutationOutcome<Void>
-    ) async throws -> MutationOutcome<Void> {
+        _ write: () async throws -> MutationOutcome<Value>
+    ) async throws -> MutationOutcome<Value> {
         do {
             return try await write()
         } catch {
@@ -350,65 +545,84 @@ final class TaskRepository {
         }
     }
 
-    /// The photo rows of task `taskID` the device holds, from the query ``photoSnapshots()``
-    /// reads, or `nil` when it holds none for that query.
-    private func cachedPhotos(ofTask taskID: String) async throws -> [TaskPhotoRow]? {
-        do {
-            return try await client.from(Tables.taskPhotos)
-                .select(readStrategy: .cacheOnly)
-                .order("created_at", ascending: false)
-                .execute([TaskPhotoRow].self)
-                .value
-                .filter { $0.taskID == taskID }
-        } catch OfflineError.cacheMiss {
-            return nil
-        }
-    }
-
-    /// The object paths of the photo rows whose `column` equals `value`, asked of the server a page
-    /// at a time until a page comes back empty.
-    private func photoPathsOnServer(column: String, value: String) async throws -> [String] {
+    /// The object paths of the photo rows `filter` picks, asked of the server a page at a time
+    /// until a page comes back empty.
+    func photoPathsOnServer(
+        where filter: (OfflineSelectRequestBuilder) -> OfflineSelectRequestBuilder
+    ) async throws -> [String] {
         var paths: [String] = []
         while true {
-            let page: [ObjectPathRow]
-            do {
-                page = try await client.from(Tables.taskPhotos)
-                    .select("object_path", readStrategy: .networkOnly)
-                    .eq(column, value: value)
-                    .order("id", ascending: true)
-                    .range(from: paths.count, to: paths.count + Self.pathPageSize - 1)
-                    .execute([ObjectPathRow].self)
-                    .value
-            } catch {
-                throw SampleFailure.read(error)
-            }
+            // --8<-- [start:network-only]
+            let page = try await filter(client.from(Tables.taskPhotos).select("object_path", readStrategy: .networkOnly))
+                .order("id", ascending: true)
+                .range(from: paths.count, to: paths.count + Self.pathPageSize - 1)
+                .execute([ObjectPathRow].self)
+                .value
+            // --8<-- [end:network-only]
             if page.isEmpty { return paths }
             paths += page.map(\.objectPath)
         }
     }
 
-    /// Deletes the files at `paths`, in batches; a missing file is no error.
-    private func deleteFiles(_ paths: [String]) async throws {
-        for start in stride(from: 0, to: paths.count, by: Self.storageDeleteBatch) {
-            let batch = Array(paths[start..<min(start + Self.storageDeleteBatch, paths.count)])
-            do {
-                try await photoBucket.remove(paths: batch)
-            } catch {
-                throw SampleFailure.storage(error)
-            }
-        }
-    }
-
+    // --8<-- [start:delete-my-data]
     /// Deletes `userID`'s files, photo rows and tasks on the server, before that user is left.
+    /// The deletes are sent now or not at all: queued, they would outlive the user they are for.
     private func deleteEverything(of userID: String) async throws {
-        try await deleteFiles(photoPathsOnServer(column: "user_id", value: userID))
-        // Sent now or not at all: queued, they would outlive the user they are for.
+        try await deleteFiles(photoPathsOnServer { $0.eq("user_id", value: userID) })
         try await write(taskTitle: nil) {
             try await client.from(Tables.taskPhotos).delete(mutationStrategy: .onlineOnly).eq("user_id", value: userID).execute()
         }
         try await write(taskTitle: nil) {
             try await client.from(Tables.tasks).delete(mutationStrategy: .onlineOnly).eq("user_id", value: userID).execute()
         }
+    }
+    // --8<-- [end:delete-my-data]
+}
+
+/// What New task reports once its write returns.
+nonisolated enum NewTaskResult: Equatable, Sendable {
+
+    /// The server stored it, at `storedAt`: the `updated_at` the server set and gave back.
+    case saved(storedAt: Date)
+
+    /// It waits in the mutation queue under `pendingMutationID`, and is sent when the network allows.
+    case savedOnDevice(pendingMutationID: Int64)
+}
+
+/// Where a list's rows came from, for the caption under the Tasks title.
+nonisolated struct ListProvenance: Equatable, Sendable {
+
+    /// Whether the rows are the device's copy rather than the server's answer to this read.
+    let isFromCache: Bool
+
+    /// When the rows were fetched from the server; `nil` when they never were.
+    let fetchedAt: Date?
+
+    /// Whether a queued write changed the rows shown.
+    let hasPendingMutations: Bool
+}
+
+nonisolated extension ListProvenance {
+
+    // --8<-- [start:provenance]
+    /// The provenance of a one-shot read's `response`: whether it is the device's copy, when it
+    /// was fetched, and whether a queued write changed it.
+    init<Value>(_ response: OfflineResponse<Value>) {
+        self.init(
+            isFromCache: response.isFromCache,
+            fetchedAt: response.fetchedAt,
+            hasPendingMutations: response.hasPendingMutations
+        )
+    }
+    // --8<-- [end:provenance]
+
+    /// The provenance of a live read's `snapshot`.
+    init<Value>(_ snapshot: QuerySnapshot<Value>) {
+        self.init(
+            isFromCache: snapshot.isFromCache,
+            fetchedAt: snapshot.fetchedAt,
+            hasPendingMutations: snapshot.hasPendingMutations
+        )
     }
 }
 

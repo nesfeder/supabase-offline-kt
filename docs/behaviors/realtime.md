@@ -4,7 +4,7 @@ Realtime stays on supabase-kt: the library never opens a channel. Hand each reco
 delivers to `applyServerRecord` or `applyServerDelete`, and every cached list of the table shows the
 change at once, without fetching again.
 
-From the samples: [LiveUpdates.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/LiveUpdates.kt) · [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift)
+From the samples: [LiveUpdates.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/LiveUpdates.kt) · [TaskRepository+Server.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository+Server.swift)
 
 === "Android"
 
@@ -14,7 +14,9 @@ From the samples: [LiveUpdates.kt](https://github.com/nesfeder/supabase-offline-
 
 === "iOS"
 
-    The iOS sample's section lands with its pull request.
+    ```swift
+    --8<-- "Data/TaskRepository+Server.swift:apply-records"
+    ```
 
 ## Why
 
@@ -30,7 +32,7 @@ sample subscribes to both of its tables behind its "Live updates" switch, on by 
 leaves the channel when the switch goes off, when nobody is signed in, and while the network is
 down or Simulate offline is on; it joins again when the network is back:
 
-From the samples: [LiveUpdates.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/LiveUpdates.kt) · [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift)
+From the samples: [LiveUpdates.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/LiveUpdates.kt) · [ServerChanges.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/ServerChanges.swift) · [AppModel.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/App/AppModel.swift)
 
 === "Android"
 
@@ -40,7 +42,11 @@ From the samples: [LiveUpdates.kt](https://github.com/nesfeder/supabase-offline-
 
 === "iOS"
 
-    The iOS sample's section lands with its pull request.
+    ```swift
+    --8<-- "Data/ServerChanges.swift:live-updates"
+
+    --8<-- "App/AppModel.swift:live-updates-apply"
+    ```
 
 Add `realtime-kt` from the same supabase-kt BOM as the rest, and install `Realtime` beside the
 other plugins; see [Project setup](../getting-started/setup.md#add-the-dependency). Each table must
@@ -92,7 +98,9 @@ For a table in another schema, pass `schema`; its key is the one configured as `
 
   === "iOS"
 
-      The iOS sample's section lands with its pull request.
+      ```swift
+      --8<-- "Data/TaskRepository.swift:read-again"
+      ```
 - **A new row joins every cached list whose filters may admit it**, appended after the list's own
   rows, past its order and limit, as a queued row is; the list's order returns with its next
   fetch. See [Optimistic overlay](overlay.md#limits).

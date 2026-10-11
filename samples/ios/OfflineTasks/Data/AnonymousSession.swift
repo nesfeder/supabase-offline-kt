@@ -29,11 +29,13 @@ final class AnonymousSession: UserSession {
         state = auth.currentUser.map { .signedIn(userID: $0.id.uuidString.lowercased()) } ?? .signingIn
     }
 
+    // --8<-- [start:access-token]
     nonisolated func accessToken() async -> String? {
         // `session` refreshes an expired token first. With no session (or none that refreshes),
         // the request goes with the publishable key alone, which the schema refuses.
         try? await auth.session.accessToken
     }
+    // --8<-- [end:access-token]
 
     func signInWhenReachable(_ statuses: SyncStatusSequence) async {
         var wasReachable = false
@@ -49,12 +51,14 @@ final class AnonymousSession: UserSession {
         }
     }
 
+    // --8<-- [start:forget-session]
     func signOut() async {
         state = .signingIn
         // Auth drops the session from the device before it calls the server, so the token is gone
         // even when that call fails; for an anonymous user nobody can sign in as again, that is all.
         try? await auth.signOut()
     }
+    // --8<-- [end:forget-session]
 
     func signIn() async throws {
         state = .signingIn

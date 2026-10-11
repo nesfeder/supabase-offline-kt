@@ -5,7 +5,7 @@ network fails, the kept copy is served instead. Writes (uploads, updates, delete
 copies) are online only and never queued, and one that reaches the server drops the cached copies
 it made stale.
 
-From the samples: [TaskPhotoFiles.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/TaskPhotoFiles.kt) · [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift)
+From the samples: [TaskPhotoFiles.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/TaskPhotoFiles.kt) · [TaskRepository+Photos.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository+Photos.swift)
 
 === "Android"
 
@@ -15,7 +15,11 @@ From the samples: [TaskPhotoFiles.kt](https://github.com/nesfeder/supabase-offli
 
 === "iOS"
 
-    The iOS sample's section lands with its pull request.
+    ```swift
+    --8<-- "Data/TaskRepository+Photos.swift:bucket"
+    ```
+
+    The Swift package's bucket has no `setHeader`.
 
 `supabase.offline.storage.from(bucket)` is an `OfflineBucketApi`: every operation of supabase-kt's
 `BucketApi`, under its name, plus the file cache. Bucket management (creating, listing and
@@ -47,7 +51,7 @@ or handed on.
 
 ## Cached files
 
-From the samples: [TaskPhotoFiles.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/TaskPhotoFiles.kt) · [LibraryMappings.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/LibraryMappings.kt) · [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift)
+From the samples: [TaskPhotoFiles.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/TaskPhotoFiles.kt) · [LibraryMappings.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/LibraryMappings.kt) · [TaskRepository+Photos.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository+Photos.swift)
 
 === "Android"
 
@@ -59,7 +63,9 @@ From the samples: [TaskPhotoFiles.kt](https://github.com/nesfeder/supabase-offli
 
 === "iOS"
 
-    The iOS sample's section lands with its pull request.
+    ```swift
+    --8<-- "Data/TaskRepository+Photos.swift:cached-file"
+    ```
 
 `cachedFile(path)` returns the cached copy, or `null`, and never touches the network.
 `ensureCachedFile(path)` downloads the object into the cache first when there is no copy; it
@@ -81,7 +87,7 @@ an image loader. The sample draws thumbnails from `localUriIfCached`, the photo 
 `ensureLocalUri`, and Share copies the file from `ensureLocalFile` out of the cache, since another
 app reads it later and a `file:` URI cannot leave the app:
 
-From the samples: [TaskPhotoFiles.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/TaskPhotoFiles.kt) · [Sharing.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/ui/components/Sharing.kt) · [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift)
+From the samples: [TaskPhotoFiles.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/TaskPhotoFiles.kt) · [Sharing.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/ui/components/Sharing.kt) · [TaskRepository+Photos.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository+Photos.swift)
 
 === "Android"
 
@@ -93,7 +99,9 @@ From the samples: [TaskPhotoFiles.kt](https://github.com/nesfeder/supabase-offli
 
 === "iOS"
 
-    The iOS sample's section lands with its pull request.
+    ```swift
+    --8<-- "Data/TaskRepository+Photos.swift:share-photo"
+    ```
 
 `ensureLocalUri` and `ensureLocalFile` are `ensureCachedFile` as a `Uri` or a `File`, and throw what
 it throws; `localUriIfCached` is `cachedFile` as a `Uri`, `null` when nothing is cached. On iOS,
@@ -117,7 +125,7 @@ The sample uploads a photo with progress, replaces a file in place, and moves or
 another task's folder; a move and a copy also write the photo's row, since the schema ties a row to
 its path:
 
-From the samples: [TaskPhotoFiles.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/TaskPhotoFiles.kt) · [OfflineTaskRepository.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/OfflineTaskRepository.kt) · [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift)
+From the samples: [TaskPhotoFiles.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/TaskPhotoFiles.kt) · [OfflineTaskRepository.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/OfflineTaskRepository.kt) · [TaskRepository+Photos.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository+Photos.swift)
 
 === "Android"
 
@@ -133,7 +141,15 @@ From the samples: [TaskPhotoFiles.kt](https://github.com/nesfeder/supabase-offli
 
 === "iOS"
 
-    The iOS sample's section lands with its pull request.
+    ```swift
+    --8<-- "Data/TaskRepository+Photos.swift:upload"
+
+    --8<-- "Data/TaskRepository+Photos.swift:replace-photo"
+
+    --8<-- "Data/TaskRepository+Photos.swift:move-photo"
+
+    --8<-- "Data/TaskRepository+Photos.swift:copy-photo"
+    ```
 
 Signed URLs, listings, `info` and `exists` always ask the server. `publicUrl` and the other URL
 builders send nothing. The sample's photo Details sheet, its Share link and Share all photos of
@@ -141,7 +157,7 @@ this task, and the Sync tab's Storage section make each of them. A signed URL wi
 transform serves Storage's resized copy, which needs image transformations on the project (Pro
 plans and up on hosted Supabase); without them the link answers with an error.
 
-From the samples: [TaskPhotoFiles.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/TaskPhotoFiles.kt) · [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift)
+From the samples: [TaskPhotoFiles.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/TaskPhotoFiles.kt) · [TaskRepository+Photos.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository+Photos.swift)
 
 === "Android"
 
@@ -159,7 +175,17 @@ From the samples: [TaskPhotoFiles.kt](https://github.com/nesfeder/supabase-offli
 
 === "iOS"
 
-    The iOS sample's section lands with its pull request.
+    ```swift
+    --8<-- "Data/TaskRepository+Photos.swift:photo-details"
+
+    --8<-- "Data/TaskRepository+Photos.swift:share-link"
+
+    --8<-- "Data/TaskRepository+Photos.swift:share-all-links"
+
+    --8<-- "Data/TaskRepository+Photos.swift:list-bucket"
+
+    --8<-- "Data/TaskRepository+Photos.swift:signed-upload"
+    ```
 
 ## Paths that are never cached
 

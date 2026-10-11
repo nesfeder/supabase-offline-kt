@@ -20,7 +20,8 @@ the line before the block says which:
     ```
 
 A section is marked in its source as the docs site's snippet extension marks one, so the site's
-pages include the same sections directly (`--8<-- "<listing file>:client"`):
+pages include the same sections directly (`--8<-- "<listing file>:client"`), or a section of the
+iOS sample's own sources (samples/ios), which the sample's CI step builds and tests:
 
     // --8<-- [start:client]
     ...
@@ -53,6 +54,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 LISTINGS = Path("swift/Tests/SupabaseOfflineTests/DocumentationListings")
+SAMPLE = Path("samples/ios")
 CATALOGS = Path("swift/Sources")
 README = Path("README.md")
 PACKAGE_README = Path("swift/README.md")
@@ -166,6 +168,22 @@ def mark_before(lines: List[str], opening: int) -> str:
     return lines[index] if index >= 0 else ""
 
 
+def site_include_problem(root: Path, include: str, section: str, sections: Dict[str, Dict[str, str]]) -> Optional[str]:
+    """Why a site page's include is refused: it names neither a listing file nor a source of the iOS
+    sample, or a section that file does not have; `None` when it is a compiled section."""
+    file_name = Path(include).name
+    if include == (LISTINGS / file_name).as_posix():
+        known = sections.get(file_name, {})
+    elif Path(include).parts[:len(SAMPLE.parts)] == SAMPLE.parts and (root / include).is_file():
+        try:
+            known = sections_of(root / include)
+        except Problem as problem:
+            return str(problem)
+    else:
+        return f"include {include} from {LISTINGS.as_posix()}/ or from a source of {SAMPLE.as_posix()}/"
+    return None if section in known else f"{file_name} has no section {section!r}"
+
+
 def check_page(path: Path, root: Path, sections: Dict[str, Dict[str, str]], update: bool) -> Tuple[List[str], int]:
     """The problems of one page, and how many blocks it checked; rewrites copies when updating."""
     text = path.read_text(encoding="utf-8")
@@ -191,11 +209,9 @@ def check_page(path: Path, root: Path, sections: Dict[str, Dict[str, str]], upda
                 problems.append(f"{where}: a swift block on a site page holds one --8<-- include line, "
                                 "or is marked <!-- not compiled: why -->")
                 continue
-            file_name, section = Path(include.group(1)).name, include.group(2)
-            if include.group(1) != (LISTINGS / file_name).as_posix():
-                problems.append(f"{where}: include {include.group(1)} from {LISTINGS.as_posix()}/")
-            elif section not in sections.get(file_name, {}):
-                problems.append(f"{where}: {file_name} has no section {section!r}")
+            problem = site_include_problem(root, include.group(1), include.group(2), sections)
+            if problem:
+                problems.append(f"{where}: {problem}")
             continue
         listing = LISTING_MARK.match(mark)
         if not listing:
@@ -311,6 +327,17 @@ SITE_FIXTURE = """# iOS apps in Swift
 ```swift
 --8<-- "swift/Tests/SupabaseOfflineTests/DocumentationListings/Listings.swift:read"
 ```
+
+```swift
+--8<-- "samples/ios/App/Repository.swift:read"
+```
+"""
+
+SAMPLE_FIXTURE = """struct Repository {
+    // --8<-- [start:read]
+    func read() {}
+    // --8<-- [end:read]
+}
 """
 
 
@@ -324,6 +351,7 @@ def self_test() -> int:
             README.as_posix(): README_FIXTURE,
             PACKAGE_README.as_posix(): ARTICLE_FIXTURE,
             SITE_PAGES[0].as_posix(): SITE_FIXTURE,
+            "samples/ios/App/Repository.swift": SAMPLE_FIXTURE,
         }
         files.update(changes)
         for name, content in files.items():
@@ -354,7 +382,7 @@ def self_test() -> int:
 
     article = "swift/Sources/SupabaseOffline/SupabaseOffline.docc/GettingStarted.md"
     cases = [
-        ("pages equal to their sections pass", {}, 0, "6 blocks on 4 pages"),
+        ("pages equal to their sections pass", {}, 0, "7 blocks on 4 pages"),
         ("a changed line in the package's README",
          {PACKAGE_README.as_posix(): ARTICLE_FIXTURE.replace("print(todos)", "print(todos * 2)")},
          1, "swift/README.md:4: differs from Listings.swift:read"),
@@ -378,7 +406,14 @@ def self_test() -> int:
         ("a site page that copies code instead of including it",
          {SITE_PAGES[0].as_posix(): "```swift\nlet todos = 1\n```\n"}, 1, "one --8<-- include line"),
         ("a site page that includes a section that does not exist",
-         {SITE_PAGES[0].as_posix(): SITE_FIXTURE.replace(":read", ":write")}, 1, "has no section 'write'"),
+         {SITE_PAGES[0].as_posix(): SITE_FIXTURE.replace("Listings.swift:read", "Listings.swift:write")},
+         1, "has no section 'write'"),
+        ("a site page that includes a section the iOS sample does not have",
+         {SITE_PAGES[0].as_posix(): SITE_FIXTURE.replace("Repository.swift:read", "Repository.swift:write")},
+         1, "Repository.swift has no section 'write'"),
+        ("a site page that includes a file of neither kind",
+         {SITE_PAGES[0].as_posix(): SITE_FIXTURE.replace("samples/ios/App/Repository.swift", "elsewhere/Repository.swift")},
+         1, "include elsewhere/Repository.swift from"),
         ("a section that never ends",
          {(LISTINGS / "Listings.swift").as_posix(): LISTING_FIXTURE.replace("        // --8<-- [end:read]\n", "")},
          1, "never ends"),

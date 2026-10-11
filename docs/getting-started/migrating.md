@@ -115,7 +115,7 @@ or queued, for reads, updates and deletes. A read would show the wrong rows; a q
 replay later and remove more than you asked. Write the conditions as one `and { }` group, which
 supabase-kt sends whole:
 
-From the samples: [TaskQueries.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/TaskQueries.kt) · [OfflineTaskRepository.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/OfflineTaskRepository.kt) · [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift)
+From the samples: [TaskQueries.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/TaskQueries.kt) · [OfflineTaskRepository.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/OfflineTaskRepository.kt) · [TaskQuery.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskQuery.swift)
 
 === "Android"
 
@@ -127,7 +127,11 @@ From the samples: [TaskQueries.kt](https://github.com/nesfeder/supabase-offline-
 
 === "iOS"
 
-    The iOS sample's section lands with its pull request.
+    ```swift
+    --8<-- "Data/TaskQuery.swift:same-column"
+    ```
+
+    Swift sends two conditions on one column together, in one `and` group, so nothing is refused.
 
 Two cases the library cannot see, because supabase-kt keeps one value by replacing the first
 rather than adding a second: two top-level `or { }` groups (only the last is sent), and a text
@@ -172,7 +176,7 @@ with no parameters, and the Sync tab's Server section with parameters, typed and
 function's changes reach the device's lists as another device's do, through Realtime or the next
 read:
 
-From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/OfflineTaskRepository.kt) · [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift)
+From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/OfflineTaskRepository.kt) · [TaskRepository+Server.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository+Server.swift)
 
 === "Android"
 
@@ -184,7 +188,11 @@ From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabas
 
 === "iOS"
 
-    The iOS sample's section lands with its pull request.
+    ```swift
+    --8<-- "Data/TaskRepository+Server.swift:rpc-no-params"
+
+    --8<-- "Data/TaskRepository+Server.swift:rpc-typed"
+    ```
 
 The full table is [Supported features](../reference/supported-features.md).
 

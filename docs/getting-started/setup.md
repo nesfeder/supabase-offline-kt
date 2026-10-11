@@ -99,7 +99,7 @@ From the samples: [SampleSupabaseClient.kt](https://github.com/nesfeder/supabase
 === "iOS"
 
     ```swift
-    --8<-- "swift/Tests/SupabaseOfflineTests/DocumentationListings/GettingStartedListings.swift:client"
+    --8<-- "App/AppModel.swift:install"
     ```
 
 Import `io.github.nesfeder.supabase.offline.offline` to reach it as `supabase.offline`, the way
@@ -140,7 +140,7 @@ From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabas
 === "iOS"
 
     ```swift
-    --8<-- "swift/Tests/SupabaseOfflineTests/DocumentationListings/GettingStartedListings.swift:first-read"
+    --8<-- "Data/TaskRepository.swift:first-read"
     ```
 
 The call is supabase-kt's own, with its filters, order and range. `NetworkFirst` is the default
@@ -155,7 +155,7 @@ covers the four strategies.
 `selectAsFlow` emits the rows as they change: when you write through the plugin, when a refresh
 from the server lands, and when a Realtime record is applied. It needs no Realtime channel.
 
-From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/OfflineTaskRepository.kt) · [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift)
+From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/OfflineTaskRepository.kt) · [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift) · [TasksModel.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Tasks/TasksModel.swift)
 
 === "Android"
 
@@ -166,7 +166,9 @@ From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabas
 === "iOS"
 
     ```swift
-    --8<-- "swift/Tests/SupabaseOfflineTests/DocumentationListings/GettingStartedListings.swift:live-read"
+    --8<-- "Data/TaskRepository.swift:first-observed-read"
+
+    --8<-- "Tasks/TasksModel.swift:live-read"
     ```
 
 Each emission is a `QuerySnapshot`: the rows (`null` while nothing is known yet), whether they are
@@ -186,7 +188,7 @@ From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabas
 === "iOS"
 
     ```swift
-    --8<-- "swift/Tests/SupabaseOfflineTests/DocumentationListings/GettingStartedListings.swift:queued-write"
+    --8<-- "Data/TaskRepository.swift:first-write"
     ```
 
 **Make the row's id on the device.** A write made offline can then be shown, opened and edited
@@ -223,7 +225,7 @@ See [Signing out and switching users](../behaviors/sign-out.md).
 The plugin logs through supabase-kt's own logging, tagged `Supabase-Offline`, at the client's
 `defaultLogLevel` unless you give it a level of its own:
 
-From the samples: [SampleSupabaseClient.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/platform/SampleSupabaseClient.kt) · [AppModel.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/App/AppModel.swift)
+From the samples: [SampleSupabaseClient.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/platform/SampleSupabaseClient.kt) · [AppModel.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/App/AppModel.swift) · [ClientSettings.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/App/ClientSettings.swift)
 
 === "Android"
 
@@ -235,7 +237,11 @@ From the samples: [SampleSupabaseClient.kt](https://github.com/nesfeder/supabase
 
 === "iOS"
 
-    The iOS sample's section lands with its pull request.
+    ```swift
+    --8<-- "App/AppModel.swift:install"
+
+    --8<-- "App/ClientSettings.swift:log-level"
+    ```
 
 Messages at `INFO` and above carry no rows, filter values, tokens or object paths. `DEBUG` carries
 request bodies and responses: keep it out of release builds. See

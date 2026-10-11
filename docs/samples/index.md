@@ -50,7 +50,8 @@ try, from going offline to starting over.
 ## The iOS sample
 
 The iOS sample is the same app in SwiftUI, on the Swift package: the same live queries, mutation
-queue and offline Storage bucket, through `SupabaseOfflineClient`. It has the Tasks and Sync
-screens, task detail and New task; it has no Photos tab, and a swiped-away task is deleted without
-an undo. The sync status sits above the tab bar. Without a project it runs in a demo mode kept in
-memory. [Run the iOS sample](ios.md#things-to-try) lists the same things to try.
+queue and offline Storage bucket, through `SupabaseOfflineClient`, and every screen above. A
+swiped-away task is deleted without an undo, a photo uploads without a progress bar, and the sync
+status sits above the tab bar. Without a project it runs in a demo mode kept in memory, whose
+stand-in server answers every call and reports changes as Realtime would.
+[Run the iOS sample](ios.md#things-to-try) lists the same things to try.
