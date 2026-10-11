@@ -644,9 +644,9 @@ def remote_refs(scratch: Path, remote: str) -> dict[str, str]:
 
 def push_package(tree: Path, version: str, remote: str) -> str:
     """Publishes the tree as the commit tagged version on the remote; see `publish`."""
-    with tempfile.TemporaryDirectory() as directory:
+    with release.throwaway_directory() as directory:
         scratch = Path(directory) / "publish.git"
-        git(Path(directory), "init", "-q", "--bare", str(scratch))
+        release.init_throwaway_repository("-q", "--bare", str(scratch))
         # The staged folder is the work tree, read through an index of its own; no ignore rule of
         # this machine may leave a file out, and the tree object must list every staged file.
         environment = dict(os.environ, GIT_DIR=str(scratch), GIT_WORK_TREE=str(tree),
@@ -983,7 +983,7 @@ def self_test() -> int:
         # a push that could move a ref fails the self-test.
         recorded = release.RecordedGit(globals()).__enter__()
         remote = work / "swift-package.git"
-        subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(remote)], check=True)
+        release.init_throwaway_repository("-q", "--bare", "-b", "main", str(remote))
         first = push_package(tree, "0.1.0", str(remote))
         refs = remote_refs(work, str(remote))
         expect(first.startswith("Pushed") and refs.get("refs/tags/0.1.0") == refs.get("refs/heads/main"),

@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.storage
 
-import io.github.jan.supabase.exceptions.HttpRequestException
 import io.github.jan.supabase.storage.storage
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingStorageServer
 import io.github.nesfeder.supabase.offline.testdoubles.TestStore
@@ -22,9 +21,9 @@ import okio.SYSTEM
 
 /**
  * supabase-kt 3.6 puts an object name in the URL as written: `x?y.png` requests `x`, a different
- * object, and `a%b.png` fails. Whatever the download returns, the cache never keeps another
- * object's bytes under the name the caller asked for, and a name that fails upstream fails as
- * supabase-kt fails it. From 3.8, which encodes the name, each is cached as any other.
+ * object, and `a%b.png` leaves a URL the HTTP client cannot build, so the library refuses it before
+ * sending. Whatever the download returns, the cache never keeps another object's bytes under the
+ * name the caller asked for. From 3.8, which encodes the name, each is cached as any other.
  */
 class ReservedCharacterObjectNameTest {
 
@@ -62,7 +61,7 @@ class ReservedCharacterObjectNameTest {
     }
 
     @Test
-    fun a_name_with_a_percent_sign_downloads_as_supabase_kt_does() = runTest {
+    fun a_name_with_a_bare_percent_sign_is_refused_or_downloads_its_own_bytes() = runTest {
         // Given
         val name = "a%b.png"
         server.objects["$BUCKET/$name"] = OWN.encodeToByteArray()
@@ -70,8 +69,8 @@ class ReservedCharacterObjectNameTest {
         // When
         val failure = runCatching { bucket().downloadAuthenticated(name) {} }.exceptionOrNull()
 
-        // Then — supabase-kt's own failure, if any, and nothing but the name's bytes cached
-        if (failure != null) assertIs<HttpRequestException>(failure)
+        // Then — the library's refusal, if any, and nothing but the name's bytes cached
+        if (failure != null) assertIs<IllegalArgumentException>(failure)
         assertCachedBytesAreItsOwn(name)
     }
 

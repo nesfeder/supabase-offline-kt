@@ -31,10 +31,9 @@ extension OfflineError {
     /// The error a caller catches for a core failure of `kind`, with the fields it carries.
     ///
     /// Total: a kind this release does not know is ``Code/unexpected``, whose message is always
-    /// ``unexpectedFailureMessage``, and a sync stopped on the device has ``localSyncFailureMessage``.
-    /// Only the text the core writes about its own failures is cleared of runtime names; a server's
-    /// text, the library's sync summary, the app's text and the request's own values reach the
-    /// caller exactly as written.
+    /// ``unexpectedFailureMessage``. Only the text the core writes about its own failures is cleared
+    /// of runtime names; a server's text, the library's sync summary, the app's text and the
+    /// request's own values reach the caller exactly as written.
     static func thrown(
         kind: BridgeErrorKind,
         message rawMessage: String,
@@ -64,8 +63,6 @@ extension OfflineError {
         let message: String
         if code == .unexpected {
             message = unexpectedFailureMessage
-        } else if code == .syncFailed && httpStatus == nil && !isConnectivityFailure {
-            message = localSyncFailureMessage
         } else if describesTheCore {
             message = redactingRuntimeNames(rawMessage)
         } else {
@@ -81,8 +78,4 @@ extension OfflineError {
             isNetworkOrConnectivityFailure: isConnectivityFailure || code == .connectivity
         )
     }
-
-    /// The message of a sync pass that a failure on the device stopped, neither the server's nor
-    /// the network's: the core's own text for it names the failure's class.
-    static let localSyncFailureMessage = "A failure on this device stopped the sync pass; the queued writes stay queued for a later pass"
 }

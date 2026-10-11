@@ -117,18 +117,20 @@ can:
 - A queued write waits, as the stored user's, and is sent with that user's token once the session
   settles, online or not.
 - An `OnlineOnly` write is sent at once, as supabase-kt sends any request meanwhile: on the anon
-  key. So are every Storage request and every `rpc`. A download's answer is cached, but a private
-  object refused on the anon key reads as "not found" and loses its cached copy.
+  key. So are every Storage request and every `rpc`. A download's answer is cached; a private
+  object refused on the anon key reads as "not found", which keeps its cached copy and is answered
+  from it.
 - A read the cache can answer for the stored user sends nothing. One that needs the server is sent
   on the anon key and its answer is not cached; see [One-shot reads](read-strategies.md#edge-cases).
 
 Under row-level security, the anon key reaches less than the user does, so an `OnlineOnly` write,
-an `rpc` or a Storage call made in those first seconds can be refused, and a private download can
-lose its cached copy. Make them after `supabase.auth.awaitInitialization()`.
+an `rpc` or a Storage call made in those first seconds can be refused, and a private download with
+nothing cached fails. Make them after `supabase.auth.awaitInitialization()`.
 <small>`WritesWhileRestoringTest.an_online_write_is_queued_until_the_session_settles_then_sent_as_the_user`,
 `WritesWhileRestoringTest.an_online_only_write_is_sent_at_once_with_the_token_sent_meanwhile`,
 `StorageWhileRestoringTest.a_download_is_sent_at_once_on_the_anon_key_and_cached`,
-`StorageWhileRestoringTest.an_upload_is_sent_at_once_on_the_anon_key`</small>
+`StorageWhileRestoringTest.an_upload_is_sent_at_once_on_the_anon_key`,
+`StorageNotFoundWhileUnsettledTest.a_not_found_while_the_session_restores_is_answered_from_the_cached_copy`</small>
 
 An expired session offline is still its user's: a write made with it is queued as that user's and
 sent once the token is refreshed.

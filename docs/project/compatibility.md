@@ -149,10 +149,12 @@ kotlinx.coroutines are held at the versions supabase-kt 3.6.0 was released with 
   is never queued. A hosted Supabase project commits a dry run all the same, unless it allows the
   rollback: see [the write path](architecture.md#the-write-path).
 - Storage object names containing `%`, `?` or `#`. supabase-kt 3.6.0 puts the name in the URL as
-  written: a `%` fails the request, and a `?` or `#` can fetch or overwrite a different object
-  (`x?y.png` fetches `x`, and an upload of it writes `x`). The library downloads such a name as
-  supabase-kt does but never caches it or serves it from the cache, and `ensureCachedFile` refuses
-  it. Keep such characters out of object names until the pin moves.
+  written: a `?` or `#` can fetch or overwrite a different object (`x?y.png` fetches `x`, and an
+  upload of it writes `x`), and a `%` that does not begin a percent-escape cannot be put in a URL.
+  The library downloads such a name as supabase-kt does but never caches it or serves it from the
+  cache, `ensureCachedFile` refuses it, and a call naming an object with such a `%` throws
+  `IllegalArgumentException` before anything is sent. Keep such characters out of object names
+  until the pin moves.
 
 **What an app on supabase-kt 3.6 inherits from it.**
 
@@ -186,6 +188,14 @@ The refusal sees a parameter that holds two values. It cannot see the calls that
 second top-level `or { }` group replaces the first, and a text search replaces a filter written
 before it on the same column. Combine those into one group too. A test pins what supabase-kt sends,
 so the day it sends every value this rule is revisited before the pin moves.
+
+**Pattern lists.** supabase-kt quotes a pattern of `likeAll`, `likeAny`, `ilikeAll` or `ilikeAny`
+only when it holds one of `,.:()`, so Postgres reads an empty pattern, `NULL`, a pattern edged with
+white space or one holding a brace as something else, and an empty list as no pattern at all:
+`delete { filter { likeAll("code", listOf("")) } }` sends `code=like(all).{}`, which matches every
+row. The library refuses such a list, at the top level or in a group, with
+`IllegalArgumentException` before anything is sent or queued. Match such a pattern with a single
+`like` or `ilike` filter. A test pins what supabase-kt sends.
 
 **An app that asks for supabase-kt 3.7 or 3.8 itself** gets it: Gradle picks the higher version,
 so the library's pin is a floor, not a ceiling.

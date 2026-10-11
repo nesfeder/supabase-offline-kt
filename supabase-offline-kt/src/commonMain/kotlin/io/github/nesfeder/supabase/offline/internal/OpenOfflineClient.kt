@@ -33,7 +33,8 @@ import okio.SYSTEM
 /**
  * Claims the database and data directory, opens the database and builds the client over it. Its
  * [OfflineClient.close] closes the database and releases the claim. A configured [databasePath]
- * brings along a database kept at [defaultDatabasePath] (see [moveDefaultDatabaseIfUnclaimed]).
+ * brings along a database, and its file cache, kept at [defaultLocation] (see
+ * [moveDefaultDatabaseIfUnclaimed]).
  *
  * @param platformNetworkAvailability the platform's connectivity monitor, used unless the
  *   configuration names the app's own signal.
@@ -46,13 +47,18 @@ internal fun openOfflineClient(
     databasePath: Path,
     dataDirectory: Path,
     openDatabase: (databasePath: Path) -> OfflineDatabase,
-    defaultDatabasePath: Path? = null,
+    defaultLocation: DataLocation? = null,
     platformNetworkAvailability: Flow<Boolean>? = null,
 ): OfflineClient {
     val engineLogger = supabase.engineLogger(config.logLevel)
     val openedPath =
-        if (defaultDatabasePath == null) databasePath
-        else moveDefaultDatabaseIfUnclaimed(databasePath, defaultDatabasePath, engineLogger)
+        if (defaultLocation == null) databasePath
+        else
+            moveDefaultDatabaseIfUnclaimed(
+                configured = DataLocation(databasePath, dataDirectory),
+                default = defaultLocation,
+                engineLogger = engineLogger,
+            )
     val registration = OpenDatabaseRegistry.register(openedPath, dataDirectory)
     try {
         openedPath.parent?.let { directory -> FileSystem.SYSTEM.createDirectories(directory) }

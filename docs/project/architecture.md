@@ -93,7 +93,7 @@ The settings:
 | --- | --- | --- |
 | `cacheSizeBytes: Long` | 100 MiB | The most the cached query results may hold, counted as the summed length of the cached responses, not the database file. Past it, the results fetched longest ago are evicted, never one of up to 500 queries a live reader shows. Any other value below 4 KiB counts as 4 KiB; `CACHE_SIZE_UNLIMITED` turns eviction off. |
 | `fileCacheSizeBytes: Long` | 256 MiB | The most the Storage file cache may hold. Past it, the least recently used files are deleted, never one being read or used in the last 30 seconds. Any other value below zero counts as zero; `CACHE_SIZE_UNLIMITED` turns eviction off. |
-| `dataDirectory: String?` | `null` | Where the database, `supabase_offline.db`, and the file cache live. `null` is the platform's place: the app's database directory and `<filesDir>/supabase_offline` on Android, `Library/Application Support` on iOS, where a database found in `Documents`, an earlier default, is first moved with its files. When this directory has no database and the default place has one no client holds, the first client moves it here, unsent writes included; when it cannot, it opens the one it can without leaving queued writes behind, and logs a warning. |
+| `dataDirectory: String?` | `null` | Where the database, `supabase_offline.db`, and the file cache live. `null` is the platform's place: the app's database directory and `<filesDir>/supabase_offline` on Android, `Library/Application Support` on iOS, where a database found in `Documents`, an earlier default, is first moved with its files. When this directory has no database and the default place has one no client holds, the first client moves it here, unsent writes included, and then its file cache; when it cannot, it opens the one it can without leaving queued writes behind, and logs a warning. |
 | `networkAvailability: Flow<Boolean>?` | `null` | The app's own connectivity signal, `true` while online, in place of the platform's monitor. `null` uses the monitor. |
 | `autoSync: Boolean` | `true` | Whether the library sends queued writes by itself when the session settles and when the network comes back. |
 | `primaryKeys`, `primaryKey(table, vararg columns)` | `id` | Each table's key columns, by its name in the default schema and as `schema.table` in another: how the cache recognizes a row. `primaryKey` throws `IllegalArgumentException` for no column. |
@@ -130,8 +130,8 @@ filter values or object paths; `DEBUG` may.
 | --- | --- | --- | --- |
 | `from(table)`, `from(schema, table)`, `get(table)`, `get(schema, table)` | A table's `OfflinePostgrestQueryBuilder`; `offline["todos"]` is `offline.from("todos")`. | A table of another schema is cached apart from the default schema's table of the same name. | `IllegalStateException` without PostgREST |
 | `class OfflinePostgrestQueryBuilder` | The offline counterpart of supabase-kt's `PostgrestQueryBuilder`, with its `postgrest`, `table` and `schema`. | Final, with an internal constructor. Each verb takes its offline choice as a named parameter with a default, before the trailing request lambda. | — |
-| `select(columns, readStrategy = ReadStrategy.NetworkFirst(), request): PostgrestResult` | Reads rows once, from the server or the cache. | Each request is cached on its own. Only a list of rows is cached. `single()`, `maybeSingle()` (supabase-kt 3.8), `head`, a count (with rows or without), `csv()`, `geojson()`, `stripNulls()` and `explain()` go to the server under every strategy but `CacheOnly`, are never stored, and fail offline as `NetworkOnly` does. | `CacheMissException` under `CacheOnly`; `NetworkDisabledException` while network access is off and the cache cannot answer; `IllegalArgumentException` for two top-level filters on one column |
-| `selectAsFlow(columns, readStrategy = FlowReadStrategy.CacheFirstThenNetwork, request): Flow<QuerySnapshot>` | Reads rows as they change: emits again whenever a write, a refresh or a server record changes them. | A failing refresh is reported in the snapshot, not thrown. A failure the read cannot recover from ends the flow after the values before it. A shape the cache never holds emits the server's answer once and completes. Needs no Realtime channel. | Through the flow: `CacheMissException` under `CacheOnly` for a shape the cache never holds; `NetworkDisabledException` while network access is off, for such a shape or for `NetworkFirstThenCache` with nothing cached; `IllegalArgumentException` for two top-level filters on one column |
+| `select(columns, readStrategy = ReadStrategy.NetworkFirst(), request): PostgrestResult` | Reads rows once, from the server or the cache. | Each request is cached on its own. Only a list of rows is cached. `single()`, `maybeSingle()` (supabase-kt 3.8), `head`, a count (with rows or without), `csv()`, `geojson()`, `stripNulls()` and `explain()` go to the server under every strategy but `CacheOnly`, are never stored, and fail offline as `NetworkOnly` does. | `CacheMissException` under `CacheOnly`; `NetworkDisabledException` while network access is off and the cache cannot answer; `IllegalArgumentException` for two top-level filters on one column or a pattern list the server would misread |
+| `selectAsFlow(columns, readStrategy = FlowReadStrategy.CacheFirstThenNetwork, request): Flow<QuerySnapshot>` | Reads rows as they change: emits again whenever a write, a refresh or a server record changes them. | A failing refresh is reported in the snapshot, not thrown. A failure the read cannot recover from ends the flow after the values before it. A shape the cache never holds emits the server's answer once and completes. Needs no Realtime channel. | Through the flow: `CacheMissException` under `CacheOnly` for a shape the cache never holds; `NetworkDisabledException` while network access is off, for such a shape or for `NetworkFirstThenCache` with nothing cached; `IllegalArgumentException` for two top-level filters on one column or a pattern list the server would misread |
 
 A verb may run its `request` lambda more than once: a read once to learn its shape and once per
 request sent, a queueable write up to three times. The lambda must build the same request every
@@ -152,6 +152,14 @@ calls that replace an earlier value and leave one: a second top-level `or` group
 after a filter on its column. A test pins what supabase-kt itself sends, so the day it sends every
 value this rule, and the query shape and queue capture that read a column's first value alone, are
 revisited before the pin moves.
+
+**A pattern list the server would misread is refused.** supabase-kt quotes a pattern of `likeAll`,
+`likeAny`, `ilikeAll` or `ilikeAny` only when it holds one of `,.:()`, so an empty list, or a
+pattern that is empty, `NULL` in any case, edged with white space or holding a brace, reaches the
+server as another list: `likeAll("code", listOf(""))` sends `like(all).{}`, and `LIKE ALL` over no
+pattern matches every row. A read, an update or a delete carrying such a list, at the top level or
+in a group, throws `IllegalArgumentException`, naming the column and never a pattern, before
+anything is sent, queued or read from the cache. A test pins what supabase-kt sends.
 
 `ReadStrategy`, for `select`:
 
@@ -206,8 +214,8 @@ asked for a shape the cache never holds. No request was sent.
 | --- | --- | --- | --- |
 | `insert(body: JsonArray, mutationStrategy, request)`; reified `insert(value: T, …)`, `insert(values: List<T>, …)` | Inserts rows. | A typed value is encoded by `postgrest.serializer`, as supabase-kt encodes it. | `MutationNotQueueableException` |
 | `upsert(body: JsonArray, …)`; reified `upsert(value: T, …)`, `upsert(values: List<T>, …)` | Inserts rows, or merges them into the rows they conflict with. | Shown merged by `onConflict`'s columns, or by the table's key. | `MutationNotQueueableException` |
-| `update(update: PostgrestUpdate.() -> Unit, …)`, `update(body: JsonElement, …)`; reified `update(value: T, …)` | Sets columns on the rows `request` filters. | A queued update replays exactly the values it sets. Queueing needs a filter the queue can record exactly. | `MutationNotQueueableException`; `IllegalArgumentException` for two top-level filters on one column |
-| `delete(mutationStrategy, request)` | Deletes the rows `request` filters. | Queueing needs a filter the queue can record exactly. | `MutationNotQueueableException`; `IllegalArgumentException` for two top-level filters on one column |
+| `update(update: PostgrestUpdate.() -> Unit, …)`, `update(body: JsonElement, …)`; reified `update(value: T, …)` | Sets columns on the rows `request` filters. | A queued update replays exactly the values it sets. Queueing needs a filter the queue can record exactly. | `MutationNotQueueableException`; `IllegalArgumentException` for two top-level filters on one column or a pattern list the server would misread |
+| `delete(mutationStrategy, request)` | Deletes the rows `request` filters. | Queueing needs a filter the queue can record exactly. | `MutationNotQueueableException`; `IllegalArgumentException` for two top-level filters on one column or a pattern list the server would misread |
 
 Each returns a `MutationOutcome`, and `mutationStrategy` defaults to `QueueIfOffline`. An
 `OnlineOnly` write made while network access is off throws `NetworkDisabledException`.
@@ -434,7 +442,9 @@ seconds, when the cache is dropped for a new owner, and when local data is clear
 
 **What is cached, and what is not.** Downloads (`downloadAuthenticated` and `downloadPublic`, to
 bytes or to a channel) go to the network first. A success is written to the cache; a "not found"
-from the server drops the copy and is rethrown; any other failure is answered from the cached copy
+from the server drops the copy and is rethrown, unless the session had not settled (restoring, or
+after a failed refresh), when the request went out on the anon key and the answer may only mean
+that key cannot read the object; any other failure, and that one, is answered from the cached copy
 when there is one. An error answer is a failure for a channel download too: supabase-kt's own
 channel download copies whatever the server answers into the channel, so the offline bucket checks
 the status first and throws what the bytes download throws, and nothing of the answer is cached or
@@ -450,7 +460,10 @@ cache, so the next read downloads them. Signed URLs, listings, `info`, `exists` 
 status always ask the server. An object path that cannot be mapped safely onto a file (a leading
 `/`, an empty, `.` or `..` segment, a `\`, a control character) still downloads and writes,
 uncached. So does one holding `%`, `?` or `#` while the pin is below 3.8: supabase-kt before 3.8
-puts the name in the URL as written, so its request can fetch or overwrite a different object.
+puts the name in the URL as written, so its request can fetch or overwrite a different object. A
+`%` there that does not begin a percent-escape leaves a URL the HTTP client cannot build, which it
+reports as a network failure, so every call that puts such a name in its URL throws
+`IllegalArgumentException` first.
 
 ### Local data and lifecycle
 
@@ -957,8 +970,10 @@ On iOS, a database in `Documents`, where an earlier default kept it, first moves
 place in `Library/Application Support` with its side files and its file cache, unless another client
 holds it or the default place already has a database (then it is left, and a warning logged); a file
 cache that cannot move is deleted, so no cached file outlives a clear. With `dataDirectory` set, a
-database at the default place moves there when that directory has none and nothing holds the default
-one. Room then opens the database on the bundled SQLite, and the client is built over it: every
+database at the default place moves there, with its side files and then its file cache, when that
+directory has none and nothing holds the default one; a file cache that cannot move is deleted
+there too, unless the two directories overlap, and one that cannot even be read is left, with a
+warning, while the database opens where it moved. Room then opens the database on the bundled SQLite, and the client is built over it: every
 setting of `Offline.Config` reaches the engine in that one function, read once (the opener also
 reads `dataDirectory`, and the version check `logLevel`). The client installs its request-pipeline
 phases once (the dry-run check, the read-shape check, the transport-failure capture and the
@@ -1025,7 +1040,7 @@ identity only while it holds nothing, since rows an earlier session left may be 
 cache another identity's, the client drops it under the send lock (no pass is stopped, since none of
 the queue goes) and the file cache's lock: the cached queries, their shapes and the file rows go in
 one transaction that records the new owner, the database is rewritten, the files are deleted, and
-live queries fetch again. The drop watermark moves, so a response or a patch that started before it
+live queries fetch again, as after a clear, even when a later step fails. The drop watermark moves, so a response or a patch that started before it
 cannot land afterward; a download that started before it is kept out by the file cache's own
 generation. The mutation queue is kept: queued writes stay with their owners.
 
@@ -1129,6 +1144,7 @@ The decisions that shaped the API and the engine, with the date each was settled
 | 2026-10-04 | On iOS the data lives in `Library/Application Support`; a database found in `Documents` moves there. | `Documents` is the user's own files: with file sharing on, the Files app shows the queue of unsent writes, and the user can delete it. |
 | 2026-10-04 | The testing artifact's published metadata pins the library to its own version. | It calls into the library outside the API records; a mismatch should fail resolution, not a test with a missing method. |
 | 2026-10-04 | The platform file helpers extend `OfflineBucketApi` and return non-null. | On the offline bucket they needed a `!!`, and on supabase-kt's own they compiled and silently returned `null`. |
+| 2026-10-05 | A pattern list the server would read as another list (empty, or a pattern that is empty, `NULL`, edged with white space or holding a brace) is refused, before anything is sent or queued. | supabase-kt quotes a pattern only when it holds one of `,.:()`, and `LIKE ALL` over no pattern matches every row, so a queued delete with `likeAll(column, listOf(""))` reached every row the user's policies admit. As with two filters on one column, the request is refused rather than rewritten, so it stays supabase-kt's own; a test pins what supabase-kt sends, so the canary shows the day it quotes these. |
 
 ### What it deliberately does not do
 
@@ -1158,6 +1174,7 @@ What the library promises, each with the tests that pin it:
 | On a table whose configured key matches a unique key on the server, a keyed INSERT whose send may have reached the server is never inserted twice. | `MutationQueueIdempotentReplayTest`, `UnconfirmedSendProofTest`, `UndeliveredRequestsAndroidTest`, `UndeliveredRequestsIosTest` |
 | Answering a read from the cache sends no request. | `CachedReadsSendNothingTest` |
 | A read, an update or a delete with two top-level filters on one column is refused before anything is sent or queued, under every strategy, online and offline. | `SameColumnFiltersTest`, `UpstreamRepeatedParameterTest` |
+| A read, an update or a delete with a pattern list the server would read as another list (empty, or a pattern that is empty, `NULL`, edged with white space or holding a brace) is refused before anything is sent or queued, at the top level and in a group, online and offline. | `PatternListsTest`, `UpstreamPatternListTest` |
 | Each emission of a live read is one view of the cache, the queue and its refresh: no write shows both patched into the cache and still queued, a replayed write never drops out of a list that holds it, and `Idle` comes with the rows its refresh fetched. | `LiveReadConsistencyTest`, `LiveReadSourceOrderTest`, `LiveReadConsistencyAndroidTest`, `LiveReadConsistencyIosTest` |
 | No error answer from Storage is cached as a file. | `ChannelDownloadStatusTest`, `DownloadToFileStatusAndroidTest` |
 | A response whose request started before a write changed the cache, before a clear, or before a change of owner never lands in the cache. | `StaleRefreshWatermarkTest`, `CacheOwnershipTest`, `ClearLocalDataDuringWritesTest`, `StorageClearDuringDownloadTest` |

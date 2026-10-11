@@ -4,13 +4,13 @@ name: Docs publish
 # (workflow_dispatch) or called by the release workflow (workflow_call); nothing on a pull request
 # or a push reaches it, and CI calls docs-check.yml instead, which cannot publish.
 #
-# Before the first publish:
-# - Settings > Pages > Source: GitHub Actions. That creates the `github-pages` environment.
-# - Restrict that environment's deployment branches to `main`, plus the release tag pattern if the
-#   release workflow runs on tags. The environment's branch policy is what stops anyone with write
-#   access from publishing from an unmerged branch.
-# - A workflow that calls this one must grant `pages: write` and `id-token: write` to the calling
-#   job, and must not use the concurrency group `docs-publish` or `pages`, which this one uses.
+# The repository is set up for it: Settings > Pages > Source is GitHub Actions, which created the
+# `github-pages` environment, and that environment deploys from `main` only. Its branch policy is
+# what stops anyone with write access from publishing from an unmerged branch; a release run from a
+# tag would need the tag's pattern added there first.
+#
+# A workflow that calls this one must grant `pages: write` and `id-token: write` to the calling
+# job, and must not use the concurrency group `docs-publish` or `pages`, which this one uses.
 #
 # The Swift API reference is DocC, which builds only on macOS: the release's macOS job builds it
 # (scripts/build-swift-docs.sh) and uploads it as an artifact of the run, which the caller names

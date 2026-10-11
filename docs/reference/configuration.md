@@ -69,13 +69,12 @@ Android, both under `Library/Application Support` on iOS. On iOS, a database fou
 where an earlier build kept it, is first moved to that default place with its files.
 
 When the directory has no database yet and the default location has one that no client of this
-process holds, the first client moves the database there, its unsent writes included. When it
-cannot, it keeps using the default one and logs a warning; when both places hold a database, it
-uses the configured one and logs that the other was left behind. The downloaded files do not move:
-an app that sets `dataDirectory` after it shipped with the default leaves its old downloads in the
-default directory, beyond `clearLocalData()` and, on Android, inside backups, until it deletes them
-itself ([Project setup](../getting-started/setup.md#a-data-directory-and-a-second-process)). On
-Android, a directory under `noBackupFilesDir` keeps the data out of backups; see
+process holds, the first client moves the database there, its unsent writes included, and then the
+downloaded files; a file that cannot move is deleted, to be downloaded again, rather than left
+beyond `clearLocalData()`. When the database cannot move, the client keeps using the default one
+and logs a warning; when both places hold a database, it uses the configured one and logs that the
+other was left behind, with its files
+([Project setup](../getting-started/setup.md#a-data-directory-and-a-second-process)). On Android, a directory under `noBackupFilesDir` keeps the data out of backups; see
 [Project setup](../getting-started/setup.md#backups).
 
 ### `networkAvailability`
