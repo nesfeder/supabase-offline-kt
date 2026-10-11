@@ -62,7 +62,7 @@ buildToolFloor-jdom2 = "2.0.6.1"
 buildToolFloor-jose4j = "0.9.7"
 # GHSA-pmhh-3w7g-xqp8: Dokka's generator (2.2.0) brings 1.16.1. Unneeded once a Dokka release brings
 # 1.23.1.
-buildToolFloor-jsoup = "1.23.1"
+buildToolFloor-jsoup = "1.23.2"
 # 40 advisories on netty-handler, -handler-proxy, -codec, -codec-http, -codec-http2 and -common,
 # the latest patched in 4.1.137.Final (GHSA-c4c3-7fpv-j4q5, GHSA-fccg-mwvh-qqg4,
 # GHSA-8c42-7qj2-3j46): the Android Gradle plugin's unified test platform brings 4.1.93.Final (its
@@ -79,7 +79,7 @@ coil = "3.6.3"
 # The documentation engine: the HTML reference in each published artifact's documentation jar.
 dokka = "2.2.0"
 junit = "4.13.2"
-kotlin = "2.4.20"
+kotlin = "2.4.21"
 # Held with supabase-bom, as Ktor is: the version the pinned supabase-kt release was built with.
 kotlinx-coroutines = "1.10.2"
 kotlinx-serialization = "1.11.0"
