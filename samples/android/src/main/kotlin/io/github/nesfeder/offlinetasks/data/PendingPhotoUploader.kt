@@ -40,7 +40,8 @@ fun interface PendingPhotoUpload {
  *
  * Each `true` from [canUpload] is a new chance (the network came back, or changed): failed photos
  * another try may upload wait again, and a pass starts. A failure marks its photo failed with
- * [describeFailure]'s sentence and keeps its file; one that may pass ends the pass.
+ * [describeFailure]'s sentence and keeps its file; a failure for want of the network ends the pass,
+ * and the photos after it stay waiting.
  */
 class PendingPhotoUploader(
     private val directory: PendingPhotoDirectory,
@@ -90,8 +91,7 @@ class PendingPhotoUploader(
 
     /**
      * Runs [block] with no upload in progress: it waits for the photo uploading now, if any, and no
-     * other starts until [block] returns. Deleting and clearing run so, so an upload never lands
-     * after the photo or its task was deleted.
+     * other starts until [block] returns. Start over runs so, so no upload lands after its deletes.
      */
     suspend fun <T> pausedWhile(block: suspend () -> T): T = uploadLock.withLock { block() }
 
@@ -106,7 +106,7 @@ class PendingPhotoUploader(
         }
     }
 
-    /** Uploads [photo]; true when it failed in a way that may pass, which ends the pass. */
+    /** Uploads [photo]; true when it failed for want of the network, which ends the pass. */
     private suspend fun uploadOne(photo: PendingPhoto): Boolean {
         val trying =
             directory.update(photo.photoId) {
@@ -116,20 +116,19 @@ class PendingPhotoUploader(
             upload.send(trying, directory.readJpeg(trying.photoId)) { fraction ->
                 sent.update { it + (trying.photoId to fraction) }
             }
-            directory.remove(trying.photoId) // the library's cache holds it now
+            directory.remove(trying.photoId) // uploaded: the device's copy goes
             false
         } catch (cancellation: CancellationException) {
             throw cancellation
-        } catch (failure: Exception) {
-            val mayPass = failure.mayPass()
-            directory.update(trying.photoId) {
+        } catch (error: Exception) {
+            directory.update(trying.photoId) { // null when it was removed meanwhile
                 it.copy(
                     state = PendingPhotoState.Failed,
-                    failureMessage = describeFailure(failure),
-                    canRetry = mayPass,
+                    failure = describeFailure(error),
+                    retryable = error.mayPass(),
                 )
             }
-            mayPass
+            error is NetworkUnavailableException // the next photo would fail the same way
         } finally {
             sent.update { it - trying.photoId }
         }

@@ -32,9 +32,9 @@ class PendingPhotoDirectoryTest {
             testPendingPhoto()
                 .copy(
                     state = PendingPhotoState.Failed,
-                    failureMessage = "Storage refused it (403): new row violates policy",
+                    failure = "Storage refused it (403): new row violates policy",
                     attempts = 2,
-                    canRetry = false,
+                    retryable = false,
                 )
         PendingPhotoDirectory(root).run {
             add(testPendingPhoto(), jpeg)
@@ -49,7 +49,7 @@ class PendingPhotoDirectoryTest {
         assertContentEquals(jpeg, reread.readJpeg(failed.photoId))
         // The stored names are the record's format: a later version must still read them.
         val stored = File(root, "${failed.photoId}.json").readText()
-        listOf("\"photo_id\"", "\"picked_at\"", "\"state\":\"failed\"", "\"can_retry\":false")
+        listOf("\"photo_id\"", "\"picked_at\"", "\"state\":\"failed\"", "\"retryable\":false")
             .forEach { assertTrue(it in stored, "$it not in $stored") }
     }
 

@@ -25,6 +25,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -276,8 +277,8 @@ fun PhotoViewerScreen(
 }
 
 /**
- * Under a photo still waiting to upload: why the bucket's actions are not offered yet, and, once
- * its upload failed, why, with Retry (when another try may work) and Remove.
+ * Under a photo still waiting to upload: where its upload stands, why the bucket's actions are not
+ * offered yet, and Remove, with Retry (when another try may work) once its upload failed.
  */
 @Composable
 private fun PendingFooter(
@@ -286,23 +287,24 @@ private fun PendingFooter(
     onRetry: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val failed = upload.state == PendingPhotoState.Failed
     Column(modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        if (upload.state == PendingPhotoState.Failed) {
-            FooterText(failedUploadText(upload))
+        FooterText(if (failed) failedUploadText(upload) else stringResource(upload.state.label))
+        FooterText(stringResource(R.string.photo_pending_note))
+        // Remove while it waits or after it failed; not while it is on its way up.
+        if (upload.state != PendingPhotoState.Uploading) {
+            val onDark = ButtonDefaults.textButtonColors(contentColor = Color.White)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (upload.canRetry) {
-                    TextButton(onClick = onRetry) {
-                        Text(stringResource(R.string.action_retry), color = Color.White)
+                if (failed) {
+                    TextButton(onClick = onRetry, enabled = upload.retryable, colors = onDark) {
+                        Text(stringResource(R.string.action_retry))
                     }
                 }
-                TextButton(onClick = onRemove) {
-                    Text(stringResource(R.string.action_remove), color = Color.White)
+                TextButton(onClick = onRemove, colors = onDark) {
+                    Text(stringResource(R.string.action_remove))
                 }
             }
-        } else {
-            FooterText(stringResource(upload.state.label))
         }
-        FooterText(stringResource(R.string.photo_pending_note))
     }
 }
 

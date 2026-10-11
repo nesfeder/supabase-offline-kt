@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -17,6 +18,7 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -27,6 +29,7 @@ import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilledIconToggleButton
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FloatingToolbarDefaults
 import androidx.compose.material3.HorizontalFloatingToolbar
 import androidx.compose.material3.Icon
@@ -237,6 +240,7 @@ fun TaskDetailScreen(
                     if (editing != null) {
                         PhotosSection(
                             editing,
+                            onAddPhoto,
                             onOpenPhoto,
                             loadPhotoFile,
                             onRetryPhoto,
@@ -258,13 +262,6 @@ fun TaskDetailScreen(
                         Icon(
                             painter = painterResource(R.drawable.ic_check),
                             contentDescription = stringResource(R.string.detail_done),
-                        )
-                    }
-                    // Online or offline: a photo waits on the device until it can upload.
-                    IconButton(onClick = onAddPhoto, enabled = editing != null) {
-                        Icon(
-                            painter = painterResource(R.drawable.ic_add_photo_alternate),
-                            contentDescription = stringResource(R.string.detail_add_photo),
                         )
                     }
                     IconButton(onClick = { confirmingDelete = true }) {
@@ -424,34 +421,48 @@ private fun TaskFields(
 }
 
 /**
- * The photos row: the server's photos and the ones waiting to upload, each marked with where it
- * stands, then a line for each upload that failed, with Retry and Remove.
+ * The photos: Add photo, online or offline; the server's photos and the ones waiting to upload,
+ * each marked with where it stands; then a line for each upload that failed, with Retry and Remove.
  */
 @Composable
 private fun PhotosSection(
     state: TaskDetailUiState.Editing,
+    onAddPhoto: () -> Unit,
     onOpenPhoto: (photoId: String) -> Unit,
     loadPhotoFile: suspend (TaskPhoto) -> PhotoFileState,
     onRetryPhoto: (TaskPhoto) -> Unit,
     onRemovePhoto: (TaskPhoto) -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(
-            text = stringResource(R.string.detail_photos),
-            style = MaterialTheme.typography.titleMedium,
-        )
-        Text(
-            text =
-                stringResource(
-                    when {
-                        state.photosFromDeviceOnly -> R.string.detail_photos_device_only
-                        state.canChangePhotos -> R.string.detail_photos_supporting
-                        else -> R.string.detail_photos_offline
-                    }
-                ),
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    text = stringResource(R.string.detail_photos),
+                    style = MaterialTheme.typography.titleMedium,
+                )
+                Text(
+                    text =
+                        stringResource(
+                            when {
+                                state.photosFromDeviceOnly -> R.string.detail_photos_device_only
+                                state.canChangePhotos -> R.string.detail_photos_supporting
+                                else -> R.string.detail_photos_offline
+                            }
+                        ),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            // Online or offline: a photo waits on the device until it can upload.
+            FilledTonalButton(onClick = onAddPhoto) {
+                Icon(painterResource(R.drawable.ic_add_photo_alternate), contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text(stringResource(R.string.detail_add_photo))
+            }
+        }
         if (state.photos.isEmpty()) return@Column
         val motion = MaterialTheme.motionScheme
         LazyRow(
@@ -481,7 +492,7 @@ private fun PhotosSection(
     }
 }
 
-/** A photo whose upload failed: why, in the app's words, with Retry when another try may work. */
+/** A photo whose upload failed: why, in the app's words, with Retry (when another try may work). */
 @Composable
 private fun FailedUpload(
     photo: TaskPhoto,
@@ -496,10 +507,8 @@ private fun FailedUpload(
             color = MaterialTheme.colorScheme.error,
             modifier = Modifier.weight(1f),
         )
-        if (upload.canRetry) {
-            TextButton(onClick = { onRetryPhoto(photo) }) {
-                Text(stringResource(R.string.action_retry))
-            }
+        TextButton(onClick = { onRetryPhoto(photo) }, enabled = upload.retryable) {
+            Text(stringResource(R.string.action_retry))
         }
         TextButton(onClick = { onRemovePhoto(photo) }) {
             Text(stringResource(R.string.action_remove))

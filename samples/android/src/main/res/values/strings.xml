@@ -158,7 +158,7 @@
         <item quantity="one">Upload failed after %1$d try. %2$s</item>
         <item quantity="other">Upload failed after %1$d tries. %2$s</item>
     </plurals>
-    <string name="photo_pending_note">It isn’t on the server yet, so details, links, replace, move and duplicate wait until it is.</string>
+    <string name="photo_pending_note">Not uploaded yet: Details, Share link, Replace, Move and Duplicate need the photo on the server.</string>
     <string name="photos_show_more">Show more</string>
     <string name="photo_share">Share</string>
     <string name="photo_share_link">Share link</string>

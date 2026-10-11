@@ -373,7 +373,7 @@ class InMemoryTaskRepository(
     }
 
     override suspend fun deleteTask(id: String): TaskMutationOutcome = detached {
-        uploader.pausedWhile { pendingPhotos.removeTask(id) }
+        pendingPhotos.removeTask(id)
         val photosOfTask =
             state.value.visibleRows()?.photos?.values?.filter { it.taskId == id }.orEmpty()
         if (photosOfTask.isNotEmpty()) {
@@ -410,9 +410,8 @@ class InMemoryTaskRepository(
         uploader.retry(photoId)
     }
 
-    override suspend fun removePendingPhoto(photoId: String): Boolean = uploader.pausedWhile {
+    override suspend fun removePendingPhoto(photoId: String): Boolean =
         pendingPhotos.remove(photoId)
-    }
 
     /**
      * Uploads a pending [photo] as the library-backed repository does: the file (unless an earlier
@@ -431,9 +430,12 @@ class InMemoryTaskRepository(
                 delay(latency * 2 / UPLOAD_STEPS)
             }
             storageRefusal()?.let { throw it }
-            if (!server.upload(photo.objectPath, jpeg)) {
-                throw PhotoStorageException(status = 409, message = "The resource already exists")
-            }
+            // A file already there is this photo's own, from a try whose answer was lost.
+            server.upload(photo.objectPath, jpeg)
+        }
+        if (!pendingPhotos.contains(photo.photoId)) {
+            server.deleteFiles(listOf(photo.objectPath)) // removed while it uploaded
+            return
         }
         val row =
             TaskPhoto(
@@ -728,13 +730,11 @@ class InMemoryTaskRepository(
 
     override suspend fun clearLocalData() {
         detached {
-            uploader.pausedWhile {
-                writeLock.withLock {
-                    updateState { it.cleared(userId = it.userId) }
-                    photoFiles.deleteAll()
-                }
-                pendingPhotos.removeAll()
+            writeLock.withLock {
+                updateState { it.cleared(userId = it.userId) }
+                photoFiles.deleteAll()
             }
+            pendingPhotos.removeAll()
             refreshFromServer(force = true)
         }
     }

@@ -86,6 +86,21 @@ class FakeSupabaseServer {
     var loseUploadAnswers: Boolean = false
 
     /**
+     * While true, an upload finds a file already at its path, as one an earlier try stored would
+     * be: the bytes are kept, and the answer is Storage's "already exists".
+     */
+    var uploadsFindTheirFileStored: Boolean = false
+
+    /**
+     * While set, an upload's answer waits for it once the file is stored, as a slow network would
+     * keep it: the file is in the bucket before the app hears so.
+     */
+    var holdUploadAnswers: CompletableDeferred<Unit>? = null
+
+    /** How many uploads are stored and waiting on [holdUploadAnswers]. */
+    val uploadsHeld: MutableStateFlow<Int> = MutableStateFlow(0)
+
+    /**
      * While set, a photo row's insert waits for it before the row is stored, and fails at the
      * transport when it completes with `false`, as a connection lost on the way would.
      */
@@ -148,10 +163,12 @@ class FakeSupabaseServer {
                     else -> error("FakeSupabaseServer has no route for $path")
                 }
             }
-        if (
-            loseUploadAnswers && request.method == HttpMethod.Post && path.startsWith(UPLOAD_PREFIX)
-        ) {
-            throw IOException("connection lost after the upload")
+        val isUpload = request.method == HttpMethod.Post && path.startsWith(UPLOAD_PREFIX)
+        if (loseUploadAnswers && isUpload) throw IOException("connection lost after the upload")
+        val hold = holdUploadAnswers
+        if (hold != null && isUpload) {
+            uploadsHeld.update { it + 1 }
+            hold.await()
         }
         return response
     }
@@ -258,6 +275,7 @@ class FakeSupabaseServer {
                 )
             request.method == HttpMethod.Post && segments.take(2) == listOf("object", BUCKET) -> {
                 val objectPath = segments.drop(2).joinToString("/")
+                if (uploadsFindTheirFileStored) files[objectPath] = body
                 if (objectPath in files) {
                     json(
                         """{"statusCode":"409","error":"Duplicate","message":"The resource already exists"}""",

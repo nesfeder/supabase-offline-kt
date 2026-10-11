@@ -75,7 +75,7 @@ fun failedUploadText(upload: PendingUpload): String =
         R.plurals.photo_upload_failed,
         upload.attempts,
         upload.attempts,
-        upload.failureMessage.orEmpty(),
+        upload.failure.orEmpty(),
     )
 
 /** The word for where a pending photo's upload stands. */

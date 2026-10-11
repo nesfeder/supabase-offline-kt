@@ -16,10 +16,10 @@ const val PHOTO_CONTENT_TYPE: String = "image/jpeg"
  * anything is sent.
  *
  * @property objectPath where the file goes in the bucket: `<user id>/<task id>/<photo id>.jpg`.
- * @property failureMessage why the last try failed, as the app says it; null unless [state] is
+ * @property failure why the last try failed, as the app says it; null unless [state] is
  *   [PendingPhotoState.Failed].
  * @property attempts how many uploads of it were started.
- * @property canRetry false once the server refused it in a way another try cannot change.
+ * @property retryable false once the server refused it in a way another try cannot change.
  */
 @Serializable
 data class PendingPhoto(
@@ -29,9 +29,9 @@ data class PendingPhoto(
     @SerialName("object_path") val objectPath: String,
     @SerialName("picked_at") val pickedAt: Instant,
     val state: PendingPhotoState = PendingPhotoState.Waiting,
-    @SerialName("failure_message") val failureMessage: String? = null,
+    val failure: String? = null,
     val attempts: Int = 0,
-    @SerialName("can_retry") val canRetry: Boolean = true,
+    val retryable: Boolean = true,
     @SerialName("content_type") val contentType: String = PHOTO_CONTENT_TYPE,
     val width: Int,
     val height: Int,
@@ -55,9 +55,9 @@ enum class PendingPhotoState {
  */
 data class PendingUpload(
     val state: PendingPhotoState,
-    val failureMessage: String?,
+    val failure: String?,
     val attempts: Int,
-    val canRetry: Boolean,
+    val retryable: Boolean,
     val localPath: String,
     val progress: Float? = null,
 )
@@ -72,8 +72,7 @@ fun PendingPhoto.toTaskPhoto(localPath: String, progress: Float?): TaskPhoto =
         width = width,
         height = height,
         createdAt = pickedAt,
-        pendingUpload =
-            PendingUpload(state, failureMessage, attempts, canRetry, localPath, progress),
+        pendingUpload = PendingUpload(state, failure, attempts, retryable, localPath, progress),
     )
 
 // --8<-- [start:pending-photo-merge]

@@ -57,6 +57,9 @@ class PendingPhotoDirectory(
     suspend fun readJpeg(photoId: String): ByteArray =
         withContext(io) { fileOf(photoId).readBytes() }
 
+    /** Whether the photo [photoId] is still here: it is not, once removed or uploaded. */
+    suspend fun contains(photoId: String): Boolean = current().any { it.photoId == photoId }
+
     /** The oldest photo waiting to upload, or null when none is. */
     suspend fun oldestWaiting(): PendingPhoto? =
         current().firstOrNull { it.state == PendingPhotoState.Waiting }
@@ -79,7 +82,7 @@ class PendingPhotoDirectory(
     /** Puts every failed photo that another try may upload back to waiting. */
     suspend fun retryFailed() = change { list ->
         list.map { record ->
-            if (record.state != PendingPhotoState.Failed || !record.canRetry) return@map record
+            if (record.state != PendingPhotoState.Failed || !record.retryable) return@map record
             record.copy(state = PendingPhotoState.Waiting).also(::write)
         }
     }

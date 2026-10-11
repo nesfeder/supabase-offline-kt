@@ -8,6 +8,7 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import io.github.nesfeder.offlinetasks.data.AppNetworkStatus
+import io.github.nesfeder.offlinetasks.data.PendingPhotoState
 import io.github.nesfeder.offlinetasks.data.PhotoDetails
 import io.github.nesfeder.offlinetasks.data.PhotoEncoder
 import io.github.nesfeder.offlinetasks.data.Task
@@ -56,9 +57,14 @@ sealed interface PhotoViewerUiState {
         val isPending: Boolean
             get() = photo.pendingUpload != null
 
-        /** Deleting needs the server, for the file; a pending photo is only on this device. */
+        /**
+         * Deleting needs the server, for the file; a pending photo is only on this device, and is
+         * removed whenever it is not on its way up.
+         */
         val canDelete: Boolean
-            get() = isPending || canChange
+            get() =
+                if (isPending) photo.pendingUpload?.state != PendingPhotoState.Uploading
+                else canChange
     }
 }
 

@@ -210,7 +210,7 @@ class TaskDetailViewModelTest {
                 }
                 .photos
                 .single()
-        assertEquals("PhotoStorageException", failed.pendingUpload?.failureMessage)
+        assertEquals("PhotoStorageException", failed.pendingUpload?.failure)
 
         // When — Storage back, and Retry
         repository.setStorageFailing(false)

@@ -25,6 +25,7 @@ import io.github.nesfeder.offlinetasks.data.PendingPhotoUploader
 import io.github.nesfeder.offlinetasks.data.PhotoDetails
 import io.github.nesfeder.offlinetasks.data.PhotoFile
 import io.github.nesfeder.offlinetasks.data.PhotoListSnapshot
+import io.github.nesfeder.offlinetasks.data.PhotoStorageException
 import io.github.nesfeder.offlinetasks.data.ReadProvenance
 import io.github.nesfeder.offlinetasks.data.RejectedTaskMutation
 import io.github.nesfeder.offlinetasks.data.RowsSnapshot
@@ -95,6 +96,9 @@ import kotlinx.serialization.json.put
 
 /** The schema both tables live in, the client's default. */
 private const val SCHEMA = "public"
+
+/** HTTP's "conflict": Storage already has a file at the path. */
+private const val HTTP_CONFLICT = 409
 
 /** How many photo rows one read of their object paths asks for. */
 private const val PATH_PAGE_SIZE = 1_000
@@ -442,8 +446,8 @@ class OfflineTaskRepository(
     // --8<-- [start:delete-task]
     /** A task's photo files (online only), then its photo rows, then the task itself. */
     override suspend fun deleteTask(id: String): TaskMutationOutcome = detached {
-        // Its photos still on this device go first, with no upload in flight to land after.
-        uploader.pausedWhile { pendingPhotos.removeTask(id) }
+        // Its photos still on this device go first; one uploading now never gets its row.
+        pendingPhotos.removeTask(id)
         val photos = cachedPhotosOf(id)
         // Files first, and only online: Storage writes are never queued, so offline they stay.
         if (canReachNetwork())
@@ -490,9 +494,8 @@ class OfflineTaskRepository(
         uploader.retry(photoId)
     }
 
-    override suspend fun removePendingPhoto(photoId: String): Boolean = uploader.pausedWhile {
+    override suspend fun removePendingPhoto(photoId: String): Boolean =
         pendingPhotos.remove(photoId)
-    }
 
     // --8<-- [start:pending-photo-upload]
     /**
@@ -505,12 +508,15 @@ class OfflineTaskRepository(
         onProgress: (Float) -> Unit,
     ) {
         val path = photo.objectPath
+        // A retry asks first: an earlier try may have stored the file and lost the answer.
         val storedBefore = photo.attempts > 1 && storage(path) { files.exists(path) }
-        if (!storedBefore) storage(path) { files.upload(path, jpeg, onProgress) }
-        // Queued behind the task's own insert when that has not reached the server yet.
-        writePendingPhotoRow(photo)
-        // No call puts uploaded bytes in the cache, so this downloads what was just sent.
-        storage(path) { files.ensureCachedFile(path) }
+        if (!storedBefore) uploadUnlessStored(path, jpeg, onProgress)
+        if (!pendingPhotos.contains(photo.photoId)) { // removed while it uploaded
+            deleteFiles(listOf(path)) // and no row will name the file
+            return
+        }
+        writePendingPhotoRow(photo) // queued behind its task's insert when that waits too
+        cacheUploadedFile(path)
     }
 
     /**
@@ -532,6 +538,37 @@ class OfflineTaskRepository(
     }
 
     // --8<-- [end:pending-photo-upload]
+
+    /**
+     * Uploads [jpeg] to [path]; a file already there counts as stored, since the path names a photo
+     * id this device made, so only an earlier try of this photo can have put it there.
+     */
+    private suspend fun uploadUnlessStored(
+        path: String,
+        jpeg: ByteArray,
+        onProgress: (Float) -> Unit,
+    ) {
+        try {
+            storage(path) { files.upload(path, jpeg, onProgress) }
+        } catch (refused: PhotoStorageException) {
+            if (refused.status != HTTP_CONFLICT) throw refused
+        }
+    }
+
+    /**
+     * Puts the file just uploaded to [path] in the library's cache: no call seeds it from an
+     * upload, so this downloads what was just sent. Best effort: the photo is stored either way,
+     * and a failure here only means it is downloaded when it is next shown.
+     */
+    private suspend fun cacheUploadedFile(path: String) {
+        try {
+            storage(path) { files.ensureCachedFile(path) }
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (notCached: Exception) {
+            // Stored, not yet cached: the screens download it when it is next shown.
+        }
+    }
 
     /**
      * True each time the network is on, or changes while on, with a user signed in: a chance for
@@ -850,10 +887,8 @@ class OfflineTaskRepository(
      * then the app's pending photos, which `clearLocalData()` does not know of.
      */
     override suspend fun clearLocalData() {
-        uploader.pausedWhile { // no upload in flight to land after the clear
-            offline.clearLocalData() // an open list fetches again by itself once the network allows
-            pendingPhotos.removeAll() // the app's own directory, outside the library's data
-        }
+        offline.clearLocalData() // an open list fetches again by itself once the network allows
+        pendingPhotos.removeAll() // the app's own directory, outside the library's data
     }
 
     // --8<-- [end:clear-local-data]

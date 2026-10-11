@@ -508,8 +508,8 @@ class OfflineTaskRepositoryTest {
         val failed = repository.photos(task.id).awaitValue { it.hasFailedUpload() }.single()
         val upload = assertNotNull(failed.pendingUpload)
         assertEquals(1, upload.attempts)
-        assertTrue(upload.canRetry)
-        assertEquals("ServerUnreachableException", upload.failureMessage)
+        assertTrue(upload.retryable)
+        assertEquals("ServerUnreachableException", upload.failure)
         assertTrue(File(upload.localPath).isFile)
         assertTrue(server.rows(Tables.TASK_PHOTOS).isEmpty())
 
@@ -544,6 +544,43 @@ class OfflineTaskRepositoryTest {
     }
 
     @Test
+    fun an_upload_storage_answers_already_exists_counts_as_stored() = runTest {
+        // Given — Storage holding a file at the photo's path, as an earlier try would leave it
+        repository.addTask("Stored before", notes = null)
+        val task = repository.tasks().awaitValue { it.isNotEmpty() }.single()
+        server.uploadsFindTheirFileStored = true
+
+        // When
+        repository.addPhoto(task.id, EncodedPhoto(ByteArray(8), 4, 3))
+
+        // Then — not a failure: the row is written, and the photo is uploaded
+        repository.photos(task.id).awaitValue { photos -> photos.isUploaded() }
+        assertEquals(1, server.rows(Tables.TASK_PHOTOS).size)
+    }
+
+    @Test
+    fun a_photo_removed_while_it_uploads_leaves_no_file_and_no_row() = runTest {
+        // Given — a photo whose file is stored, its upload's answer still on the way
+        repository.addTask("Changed my mind", notes = null)
+        val task = repository.tasks().awaitValue { it.isNotEmpty() }.single()
+        val release = CompletableDeferred<Unit>()
+        server.holdUploadAnswers = release
+        repository.addPhoto(task.id, EncodedPhoto(ByteArray(8), 4, 3))
+        withTimeout(WAIT) { server.uploadsHeld.first { it == 1 } }
+        val photo = repository.photos(task.id).awaitValue { it.isNotEmpty() }.single()
+
+        // When — removed at once, and then the answer arrives
+        assertTrue(repository.removePendingPhoto(photo.id))
+        release.complete(Unit)
+
+        // Then — the file is deleted again, and no row names it
+        withTimeout(WAIT) { while (server.files.isNotEmpty()) delay(POLL) }
+        repository.photos(task.id).awaitValue { it.isEmpty() }
+        assertTrue(server.rows(Tables.TASK_PHOTOS).isEmpty())
+        assertTrue(pendingRoot.listFiles().orEmpty().isEmpty())
+    }
+
+    @Test
     fun a_photo_of_a_task_still_queued_is_written_after_the_task() = runTest {
         // Given — a task made offline, and a photo added to it
         repository.allPhotos().awaitValue { it.isEmpty() }
@@ -574,7 +611,7 @@ class OfflineTaskRepositoryTest {
 
         // Then — failed for good, and the file went with the row
         val failed = repository.photos(task.id).awaitValue { it.hasFailedUpload() }.single()
-        assertEquals(false, failed.pendingUpload?.canRetry)
+        assertEquals(false, failed.pendingUpload?.retryable)
         assertTrue(server.files.isEmpty(), "a file was left with no row: ${server.files.keys}")
         assertTrue(server.rows(Tables.TASK_PHOTOS).isEmpty())
     }
