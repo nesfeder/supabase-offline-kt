@@ -61,7 +61,7 @@ class UndeliveredRequestsIosTest {
         NSError.errorWithDomain(
             NSURLErrorDomain,
             code,
-            mapOf<Any?, Any?>(NSLocalizedDescriptionKey to "Localised text, any language"),
+            mapOf<Any?, Any?>(NSLocalizedDescriptionKey to "Localized text, any language"),
         )
 
     /** The failure as the Darwin engine raises it: its message is the `NSError`'s description. */

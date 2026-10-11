@@ -385,7 +385,7 @@ class AutoSyncTest {
     /**
      * With the monitor saying offline and the server out of reach: a write is queued, the library's
      * one attempt at it fails, and the queue is emptied by discards, so nothing asks for a pass
-     * afterwards.
+     * afterward.
      */
     private suspend fun TestScope.failOneAttemptThenEmptyTheQueue(rig: Rig) {
         val first = assertIs<MutationOutcome.Queued>(rig.client.from(TABLE).insert(row(1)))

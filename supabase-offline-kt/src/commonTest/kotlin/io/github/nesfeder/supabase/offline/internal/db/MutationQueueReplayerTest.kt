@@ -36,7 +36,7 @@ import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 
 /**
- * Behavioural pins for [MutationQueueReplayer] — the replay path that pushes queued offline
+ * Behavioral pins for [MutationQueueReplayer] — the replay path that pushes queued offline
  * mutations to Supabase. The replayer previously had no test coverage; these cases lock in FIFO
  * replay, per-failure-class handling (network pause vs. permanent drop vs. transient 401 vs.
  * bounded unknown-error dead-letter), the single-sweep-per-table `distinct()` fix, the concurrency

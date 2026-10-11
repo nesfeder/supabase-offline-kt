@@ -10,11 +10,12 @@ import io.github.nesfeder.supabase.offline.internal.db.RESERVED_TABLE_NAME
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueue
 
 /**
- * Clears local data, or drops the caches for a new owner, in one transaction that records the
- * owner. The lock order, outermost first: the replayer's send lock, the file cache's (never with a
- * table lock), a table's ([TableWriteLocks]), the queue's ([MutationQueue]), the clear lock
- * ([CacheFreshness]), then the records' own. A clear takes no table lock: a write holding one
- * checks the watermarks under the clear lock. Eviction's and the read locks go alone.
+ * Clears local data, or drops the caches for a new owner, in one transaction recording the owner.
+ * Locks, outermost first: the replayer's send lock, the file cache's (never with a table lock), a
+ * table's snapshot lock ([QueryOverlay.holdingReadersOf]) and write lock ([TableWriteLocks]), the
+ * queue's ([MutationQueue]), the clear lock ([CacheFreshness]), then the records' own. A clear
+ * takes no table lock: a write holding one checks the watermarks under the clear lock. Eviction's
+ * lock goes alone; the queue's per-table read locks and the identity reader's lock are leaves.
  */
 internal class LocalData(
     private val queryCacheDao: PayloadWriteCountingDao,
@@ -30,7 +31,7 @@ internal class LocalData(
     /**
      * Wipes every cached payload, storage-object row and mutation, the mutation queue's records
      * included, in one transaction, and moves the watermarks so that no response or cache patch
-     * started before it lands afterwards. For identity changes: sign-out, account switch, deletion.
+     * started before it lands afterward. For identity changes: sign-out, account switch, deletion.
      *
      * @param owner the identity the emptied cache belongs to, recorded in the same transaction;
      *   `null` records none, and the next identity to use the cache claims it.
@@ -68,8 +69,8 @@ internal class LocalData(
     /**
      * Empties the cache for [owner], the identity it now belongs to: every cached query with its
      * shape record, and every Storage row, go in one transaction that records [owner]. The mutation
-     * queue and its records stay. No response or cache patch started before it lands afterwards;
-     * the files of the Storage cache are its caller's to delete.
+     * queue and its records stay. No response or cache patch started before it lands afterward; the
+     * files of the Storage cache are its caller's to delete.
      */
     suspend fun dropCacheFor(owner: String) {
         // The locks and order of [clearLocalData], which this is but for the mutation queue

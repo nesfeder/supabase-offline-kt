@@ -23,7 +23,7 @@ import kotlinx.coroutines.currentCoroutineContext
 /**
  * Carried in a coroutine context while a queued mutation is sent: the identity that owns it, and
  * the replay pass sending it. The phase [installReplayOwnerCheck] adds stops a request sent from
- * that coroutine once [sender] is cancelled, or, for a PostgREST request, unless its token is
+ * that coroutine once [sender] is canceled, or, for a PostgREST request, unless its token is
  * [owner]'s, and records here which it did.
  *
  * @property sender the pass sending the mutation, which runs the request whatever cancels it; a
@@ -42,7 +42,7 @@ internal class ReplayOwner(val owner: QueueIdentity, val sender: Job? = null) :
     val stoppedForAnotherSession: Boolean
         get() = stoppedForSession.load()
 
-    /** Whether the check stopped a request because [sender] was cancelled before it was sent. */
+    /** Whether the check stopped a request because [sender] was canceled before it was sent. */
     val stoppedWithItsSender: Boolean
         get() = stoppedWithSender.load()
 
@@ -51,7 +51,7 @@ internal class ReplayOwner(val owner: QueueIdentity, val sender: Job? = null) :
         stoppedForSession.store(true)
     }
 
-    /** Records that the check stopped a request because [sender] was cancelled. */
+    /** Records that the check stopped a request because [sender] was canceled. */
     fun recordSenderStopped() {
         stoppedWithSender.store(true)
     }
@@ -71,7 +71,7 @@ private val ReplayOwnerCheckInstallation =
 /**
  * Installs, once per client, the phase that binds a queued mutation's send to its owner and its
  * pass. It runs just before the request is sent, after supabase-kt set the `Authorization` header,
- * and stops a request made under a [ReplayOwner] whose [ReplayOwner.sender] was cancelled, or, when
+ * and stops a request made under a [ReplayOwner] whose [ReplayOwner.sender] was canceled, or, when
  * the Auth plugin is installed, a PostgREST request whose token names another identity. Without
  * Auth the session never changes identity.
  */

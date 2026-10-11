@@ -38,7 +38,7 @@ internal class OfflinePlugin(
     private val client: OfflineClient
         get() =
             checkNotNull(opened.load()) {
-                "The Offline plugin is used before its SupabaseClient finished initialising it"
+                "The Offline plugin is used before its SupabaseClient finished initializing it"
             }
 
     /**
@@ -48,7 +48,7 @@ internal class OfflinePlugin(
      */
     override fun init() {
         val client = config.openLocalData(supabaseClient, config)
-        if (!opened.compareAndSet(null, client)) error("The Offline plugin was initialised twice")
+        if (!opened.compareAndSet(null, client)) error("The Offline plugin was initialized twice")
         supabaseClient.warnUnlessTestedSupabaseKt(supabaseClient.engineLogger(config.logLevel))
     }
 

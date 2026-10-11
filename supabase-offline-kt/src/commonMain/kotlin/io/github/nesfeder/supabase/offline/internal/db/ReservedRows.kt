@@ -11,7 +11,7 @@ package io.github.nesfeder.supabase.offline.internal.db
  * longer. A `from(table)` call only ever produces cache rows under the name it was given, and
  * `OfflineClient.from` refuses this one.
  *
- * Rows under this name are never evicted, never counted towards the cache size, never returned by a
+ * Rows under this name are never evicted, never counted toward the cache size, never returned by a
  * read and never touched by an overlay; `clearLocalData` removes them with everything else, and a
  * drop of the cache for a new owner removes the query shapes and keeps the rest.
  *

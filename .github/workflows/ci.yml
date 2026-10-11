@@ -22,7 +22,8 @@ name: CI
 #   final-status ── fans in every job above but the two coverage jobs and snapshot, so neither
 #                   Codecov nor Maven Central being down ever blocks a merge
 #
-#   formatting     kempt check; skipped until .kempt.toml exists
+#   formatting     kempt check, and American spelling across the tree (each self-test first);
+#                  skipped until .kempt.toml exists
 #   static-checks  API visibility and the classifier of API changes (each self-test first), and
 #                  the self-tests of the build-tool floors check, the published-artifacts check,
 #                  the Swift bridge's header check and the release script (the checks themselves
@@ -85,7 +86,7 @@ permissions:
   contents: read
 
 # One group per pull request, where a newer run cancels an older one. Every other run has a group
-# of its own, so a push to main is never cancelled or replaced by a later one, and a label event
+# of its own, so a push to main is never canceled or replaced by a later one, and a label event
 # that runs nothing cancels nothing.
 concurrency:
   group: >-
@@ -131,9 +132,10 @@ jobs:
       # library change that breaks the sample without moving the API records shows up there.
       # `ios-sample` runs the iOS sample's tests in ios-tests, on the self-hosted runner only: for
       # its own sources and what it is built on (the Swift package but its documentation and its
-      # own tests, the bridge, the two scripts), and this workflow; every push to main runs them too, as it builds the
-      # Android sample. Its sources fall to `kotlin` below, since ios-tests runs only when `kotlin`
-      # says so; its page and screenshots are under docs/ and run the docs job alone.
+      # own tests, the bridge, the two scripts), and this workflow; every push to main runs them
+      # too, as it builds the Android sample. Its sources fall to `kotlin` below, since ios-tests
+      # runs only when `kotlin` says so; its page and screenshots are under docs/ and run the docs
+      # job alone.
       - name: Classify the changed files
         id: classify
         env:
@@ -200,18 +202,19 @@ jobs:
                 workflows=true ;;
               swift/*.md)
                 # The Swift package's README is published with it, and its PARITY.md sits beside
-                # it: the Kotlin jobs check the published tree, the docs job's spelling check reads
-                # every Markdown file.
+                # it: the Kotlin jobs check the published tree, the docs job the README's listings.
                 kotlin=true; docs=true ;;
-              # Every other Markdown file: the docs job's spelling check reads them all.
-              docs/* | mkdocs.yml | *.md | samples/supabase/* | scripts/check-spelling.py)
+              # Every other Markdown file: the docs job builds the site and checks its listings.
+              docs/* | mkdocs.yml | *.md | samples/supabase/*)
                 docs=true ;;
               # The site's Kotlin samples: the Kotlin jobs compile them, the docs build includes them.
               supabase-offline-kt/src/androidHostTest/kotlin/io/github/nesfeder/supabase/offline/docs/* \
                 | supabase-offline-kt-testing/src/commonTest/kotlin/io/github/nesfeder/supabase/offline/testing/docs/*)
                 kotlin=true; docs=true ;;
+              # scripts/check-spelling.py runs in formatting, on every run.
               .github/* | LICENSE | .gitignore | .editorconfig | .git-blame-ignore-revs \
-                | .kempt.toml | config/license-header* | *.properties.example)
+                | .kempt.toml | config/license-header* | *.properties.example \
+                | scripts/check-spelling.py)
                 ;;
               *)
                 kotlin=true ;;
@@ -290,6 +293,15 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+
+      # Every comment, doc comment, string and name in the sources and scripts, every workflow and
+      # every Markdown page, in American spelling (CONTRIBUTING.md, "Formatting"). Whole-tree, so it
+      # needs no base; the self-test runs first: a check that cannot see a British form proves
+      # nothing.
+      - name: Check American spelling
+        run: |
+          python3 scripts/check-spelling.py --self-test
+          python3 scripts/check-spelling.py
 
       - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
         with:

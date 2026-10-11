@@ -55,7 +55,7 @@ on:
 
 permissions: {}
 
-# One release at a time, this workflow and Release resume together, and never cancelled halfway.
+# One release at a time, this workflow and Release resume together, and never canceled halfway.
 concurrency:
   group: release
   cancel-in-progress: false

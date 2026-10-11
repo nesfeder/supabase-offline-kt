@@ -28,7 +28,7 @@ import kotlinx.serialization.json.JsonArray
 
 /**
  * The engine's own state lives in reserved `object_cache` rows so that the Room schema does not
- * change. Those rows are engine state, not cache: never evicted, never counted towards the cache
+ * change. Those rows are engine state, not cache: never evicted, never counted toward the cache
  * size, never returned by a read, never touched by an overlay — and wiped with everything else when
  * local data is cleared.
  */
@@ -72,7 +72,7 @@ class ReservedRowsTest {
         // When
         store.queryCache.evictOverBudget()
 
-        // Then — the cache row went; the reserved rows stayed and never counted towards the size
+        // Then — the cache row went; the reserved rows stayed and never counted toward the size
         assertNull(queryCacheDao.getRow("todos", "todos"))
         assertNotNull(queryCacheDao.getRow(RESERVED_TABLE_NAME, REJECTED_MUTATIONS_CACHE_KEY))
         assertTrue(reservedBytes > 0)

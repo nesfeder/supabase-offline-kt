@@ -220,7 +220,7 @@ internal class QueryCache(
         if (queryCacheLimits.maxPayloadBytes == null) return false
         val isLargePayload = payload.length >= ENFORCEMENT_LARGE_PAYLOAD_CHARS
         // Always advance the counter so the cadence reflects the true write count; combine with
-        // the large-payload trigger afterwards so both side effects run regardless of order.
+        // the large-payload trigger afterward so both side effects run regardless of order.
         // fetchAndAdd returns the pre-increment value, so +1 yields the just-completed write's
         // ordinal — enforcing on every ENFORCEMENT_WRITE_INTERVAL-th write.
         val cadenceReached = (writeCounter.fetchAndAdd(1) + 1) % ENFORCEMENT_WRITE_INTERVAL == 0

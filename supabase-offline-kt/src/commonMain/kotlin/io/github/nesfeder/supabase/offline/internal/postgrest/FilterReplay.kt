@@ -155,7 +155,7 @@ private fun PostgrestFilterBuilder.replayCondition(condition: FilterDescriptor.C
         }
 
         // Array / JSON operators. Each accepts two encodings — a `{a,b}` element list and an
-        // `[a,b]` range — so both must be recognised; see [replayArrayOrRangeCondition].
+        // `[a,b]` range — so both must be recognized; see [replayArrayOrRangeCondition].
         FilterOperator.CS ->
             return replayArrayOrRangeCondition(condition, FilterOperator.CS) { list ->
                 cs(condition.column, list)
@@ -230,7 +230,7 @@ private fun PostgrestFilterBuilder.replayCondition(condition: FilterDescriptor.C
  * @param condition The captured condition.
  * @param operator The operator to re-encode a range form under.
  * @param replayList Applies the element-list form via the operator's typed DSL entry point.
- * @return true when either encoding was recognised and applied; false when the stored value matched
+ * @return true when either encoding was recognized and applied; false when the stored value matched
  *   neither, leaving the condition off the request.
  */
 private fun PostgrestFilterBuilder.replayArrayOrRangeCondition(
@@ -249,7 +249,7 @@ private fun PostgrestFilterBuilder.replayArrayOrRangeCondition(
 }
 
 /**
- * Recognises supabase-kt's `[min,max]` range encoding for the array operators.
+ * Recognizes supabase-kt's `[min,max]` range encoding for the array operators.
  *
  * Returns `null` for anything else — including a genuine JSON string array (`["a","b"]`), which
  * stays a list so the older capture form keeps decoding as it always has. That check is what makes
@@ -363,7 +363,7 @@ private fun String.hasEscapedListWrapper(): Boolean =
 private fun splitVerbatimElements(body: String): List<String> = body.split(',')
 
 /**
- * Splits an unwrapped `in` list body on its element separators, honouring the quoting `escapeValue`
+ * Splits an unwrapped `in` list body on its element separators, honoring the quoting `escapeValue`
  * applies. This is the **only** body that gets escape handling; see [splitPostgrestListValue] for
  * why.
  *
@@ -373,7 +373,7 @@ private fun splitVerbatimElements(body: String): List<String> = body.split(',')
  * different set of rows than the caller asked for. (Before the wrapper strip landed the same value
  * produced inert garbage; correcting the wrapper is what made this leg reachable.)
  *
- * A quoted element is taken verbatim; an unquoted one is trimmed, preserving the previous behaviour
+ * A quoted element is taken verbatim; an unquoted one is trimmed, preserving the previous behavior
  * for the ordinary case. An unterminated quote — which `escapeValue` cannot emit — is closed
  * implicitly at the end of the input rather than rejected, since returning "no elements" would drop
  * the condition and broaden the mutation.

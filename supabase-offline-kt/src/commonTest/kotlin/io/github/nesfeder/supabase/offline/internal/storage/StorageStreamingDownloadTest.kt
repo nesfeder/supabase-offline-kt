@@ -40,7 +40,7 @@ import okio.SYSTEM
 
 /**
  * Channel downloads stream through a file on disk instead of being held in memory whole, and a
- * download that is cancelled or fails part-way leaves nothing behind.
+ * download that is canceled or fails part-way leaves nothing behind.
  */
 class StorageStreamingDownloadTest {
 
@@ -98,8 +98,8 @@ class StorageStreamingDownloadTest {
     }
 
     @Test
-    fun a_cancelled_channel_download_leaves_no_partial_file() = runTest {
-        // Given — cancelled when part of the object is on disk
+    fun a_canceled_channel_download_leaves_no_partial_file() = runTest {
+        // Given — canceled when part of the object is on disk
         delegate.onDownload = { LARGE }
         val midway = CompletableDeferred<Unit>()
         delegate.onChannelChunk = { written ->

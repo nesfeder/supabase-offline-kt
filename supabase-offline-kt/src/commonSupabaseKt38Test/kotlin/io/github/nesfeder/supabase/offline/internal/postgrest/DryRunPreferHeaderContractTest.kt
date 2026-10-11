@@ -11,9 +11,9 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
 
 /**
- * Pins the upstream behaviour the dry-run probe depends on, so a supabase-kt change breaks this
- * test rather than silently letting a dry run into the queue: supabase-kt 3.8's `dryRun()` is
- * visible only as `tx=rollback` in the `Prefer` header of the outgoing PostgREST request.
+ * Pins the upstream behavior the dry-run probe depends on, so a supabase-kt change breaks this test
+ * rather than silently letting a dry run into the queue: supabase-kt 3.8's `dryRun()` is visible
+ * only as `tx=rollback` in the `Prefer` header of the outgoing PostgREST request.
  */
 class DryRunPreferHeaderContractTest {
 

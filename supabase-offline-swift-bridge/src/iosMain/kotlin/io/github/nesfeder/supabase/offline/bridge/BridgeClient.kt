@@ -376,7 +376,7 @@ internal constructor(
      */
     public fun close(completion: (BridgeError?) -> Unit): BridgeCancellable {
         val first = closing.compareAndSet(expectedValue = false, newValue = true)
-        // The handle holds no job: a close cancelled before it started would never close at all.
+        // The handle holds no job: a close canceled before it started would never close at all.
         lifecycleScope.launch {
             val error =
                 if (first) {
@@ -391,7 +391,7 @@ internal constructor(
                 runner.report(failure, "The completion of close")
             }
         }
-        return BridgeCancellable(null) { runner.report(it, "Cancelling close") }
+        return BridgeCancellable(null) { runner.report(it, "Canceling close") }
     }
 
     /**

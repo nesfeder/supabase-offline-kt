@@ -25,7 +25,7 @@ import kotlinx.coroutines.launch
 
 /**
  * Runs every asynchronous bridge call in the bridge's own scope and holds the boundary's promises:
- * each completion fires exactly once, a cancelled handle cancels the work, and no failure, a
+ * each completion fires exactly once, a canceled handle cancels the work, and no failure, a
  * caller's completion that throws included, ever leaves Kotlin.
  *
  * @param clientClosing whether the client is closing, which turns a cancellation into
@@ -45,7 +45,7 @@ internal class OperationRunner(
 
     /**
      * Where completions run: never inside the call that takes them, even when the answer is known
-     * at once (a closed client, a handle cancelled before its call started). Never cancelled, so an
+     * at once (a closed client, a handle canceled before its call started). Never canceled, so an
      * answer still goes after close.
      */
     private val answerScope: CoroutineScope =
@@ -126,7 +126,7 @@ internal class OperationRunner(
     /**
      * Collects [values], handing each to [onValue], and ends with [onCompletion] exactly once:
      * `null` when the flow completes or the client closes under it, an error when it fails or the
-     * handle is cancelled.
+     * handle is canceled.
      */
     fun <T> subscribe(
         operation: String,
@@ -186,7 +186,7 @@ internal class OperationRunner(
     }
 
     /**
-     * Launches [block] in [scope]. A job cancelled before it ran answers through [delivery] with
+     * Launches [block] in [scope]. A job canceled before it ran answers through [delivery] with
      * [endingOf] its cause, and one that ended without an answer with an error, once.
      */
     private fun <T> launchCatching(
@@ -216,7 +216,7 @@ internal class OperationRunner(
         }
 
     /**
-     * How a subscription cancelled by [cause] ends: with no error when the client closed under it,
+     * How a subscription canceled by [cause] ends: with no error when the client closed under it,
      * as the library ends a live read at close, and as [errorOf] says otherwise.
      */
     private fun subscriptionEndingOf(cause: Throwable): BridgeError? =
@@ -231,7 +231,7 @@ internal class OperationRunner(
         val closing = clientClosing()
         return when {
             failure is CancellationException && ownCancellation ->
-                if (closing) clientClosedError("CancellationException") else cancelledError()
+                if (closing) clientClosedError("CancellationException") else canceledError()
             else -> bridgeErrorOf(failure, closing)
         }
     }
@@ -248,7 +248,7 @@ internal class OperationRunner(
 
     /** Reports a failure inside a cancel handle. */
     private fun reportCancelFailure(failure: Throwable) {
-        report(failure, "Cancelling a call")
+        report(failure, "Canceling a call")
     }
 }
 

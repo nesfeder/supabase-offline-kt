@@ -242,7 +242,7 @@ private fun SharedTransitionScope.DestinationContent(
 
 /**
  * True from the moment a predictive back gesture starts until [visibility]'s transition has
- * settled, released or cancelled: the specs it picks must not change while the gesture's transition
+ * settled, released or canceled: the specs it picks must not change while the gesture's transition
  * finishes, or the screen would jump.
  */
 @Composable

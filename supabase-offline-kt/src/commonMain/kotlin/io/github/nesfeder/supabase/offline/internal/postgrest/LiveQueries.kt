@@ -127,7 +127,7 @@ internal class LiveQueries(
         val key = Key(table, cacheKey)
         val entry = acquire(key, upstream)
         // When the client closes, its scope — and with it this entry's sharing coroutine — is
-        // cancelled. Fail the collection then, instead of leaving it waiting on a flow that will
+        // canceled. Fail the collection then, instead of leaving it waiting on a flow that will
         // never emit again, or ending it as though the read were done.
         val closedWatcher = launch {
             scope.coroutineContext.job.join()

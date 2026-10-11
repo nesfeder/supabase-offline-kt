@@ -77,7 +77,7 @@ class MutationQueueReplayOrderTest {
     }
 
     @Test
-    fun replay_follows_insertion_order_even_when_the_clock_stepped_backwards() = runTest {
+    fun replay_follows_insertion_order_even_when_the_clock_stepped_backward() = runTest {
         // Given — an insert, then the device clock is set back, then an edit of the same row
         clock = 5_000L
         store.mutationQueue.enqueueInsert(

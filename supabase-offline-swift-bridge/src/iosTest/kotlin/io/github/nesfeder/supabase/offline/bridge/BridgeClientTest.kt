@@ -306,7 +306,7 @@ class BridgeClientTest {
     }
 
     @Test
-    fun a_cancelled_call_answers_once_with_cancelled_and_the_late_answer_is_dropped() = bridgeTest {
+    fun a_canceled_call_answers_once_with_canceled_and_the_late_answer_is_dropped() = bridgeTest {
         // Given — a read the server holds
         server.answer = { null }
         val client = openTestClient(server)
@@ -328,14 +328,14 @@ class BridgeClientTest {
     }
 
     @Test
-    fun a_cancelled_subscription_ends_once_with_cancelled_and_delivers_nothing_more() = bridgeTest {
+    fun a_canceled_subscription_ends_once_with_canceled_and_delivers_nothing_more() = bridgeTest {
         // Given — a subscription to the queue count, which has delivered its first value
         val client = openTestClient(server) { autoSync = false }
         val counts = SubscriptionProbe<Int>()
         val handle = client.observePendingMutationCount(null, counts.onValue, counts.onCompletion)
         counts.awaitValue { it == 0 }
 
-        // When — it is cancelled, then the queue changes
+        // When — it is canceled, then the queue changes
         handle.cancel()
         val ending = counts.ending.await()
         awaitErrorOnly { client.disableNetwork(it) }

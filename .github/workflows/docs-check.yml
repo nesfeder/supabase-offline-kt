@@ -1,9 +1,10 @@
 name: Docs check
 
-# American spelling, strict build, link checks, and the built site uploaded as the `docs-site`
-# artifact so it can be downloaded and previewed. Nothing is published: publishing is
-# docs-publish.yml, which CI never calls. ci.yml calls this workflow when the documentation
-# changed and folds its result into the single required `All Green` check.
+# Strict build, link checks, and the built site uploaded as the `docs-site` artifact so it can be
+# downloaded and previewed. Nothing is published: publishing is docs-publish.yml, which CI never
+# calls. ci.yml calls this workflow when the documentation changed and folds its result into the
+# single required `All Green` check; the pages' spelling is checked by ci.yml's formatting job, on
+# every run.
 
 on:
   workflow_call:
@@ -36,13 +37,6 @@ jobs:
       - name: Verify the vendored Mermaid
         working-directory: docs/assets/javascripts/mermaid
         run: sha256sum --check --strict mermaid.min.js.sha256
-
-      # Every tracked Markdown file and mkdocs.yml, in American spelling (CONTRIBUTING.md, "Writing
-      # pages"). The self-test runs first: a check that cannot see a British form proves nothing.
-      - name: Check American spelling
-        run: |
-          python scripts/check-spelling.py --self-test
-          python scripts/check-spelling.py
 
       - name: Install the pinned toolchain
         run: pip install -r .github/workflows/docs-requirements.txt

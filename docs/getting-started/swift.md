@@ -75,12 +75,13 @@ their token:
 --8<-- "swift/Tests/SupabaseOfflineTests/DocumentationListings/GettingStartedListings.swift:sign-out"
 ```
 
-Why the network is off: a live read fetches again right after the clear, with whatever token the
-closure returns then, so a clear made while it still returns the outgoing user's token puts that
-user's rows back for the next one; and a sync that runs between the sign-out and the clear sends
-the outgoing user's queued writes with the publishable key alone. Clearing in the `catch` is safe
-with supabase-swift, which ends the session on the device before it calls the server; with an
-Auth that keeps its session when the sign-out fails, end the session on the device yourself first.
+Why the network is off: a live read that refreshes fetches again right after the clear, with
+whatever token the closure returns then, so a clear made while it still returns the outgoing
+user's token puts that user's rows back for the next one; and a sync that runs between the
+sign-out and the clear sends the outgoing user's queued writes with the publishable key alone.
+Clearing in the `catch` is safe with supabase-swift, which ends the session on the device before it
+calls the server; with an Auth that keeps its session when the sign-out fails, end the session on
+the device yourself first.
 
 Signing out and back in as the same user needs nothing. If your app reads while nobody is signed
 in, turn the network back on right after the clear instead, and restart open live reads once the

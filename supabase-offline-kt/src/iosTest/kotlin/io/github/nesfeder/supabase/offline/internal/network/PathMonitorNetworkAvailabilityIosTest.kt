@@ -19,7 +19,7 @@ class PathMonitorNetworkAvailabilityIosTest {
 
     @Test
     fun the_monitor_reports_the_current_path_and_stops_when_collection_ends() = runTest {
-        // When — the first value, after which the collection ends and the monitor is cancelled
+        // When — the first value, after which the collection ends and the monitor is canceled
         val first =
             withContext(Dispatchers.Default) {
                 withTimeoutOrNull(5.seconds) { pathMonitorNetworkAvailability().first() }

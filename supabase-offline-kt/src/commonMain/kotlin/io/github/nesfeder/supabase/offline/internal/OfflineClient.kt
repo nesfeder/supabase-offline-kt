@@ -266,7 +266,10 @@ internal class OfflineClient(
      */
     private val liveQueries = LiveQueries(clientScope, engineLogger)
 
-    /** The identity a write, a discard, a dismissal or a retry is for, read once per status. */
+    /**
+     * The identity a write, a discard, a dismissal, a retry or a read's overlay is for, read once
+     * per status.
+     */
     private val queueIdentityReader = QueueIdentityReader(supabaseClient)
 
     /** The identity the overlay and counts are for, read once per session status. */
@@ -563,7 +566,7 @@ internal class OfflineClient(
                 }
             }
         } finally {
-            // Cancelled too: what the rewrite left goes to the background
+            // Canceled too: what the rewrite left goes to the background
             databaseScrub.finishSoon()
         }
         engineLogger.info {
@@ -754,7 +757,7 @@ internal class OfflineClient(
 
     /**
      * Publishes the status's last value, with no pass running, after which it changes no more: the
-     * work that kept it current is cancelled with the client's scope, and a pass running at [close]
+     * work that kept it current is canceled with the client's scope, and a pass running at [close]
      * would otherwise leave it syncing for good.
      */
     private suspend fun publishFinalStatus() {
@@ -1017,7 +1020,7 @@ internal class OfflineClient(
             // To a live read the clear, done or cut short, is what a change of owner is: it
             // fetches again. Asked first, as finishing the rewrite rethrows a cancellation
             liveQueries.liveTables().forEach { table -> liveQueries.requestRefresh(table) }
-            // Cancelled too: what the rewrite left goes to the background
+            // Canceled too: what the rewrite left goes to the background
             databaseScrub.finishSoon()
         }
         // The writes an earlier failure held back are gone with it

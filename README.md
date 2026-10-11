@@ -63,6 +63,9 @@ val supabase = createSupabaseClient(
 ### Read
 
 ```kotlin
+import io.github.jan.supabase.postgrest.query.Order
+import kotlinx.serialization.Serializable
+
 @Serializable
 data class Task(val id: String, val title: String, val done: Boolean = false)
 
@@ -80,6 +83,9 @@ same rows as a `Flow` that follows every change.
 ### Write
 
 ```kotlin
+import io.github.nesfeder.supabase.offline.MutationOutcome
+import kotlin.uuid.Uuid
+
 val task = Task(id = Uuid.random().toString(), title = "Buy milk")
 
 when (val outcome = supabase.offline.from("tasks").insert(task)) {

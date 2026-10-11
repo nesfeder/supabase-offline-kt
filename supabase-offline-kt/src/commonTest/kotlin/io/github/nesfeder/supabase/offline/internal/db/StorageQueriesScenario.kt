@@ -33,7 +33,7 @@ private fun row(bucketId: String, path: String, size: Long?) =
     )
 
 /**
- * Writes an object, one of its transformed variants, a neighbour whose path merely starts the same,
+ * Writes an object, one of its transformed variants, a neighbor whose path merely starts the same,
  * the same path in another bucket, a name with SQL wildcard characters and a row with no recorded
  * size, then runs every query the file cache uses.
  */

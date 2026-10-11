@@ -40,7 +40,7 @@ class UuidKeyCaseTest {
 
     @Test
     fun a_row_written_in_capitals_and_sent_back_in_lower_case_is_shown_once() {
-        // Given — the server's copy of a row the client inserted with a capitalised key
+        // Given — the server's copy of a row the client inserted with a capitalized key
         val cached = """[{"id":"$LOWER","title":"a"}]"""
 
         // When — the insert, which the server already holds, is overlaid
@@ -71,7 +71,7 @@ class UuidKeyCaseTest {
     }
 
     @Test
-    fun an_update_filtered_by_a_capitalised_key_changes_the_row_sent_in_lower_case() {
+    fun an_update_filtered_by_a_capitalized_key_changes_the_row_sent_in_lower_case() {
         // Given
         val cached = """[{"id":"$LOWER","title":"a"}]"""
         val byKey =

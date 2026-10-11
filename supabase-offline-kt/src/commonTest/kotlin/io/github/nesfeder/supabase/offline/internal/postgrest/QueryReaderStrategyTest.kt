@@ -40,7 +40,7 @@ import kotlinx.serialization.json.JsonArray
 
 /**
  * Read-strategy semantics of [QueryReader], one strategy and one failure class at a time: which
- * strategies fall back to cache on a connectivity failure, which honour a cache duration, which
+ * strategies fall back to cache on a connectivity failure, which honor a cache duration, which
  * never touch the network, and what each one logs.
  *
  * Only the network SELECT is scripted (a [FakeRemoteTable]); the cache is a real `TestStore` over

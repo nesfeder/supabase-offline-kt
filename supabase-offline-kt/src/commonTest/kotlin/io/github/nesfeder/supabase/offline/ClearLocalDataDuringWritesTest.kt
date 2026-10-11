@@ -30,8 +30,8 @@ import kotlinx.serialization.json.JsonArray
 /**
  * Clearing local data is identity teardown (sign-out, account switch, account deletion). Once it
  * has run, nothing the outgoing session started may reach the server or the local store: a sweep
- * already replaying the queue stops, a write whose response arrives afterwards is not overlaid onto
- * the next user's cache, and a write that failed offline afterwards is not queued.
+ * already replaying the queue stops, a write whose response arrives afterward is not overlaid onto
+ * the next user's cache, and a write that failed offline afterward is not queued.
  */
 class ClearLocalDataDuringWritesTest {
 

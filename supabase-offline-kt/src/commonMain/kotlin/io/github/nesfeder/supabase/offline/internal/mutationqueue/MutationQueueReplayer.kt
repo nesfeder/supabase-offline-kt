@@ -199,7 +199,7 @@ internal class MutationQueueReplayer(
             try {
                 pass.await()
             } catch (cancellation: CancellationException) {
-                // Rethrows when the caller itself was cancelled; otherwise only the pass was, by
+                // Rethrows when the caller itself was canceled; otherwise only the pass was, by
                 // clearLocalData, which left nothing queued: report what it sent before
                 currentCoroutineContext().ensureActive()
                 progress.report(remainingCount = 0, stop = SyncStop.LocalDataCleared)
@@ -211,7 +211,7 @@ internal class MutationQueueReplayer(
 
     /**
      * Wipes local data with [clear] once no pass can send anything more: passes in flight are
-     * cancelled and [clear] runs under the send lock. An outcome arriving afterwards is discarded.
+     * canceled and [clear] runs under the send lock. An outcome arriving afterward is discarded.
      */
     suspend fun clearLocalData(clear: suspend () -> Unit) {
         clearGeneration.update { generation -> generation + 1 }
@@ -260,7 +260,7 @@ internal class MutationQueueReplayer(
      * Sends queued mutation [mutationId] now if it is at the head of [identity]'s queue, nobody
      * else is sending it, and the session is still [identity]. On success [onAccepted] runs before
      * the mutation leaves the queue; a failure of [onAccepted] is logged, since the server has the
-     * write. A caller cancelled while the request is on the wire leaves the mutation queued.
+     * write. A caller canceled while the request is on the wire leaves the mutation queued.
      */
     suspend fun sendAtHead(
         mutationId: Long,
@@ -532,7 +532,7 @@ internal class MutationQueueReplayer(
 
     /**
      * One pass, counting into [progress]. Reads the identity's queue once, then re-checks each
-     * mutation as it claims it. Cancelled, it stops between mutations: a request already sent
+     * mutation as it claims it. Canceled, it stops between mutations: a request already sent
      * finishes and its answer is recorded, since a write the server applied but the queue kept
      * would be sent again.
      */
@@ -585,7 +585,7 @@ internal class MutationQueueReplayer(
             val (outcome, recorded) =
                 try {
                     // Runs to its outcome once sent; the owner check stops the request if the pass
-                    // is cancelled first
+                    // is canceled first
                     withContext(NonCancellable) {
                         val outcome =
                             try {
@@ -732,7 +732,7 @@ internal class MutationQueueReplayer(
 
     /**
      * Sends [mutation] as [identity], the pass [pass] running it: stopped before it leaves the
-     * device when the session is no longer [identity]'s or [pass] was cancelled.
+     * device when the session is no longer [identity]'s or [pass] was canceled.
      */
     private suspend fun replay(
         mutation: MutationRow,
@@ -755,7 +755,7 @@ internal class MutationQueueReplayer(
                     is SendOutcome.Succeeded -> ReplayOutcome.Synced(rowsWereOnServer = sent.value)
                     is SendOutcome.Failed ->
                         if (owner.stoppedWithItsSender) {
-                            // It never left the device: the pass ends here, cancelled
+                            // It never left the device: the pass ends here, canceled
                             if (newlyUnconfirmed) mutationQueue.clearUnconfirmedSend(mutation.id)
                             throw CancellationException("The replay pass was stopped")
                         } else if (owner.stoppedForAnotherSession) {
@@ -922,7 +922,7 @@ internal class MutationQueueReplayer(
                 refuse(
                     mutation,
                     "has an unknown operation",
-                    "The queued operation is not recognised",
+                    "The queued operation is not recognized",
                 )
         }
     }

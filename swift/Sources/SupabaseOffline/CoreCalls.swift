@@ -179,11 +179,11 @@ private final class PendingCall<Value: Sendable>: @unchecked Sendable {
     /// canceled first, so the call is never sent.
     func wait(with continuation: CheckedContinuation<Value, any Error>) -> Bool {
         lock.lock()
-        let cancelledFirst = isCancelled
-        if !cancelledFirst { self.continuation = continuation }
+        let canceledFirst = isCancelled
+        if !canceledFirst { self.continuation = continuation }
         lock.unlock()
-        if cancelledFirst { continuation.resume(throwing: CancellationError()) }
-        return !cancelledFirst
+        if canceledFirst { continuation.resume(throwing: CancellationError()) }
+        return !canceledFirst
     }
 
     /// Keeps the sent call's handle; cancels the call at once when the task was canceled while it
@@ -303,19 +303,19 @@ private final class LiveSubscription: @unchecked Sendable {
     private var handle: (any CoreCallHandle)?
 
     /// Whether the reader has stopped.
-    private var cancelled = false
+    private var canceled = false
 
     /// Whether the reader has stopped, so a subscription not yet started never starts.
     var isCancelled: Bool {
         lock.lock()
         defer { lock.unlock() }
-        return cancelled
+        return canceled
     }
 
     /// Keeps the started subscription's handle, or cancels it at once when the reader has stopped.
     func attach(_ handle: any CoreCallHandle) {
         lock.lock()
-        let cancelsNow = cancelled
+        let cancelsNow = canceled
         if !cancelsNow { self.handle = handle }
         lock.unlock()
         if cancelsNow { handle.cancel() }
@@ -324,8 +324,8 @@ private final class LiveSubscription: @unchecked Sendable {
     /// Cancels the subscription, once.
     func cancel() {
         lock.lock()
-        let handle = cancelled ? nil : self.handle
-        cancelled = true
+        let handle = canceled ? nil : self.handle
+        canceled = true
         self.handle = nil
         lock.unlock()
         handle?.cancel()

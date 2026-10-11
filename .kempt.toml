@@ -1,6 +1,6 @@
 # kempt configuration: https://github.com/ZacSweers/kempt
 #
-# kempt formats Kotlin and Kotlin script with ktfmt, inserts the licence header and normalises
+# kempt formats Kotlin and Kotlin script with ktfmt, inserts the license header and normalizes
 # whitespace. It does not format Swift.
 #
 #   kempt check     read-only; what CI's Formatting job runs

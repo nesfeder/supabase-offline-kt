@@ -79,7 +79,7 @@ class LiveReadsAfterClearTest {
     @Test
     fun a_live_list_fetches_again_after_a_clear_cut_short_while_a_read_holds_the_log() =
         runTest(timeout = 2.minutes) {
-            // Given — a client whose clear is cancelled while it rewrites the database, with an
+            // Given — a client whose clear is canceled while it rewrites the database, with an
             // open read holding the log, so the rewrite leaves work for later
             val heldServer = seededServer("a" to "Milk")
             val clear = CompletableDeferred<Job>()
@@ -99,7 +99,7 @@ class LiveReadsAfterClearTest {
                 list.await { seen -> seen.titles == listOf("Milk") && !seen.isFromCache }
                 heldServer.seed(LiveReadConsistency.TABLE, row("b", "Eggs"))
 
-                // When — local data is cleared, and the clear's caller is cancelled
+                // When — local data is cleared, and the clear's caller is canceled
                 val job =
                     launch(Dispatchers.Default, start = CoroutineStart.LAZY) {
                         heldClient.clearLocalData()

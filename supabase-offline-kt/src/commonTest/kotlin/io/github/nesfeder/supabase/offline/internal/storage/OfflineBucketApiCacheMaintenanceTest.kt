@@ -22,7 +22,7 @@ import okio.Path.Companion.toPath
 import okio.SYSTEM
 
 /**
- * How [CachingBucketApi] keeps its disk cache in step with the bucket operations it forwards:
+ * How [CachingBucketApi] keeps its disk cache in step with the bucket operations it passes on:
  * `delete` removes the cached file and its row, `move` carries both across, `copy` leaves the cache
  * alone, and `cachedFile` answers only for a tracked file that is still on disk.
  *
