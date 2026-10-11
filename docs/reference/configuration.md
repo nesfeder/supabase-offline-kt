@@ -4,9 +4,19 @@ The plugin's settings go in the `install(Offline) { … }` block, an `Offline.Co
 has a default that suits most apps; set only what you need. The plugin reads its settings once,
 when the client is created.
 
-```kotlin
---8<-- "ConfigurationExamples.kt:every-setting"
-```
+*From the samples: [ClientSettings.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/App/ClientSettings.swift)*
+
+=== "Android"
+
+    ```kotlin
+    --8<-- "ConfigurationExamples.kt:every-setting"
+    ```
+
+=== "iOS"
+
+    ```swift
+    --8<-- "samples/ios/OfflineTasks/App/ClientSettings.swift:every-setting"
+    ```
 
 ## The settings
 
@@ -30,9 +40,19 @@ not the size of the database file. Past it, the results fetched longest ago are 
 of up to 500 lists a live reader shows. Any other value below 4 KiB counts as 4 KiB. See
 [Cache size and eviction](../behaviors/eviction.md).
 
-```kotlin
---8<-- "ConfigurationExamples.kt:sizes"
-```
+*From the samples: [ClientSettings.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/App/ClientSettings.swift)*
+
+=== "Android"
+
+    ```kotlin
+    --8<-- "ConfigurationExamples.kt:sizes"
+    ```
+
+=== "iOS"
+
+    ```swift
+    --8<-- "samples/ios/OfflineTasks/App/ClientSettings.swift:sizes"
+    ```
 
 ### `fileCacheSizeBytes`
 
@@ -81,9 +101,19 @@ A signal that fails or ends is no longer watched (a failure is logged), and the 
 `UNKNOWN`, which counts as online. To stop every request, use `disableNetwork()`: that switch is a
 gate. See [Replaying the queue](../behaviors/sync.md).
 
-```kotlin
---8<-- "ConfigurationExamples.kt:own-signal"
-```
+*From the samples: [ClientSettings.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/App/ClientSettings.swift)*
+
+=== "Android"
+
+    ```kotlin
+    --8<-- "ConfigurationExamples.kt:own-signal"
+    ```
+
+=== "iOS"
+
+    ```swift
+    --8<-- "samples/ios/OfflineTasks/App/ClientSettings.swift:own-signal"
+    ```
 
 ### `autoSync`
 
@@ -123,9 +153,19 @@ the logging processor the client was built with (`defaultLoggingFactory` in
 `createSupabaseClient`), tagged `Supabase-Offline`. `null` uses the client's `defaultLogLevel`, as
 supabase-kt's own plugins do. There is no second logging setup.
 
-```kotlin
---8<-- "ConfigurationExamples.kt:log-level"
-```
+*From the samples: [ClientSettings.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/App/ClientSettings.swift)*
+
+=== "Android"
+
+    ```kotlin
+    --8<-- "ConfigurationExamples.kt:log-level"
+    ```
+
+=== "iOS"
+
+    ```swift
+    --8<-- "samples/ios/OfflineTasks/App/ClientSettings.swift:log-level"
+    ```
 
 | Level | What the plugin logs | Carries row data |
 | --- | --- | --- |

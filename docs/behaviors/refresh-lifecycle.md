@@ -5,9 +5,19 @@ minute, for as long as the flow is collected. Each emission says how it stands i
 `QuerySnapshot.refresh`, and waiting for the network or for the session is reported as waiting,
 never as a failure.
 
-```kotlin
---8<-- "ReadExamples.kt:refresh-state"
-```
+*From the samples: [SyncView.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Sync/SyncView.swift)*
+
+=== "Android"
+
+    ```kotlin
+    --8<-- "ReadExamples.kt:refresh-state"
+    ```
+
+=== "iOS"
+
+    ```swift
+    --8<-- "samples/ios/OfflineTasks/Sync/SyncView.swift:refresh-state"
+    ```
 
 ## The four states
 

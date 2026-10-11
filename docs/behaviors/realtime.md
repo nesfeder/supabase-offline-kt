@@ -4,9 +4,19 @@ Realtime stays on supabase-kt: the library never opens a channel. Hand each reco
 delivers to `applyServerRecord` or `applyServerDelete`, and every cached list of the table shows the
 change at once, without fetching again.
 
-```kotlin
---8<-- "ConfigurationExamples.kt:apply-records"
-```
+*From the samples: [TaskRepository+Server.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository+Server.swift)*
+
+=== "Android"
+
+    ```kotlin
+    --8<-- "ConfigurationExamples.kt:apply-records"
+    ```
+
+=== "iOS"
+
+    ```swift
+    --8<-- "samples/ios/OfflineTasks/Data/TaskRepository+Server.swift:apply-records"
+    ```
 
 ## Why
 

@@ -5,21 +5,59 @@ once when nothing of the same user waits ahead of it; otherwise it waits and is 
 pass, in the order it was made. A write returns a `MutationOutcome`: `Applied` with the server's
 answer, or `Queued`, and every cached read shows it at once either way.
 
-```kotlin
---8<-- "GettingStartedExamples.kt:first-write"
-```
+*From the samples: [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift)*
+
+=== "Android"
+
+    ```kotlin
+    --8<-- "GettingStartedExamples.kt:first-write"
+    ```
+
+=== "iOS"
+
+    ```swift
+    --8<-- "samples/ios/OfflineTasks/Data/TaskRepository.swift:first-write"
+    ```
 
 The verbs are supabase-kt's, with its overloads and request DSL:
 
-```kotlin
---8<-- "QueueExamples.kt:verbs"
-```
+*From the samples: [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift)*
+
+=== "Android"
+
+    ```kotlin
+    --8<-- "QueueExamples.kt:verbs"
+    ```
+
+=== "iOS"
+
+    ```swift
+    --8<-- "samples/ios/OfflineTasks/Data/TaskRepository.swift:insert-list"
+
+    --8<-- "samples/ios/OfflineTasks/Data/TaskRepository.swift:duplicate-task"
+
+    --8<-- "samples/ios/OfflineTasks/Data/TaskRepository.swift:typed-update"
+
+    --8<-- "samples/ios/OfflineTasks/Data/TaskRepository.swift:body-update"
+
+    --8<-- "samples/ios/OfflineTasks/Data/TaskRepository.swift:delete-row"
+    ```
 
 ## The two strategies
 
-```kotlin
---8<-- "QueueExamples.kt:mutation-strategies"
-```
+*From the samples: [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift)*
+
+=== "Android"
+
+    ```kotlin
+    --8<-- "QueueExamples.kt:mutation-strategies"
+    ```
+
+=== "iOS"
+
+    ```swift
+    --8<-- "samples/ios/OfflineTasks/Data/TaskRepository.swift:mutation-strategies"
+    ```
 
 - **`QueueIfOffline`**, the default, saves the write to the queue, so it keeps its place among the
   user's writes in every table, and keeps it there until the server has accepted or refused it.
@@ -78,9 +116,19 @@ under either strategy, online or offline, before anything is sent or queued: sup
 only the first, and the write would reach more rows than it names, now or when the queue replays
 it. Write the conditions as one `and { }` group, which supabase-kt sends whole:
 
-```kotlin
---8<-- "QueueExamples.kt:same-column-write"
-```
+*From the samples: [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift)*
+
+=== "Android"
+
+    ```kotlin
+    --8<-- "QueueExamples.kt:same-column-write"
+    ```
+
+=== "iOS"
+
+    ```swift
+    --8<-- "samples/ios/OfflineTasks/Data/TaskRepository.swift:same-column-write"
+    ```
 
 ## Dry runs
 
@@ -88,9 +136,15 @@ A dry run is a write carrying `Prefer: tx=rollback`: supabase-kt 3.8's `dryRun()
 header added by hand. It is never queued, since the queue would replay it as a real write: it is
 sent at once, and offline it throws `MutationNotQueueableException`.
 
-```kotlin
---8<-- "QueueExamples.kt:dry-run"
-```
+=== "Android"
+
+    ```kotlin
+    --8<-- "QueueExamples.kt:dry-run"
+    ```
+
+=== "iOS"
+
+    The Swift package sets no request header, so a Swift app has no dry run: every write it makes is applied, or queued.
 
 PostgREST rolls a dry run back only when the project lets a request choose (`db-tx-end` set to
 `commit-allow-override` or `rollback-allow-override`). A hosted Supabase project does not by
@@ -160,9 +214,23 @@ configure the same request every time: no side effects, and no clock or counter 
 
 ## Seeing and dropping queued writes
 
-```kotlin
---8<-- "QueueExamples.kt:pending"
-```
+*From the samples: [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift) · [QueueWording.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Sync/QueueWording.swift)*
+
+=== "Android"
+
+    ```kotlin
+    --8<-- "QueueExamples.kt:pending"
+    ```
+
+=== "iOS"
+
+    ```swift
+    --8<-- "samples/ios/OfflineTasks/Data/TaskRepository.swift:pending"
+
+    --8<-- "samples/ios/OfflineTasks/Data/TaskRepository.swift:discard"
+
+    --8<-- "samples/ios/OfflineTasks/Sync/QueueWording.swift:waiting-change"
+    ```
 
 `pendingMutations(table)`, `pendingMutationCount(table)` and `pendingMutationCountFlow(table)` show
 the current user's queued writes, of one table or of all, in the order they will be sent. Each is a

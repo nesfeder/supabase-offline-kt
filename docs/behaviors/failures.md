@@ -5,9 +5,21 @@ or keeps the write queued; on the server's, it hands you supabase-kt's own excep
 queued write the server refuses later, on replay, is not thrown at anyone: it goes to the rejected
 list, which your app shows.
 
-```kotlin
---8<-- "QueueExamples.kt:write-failure"
-```
+*From the samples: [SampleFailure.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/SampleFailure.swift)*
+
+=== "Android"
+
+    ```kotlin
+    --8<-- "QueueExamples.kt:write-failure"
+    ```
+
+=== "iOS"
+
+    ```swift
+    --8<-- "samples/ios/OfflineTasks/Data/SampleFailure.swift:write-failure"
+
+    --8<-- "samples/ios/OfflineTasks/Data/SampleFailure.swift:failure-codes"
+    ```
 
 ## How a failure is classified
 
@@ -88,13 +100,35 @@ Each entry is a `RejectedMutation`: the table, the operation, the rows' keys, th
 server's answer as a `ServerError` (`status`, `code`, `message`, `details`, `hint`), and whether it
 can be retried.
 
-```kotlin
---8<-- "QueueExamples.kt:rejected-list"
-```
+*From the samples: [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift) · [QueueWording.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Sync/QueueWording.swift)*
 
-```kotlin
---8<-- "QueueExamples.kt:rejected-actions"
-```
+=== "Android"
+
+    ```kotlin
+    --8<-- "QueueExamples.kt:rejected-list"
+    ```
+
+=== "iOS"
+
+    ```swift
+    --8<-- "samples/ios/OfflineTasks/Data/TaskRepository.swift:rejected-list"
+
+    --8<-- "samples/ios/OfflineTasks/Sync/QueueWording.swift:refused-change"
+    ```
+
+*From the samples: [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift)*
+
+=== "Android"
+
+    ```kotlin
+    --8<-- "QueueExamples.kt:rejected-actions"
+    ```
+
+=== "iOS"
+
+    ```swift
+    --8<-- "samples/ios/OfflineTasks/Data/TaskRepository.swift:rejected-actions"
+    ```
 
 Retry a write once its cause is fixed, such as a missing parent row or a policy: it rejoins the
 queue at the end under a new id. Postgres puts the offending values in `details` (a duplicate key's

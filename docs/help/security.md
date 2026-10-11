@@ -67,9 +67,19 @@ do not send an exception's `message`, its `toString()` or its stack trace's text
 crash reporting unredacted. The same goes for `RefreshState.Stalled.cause`, which is
 supabase-kt's exception. Report the kind and the status instead:
 
-```kotlin
---8<-- "ConfigurationExamples.kt:reportable-failure"
-```
+*From the samples: [SampleFailure.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/SampleFailure.swift)*
+
+=== "Android"
+
+    ```kotlin
+    --8<-- "ConfigurationExamples.kt:reportable-failure"
+    ```
+
+=== "iOS"
+
+    ```swift
+    --8<-- "samples/ios/OfflineTasks/Data/SampleFailure.swift:reportable-failure"
+    ```
 
 What the library builds itself is safe to report: `SyncStatus.lastSyncError` is a
 `SyncFailedException` that keeps the HTTP status and the PostgREST or Postgres code and nothing of

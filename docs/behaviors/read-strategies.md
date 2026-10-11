@@ -4,9 +4,23 @@ A `select` reads its rows once, from the server or from the device's cache, as i
 says. Only a list of rows is cached, and every list the server returns is kept for the next read,
 with the user's queued writes laid over it whichever way it is answered.
 
-```kotlin
---8<-- "ReadExamples.kt:strategies"
-```
+*From the samples: [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift)*
+
+=== "Android"
+
+    ```kotlin
+    --8<-- "ReadExamples.kt:strategies"
+    ```
+
+=== "iOS"
+
+    ```swift
+    --8<-- "samples/ios/OfflineTasks/Data/TaskRepository.swift:first-read"
+
+    --8<-- "samples/ios/OfflineTasks/Data/TaskRepository.swift:badge-read"
+
+    --8<-- "samples/ios/OfflineTasks/Data/TaskRepository.swift:network-only-read"
+    ```
 
 ## Choosing a strategy
 
@@ -43,9 +57,19 @@ again; when the server cannot be reached, the stale rows are served after all.
 It serves the cached rows and never sends a request. With nothing it may serve, it throws
 `CacheMissException`:
 
-```kotlin
---8<-- "ReadExamples.kt:cache-only"
-```
+*From the samples: [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift)*
+
+=== "Android"
+
+    ```kotlin
+    --8<-- "ReadExamples.kt:cache-only"
+    ```
+
+=== "iOS"
+
+    ```swift
+    --8<-- "samples/ios/OfflineTasks/Data/TaskRepository.swift:cache-only"
+    ```
 
 ## `NetworkOnly`
 
@@ -63,9 +87,21 @@ to it does not make it younger: a day-old list with your edit laid over it is st
 A result says whether it came from the cache, when its rows were fetched, and whether a queued
 write changed them, through three extension properties on supabase-kt's `PostgrestResult`:
 
-```kotlin
---8<-- "ReadExamples.kt:provenance"
-```
+*From the samples: [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift) · [QueueWording.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Sync/QueueWording.swift)*
+
+=== "Android"
+
+    ```kotlin
+    --8<-- "ReadExamples.kt:provenance"
+    ```
+
+=== "iOS"
+
+    ```swift
+    --8<-- "samples/ios/OfflineTasks/Data/TaskRepository.swift:provenance"
+
+    --8<-- "samples/ios/OfflineTasks/Sync/QueueWording.swift:provenance-caption"
+    ```
 
 A result supabase-kt returned itself reads `false`, `null` and `false`. The library stamps these
 in response headers PostgREST never sends; a read the cache never holds, such as a `count`, keeps
@@ -77,9 +113,19 @@ the server's own headers.
 first row; the [sample app](../samples/android.md) reads its list once and finds the row in it,
 so a task never opened before still opens offline.
 
-```kotlin
---8<-- "ReadExamples.kt:one-row"
-```
+*From the samples: [TaskDetailModel.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Detail/TaskDetailModel.swift)*
+
+=== "Android"
+
+    ```kotlin
+    --8<-- "ReadExamples.kt:one-row"
+    ```
+
+=== "iOS"
+
+    ```swift
+    --8<-- "samples/ios/OfflineTasks/Detail/TaskDetailModel.swift:row-from-list"
+    ```
 
 **A list with a total.** A read that asks for a `count` is never cached, rows and all, so a
 paginated screen with a total has nothing offline. Read the rows and the count separately.
@@ -88,9 +134,19 @@ paginated screen with a total has nothing offline. Read the rows and the count s
 sent: supabase-kt sends only the first, so the read would return every row the first admits.
 Write them as one `and { }` group:
 
-```kotlin
---8<-- "ReadExamples.kt:same-column"
-```
+*From the samples: [TaskQuery.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskQuery.swift)*
+
+=== "Android"
+
+    ```kotlin
+    --8<-- "ReadExamples.kt:same-column"
+    ```
+
+=== "iOS"
+
+    ```swift
+    --8<-- "samples/ios/OfflineTasks/Data/TaskQuery.swift:same-column"
+    ```
 
 **While a stored session restores.** supabase-kt sends requests on the anon key until the stored
 session is restored, and row-level security can answer such a request with fewer rows, or none.

@@ -29,11 +29,13 @@ final class AnonymousSession: UserSession {
         state = auth.currentUser.map { .signedIn(userID: $0.id.uuidString.lowercased()) } ?? .signingIn
     }
 
+    // --8<-- [start:access-token]
     nonisolated func accessToken() async -> String? {
         // `session` refreshes an expired token first. With no session (or none that refreshes),
         // the request goes with the publishable key alone, which the schema refuses.
         try? await auth.session.accessToken
     }
+    // --8<-- [end:access-token]
 
     func signInWhenReachable(_ statuses: SyncStatusSequence) async {
         var wasReachable = false

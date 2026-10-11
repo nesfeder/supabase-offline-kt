@@ -19,9 +19,21 @@ not sent yet.
 
 ## An example
 
-```kotlin
---8<-- "GettingStartedExamples.kt:home"
-```
+*From the samples: [AppModel.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/App/AppModel.swift) · [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift)*
+
+=== "Android"
+
+    ```kotlin
+    --8<-- "GettingStartedExamples.kt:home"
+    ```
+
+=== "iOS"
+
+    ```swift
+    --8<-- "samples/ios/OfflineTasks/App/AppModel.swift:install"
+
+    --8<-- "samples/ios/OfflineTasks/Data/TaskRepository.swift:first-write"
+    ```
 
 A write returns a `MutationOutcome` rather than the server's result, because a queued write has
 no answer yet. That is the one difference in what a call returns.

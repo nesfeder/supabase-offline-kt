@@ -5,9 +5,19 @@ The testing artifact builds the client the way your app builds it, with
 client's memory, and nothing touches the disk. Its factories build the library's value types, for
 your own test doubles.
 
-```kotlin
---8<-- "TestingExamples.kt:in-memory-client"
-```
+*From the samples: [AppModel.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/App/AppModel.swift)*
+
+=== "Android"
+
+    ```kotlin
+    --8<-- "TestingExamples.kt:in-memory-client"
+    ```
+
+=== "iOS"
+
+    ```swift
+    --8<-- "samples/ios/OfflineTasks/App/AppModel.swift:in-memory-client"
+    ```
 
 ## Add the test artifact
 
@@ -66,9 +76,19 @@ Call `disableNetwork()`: reads are answered from the cache and writes are queued
 airplane mode, until `enableNetwork()`. To see how your app meets a server that fails or a
 connection that drops, fail the requests in the mock engine instead.
 
-```kotlin
---8<-- "TestingExamples.kt:offline-test"
-```
+*From the samples: [ApiTourTests.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasksTests/ApiTourTests.swift)*
+
+=== "Android"
+
+    ```kotlin
+    --8<-- "TestingExamples.kt:offline-test"
+    ```
+
+=== "iOS"
+
+    ```swift
+    --8<-- "samples/ios/OfflineTasksTests/ApiTourTests.swift:offline-test"
+    ```
 
 ## Waiting for the client
 
@@ -85,9 +105,19 @@ change, so wait for the value you expect there too.
 The library's value types have no public constructors, so a fake of your own repository builds
 them with the testing artifact's factories:
 
-```kotlin
---8<-- "TestingExamples.kt:factories"
-```
+*From the samples: [WordingTests.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasksTests/WordingTests.swift)*
+
+=== "Android"
+
+    ```kotlin
+    --8<-- "TestingExamples.kt:factories"
+    ```
+
+=== "iOS"
+
+    ```swift
+    --8<-- "samples/ios/OfflineTasksTests/WordingTests.swift:factories"
+    ```
 
 | Factory | Builds |
 | --- | --- |

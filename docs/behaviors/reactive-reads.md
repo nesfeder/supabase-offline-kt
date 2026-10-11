@@ -5,15 +5,39 @@ over them, and emits again whenever a write, a refresh or a server record change
 no Realtime channel: it follows the device's cache, and refreshes the cache from the server as its
 strategy says.
 
-```kotlin
---8<-- "GettingStartedExamples.kt:first-observed-read"
-```
+*From the samples: [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift) · [TasksModel.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Tasks/TasksModel.swift)*
+
+=== "Android"
+
+    ```kotlin
+    --8<-- "GettingStartedExamples.kt:first-observed-read"
+    ```
+
+=== "iOS"
+
+    ```swift
+    --8<-- "samples/ios/OfflineTasks/Data/TaskRepository.swift:first-observed-read"
+
+    --8<-- "samples/ios/OfflineTasks/Tasks/TasksModel.swift:live-read"
+    ```
 
 ## The three strategies
 
-```kotlin
---8<-- "ReadExamples.kt:reactive-strategies"
-```
+*From the samples: [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift) · [TaskDetailModel.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Detail/TaskDetailModel.swift)*
+
+=== "Android"
+
+    ```kotlin
+    --8<-- "ReadExamples.kt:reactive-strategies"
+    ```
+
+=== "iOS"
+
+    ```swift
+    --8<-- "samples/ios/OfflineTasks/Data/TaskRepository.swift:reactive-strategies"
+
+    --8<-- "samples/ios/OfflineTasks/Detail/TaskDetailModel.swift:sequence-cache-only"
+    ```
 
 - **`CacheFirstThenNetwork`**, the default, emits the cached rows at once and asks the server in
   parallel. A refresh that fails leaves the rows on screen and is tried again for as long as the
@@ -44,16 +68,36 @@ columns the server fills in until the server has the write: sort on the device w
 matters, and decode into a type whose server-filled fields are optional. Next to rows the screen
 already shows, `refresh` says whether to show a note:
 
-```kotlin
---8<-- "ReadExamples.kt:refresh-state"
-```
+*From the samples: [SyncView.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Sync/SyncView.swift)*
+
+=== "Android"
+
+    ```kotlin
+    --8<-- "ReadExamples.kt:refresh-state"
+    ```
+
+=== "iOS"
+
+    ```swift
+    --8<-- "samples/ios/OfflineTasks/Sync/SyncView.swift:refresh-state"
+    ```
 
 To mark each row whose change has not reached the server yet, combine the read with
 `pendingMutations(table)` and its rows' keys:
 
-```kotlin
---8<-- "ReadExamples.kt:pending-marks"
-```
+*From the samples: [TasksModel.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Tasks/TasksModel.swift)*
+
+=== "Android"
+
+    ```kotlin
+    --8<-- "ReadExamples.kt:pending-marks"
+    ```
+
+=== "iOS"
+
+    ```swift
+    --8<-- "samples/ios/OfflineTasks/Tasks/TasksModel.swift:pending-marks"
+    ```
 
 ## When it fetches again
 

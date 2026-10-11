@@ -5,9 +5,19 @@ network fails, the kept copy is served instead. Writes (uploads, updates, delete
 copies) are online only and never queued, and one that reaches the server drops the cached copies
 it made stale.
 
-```kotlin
---8<-- "StorageExamples.kt:bucket"
-```
+*From the samples: [TaskRepository+Photos.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository+Photos.swift)*
+
+=== "Android"
+
+    ```kotlin
+    --8<-- "StorageExamples.kt:bucket"
+    ```
+
+=== "iOS"
+
+    ```swift
+    --8<-- "samples/ios/OfflineTasks/Data/TaskRepository+Photos.swift:bucket"
+    ```
 
 `supabase.offline.storage.from(bucket)` is an `OfflineBucketApi`: every operation of supabase-kt's
 `BucketApi`, under its name, plus the file cache. Bucket management (creating, listing and
@@ -15,9 +25,19 @@ emptying buckets) stays on `supabase.storage`.
 
 ## Downloads
 
-```kotlin
---8<-- "StorageExamples.kt:download"
-```
+*From the samples: [TaskRepository+Photos.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository+Photos.swift)*
+
+=== "Android"
+
+    ```kotlin
+    --8<-- "StorageExamples.kt:download"
+    ```
+
+=== "iOS"
+
+    ```swift
+    --8<-- "samples/ios/OfflineTasks/Data/TaskRepository+Photos.swift:download"
+    ```
 
 `downloadAuthenticated` and `downloadPublic`, to bytes or to a channel, go to the network first:
 
@@ -38,9 +58,19 @@ or handed on.
 
 ## Cached files
 
-```kotlin
---8<-- "StorageExamples.kt:cached-file"
-```
+*From the samples: [TaskRepository+Photos.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository+Photos.swift)*
+
+=== "Android"
+
+    ```kotlin
+    --8<-- "StorageExamples.kt:cached-file"
+    ```
+
+=== "iOS"
+
+    ```swift
+    --8<-- "samples/ios/OfflineTasks/Data/TaskRepository+Photos.swift:cached-file"
+    ```
 
 `cachedFile(path)` returns the cached copy, or `null`, and never touches the network.
 `ensureCachedFile(path)` downloads the object into the cache first when there is no copy; it
@@ -60,9 +90,19 @@ your own rule, and download again when it is too old.
 On Android, three helpers on the offline bucket give the cached copy in the platform's terms, for
 an image loader:
 
-```kotlin
---8<-- "StorageExamples.kt:android-helpers"
-```
+*From the samples: [TaskRepository+Photos.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository+Photos.swift)*
+
+=== "Android"
+
+    ```kotlin
+    --8<-- "StorageExamples.kt:android-helpers"
+    ```
+
+=== "iOS"
+
+    ```swift
+    --8<-- "samples/ios/OfflineTasks/Data/TaskRepository+Photos.swift:share-photo"
+    ```
 
 `ensureLocalUri` and `ensureLocalFile` are `ensureCachedFile` as a `Uri` or a `File`, and throw what
 it throws; `localUriIfCached` is `cachedFile` as a `Uri`, `null` when nothing is cached. On iOS,

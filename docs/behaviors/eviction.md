@@ -4,9 +4,19 @@ The query cache is bounded by `cacheSizeBytes`, 100 MiB by default, counted as t
 the cached responses; past it, the lists fetched longest ago are deleted first. A list a live
 reader shows is never deleted while it is shown, and the mutation queue is never evicted at all.
 
-```kotlin
---8<-- "ConfigurationExamples.kt:sizes"
-```
+*From the samples: [ClientSettings.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/App/ClientSettings.swift)*
+
+=== "Android"
+
+    ```kotlin
+    --8<-- "ConfigurationExamples.kt:sizes"
+    ```
+
+=== "iOS"
+
+    ```swift
+    --8<-- "samples/ios/OfflineTasks/App/ClientSettings.swift:sizes"
+    ```
 
 ## What is measured
 

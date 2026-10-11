@@ -5,9 +5,19 @@ a time: when the session settles as someone else they are dropped, and nothing c
 is ever served to the next. Queued writes are different: they stay with the user who made them
 until you call `clearLocalData()`, which deletes everything the library keeps on the device.
 
-```kotlin
---8<-- "QueueExamples.kt:sign-out"
-```
+*From the samples: [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift)*
+
+=== "Android"
+
+    ```kotlin
+    --8<-- "QueueExamples.kt:sign-out"
+    ```
+
+=== "iOS"
+
+    ```swift
+    --8<-- "samples/ios/OfflineTasks/Data/TaskRepository.swift:sign-out"
+    ```
 
 ## Why it matters
 
@@ -49,9 +59,19 @@ touch the server, and the client stays usable afterward.
    exception reaches your code with the session kept. To end it on this device anyway, forget it
    without the server; the server-side session stays valid until it expires:
 
-    ```kotlin
-    --8<-- "QueueExamples.kt:forget-session"
-    ```
+    *From the samples: [AnonymousSession.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/AnonymousSession.swift)*
+
+    === "Android"
+
+        ```kotlin
+        --8<-- "QueueExamples.kt:forget-session"
+        ```
+
+    === "iOS"
+
+        ```swift
+        --8<-- "samples/ios/OfflineTasks/Data/AnonymousSession.swift:forget-session"
+        ```
 
 The example at the top does the first two.
 
@@ -120,9 +140,19 @@ To delete a user's data on the server and then on the device, do it online, and 
 first, so no queued write can be replayed after your deletes and leave a row behind. Send the
 deletes `OnlineOnly`: a queued delete could outlive the user it is for.
 
-```kotlin
---8<-- "QueueExamples.kt:delete-my-data"
-```
+*From the samples: [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift)*
+
+=== "Android"
+
+    ```kotlin
+    --8<-- "QueueExamples.kt:delete-my-data"
+    ```
+
+=== "iOS"
+
+    ```swift
+    --8<-- "samples/ios/OfflineTasks/Data/TaskRepository.swift:delete-my-data"
+    ```
 
 Delete the user's Storage objects too, through the bucket, before anything that deletes the user:
 Supabase refuses to delete a user who still owns objects, and deleting a row never deletes its

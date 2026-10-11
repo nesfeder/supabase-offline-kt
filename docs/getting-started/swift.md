@@ -31,35 +31,51 @@ dependencies. Use `.upToNextMinor`: before 1.0, a minor release may change the A
 
 A row is a `Codable`, `Sendable` type whose keys are the table's columns:
 
+*From the sample: [TaskRows.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRows.swift)*
+
 ```swift
---8<-- "swift/Tests/SupabaseOfflineTests/DocumentationListings/GettingStartedListings.swift:row"
+--8<-- "samples/ios/OfflineTasks/Data/TaskRows.swift:row"
 ```
 
 Make the id on the device: a write whose answer was lost is sent again, and with its id the server
-recognizes the row it already has.
+recognizes the row it already has. The sample makes every id with `UUID().uuidString.lowercased()`,
+since Postgres writes a UUID in lower case.
 
 `nonisolated` matters in an app whose code runs on the main actor by default, as Xcode 26 sets new
 apps up. A value type declared there encodes and decodes on the main actor only, and the package
 works off it, so declare `nonisolated` every value type you hand to the package or read back from
 it: rows, and the patch bodies, Realtime records and filter values of your own that an actor or a
 `@Sendable` callback uses. Without it, a read that decodes the row, or a write from an actor of your
-own, does not compile:
+own, does not compile. The sample's typed patch for a task's text is one:
+
+*From the sample: [TaskRows.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRows.swift)*
 
 ```swift
---8<-- "swift/Tests/SupabaseOfflineTests/DocumentationListings/GettingStartedListings.swift:off-main-actor"
+--8<-- "samples/ios/OfflineTasks/Data/TaskRows.swift:off-main-actor"
 ```
 
 ## Create the client
 
 Create one client for the app and share it. The access-token closure gives it the signed-in user's
-token; with supabase-swift's Auth, where `supabase` is your supabase-swift client:
+token; with supabase-swift's Auth, as the sample signs in anonymously:
+
+*From the sample: [AppModel.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/App/AppModel.swift)*
 
 ```swift
---8<-- "swift/Tests/SupabaseOfflineTests/DocumentationListings/GettingStartedListings.swift:client"
+--8<-- "samples/ios/OfflineTasks/App/AppModel.swift:install"
+```
+
+The session's token, which supabase-swift's `session` refreshes first when it has expired:
+
+*From the sample: [AnonymousSession.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/AnonymousSession.swift)*
+
+```swift
+--8<-- "samples/ios/OfflineTasks/Data/AnonymousSession.swift:access-token"
 ```
 
 The key is the project's publishable key. When nobody is signed in the closure returns `nil`, and
-requests go with the publishable key alone.
+requests go with the publishable key alone. The sample's `ClientSettings.config` writes out every
+other setting with the default it keeps; see [Configuration](../reference/configuration.md).
 
 ## When the user changes
 
@@ -69,10 +85,13 @@ user signs out, with the client's network turned off from before the sign-out un
 is signed in. Sync the user's queued writes first if they should still go; turn the network off;
 sign out, so the closure returns `nil`, clearing even if the sign-out throws; clear; and once the
 next user is signed in, turn the network back on, which makes open live reads fetch again with
-their token:
+their token. The sample's **Start over** does it, discarding the queued writes rather than sending
+them, since its anonymous user leaves for good:
+
+*From the sample: [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift)*
 
 ```swift
---8<-- "swift/Tests/SupabaseOfflineTests/DocumentationListings/GettingStartedListings.swift:sign-out"
+--8<-- "samples/ios/OfflineTasks/Data/TaskRepository.swift:sign-out"
 ```
 
 Why the network is off: a live read that refreshes fetches again right after the clear, with
@@ -90,18 +109,24 @@ once it has ended, before the next user signs in.
 
 ## Read
 
+*From the sample: [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift)*
+
 ```swift
---8<-- "swift/Tests/SupabaseOfflineTests/DocumentationListings/GettingStartedListings.swift:first-read"
+--8<-- "samples/ios/OfflineTasks/Data/TaskRepository.swift:first-read"
 ```
 
 A read asks the server, and answers from the device's copy when the server cannot be reached, unless
-it names another read strategy. Each read is kept on the device under its own columns, filters,
-order and range, so a read the app has never made online has nothing to show offline.
+it names another read strategy; the sample's pull to refresh names `.networkFirst(maxAge:)`, so a
+saved list older than a day is not shown as an answer. Each read is kept on the device under its own
+columns, filters, order and range, so a read the app has never made online has nothing to show
+offline.
 
 ## Write
 
+*From the sample: [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift)*
+
 ```swift
---8<-- "swift/Tests/SupabaseOfflineTests/DocumentationListings/GettingStartedListings.swift:queued-write"
+--8<-- "samples/ios/OfflineTasks/Data/TaskRepository.swift:first-write"
 ```
 
 A write returns a `MutationOutcome`: the server applied it, or it waits in the queue on the device.
@@ -111,10 +136,21 @@ back. Nothing runs when the app returns to the foreground: call `syncPendingMuta
 ## Read live
 
 A live read yields the rows again whenever a write, a sync or a refresh changes them. In SwiftUI,
-iterate it in a `.task`, which ends it when the view goes away:
+iterate it in a `.task`, which ends it when the view goes away; the sample's root view runs this one
+in `.task(id: session.userID)`, so it starts again for each user:
+
+*From the sample: [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift)*
 
 ```swift
---8<-- "swift/Tests/SupabaseOfflineTests/DocumentationListings/GettingStartedListings.swift:live-read"
+--8<-- "samples/ios/OfflineTasks/Data/TaskRepository.swift:first-observed-read"
+```
+
+and the screen's model iterates it, keeping each snapshot's rows:
+
+*From the sample: [TasksModel.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Tasks/TasksModel.swift)*
+
+```swift
+--8<-- "samples/ios/OfflineTasks/Tasks/TasksModel.swift:live-read"
 ```
 
 ## Next
@@ -122,5 +158,6 @@ iterate it in a `.task`, which ends it when the view goes away:
 The [Swift API reference](https://nesfeder.github.io/supabase-offline-kt/swift/documentation/supabaseoffline/)
 has the rest: moving calls from supabase-swift, what is kept, queued and refused offline, telling
 failures apart, and testing an app against the in-memory client. Every code sample on this page is
-compiled with the package's tests. [Under the hood](../help/under-the-hood.md) says what the
+the [iOS sample](../samples/ios.md)'s own code, which CI builds and tests; the
+[guided tour](../samples/tour.md) shows the rest of the API in it. [Under the hood](../help/under-the-hood.md) says what the
 package's binary holds and what that means for an app.
