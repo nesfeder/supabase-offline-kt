@@ -696,7 +696,7 @@ run_self_test() {
         fi
     }
 
-    has() { printf '%s\n' "$OUTPUT" | grep -F -q -- "$1"; }
+    has() { grep -F -q -- "$1" <<< "$OUTPUT"; }
     lacks() { ! has "$1"; }
     count_rows() { printf '%s\n' "$OUTPUT" | grep -c "^  $1 " || true; }
     # The first `now` value printed under the setting with this label.

@@ -491,8 +491,8 @@ public interface Offline : SupabasePlugin<Offline.Config> {
          * it, is first moved to the default location with its files.
          *
          * When the directory has no database yet and the default location has one, the first client
-         * moves it here, unsent writes included; when it cannot, the default one stays in use and a
-         * warning is logged.
+         * moves it here, unsent writes included, and the downloaded files with it; when it cannot,
+         * the default one stays in use and a warning is logged.
          *
          * On Android, keep its files out of Auto Backup, as [Offline] shows; on iOS the plugin
          * excludes them from backups itself.

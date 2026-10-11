@@ -27,9 +27,10 @@ emptying buckets) stays on `supabase.storage`.
 - **Any other failure** is answered from the cached copy when there is one, and thrown when there
   is none.
 
-While a stored session restores, a download goes out on the anon key, and Storage answers an
-object that key may not read as "not found": the cached copy is dropped and the error thrown.
-Download private objects after `supabase.auth.awaitInitialization()`.
+While a stored session restores, or after its refresh failed, a download goes out on the anon key,
+and Storage answers an object that key may not read as "not found". That answer keeps the cached
+copy and is answered from it; with nothing cached, it is thrown. Download private objects after
+`supabase.auth.awaitInitialization()`.
 
 A download with an image transform is cached per transform, apart from the original. A channel
 download streams through a file on disk instead of being held in memory, and its answer's status
@@ -92,9 +93,11 @@ segment, a `\`, a control character) still downloads and writes, uncached, and
 `ensureCachedFile` refuses it with `IllegalArgumentException`.
 
 So does a name holding `%`, `?` or `#` on supabase-kt 3.6, which puts the name in the URL as
-written: a `%` fails the request, and a `?` or `#` can fetch or overwrite a different object
-(`x?y.png` fetches `x`, and an upload of it writes `x`), so the library never caches it. Keep these
-characters out of object names.
+written: a `?` or `#` can fetch or overwrite a different object (`x?y.png` fetches `x`, and an
+upload of it writes `x`), so the library never caches it. A `%` that does not begin a
+percent-escape (`100%.png`) cannot be put in a URL at all, so every call naming it throws
+`IllegalArgumentException` before anything is sent, rather than failing as if the network had.
+Keep these characters out of object names.
 
 ## Whose files they are
 
@@ -119,7 +122,7 @@ object is cached. Each cell names the test that pins it. Writes are `upload`, `u
 | **Online** | The server's bytes, written to the cache whole or not at all. Not found: the cached copy is dropped and the error thrown.<br><small>`OfflineBucketApiDownloadTest.downloadAuthenticated_success_cachesBytesAndReturnsThem`, `StorageStreamingDownloadTest.a_channel_download_streams_from_the_network_through_the_cache_to_the_caller`, `StorageAtomicWriteTest.a_write_that_fails_part_way_leaves_the_previous_copy_whole`, `OfflineBucketApiTest.not_found_download_evicts_cache_and_rethrows`</small> | The cached file; if there is none, the object is downloaded to disk once.<br><small>`StorageCachedFileTest.ensureCachedFile_streams_a_missing_object_to_disk_once`</small> | The cached file or `null`; never a request.<br><small>`StorageCachedFileTest.cachedFile_is_null_before_anything_is_cached_and_never_downloads`, `StorageCachedFileTest.cachedFile_describes_a_downloaded_object`</small> | Sent; the cached copy of what they change is dropped. A write the server rejected keeps it.<br><small>`StorageWriteInvalidationTest.an_update_never_leaves_the_old_bytes_to_be_served`, `StorageWriteInvalidationTest.a_vararg_delete_removes_the_cached_copy`, `StorageWriteInvalidationTest.a_write_the_server_rejected_keeps_the_cached_copy`</small> |
 | **Offline, warm** | The cached bytes.<br><small>`OfflineBucketApiTest.successful_download_caches_bytes_then_serves_cache_on_network_failure`, `OfflineBucketApiDownloadTest.downloadAuthenticatedToChannel_fallsBackToCacheOnFailure`</small> | The cached file, no request.<br><small>`StorageCachedFileTest.ensureCachedFile_streams_a_missing_object_to_disk_once`</small> | The cached file.<br><small>`StorageCachedFileTest.cachedFile_describes_a_downloaded_object`</small> | Throw the connectivity failure; the cache is left as it was.<br><small>`StorageWriteInvalidationTest.storage_writes_fail_offline_with_the_connectivity_error_and_leave_the_cache_alone`</small> |
 | **Offline, cold** | Throws the failure.<br><small>`OfflineBucketApiDownloadTest.downloadAuthenticated_throwsWhenNoCacheAndDelegateFails`, `OfflineBucketApiDownloadTest.downloadPublic_throwsWhenNoCacheAndDelegateFails`</small> | Throws the failure.<br><small>`StorageCachedFileTest.ensureCachedFile_throws_the_download_failure_when_nothing_is_cached`</small> | `null`.<br><small>`StorageCachedFileTest.cachedFile_is_null_before_anything_is_cached_and_never_downloads`</small> | As offline, warm.<br><small>`StorageWriteInvalidationTest.storage_writes_fail_offline_with_the_connectivity_error_and_leave_the_cache_alone`</small> |
-| **Session restoring** | Not held for the session: sent at once on the anon key, and its answer cached. A `401` or `403` keeps the cached copy; cold, the refusal is thrown. But Storage answers an object the anon key may not read as "not found", which drops the cached copy and is thrown: download private objects after `supabase.auth.awaitInitialization()`.<br><small>`StorageWhileRestoringTest.a_download_is_sent_at_once_on_the_anon_key_and_cached`, `OfflineBucketApiTest.transient_auth_failure_serves_cache_and_does_not_evict`, `OfflineBucketApiDownloadTest.downloadAuthenticated_throwsWhenNoCacheAndDelegateFails`</small> | As a download.<br><small>`StorageCachedFileTest.ensureCachedFile_streams_a_missing_object_to_disk_once`, `StorageCachedFileTest.ensureCachedFile_throws_the_download_failure_when_nothing_is_cached`</small> | Unchanged: never a request.<br><small>`StorageCachedFileTest.cachedFile_is_null_before_anything_is_cached_and_never_downloads`</small> | Sent at once on the anon key; a refusal keeps the cached copy.<br><small>`StorageWhileRestoringTest.an_upload_is_sent_at_once_on_the_anon_key`, `StorageWriteInvalidationTest.a_write_the_server_rejected_keeps_the_cached_copy`</small> |
+| **Session restoring** | Not held for the session: sent at once on the anon key, and its answer cached. A `401` or `403` keeps the cached copy; cold, the refusal is thrown. Storage answers an object the anon key may not read as "not found", which keeps the cached copy too and is answered from it; cold, it is thrown: download private objects after `supabase.auth.awaitInitialization()`.<br><small>`StorageWhileRestoringTest.a_download_is_sent_at_once_on_the_anon_key_and_cached`, `StorageNotFoundWhileUnsettledTest.a_not_found_while_the_session_restores_is_answered_from_the_cached_copy`, `OfflineBucketApiTest.transient_auth_failure_serves_cache_and_does_not_evict`, `OfflineBucketApiDownloadTest.downloadAuthenticated_throwsWhenNoCacheAndDelegateFails`</small> | As a download.<br><small>`StorageCachedFileTest.ensureCachedFile_streams_a_missing_object_to_disk_once`, `StorageCachedFileTest.ensureCachedFile_throws_the_download_failure_when_nothing_is_cached`</small> | Unchanged: never a request.<br><small>`StorageCachedFileTest.cachedFile_is_null_before_anything_is_cached_and_never_downloads`</small> | Sent at once on the anon key; a refusal keeps the cached copy.<br><small>`StorageWhileRestoringTest.an_upload_is_sent_at_once_on_the_anon_key`, `StorageWriteInvalidationTest.a_write_the_server_rejected_keeps_the_cached_copy`</small> |
 
 A channel download whose answer is an error throws it, and caches nothing.
 <small>`ChannelDownloadStatusTest`, `DownloadToFileStatusAndroidTest`</small>

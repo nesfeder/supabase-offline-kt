@@ -28,7 +28,8 @@ import io.github.jan.supabase.storage.BucketApi
  *
  * **Object paths that cannot be cached** — a leading `/`, an empty or `.`/`..` segment, a `\`, a
  * control character, and with supabase-kt below 3.8 a `%`, `?` or `#`, which it puts in the URL
- * unencoded — still download and write normally; they are never mapped onto a file.
+ * unencoded — still download and write normally; they are never mapped onto a file. A `%` there
+ * that does not begin a percent-escape throws [IllegalArgumentException] before anything is sent.
  *
  * The cache is bounded by [Offline.Config.fileCacheSizeBytes], evicting the least recently used
  * files first; clearing local data empties it.

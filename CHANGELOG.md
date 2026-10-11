@@ -88,6 +88,11 @@ release.
   sent or queued. supabase-kt sends only the first of them, so the read showed rows outside the
   window and the write reached them, and a queued write replayed that way later. Write the two as
   one `and { }` group, which sends both.
+- A read, an update or a delete whose pattern list (`likeAll`, `likeAny`, `ilikeAll`, `ilikeAny`)
+  is empty, or holds a pattern that is empty, `NULL`, edged with white space or holding a brace
+  (and none of `,.:()`), throws `IllegalArgumentException` before anything is sent or queued, at
+  the top level or in a group. supabase-kt sends such a pattern unquoted, so the server read another
+  list: `likeAll("code", listOf(""))` went out as `like(all).{}`, which matches every row.
 - On iOS the database and the file cache live in `Library/Application Support` by default
   (`supabase_offline.db` and `supabase_offline/`), not in `Documents`, which an app with file
   sharing on shows in the Files app. A client that finds a database in `Documents` moves it, with
@@ -105,6 +110,10 @@ release.
   same user to another table: it stops at the first write with an earlier one still queued
   elsewhere, and `SyncReport.heldBehindOtherTablesCount` counts what it held back. Sync every table
   to send them in order.
+- On Swift, the requirement of `OfflineFilterValue` is `offlineFilterText`, where it was
+  `filterText`, a name that showed in completion on `String`, `Int`, `Date`, `UUID` and every other
+  standard type that conforms, and could collide with one an app declares. A type of your own that
+  conforms declares `var offlineFilterText: String`.
 
 ### Added
 
@@ -393,6 +402,9 @@ release.
 - A live read fetches again after `clearLocalData()`, as after a change of owner, instead of
   showing the emptied cache until something else fetched; a refresh request made while a read's
   refresh ran is no longer lost.
+- A live read fetches again after a change of owner whose last step, deleting the file cache's
+  folders, failed: it showed the emptied cache until something else fetched, and the error logged
+  said the cache had not been dropped.
 - A read made while the stored session restores waits for it at most 10 seconds instead of waiting
   on a session store that hangs. Past that the cache is not served and the read goes out on the anon
   key: a one-shot read returns that answer uncached, which under row-level security can hold fewer
@@ -410,3 +422,19 @@ release.
   the queue and send it itself, so the write returned `Queued` with the network up and nothing
   ahead of it; it was still sent once, and never twice.
 - While a stored session restores, reads and writes read it once between them, not once each.
+- A Storage call naming an object whose name holds a `%` that does not begin a percent-escape
+  (`100%.png`) throws `IllegalArgumentException` before anything is sent. supabase-kt 3.6 puts the
+  name in the URL as written, the HTTP client cannot build that URL, and the failure read as a
+  connectivity failure, so an app took itself to be offline.
+- A Storage "not found" answered while the session restores, or after its refresh failed, keeps
+  the user's cached copy and is answered from it. The download went out on the anon key, and
+  Storage answers an object that key may not read as "not found", so the copy was dropped and an
+  app opening a private file at launch lost it until the next download.
+- A client that opens with `dataDirectory` newly set, and moves the database from the default
+  location, moves the downloaded files with it; one that cannot move is deleted, to be downloaded
+  again. They stayed in the default directory, where `clearLocalData()` no longer reached them and,
+  on Android, Auto Backup still included them.
+- `SyncStatus.lastSyncError` for a pass stopped on the device, by neither the server nor the
+  network, says so in a fixed sentence instead of naming the failure's class. On iOS a pass stopped
+  by a request header the HTTP client refuses now says so, and what to check, instead of that
+  general sentence.

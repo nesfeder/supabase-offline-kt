@@ -223,6 +223,8 @@ internal suspend fun TestStore.recordQueryShape(
  * @param responseTrust which read responses may replace what the cache holds.
  * @param config the plugin configuration the client reports, and reads `autoSync` from.
  * @param networkAvailability the connectivity signal the client watches; `null` for none.
+ * @param fileSystem the file system the Storage file cache uses; pass a [FakeFailingFileSystem] to
+ *   make it fail.
  * @return the offline client.
  */
 internal fun newTestOfflineClient(
@@ -245,6 +247,7 @@ internal fun newTestOfflineClient(
     responseTrust: ResponseTrustPolicy = ResponseTrustPolicy.SETTLED_SESSION,
     config: Offline.Config = Offline.Config(),
     networkAvailability: Flow<Boolean>? = null,
+    fileSystem: FileSystem = FileSystem.SYSTEM,
 ): OfflineClient =
     OfflineClient(
         supabaseClient = supabase,
@@ -266,6 +269,7 @@ internal fun newTestOfflineClient(
         responseTrust = responseTrust,
         config = config,
         networkAvailability = networkAvailability,
+        fileSystem = fileSystem,
     )
 
 /**
@@ -431,6 +435,8 @@ internal fun newTestFileCache(
  * @param operationGate the gate every member passes; pass one to close it as the client's close
  *   does.
  * @param networkAccess the network switch the bucket honors; on by default.
+ * @param requestSession the session a request sent now goes out under; settled, without Auth, by
+ *   default.
  * @return the offline bucket.
  */
 internal fun newTestBucketApi(
@@ -443,6 +449,7 @@ internal fun newTestBucketApi(
     backgroundScope: CoroutineScope = newEngineScope(engineLogger),
     operationGate: ClientOperationGate = ClientOperationGate(),
     networkAccess: NetworkAccess = NetworkAccess(),
+    requestSession: () -> RequestSession = { RequestSession.WithoutAuth },
 ): CachingBucketApi =
     CachingBucketApi(
         delegate = delegate,
@@ -451,6 +458,7 @@ internal fun newTestBucketApi(
         backgroundScope = backgroundScope,
         operationGate = operationGate,
         networkAccess = networkAccess,
+        requestSession = requestSession,
     )
 
 /**

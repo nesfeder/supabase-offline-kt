@@ -76,7 +76,7 @@ extension OfflinePostgrestFilterBuilder {
 
     /// Rows where `column` `IS` `value`: `nil` for `NULL`, or `true` or `false`.
     public func `is`(_ column: String, value: Bool?) -> Self {
-        applying(.adding(.condition(column: column, operator: .is, value: .single(value.filterText), isNegated: false)))
+        applying(.adding(.condition(column: column, operator: .is, value: .single(value.offlineFilterText), isNegated: false)))
     }
 
     /// Rows where `column` is one of `values`.
@@ -84,19 +84,19 @@ extension OfflinePostgrestFilterBuilder {
     /// A value holding `"` or `\` and none of `,.:()` fails the request with
     /// ``OfflineError/Code/invalidRequest``: filter on such a value with ``eq(_:value:)`` instead.
     public func `in`(_ column: String, values: [any OfflineFilterValue]) -> Self {
-        applying(.adding(.condition(column: column, operator: .in, value: .list(values.map(\.filterText)), isNegated: false)))
+        applying(.adding(.condition(column: column, operator: .in, value: .list(values.map(\.offlineFilterText)), isNegated: false)))
     }
 
     /// Rows where `column` is none of `values`; a value holding `"` or `\` fails as in
     /// ``in(_:values:)``.
     public func notIn(_ column: String, values: [any OfflineFilterValue]) -> Self {
-        applying(.adding(.condition(column: column, operator: .in, value: .list(values.map(\.filterText)), isNegated: true)))
+        applying(.adding(.condition(column: column, operator: .in, value: .list(values.map(\.offlineFilterText)), isNegated: true)))
     }
 
     /// Rows where each column in `query` equals its value, in the columns' order.
     public func match(_ query: [String: any OfflineFilterValue]) -> Self {
         query.sorted { $0.key < $1.key }.reduce(self) { builder, entry in
-            builder.applying(.adding(.condition(column: entry.key, operator: .eq, value: .single(entry.value.filterText), isNegated: false)))
+            builder.applying(.adding(.condition(column: entry.key, operator: .eq, value: .single(entry.value.offlineFilterText), isNegated: false)))
         }
     }
 
@@ -180,9 +180,9 @@ extension OfflinePostgrestFilterBuilder {
     ) -> Self {
         guard let config else {
             let filterOperator = type?.filterOperator ?? .fts
-            return applying(.adding(.condition(column: column, operator: filterOperator, value: .single(query.filterText), isNegated: false)))
+            return applying(.adding(.condition(column: column, operator: filterOperator, value: .single(query.offlineFilterText), isNegated: false)))
         }
-        return applying(.adding(.textSearch(column: column, query: query.filterText, type: type, config: config)))
+        return applying(.adding(.textSearch(column: column, query: query.offlineFilterText, type: type, config: config)))
     }
 
     /// Rows where `column` matches the `to_tsquery` `query`, with the configuration `config`.
@@ -196,7 +196,7 @@ extension OfflinePostgrestFilterBuilder {
         _ column: String,
         _ patterns: [some OfflineFilterValue]
     ) -> Self {
-        applying(.adding(.patternList(kind: kind, column: column, patterns: patterns.map(\.filterText))))
+        applying(.adding(.patternList(kind: kind, column: column, patterns: patterns.map(\.offlineFilterText))))
     }
 }
 
@@ -365,16 +365,16 @@ enum FilterValueNodes {
             if let elements {
                 conditionValue = .list(elements)
             } else {
-                conditionValue = .list(try PostgrestFilterText.listElements(of: value.filterText, opening: "(", closing: ")"))
+                conditionValue = .list(try PostgrestFilterText.listElements(of: value.offlineFilterText, opening: "(", closing: ")"))
             }
         case .range:
             if let elements, elements.count == 2 {
                 conditionValue = .range(elements[0], elements[1])
             } else {
-                conditionValue = try PostgrestFilterText.range(of: value.filterText)
+                conditionValue = try PostgrestFilterText.range(of: value.offlineFilterText)
             }
         case .literal, .single:
-            conditionValue = .single(value.filterText)
+            conditionValue = .single(value.offlineFilterText)
         }
         return .condition(column: column, operator: filterOperator, value: conditionValue, isNegated: isNegated)
     }

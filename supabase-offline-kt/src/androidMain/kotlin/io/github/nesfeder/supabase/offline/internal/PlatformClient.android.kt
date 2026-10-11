@@ -22,7 +22,7 @@ internal actual fun openPlatformClient(
  * Opens [config]'s client for [supabase] over Room. The database is in [context]'s database
  * directory (`supabase_offline.db`) and downloaded files under `<filesDir>/supabase_offline`, or
  * both in [Offline.Config.dataDirectory] when it is set; a database at the default location moves
- * there.
+ * there with its files.
  *
  * @throws IllegalStateException when another open client already uses the database or the
  *   directory.
@@ -33,16 +33,19 @@ internal fun openAndroidClient(
     config: Offline.Config,
 ): OfflineClient {
     val configuredDirectory = config.dataDirectory?.toPath()
-    val defaultPath = defaultDatabasePath(context)
+    val defaultLocation =
+        DataLocation(defaultDatabasePath(context), PlatformBaseDirectory(context).path)
     return openOfflineClient(
         supabase = supabase,
         config = config,
-        databasePath = configuredDirectory?.let { it / OFFLINE_DATABASE_FILE_NAME } ?: defaultPath,
-        dataDirectory = configuredDirectory ?: PlatformBaseDirectory(context).path,
+        databasePath =
+            configuredDirectory?.let { it / OFFLINE_DATABASE_FILE_NAME }
+                ?: defaultLocation.databasePath,
+        dataDirectory = configuredDirectory ?: defaultLocation.dataDirectory,
         openDatabase = { databasePath ->
             buildOfflineDatabase(offlineDatabaseBuilder(context, databasePath.toString()))
         },
-        defaultDatabasePath = defaultPath.takeIf { configuredDirectory != null },
+        defaultLocation = defaultLocation.takeIf { configuredDirectory != null },
         platformNetworkAvailability = connectivityManagerNetworkAvailability(context),
     )
 }

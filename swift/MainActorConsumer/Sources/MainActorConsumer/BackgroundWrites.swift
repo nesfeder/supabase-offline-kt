@@ -23,7 +23,7 @@ nonisolated struct TodoID: OfflineFilterValue {
     var raw: UUID
 
     /// The id as PostgREST reads it.
-    var filterText: String { raw.filterText }
+    var offlineFilterText: String { raw.offlineFilterText }
 }
 
 /// Writes made off the main actor, as an app's own actor makes them.

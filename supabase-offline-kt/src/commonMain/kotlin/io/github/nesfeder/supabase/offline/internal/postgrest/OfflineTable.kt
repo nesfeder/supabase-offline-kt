@@ -354,8 +354,8 @@ internal class OfflineTable(
         val table = delegate.table
         val conversionMethod = delegate.postgrest.config.propertyConversionMethod
         engineLogger.debug { "UPDATE $table request body: $body" }
-        // Every build of it, the first included, refuses two values for one top-level parameter
-        val checkedRequest = refusingRepeatedParameters(request)
+        // Every build of it, the first included, refuses a filter the server would misread
+        val checkedRequest = refusingMisreadFilters(request)
         // One build of the request serves its schema, its queue capture and the cache patch
         val built = lazy {
             SelectRequestBuilder(delegate.schema, conversionMethod).apply(checkedRequest)
@@ -403,8 +403,8 @@ internal class OfflineTable(
         val table = delegate.table
         val conversionMethod = delegate.postgrest.config.propertyConversionMethod
         engineLogger.debug { "DELETE $table attempting network" }
-        // Every build of it, the first included, refuses two values for one top-level parameter
-        val checkedRequest = refusingRepeatedParameters(request)
+        // Every build of it, the first included, refuses a filter the server would misread
+        val checkedRequest = refusingMisreadFilters(request)
         // One build of the request serves its schema, its queue capture and the cache patch
         val built = lazy {
             SelectRequestBuilder(delegate.schema, conversionMethod).apply(checkedRequest)

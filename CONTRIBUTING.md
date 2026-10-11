@@ -167,6 +167,8 @@ Then add a line under `## Unreleased` in `CHANGELOG.md`, under the heading the r
 
 Until the first release is tagged, `## Unreleased` describes that release as a whole, so any new or
 edited line in it satisfies the check; from the first release on, the rating decides the heading.
+A release's prepare pull request renames `## Unreleased` to the version it releases, and the check
+reads that section in its place until the version is tagged.
 `python3 scripts/api-compat.py check-pr --base "$(git merge-base origin/main HEAD)"` runs the same
 check CI does.
 
@@ -554,6 +556,11 @@ is at the top of `ci.yml`). The two can have different iOS simulator runtimes in
 different system SQLite versions under the suite's system-SQLite build. A failure that appears on
 one route only may be that difference: compare the runtime each run's simulator used before you
 look for anything else.
+
+In CI, only the self-hosted route runs the Swift package's tests (`scripts/test-swift-package.sh`):
+a run on GitHub's macOS runner, as every merge-queue and weekly run is, runs the Kotlin iOS tests
+alone, and the release runs the Swift tests once more against its own framework. So run the script
+yourself before review whenever you change the bridge or `swift/`.
 
 ### When a run fails on a download
 

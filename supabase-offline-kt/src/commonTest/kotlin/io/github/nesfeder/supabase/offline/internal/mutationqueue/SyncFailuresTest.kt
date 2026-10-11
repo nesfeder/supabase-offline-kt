@@ -34,4 +34,28 @@ class SyncFailuresTest {
         }
         assertEquals(direct.message, wrapped.message)
     }
+
+    @Test
+    fun a_failure_on_the_device_is_named_in_a_fixed_sentence_without_its_class_or_its_text() {
+        // Given — failures that are neither the server's nor the network's
+        val failures =
+            listOf(
+                IllegalStateException("row {\"email\":\"someone@example.com\"}"),
+                UnsupportedOperationException("token eyJhbGciOi.secret-token-tail"),
+            )
+
+        // When
+        val reported = failures.map(::syncFailureOf)
+
+        // Then — one sentence for all of them, naming no class and quoting nothing
+        for (failure in reported) {
+            assertEquals(
+                "A failure on this device stopped the sync pass; " +
+                    "the queued writes stay queued for a later pass",
+                failure.message,
+            )
+            assertNull(failure.httpStatus)
+            assertNull(failure.code)
+        }
+    }
 }

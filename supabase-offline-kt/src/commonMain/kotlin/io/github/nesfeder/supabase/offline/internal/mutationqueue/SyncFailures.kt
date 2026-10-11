@@ -13,6 +13,12 @@ import io.ktor.http.IllegalHeaderValueException
 private const val STILL_QUEUED = "the queued writes stay queued for a later pass"
 
 /**
+ * What a pass stopped by neither the server nor the network says: nothing of the failure, whose
+ * class names the library's internals and whose message may carry a row or a token.
+ */
+private const val LOCAL_FAILURE = "A failure on this device stopped the sync pass"
+
+/**
  * What a pass stopped by a request header the HTTP client refuses says: nothing of the header,
  * which may be the project key or the access token.
  */
@@ -23,7 +29,8 @@ private const val ILLEGAL_HEADER =
 /**
  * What [SyncStatus.lastSyncError][io.github.nesfeder.supabase.offline.SyncStatus.lastSyncError]
  * reports for a pass that [cause] stopped: its kind, status and PostgREST code, in the library's
- * own words, and nothing of its message, which may carry a row, a filter value or a token.
+ * own words, and nothing of its class or its message, which may carry a row, a filter value or a
+ * token.
  */
 internal fun syncFailureOf(cause: Throwable): SyncFailedException {
     val connectivity = cause.isNetworkOrConnectivityFailure()
@@ -35,7 +42,7 @@ internal fun syncFailureOf(cause: Throwable): SyncFailedException {
             status != null ->
                 "The server answered $status${code?.let { " ($it)" }.orEmpty()}; $STILL_QUEUED"
             cause.isIllegalHeader() -> "$ILLEGAL_HEADER; $STILL_QUEUED"
-            else -> "A failure (${cause::class.simpleName}) stopped the pass; $STILL_QUEUED"
+            else -> "$LOCAL_FAILURE; $STILL_QUEUED"
         }
     return SyncFailedException(
         message = message,

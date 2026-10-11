@@ -41,6 +41,7 @@ import io
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -907,8 +908,27 @@ def new_bullets(before: Dict[str, Set[str]], after: Dict[str, Set[str]]) -> Dict
     return {heading: after[heading] - everywhere for heading in HEADINGS}
 
 
-# A released version's section: `## 0.1.0` or `## [0.1.0] - 2026-10-01`.
-RELEASED_SECTION = re.compile(r"^## \[?\d+\.\d+\.\d+\]?(?:\s|$)", re.MULTILINE)
+def released_sections(content: Optional[str]) -> List[str]:
+    """The versions of the released sections (`## 0.1.0`, `## [0.1.0] - 2026-10-01`), newest first."""
+    if content is None:
+        return []
+    titles = [section_title(line) for line in content.splitlines() if line.startswith("## ")]
+    return [title for title in titles if SEMVER.match(title)]
+
+
+def prepared_version(content: Optional[str], released: Optional[str]) -> Optional[str]:
+    """The version a release's prepare change names: the changelog's newest section, when it is a
+    released version newer than the latest release tag (`released`). Its pull request writes that
+    section, not `## Unreleased`, which it renames."""
+    if content is None:
+        return None
+    newest = next((line for line in content.splitlines() if line.startswith("## ")), None)
+    version = section_title(newest) if newest else None
+    if version is None or not SEMVER.match(version):
+        return None
+    if released is not None and version_tuple(version) <= version_tuple(released):
+        return None
+    return version
 
 
 def required_headings(report: Report) -> Optional[Set[str]]:
@@ -938,18 +958,23 @@ def command_check_pr(git: Git, arguments: argparse.Namespace) -> int:
     """Rates the change, then requires the changelog line the rating needs.
 
     Until the first release is tagged, `## Unreleased` describes that release as a whole, so any
-    new or edited line in it will do; from then on the rating decides the heading.
+    new or edited line in it will do; from then on the rating decides the heading. A release's
+    prepare change, which renames `## Unreleased` to the version it releases, is held to that
+    section instead.
     """
     report, problems = classify(git, arguments.base, arguments.head, arguments.swift_report)
     policy = load_policy(git, arguments.head)
     path = policy.get("changelog", "CHANGELOG.md")
     changelog = git.show(arguments.head, path)
-    before = changelog_section(git.show(arguments.base, path), "Unreleased")
-    added = new_bullets(before, changelog_section(changelog, "Unreleased"))
-    required = required_headings(report)
+    base_changelog = git.show(arguments.base, path)
     released = latest_release_tag(git)
+    preparing = prepared_version(changelog, released)
+    section = preparing or "Unreleased"
+    before = changelog_section(base_changelog, prepared_version(base_changelog, released) or "Unreleased")
+    added = new_bullets(before, changelog_section(changelog, section))
+    required = required_headings(report)
     failures = list(problems)
-    if released is None and changelog is not None and RELEASED_SECTION.search(changelog):
+    if released is None and [version for version in released_sections(changelog) if version != preparing]:
         failures.append(
             f"{path} records a released version, but this clone has no release tag, so the check "
             "cannot tell which rule applies. Fetch the tags (in CI, the checkout's `fetch-tags: true`)."
@@ -960,16 +985,16 @@ def command_check_pr(git: Git, arguments: argparse.Namespace) -> int:
     headings = ", ".join("### " + heading for heading in sorted(required or ()))
     if required and released is None:
         report.notes.append(
-            "Nothing has been released yet, so any new or edited line under `## Unreleased` will do. "
+            f"Nothing has been released yet, so any new or edited line under `## {section}` will do. "
             f"From the first release on, this change needs one under: {headings}."
         )
         if not any(added.values()):
             failures.append(
-                f"This change is `{report.level()}`{flags}. Add or edit a line under `## Unreleased` in {path}."
+                f"This change is `{report.level()}`{flags}. Add or edit a line under `## {section}` in {path}."
             )
     elif required and not any(added[heading] for heading in required):
         failures.append(
-            f"This change is `{report.level()}`{flags}. Add a bullet under `## Unreleased` in "
+            f"This change is `{report.level()}`{flags}. Add a bullet under `## {section}` in "
             f"{path}, under one of: {headings}."
         )
     if added["Breaking"] and report.level() != "breaking":
@@ -1193,6 +1218,10 @@ class Fixture:
             ("commit.gpgsign", "false"),
             ("tag.gpgsign", "false"),
             ("core.hooksPath", os.devnull),
+            # No automatic maintenance: a background gc still writing into the repository fails
+            # its deletion with "Directory not empty".
+            ("gc.auto", "0"),
+            ("maintenance.auto", "false"),
         ):
             self.git.run("config", key, value)
 
@@ -1226,10 +1255,13 @@ class Fixture:
 
 @contextlib.contextmanager
 def fixture() -> Iterator[Tuple[Fixture, str]]:
-    """A fresh Fixture and its baseline commit, deleted afterward."""
-    with tempfile.TemporaryDirectory(prefix="api-compat-self-test.") as directory:
+    """A fresh Fixture and its baseline commit, deleted afterward as far as it can be."""
+    directory = tempfile.mkdtemp(prefix="api-compat-self-test.")
+    try:
         repository = Fixture(directory)
         yield repository, repository.baseline()
+    finally:
+        shutil.rmtree(directory, ignore_errors=True)
 
 
 def expect(condition: bool, message: str, failures: List[str]) -> None:
@@ -1854,6 +1886,29 @@ def self_test() -> int:
         repository.write("CHANGELOG.md", changelog_with("Breaking", "- `helper` is now `renamed`."))
         head = repository.commit("a changelog with a released version, and no tag")
         expect(check_pr(repository, base, head) == 1, "a released version in the changelog with no tag in the clone fails", failures)
+
+    # The first release's prepare change: Unreleased renamed to the version, no tag yet.
+    with fixture() as (repository, _):
+        repository.git.run("tag", "-d", "0.1.0")
+        repository.write("CHANGELOG.md", prerelease)
+        repository.write("gradle.properties", "VERSION_NAME=0.1.0-SNAPSHOT\n")
+        base = repository.commit("nothing released yet")
+        prepared = prerelease.replace("## Unreleased", "## [0.1.0] - 2026-10-07", 1)
+        repository.write("CHANGELOG.md", prepared)
+        repository.write("gradle.properties", "VERSION_NAME=0.1.0\n")
+        head = repository.commit("prepare 0.1.0")
+        expect(check_pr(repository, base, head) == 0, "a prepare change, before any tag, passes check-pr", failures)
+        expect(check_release(repository, head, "0.1.0", from_tag=None) == 0,
+               "…and check-release still passes it as the first release", failures)
+        repository.write("lib/api/lib.klib.api", renamed_helper)
+        fixed = repository.commit("a break after the prepare change, no changelog line")
+        expect(check_pr(repository, head, fixed) == 1, "a break onto a prepared changelog still needs a line", failures)
+        repository.write("CHANGELOG.md", prepared.replace("- The first release.", "- The first release, with `renamed`."))
+        fixed = repository.commit("a break after the prepare change, with a line in its section")
+        expect(check_pr(repository, head, fixed) == 0, "…which the prepared section takes", failures)
+        repository.write("CHANGELOG.md", prepared.replace("## [0.1.0] - 2026-10-07", "## [0.2.0] - 2026-11-01\n\n## 0.1.0", 1))
+        later = repository.commit("a later prepare change, in a clone with no tags")
+        expect(check_pr(repository, head, later) == 1, "a prepare change over an untagged release still fails", failures)
 
     # Only a line this change wrote counts: an unchanged or moved old line does not.
     with fixture() as (repository, _):
