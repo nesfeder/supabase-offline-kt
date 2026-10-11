@@ -35,9 +35,17 @@ are none), even when another cached request of the same table holds the rows it 
 detail screen's row from the list a list screen already reads, with the same request, and pick it
 out on the device:
 
-```kotlin
---8<-- "ReadExamples.kt:row-from-list"
-```
+From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/OfflineTaskRepository.kt) · [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift)
+
+=== "Android"
+
+    ```kotlin
+    --8<-- "data/supabase/OfflineTaskRepository.kt:row-from-list"
+    ```
+
+=== "iOS"
+
+    The iOS sample's section lands with its pull request.
 
 And read each list online once: on the very first launch, before any read has reached the server,
 there is nothing to show offline.

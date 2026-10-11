@@ -2,11 +2,24 @@
 
 A `select` reads its rows once, from the server or from the device's cache, as its read strategy
 says. Only a list of rows is cached, and every list the server returns is kept for the next read,
-with the user's queued writes laid over it whichever way it is answered.
+with the user's queued writes laid over it whichever way it is answered. The sample's pull to
+refresh, its launch badge and Start over's lookup each use a strategy of their own:
 
-```kotlin
---8<-- "ReadExamples.kt:strategies"
-```
+From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/OfflineTaskRepository.kt) · [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift)
+
+=== "Android"
+
+    ```kotlin
+    --8<-- "data/supabase/OfflineTaskRepository.kt:first-read"
+
+    --8<-- "data/supabase/OfflineTaskRepository.kt:badge-read"
+
+    --8<-- "data/supabase/OfflineTaskRepository.kt:network-only"
+    ```
+
+=== "iOS"
+
+    The iOS sample's section lands with its pull request.
 
 ## Choosing a strategy
 
@@ -43,9 +56,17 @@ again; when the server cannot be reached, the stale rows are served after all.
 It serves the cached rows and never sends a request. With nothing it may serve, it throws
 `CacheMissException`:
 
-```kotlin
---8<-- "ReadExamples.kt:cache-only"
-```
+From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/OfflineTaskRepository.kt) · [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift)
+
+=== "Android"
+
+    ```kotlin
+    --8<-- "data/supabase/OfflineTaskRepository.kt:cache-only"
+    ```
+
+=== "iOS"
+
+    The iOS sample's section lands with its pull request.
 
 ## `NetworkOnly`
 
@@ -61,11 +82,21 @@ to it does not make it younger: a day-old list with your edit laid over it is st
 ## Where the rows came from
 
 A result says whether it came from the cache, when its rows were fetched, and whether a queued
-write changed them, through three extension properties on supabase-kt's `PostgrestResult`:
+write changed them, through three extension properties on supabase-kt's `PostgrestResult`. The
+sample's pull to refresh turns them into the caption under the list's title ("Updated just now",
+"From this device, 3 minutes ago"):
 
-```kotlin
---8<-- "ReadExamples.kt:provenance"
-```
+From the samples: [LibraryMappings.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/LibraryMappings.kt) · [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift)
+
+=== "Android"
+
+    ```kotlin
+    --8<-- "data/supabase/LibraryMappings.kt:provenance"
+    ```
+
+=== "iOS"
+
+    The iOS sample's section lands with its pull request.
 
 A result supabase-kt returned itself reads `false`, `null` and `false`. The library stamps these
 in response headers PostgREST never sends; a read the cache never holds, such as a `count`, keeps
@@ -77,20 +108,55 @@ the server's own headers.
 first row; the [sample app](../samples/android.md) reads its list once and finds the row in it,
 so a task never opened before still opens offline.
 
-```kotlin
---8<-- "ReadExamples.kt:one-row"
-```
+From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/OfflineTaskRepository.kt) · [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift)
+
+=== "Android"
+
+    ```kotlin
+    --8<-- "data/supabase/OfflineTaskRepository.kt:row-from-list"
+    ```
+
+=== "iOS"
+
+    The iOS sample's section lands with its pull request.
 
 **A list with a total.** A read that asks for a `count` is never cached, rows and all, so a
-paginated screen with a total has nothing offline. Read the rows and the count separately.
+paginated screen with a total has nothing offline. Read the rows and the count separately. The
+samples ask for a count only where a connection is expected anyway: the Sync tab's Server section,
+and a Try it item with the generic `filter(column, operator, value)`:
+
+From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/OfflineTaskRepository.kt) · [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift)
+
+=== "Android"
+
+    ```kotlin
+    --8<-- "data/supabase/OfflineTaskRepository.kt:count"
+
+    --8<-- "data/supabase/OfflineTaskRepository.kt:operator-filter"
+    ```
+
+=== "iOS"
+
+    The iOS sample's section lands with its pull request.
 
 **Two filters on one column** are refused with an `IllegalArgumentException` before anything is
 sent: supabase-kt sends only the first, so the read would return every row the first admits.
-Write them as one `and { }` group:
+Write them as one `and { }` group, as the sample's Recent chip does; its Try it makes the refused
+read:
 
-```kotlin
---8<-- "ReadExamples.kt:same-column"
-```
+From the samples: [TaskQueries.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/TaskQueries.kt) · [OfflineTaskRepository.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/OfflineTaskRepository.kt) · [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift)
+
+=== "Android"
+
+    ```kotlin
+    --8<-- "data/supabase/TaskQueries.kt:same-column"
+
+    --8<-- "data/supabase/OfflineTaskRepository.kt:two-filters-refused"
+    ```
+
+=== "iOS"
+
+    The iOS sample's section lands with its pull request.
 
 **While a stored session restores.** supabase-kt sends requests on the anon key until the stored
 session is restored, and row-level security can answer such a request with fewer rows, or none.

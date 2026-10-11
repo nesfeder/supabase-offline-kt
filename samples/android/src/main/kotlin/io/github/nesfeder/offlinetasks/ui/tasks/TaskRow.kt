@@ -36,6 +36,7 @@ import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -62,6 +63,7 @@ fun TaskRow(
     onDelete: (Task) -> Unit,
     onOpen: (Task) -> Unit,
     modifier: Modifier = Modifier,
+    photoCount: Int = 0,
 ) {
     val threshold = SwipeToDismissBoxDefaults.positionalThreshold
     // Remembered, not saved: a row that comes back from Undo must come back unswiped.
@@ -103,16 +105,25 @@ fun TaskRow(
                 },
                 trailingContent = { PendingMark(visible = task.hasPendingMutations) },
                 supportingContent =
-                    task.notes
-                        ?.takeIf { it.isNotBlank() }
-                        ?.let { notes ->
-                            { Text(notes, maxLines = 1, overflow = TextOverflow.Ellipsis) }
-                        },
+                    supportingTextOf(task.notes, photoCount)?.let { text ->
+                        { Text(text, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                    },
             ) {
                 TaskTitle(task, title)
             }
         }
     }
+}
+
+/** The line under the title: the notes, and how many photos the task has. */
+@Composable
+private fun supportingTextOf(notes: String?, photoCount: Int): String? {
+    val photos =
+        if (photoCount > 0) pluralStringResource(R.plurals.photos_count, photoCount, photoCount)
+        else null
+    return listOfNotNull(notes?.takeIf { it.isNotBlank() }, photos)
+        .takeIf { it.isNotEmpty() }
+        ?.joinToString(" · ")
 }
 
 /** The title, struck through and faded to the variant color once the task is done. */

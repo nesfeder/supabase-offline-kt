@@ -43,8 +43,11 @@ import kotlinx.coroutines.flow.StateFlow
  * result. A photo whose row the server refuses at once has its file deleted too.
  */
 interface TaskRepository {
-    /** The user's tasks, newest first. */
-    fun tasks(): Flow<TaskListSnapshot>
+    /**
+     * The user's tasks that [query] selects, newest first. The read's strategy follows
+     * [SyncSettings.preferFreshData].
+     */
+    fun tasks(query: TaskQuery = TaskQuery()): Flow<TaskListSnapshot>
 
     /**
      * The task with [id], as [tasks] holds it: a list of at most one row, empty once the device or
@@ -58,12 +61,55 @@ interface TaskRepository {
     /** Every photo the user has, newest first. */
     fun allPhotos(): Flow<PhotoListSnapshot>
 
+    /** The newest [count] photos, a page of the Photos grid; asking for more reads a new page. */
+    fun photoPage(count: Int): Flow<PhotoListSnapshot>
+
+    /** How many photos each of [taskIds] has, for the list's rows; a task with none is absent. */
+    fun photoCounts(taskIds: List<String>): Flow<Map<String, Int>>
+
     /**
-     * Adds a task with a new id and the device's clock as its creation time.
+     * Adds a task with a new id and the device's clock as its creation time. With [needsConnection]
+     * it is sent now or not at all, and never queued.
+     *
+     * @throws TaskWriteRefusedException when it was sent at once and the server refused it.
+     * @throws NetworkUnavailableException with [needsConnection], when the server cannot be
+     *   reached.
+     */
+    suspend fun addTask(
+        title: String,
+        notes: String?,
+        needsConnection: Boolean = false,
+    ): NewTaskOutcome
+
+    /**
+     * Adds a copy of the task with [id], under a new id, as the device holds it.
      *
      * @throws TaskWriteRefusedException when it was sent at once and the server refused it.
      */
-    suspend fun addTask(title: String, notes: String?): TaskMutationOutcome
+    suspend fun duplicateTask(id: String): NewTaskOutcome
+
+    /** Adds five sample tasks in one write. */
+    suspend fun addSampleTasks(): TaskMutationOutcome
+
+    /**
+     * Adds the starter list's tasks, each under an id of its own for this user: a second import
+     * changes nothing, on the device or on the server.
+     */
+    suspend fun importStarterList(): TaskMutationOutcome
+
+    /**
+     * Adds a task whose title the server refuses: online it is refused at once and thrown; offline
+     * it waits, and is refused when it replays.
+     */
+    suspend fun addTaskWithBlankTitle(): TaskMutationOutcome
+
+    /**
+     * Deletes this week's done tasks with one grouped filter. The queue cannot hold such a delete,
+     * so it is sent now.
+     *
+     * @throws WriteNeedsConnectionException when the server cannot be reached; nothing is queued.
+     */
+    suspend fun deleteThisWeeksDoneTasks(): TaskMutationOutcome
 
     /**
      * Sets a task's title and notes; null [notes] clears them on the server too.
@@ -108,6 +154,80 @@ interface TaskRepository {
     /** The photo's file if it is on this device, without touching the network. */
     suspend fun cachedPhotoFile(photo: TaskPhoto): PhotoFile?
 
+    /** The photo's file as a `file:` URI if it is on this device, without touching the network. */
+    suspend fun photoUriIfCached(photo: TaskPhoto): String?
+
+    /**
+     * The photo's file as a `file:` URI, downloaded and kept on this device if it is not there yet.
+     *
+     * @throws NetworkUnavailableException when it is not on the device and the network is off.
+     */
+    suspend fun photoUri(photo: TaskPhoto): String
+
+    /**
+     * The photo's file on this device, downloaded first if needed, as a path to share it from.
+     *
+     * @throws NetworkUnavailableException when it is not on the device and the network is off.
+     */
+    suspend fun photoFileToShare(photo: TaskPhoto): String
+
+    /**
+     * What Storage and this device know about the photo's file.
+     *
+     * @throws NetworkUnavailableException while the network is off.
+     */
+    suspend fun photoDetails(photo: TaskPhoto): PhotoDetails
+
+    /**
+     * A link anyone can open for an hour, to a copy of the photo 512 pixels wide.
+     *
+     * @throws NetworkUnavailableException while the network is off.
+     */
+    suspend fun photoShareLink(photo: TaskPhoto): String
+
+    /**
+     * Links anyone can open for an hour, one for each of [photos].
+     *
+     * @throws NetworkUnavailableException while the network is off.
+     */
+    suspend fun photoShareLinks(photos: List<TaskPhoto>): List<String>
+
+    /**
+     * Replaces the photo's file with [replacement], in place: its row and path stay.
+     *
+     * @throws NetworkUnavailableException while the network is off.
+     */
+    suspend fun replacePhoto(photo: TaskPhoto, replacement: EncodedPhoto)
+
+    /**
+     * Moves the photo to the task [taskId]: its file first, then its row.
+     *
+     * @throws NetworkUnavailableException while the network is off; nothing moves.
+     */
+    suspend fun movePhoto(photo: TaskPhoto, taskId: String): TaskMutationOutcome
+
+    /**
+     * Adds a copy of the photo to the task [taskId]: a copy of its file, then a row for it.
+     *
+     * @throws NetworkUnavailableException while the network is off; nothing is copied.
+     */
+    suspend fun copyPhoto(photo: TaskPhoto, taskId: String): TaskMutationOutcome
+
+    /**
+     * One page of the user's task folders in the bucket, from the [offset]th, with their files.
+     *
+     * @throws NetworkUnavailableException while the network is off.
+     */
+    suspend fun listBucket(offset: Int): BucketListing
+
+    /**
+     * Adds a copy of the newest photo to its task, uploaded through a signed upload URL instead of
+     * the session; null when there is no photo to copy.
+     *
+     * @throws NetworkUnavailableException while the network is off.
+     */
+    suspend fun uploadThroughSignedUrl(): TaskPhoto?
+
     /**
      * The photo's file, downloaded and kept on this device if it is not there yet.
      *
@@ -121,8 +241,22 @@ interface TaskRepository {
     /** How many writes wait in the mutation queue, for one [table] or all of them. */
     fun pendingMutationCount(table: String? = null): Flow<Int>
 
+    /** How many writes wait in the mutation queue now, read once, as the app starts. */
+    suspend fun pendingMutationCountNow(): Int
+
+    /** The writes waiting in the mutation queue, in the order they will be sent. */
+    fun waitingChanges(): Flow<List<WaitingChange>>
+
+    /**
+     * Removes a waiting write without sending it: its rows show again as the server last sent them.
+     */
+    suspend fun discardWaitingChange(id: Long)
+
     /** The writes the server refused on replay, newest first, until dismissed or retried. */
     fun rejectedMutations(): Flow<List<RejectedTaskMutation>>
+
+    /** The refused writes as they stand now, newest first, read once. */
+    suspend fun rejectedMutationsNow(): List<RejectedTaskMutation>
 
     /** Forgets a refused write. */
     suspend fun dismissRejectedMutation(id: Long)
@@ -146,12 +280,63 @@ interface TaskRepository {
     val syncStatus: StateFlow<AppSyncStatus>
 
     /**
-     * Asks the server for the task list again, as pull-to-refresh does.
+     * Asks the server for the task list again, as pull-to-refresh does, and says where the rows
+     * came from: the server, or the device's copy when the server could not be reached.
+     *
+     * @param query the list to read again: each query is cached on its own, so it is the one the
+     *   screen shows.
+     * @throws NetworkUnavailableException while the network is off and nothing is saved.
+     * @throws ServerUnreachableException when the server does not answer and nothing is saved.
+     */
+    suspend fun refreshTasks(query: TaskQuery = TaskQuery()): ReadProvenance
+
+    /**
+     * How many open tasks the device holds, read once as the app starts, from the device's copy
+     * when it is a day old at most and from the server otherwise; null when neither has it.
+     */
+    suspend fun openTaskCountNow(): Int?
+
+    /** The Sync tab's switches. */
+    val settings: StateFlow<SyncSettings>
+
+    /** Chooses how the task list reads: the device's copy first, or the server first. */
+    fun setPreferFreshData(prefer: Boolean)
+
+    /** Turns applying other devices' changes as they happen on or off. */
+    fun setLiveUpdates(enabled: Boolean)
+
+    /** Where applying other devices' changes stands. */
+    val liveUpdatesStatus: StateFlow<LiveUpdatesStatus>
+
+    /**
+     * Marks every open task done, on the server, through a database function; returns how many it
+     * changed. Functions always run on the server.
      *
      * @throws NetworkUnavailableException while the network is off.
-     * @throws ServerUnreachableException when the server does not answer.
      */
-    suspend fun refreshTasks()
+    suspend fun markAllDone(): Int
+
+    /**
+     * Asks the server how many tasks the user has and how many are done, through a count and a
+     * database function. Both always run on the server.
+     *
+     * @throws NetworkUnavailableException while the network is off.
+     */
+    suspend fun serverCounts(): ServerCounts
+
+    /**
+     * Counts the user's open tasks on the server. A count is never saved on the device.
+     *
+     * @throws NetworkUnavailableException while the network is off.
+     */
+    suspend fun countOpenTasksOnServer(): Int
+
+    /**
+     * Reads with two filters on one column, which the library refuses before sending anything.
+     *
+     * @throws InvalidRequestException always.
+     */
+    suspend fun readWithTwoFiltersOnOneColumn()
 
     /** Switches the app's own network access off ("Simulate offline") or back on. */
     suspend fun setNetworkEnabled(enabled: Boolean)

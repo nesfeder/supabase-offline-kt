@@ -25,6 +25,8 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilledIconToggleButton
 import androidx.compose.material3.FloatingToolbarDefaults
 import androidx.compose.material3.HorizontalFloatingToolbar
@@ -44,11 +46,13 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardCapitalization
@@ -62,6 +66,7 @@ import io.github.nesfeder.offlinetasks.data.TASK_TITLE_MAX_LENGTH
 import io.github.nesfeder.offlinetasks.data.TaskPhoto
 import io.github.nesfeder.offlinetasks.data.characterCount
 import io.github.nesfeder.offlinetasks.ui.components.EmptyState
+import io.github.nesfeder.offlinetasks.ui.components.shareText
 import io.github.nesfeder.offlinetasks.ui.feedback.AppSnackbarHost
 import io.github.nesfeder.offlinetasks.ui.navigation.SharedBounds
 import io.github.nesfeder.offlinetasks.ui.navigation.SharedKeys
@@ -90,10 +95,13 @@ fun TaskDetailRoute(
         rememberLauncherForActivityResult(PickVisualMedia()) { uri ->
             uri?.let { viewModel.attachPhoto(it.toString()) }
         }
+    val context = LocalContext.current
     LaunchedEffect(viewModel) {
         viewModel.messages.collect { message ->
             when (message) {
                 TaskDetailMessage.Deleted -> onBack()
+                is TaskDetailMessage.ShareLinks ->
+                    context.shareText(message.links.joinToString("\n"))
             }
         }
     }
@@ -111,6 +119,8 @@ fun TaskDetailRoute(
         onDelete = viewModel::delete,
         loadPhotoFile = viewModel::photoFile,
         taskId = taskId,
+        onDuplicate = viewModel::duplicate,
+        onShareAllPhotos = viewModel::shareAllPhotos,
     )
 }
 
@@ -133,6 +143,8 @@ fun TaskDetailScreen(
     onDelete: () -> Unit,
     loadPhotoFile: suspend (TaskPhoto) -> PhotoFileState,
     modifier: Modifier = Modifier,
+    onDuplicate: () -> Unit = {},
+    onShareAllPhotos: () -> Unit = {},
 ) {
     val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
     var confirmingDelete by rememberSaveable { mutableStateOf(false) }
@@ -165,6 +177,16 @@ fun TaskDetailScreen(
                     collapsedHeight = TopAppBarDefaults.MediumAppBarCollapsedHeight,
                     expandedHeight =
                         TopAppBarDefaults.MediumFlexibleAppBarWithSubtitleExpandedHeight,
+                    actions = {
+                        if (editing != null) {
+                            DetailMenu(
+                                canShareAll =
+                                    editing.canChangePhotos && editing.photos.isNotEmpty(),
+                                onDuplicate = onDuplicate,
+                                onShareAllPhotos = onShareAllPhotos,
+                            )
+                        }
+                    },
                     navigationIcon = {
                         if (showBackButton) {
                             IconButton(onClick = onBack) {
@@ -278,6 +300,36 @@ fun TaskDetailScreen(
     }
 }
 
+/** The app bar's menu: Duplicate task, and links to every photo for the share sheet. */
+@Composable
+private fun DetailMenu(
+    canShareAll: Boolean,
+    onDuplicate: () -> Unit,
+    onShareAllPhotos: () -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    IconButton(onClick = { expanded = true }) {
+        Icon(painterResource(R.drawable.ic_more_vert), stringResource(R.string.action_more))
+    }
+    DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+        DropdownMenuItem(
+            text = { Text(stringResource(R.string.detail_duplicate)) },
+            onClick = {
+                expanded = false
+                onDuplicate()
+            },
+        )
+        DropdownMenuItem(
+            text = { Text(stringResource(R.string.detail_share_all_photos)) },
+            enabled = canShareAll,
+            onClick = {
+                expanded = false
+                onShareAllPhotos()
+            },
+        )
+    }
+}
+
 /** The task's text and done flag, as the fields show them. */
 private data class TaskFieldValues(
     val title: String,
@@ -372,8 +424,11 @@ private fun PhotosSection(
         Text(
             text =
                 stringResource(
-                    if (state.canChangePhotos) R.string.detail_photos_supporting
-                    else R.string.detail_photos_offline
+                    when {
+                        state.photosFromDeviceOnly -> R.string.detail_photos_device_only
+                        state.canChangePhotos -> R.string.detail_photos_supporting
+                        else -> R.string.detail_photos_offline
+                    }
                 ),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,

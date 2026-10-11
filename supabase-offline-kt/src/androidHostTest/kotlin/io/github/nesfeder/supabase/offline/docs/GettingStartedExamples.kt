@@ -6,138 +6,25 @@ import android.content.Context
 import io.github.jan.supabase.SupabaseClient
 import io.github.jan.supabase.auth.Auth
 import io.github.jan.supabase.createSupabaseClient
-import io.github.jan.supabase.logging.LogLevel
 import io.github.jan.supabase.postgrest.Postgrest
 import io.github.jan.supabase.postgrest.from
 import io.github.jan.supabase.postgrest.postgrest
-import io.github.jan.supabase.postgrest.query.Order
 import io.github.jan.supabase.postgrest.rpc
-import io.github.jan.supabase.storage.Storage
-import io.github.nesfeder.supabase.offline.MutationOutcome
 import io.github.nesfeder.supabase.offline.Offline
-import io.github.nesfeder.supabase.offline.QuerySnapshot
-import io.github.nesfeder.supabase.offline.RefreshState
 import io.github.nesfeder.supabase.offline.offline
 import io.github.nesfeder.supabase.offline.rpc
-import kotlin.uuid.Uuid
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.map
 import kotlinx.serialization.Serializable
 
 // The documentation site's Getting started pages include the sections of this file between the
-// `--8<--` markers, so every Kotlin sample there compiles. Nothing here runs.
+// `--8<--` markers, so every Kotlin listing there compiles. The sample apps show everything else;
+// these are what no sample makes: supabase-kt's side of the migration page's contrasts, with the
+// offline side beside it, and a data directory Android never backs up. Nothing here runs.
 
 /** A row of the `todos` table the site's examples read and write. */
 @Serializable internal data class Todo(val id: String, val title: String, val done: Boolean = false)
 
 /** The arguments of the `archive_done` database function the migration page calls. */
 @Serializable internal data class ArchiveDone(val before: String)
-
-/** What a screen shows for one list, built from a [QuerySnapshot]. */
-internal sealed interface TodoListState {
-
-    /** Nothing is known yet: nothing cached and nothing queued. */
-    data object Loading : TodoListState
-
-    /** The rows to show, with whether they still wait to reach the server. */
-    data class Shown(val todos: List<Todo>, val savedOnDeviceOnly: Boolean, val isStale: Boolean) :
-        TodoListState
-}
-
-/** The home page's example: install the plugin, read, and write. */
-internal suspend fun homePageExample(supabaseUrl: String, supabaseKey: String): List<Todo> {
-    // --8<-- [start:home]
-    val supabase =
-        createSupabaseClient(supabaseUrl, supabaseKey) {
-            install(Auth)
-            install(Postgrest)
-            install(Offline) // last
-        }
-    val todos = supabase.offline.from("todos")
-
-    // From the server, or from the device's cache when the server cannot be reached
-    val open = todos.select { filter { eq("done", false) } }.decodeList<Todo>()
-
-    // Sent now, or kept on the device and sent when the network is back
-    when (todos.insert(Todo(id = Uuid.random().toString(), title = "Buy milk"))) {
-        is MutationOutcome.Applied -> Unit // the server has it
-        is MutationOutcome.Queued -> Unit // it waits in the mutation queue
-    }
-    // --8<-- [end:home]
-    return open
-}
-
-/** The setup page's client: the plugin installed last, beside the plugins it builds on. */
-internal fun setupClient(supabaseUrl: String, supabaseKey: String): SupabaseClient {
-    // --8<-- [start:install]
-    val supabase =
-        createSupabaseClient(supabaseUrl = supabaseUrl, supabaseKey = supabaseKey) {
-            install(Auth) // optional: without it, every request is the anonymous user
-            install(Postgrest) // required
-            install(Storage) // only for offline.storage
-            install(Offline) // last; settings go in its block
-        }
-    // --8<-- [end:install]
-    return supabase
-}
-
-/** The setup page's first read. */
-internal suspend fun setupFirstRead(supabase: SupabaseClient): List<Todo> {
-    // --8<-- [start:first-read]
-    val todos =
-        supabase.offline
-            .from("todos")
-            .select { order("created_at", Order.DESCENDING) }
-            .decodeList<Todo>()
-    // --8<-- [end:first-read]
-    return todos
-}
-
-/** The setup page's first live read, mapped to a screen's state. */
-internal fun setupFirstObservedRead(supabase: SupabaseClient): Flow<TodoListState> {
-    // --8<-- [start:first-observed-read]
-    val screenState: Flow<TodoListState> =
-        supabase.offline
-            .from("todos")
-            .selectAsFlow { order("created_at", Order.DESCENDING) }
-            .map { snapshot ->
-                val rows = snapshot.result ?: return@map TodoListState.Loading
-                TodoListState.Shown(
-                    todos = rows.decodeList<Todo>(),
-                    savedOnDeviceOnly = snapshot.hasPendingMutations,
-                    isStale = snapshot.refresh is RefreshState.Stalled,
-                )
-            }
-    // --8<-- [end:first-observed-read]
-    return screenState
-}
-
-/** The setup page's first write, with an id made on the device. */
-internal suspend fun setupFirstWrite(supabase: SupabaseClient, title: String): Todo {
-    // --8<-- [start:first-write]
-    val todo = Todo(id = Uuid.random().toString(), title = title)
-    when (val outcome = supabase.offline.from("todos").insert(todo)) {
-        is MutationOutcome.Applied -> Unit // the server has it; outcome.result is its answer
-        is MutationOutcome.Queued -> Unit // outcome.pendingMutation.id identifies it from now on
-    }
-    // --8<-- [end:first-write]
-    return todo
-}
-
-/** The setup page's logging: supabase-kt's own settings, and the plugin's level. */
-internal fun setupLogging(supabaseUrl: String, supabaseKey: String): SupabaseClient {
-    // --8<-- [start:logging]
-    val supabase =
-        createSupabaseClient(supabaseUrl, supabaseKey) {
-            defaultLogLevel = LogLevel.WARNING // every plugin's least severe level
-            install(Postgrest)
-            install(Offline) {
-                logLevel = LogLevel.INFO // this plugin's, in place of the default
-            }
-        }
-    // --8<-- [end:logging]
-    return supabase
-}
 
 /** The setup page's Android data directory, which Android never backs up. */
 internal fun setupNoBackupDirectory(

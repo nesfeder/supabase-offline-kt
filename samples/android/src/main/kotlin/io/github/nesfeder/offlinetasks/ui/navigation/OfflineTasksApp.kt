@@ -49,6 +49,7 @@ import io.github.nesfeder.offlinetasks.ui.detail.TaskDetailRoute
 import io.github.nesfeder.offlinetasks.ui.feedback.AppSnackbars
 import io.github.nesfeder.offlinetasks.ui.feedback.LocalAppSnackbars
 import io.github.nesfeder.offlinetasks.ui.feedback.failureMessage
+import io.github.nesfeder.offlinetasks.ui.feedback.noticeMessage
 import io.github.nesfeder.offlinetasks.ui.newtask.NewTaskRoute
 import io.github.nesfeder.offlinetasks.ui.photos.PhotoViewerRoute
 import io.github.nesfeder.offlinetasks.ui.photos.PhotosRoute
@@ -88,6 +89,11 @@ fun OfflineTasksApp(
             snackbarHostState.showSnackbar(failureMessage(resources, failure))
         }
     }
+    LaunchedEffect(shellViewModel) {
+        shellViewModel.notices.collect { notice ->
+            snackbarHostState.showSnackbar(noticeMessage(resources, notice))
+        }
+    }
     val currentTopLevel = backStack.currentTopLevel()
     // The open task, marked in the list while both panes show.
     val selectedTaskId = (backStack.lastOrNull() as? Destination.TaskDetail)?.taskId
@@ -102,16 +108,7 @@ fun OfflineTasksApp(
                         selected = selected,
                         onClick = { backStack.selectTopLevel(topLevel) },
                         icon = {
-                            BadgedBox(
-                                badge = {
-                                    val count = badges.pendingCount
-                                    if (topLevel == TopLevelDestination.Sync && count > 0) {
-                                        Badge {
-                                            RollingText(text = count.toString(), count = count)
-                                        }
-                                    }
-                                }
-                            ) {
+                            BadgedBox(badge = { DestinationBadge(topLevel, badges) }) {
                                 Icon(
                                     painterResource(topLevel.icon(selected)),
                                     contentDescription = null,
@@ -207,6 +204,31 @@ fun OfflineTasksApp(
                     },
             )
         }
+    }
+}
+
+/**
+ * The badge on a destination: the open-task count on Tasks; on Sync, the refused writes in the
+ * error color when there are any, the waiting writes otherwise.
+ */
+@Composable
+private fun DestinationBadge(topLevel: TopLevelDestination, badges: AppShellUiState) {
+    val count =
+        when (topLevel) {
+            TopLevelDestination.Tasks -> badges.openTaskCount ?: 0
+            TopLevelDestination.Photos -> 0
+            TopLevelDestination.Sync ->
+                if (badges.rejectedCount > 0) badges.rejectedCount else badges.pendingCount
+        }
+    if (count == 0) return
+    val refused = topLevel == TopLevelDestination.Sync && badges.rejectedCount > 0
+    Badge(
+        containerColor =
+            if (refused) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
+        contentColor =
+            if (refused) MaterialTheme.colorScheme.onError else MaterialTheme.colorScheme.onPrimary,
+    ) {
+        RollingText(text = count.toString(), count = count)
     }
 }
 

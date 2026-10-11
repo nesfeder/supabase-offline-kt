@@ -2,66 +2,145 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.offlinetasks.data.supabase
 
+import io.github.jan.supabase.auth.exception.TokenExpiredException
 import io.github.jan.supabase.exceptions.NotFoundRestException
 import io.github.jan.supabase.exceptions.RestException
+import io.github.jan.supabase.exceptions.SupabaseEncodingException
 import io.github.jan.supabase.postgrest.exception.PostgrestRestException
+import io.github.nesfeder.offlinetasks.data.ClientUnavailableException
+import io.github.nesfeder.offlinetasks.data.InvalidRequestException
+import io.github.nesfeder.offlinetasks.data.NetworkSwitchedOffException
 import io.github.nesfeder.offlinetasks.data.NetworkUnavailableException
+import io.github.nesfeder.offlinetasks.data.NotSavedOnDeviceException
 import io.github.nesfeder.offlinetasks.data.PhotoNotFoundException
 import io.github.nesfeder.offlinetasks.data.PhotoStorageException
+import io.github.nesfeder.offlinetasks.data.RowFormatException
+import io.github.nesfeder.offlinetasks.data.ServerRefusedException
 import io.github.nesfeder.offlinetasks.data.ServerUnreachableException
+import io.github.nesfeder.offlinetasks.data.SessionExpiredException
+import io.github.nesfeder.offlinetasks.data.SyncStoppedException
 import io.github.nesfeder.offlinetasks.data.TaskMutationOperation
 import io.github.nesfeder.offlinetasks.data.TaskServerError
 import io.github.nesfeder.offlinetasks.data.TaskWriteRefusedException
+import io.github.nesfeder.offlinetasks.data.UnknownLibraryFailureException
+import io.github.nesfeder.offlinetasks.data.WriteNeedsConnectionException
+import io.github.nesfeder.supabase.offline.CacheMissException
+import io.github.nesfeder.supabase.offline.MutationNotQueueableException
+import io.github.nesfeder.supabase.offline.NetworkDisabledException
+import io.github.nesfeder.supabase.offline.OfflineException
 import io.github.nesfeder.supabase.offline.SyncFailedException
 import io.github.nesfeder.supabase.offline.httpStatusOrNull
 import io.github.nesfeder.supabase.offline.isNetworkOrConnectivityFailure
+import kotlin.coroutines.cancellation.CancellationException
+import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.JsonPrimitive
+
+/** HTTP's "unauthorized": a token that has expired, or none where one is needed. */
+private const val HTTP_UNAUTHORIZED = 401
 
 /** HTTP's "not found". */
 private const val HTTP_NOT_FOUND = 404
 
+/** The first status of a server failure that may pass, rather than a refusal. */
+private const val HTTP_SERVER_ERROR = 500
+
+/** What a library call was doing when it failed, so a failure can name what it was for. */
+internal sealed interface LibraryCall {
+    /** A read, a count or a database function. */
+    data object Read : LibraryCall
+
+    /** A replay of the mutation queue. */
+    data object Sync : LibraryCall
+
+    /** A write to [table]; [taskTitle] names the task it was for, when it carried one. */
+    data class Write(
+        val table: String,
+        val operation: TaskMutationOperation,
+        val taskTitle: String?,
+    ) : LibraryCall
+
+    /** A Storage call about the file at [objectPath]. */
+    data class Storage(val objectPath: String) : LibraryCall
+}
+
+// --8<-- [start:failure-codes]
 /**
- * A write's failure as `TaskRepository` names it: the server's refusal of a write sent at once, or
- * the network. Anything else is passed on as it is.
+ * Every failure a library call can throw, in the app's terms: one branch for each kind, each with a
+ * sentence of its own on screen. The library's own types come first, then supabase-kt's, which the
+ * library passes through unchanged.
  */
-internal fun Throwable.asWriteFailure(
-    table: String,
-    operation: TaskMutationOperation,
-    taskTitle: String?,
-): Throwable =
+internal fun Throwable.toAppFailure(call: LibraryCall): Throwable =
     when {
-        this is PostgrestRestException ->
-            TaskWriteRefusedException(table, operation, taskTitle, toTaskServerError(), this)
+        this is CancellationException -> this // never a failure
+        // Simulate offline is on, and the request needed the server.
+        this is NetworkDisabledException -> NetworkSwitchedOffException(this)
+        // A cache-only read found nothing saved for its query.
+        this is CacheMissException -> NotSavedOnDeviceException(this)
+        // A write the queue cannot hold found no connection; nothing was queued.
+        this is MutationNotQueueableException ->
+            WriteNeedsConnectionException(message.orEmpty(), this)
+        // Why a replay stopped, writes still queued: the status and code, never the message.
+        this is SyncFailedException ->
+            SyncStoppedException(httpStatus, code, isNetworkOrConnectivityFailure(), this)
+        // A kind of failure a later release of the library adds.
+        this is OfflineException -> UnknownLibraryFailureException(this)
+        // The session's token expired and could not be refreshed, here or on the server.
+        this is TokenExpiredException || httpStatusOrNull() == HTTP_UNAUTHORIZED ->
+            SessionExpiredException(this)
+        // PostgREST refused it: a write's refusal names the task, anything else its status.
+        this is PostgrestRestException -> serverRefusal(call)
+        // Storage refused it, or has no such file.
+        this is RestException -> storageRefusal(call)
+        // No connection, or no answer in time: the network, not the server.
         isNetworkOrConnectivityFailure() -> NetworkUnavailableException(this)
-        else -> this
+        // A row that does not decode into the app's type, or a value that does not encode.
+        this is SerializationException || this is SupabaseEncodingException ->
+            RowFormatException(this)
+        // Two top-level filters on one column, or a retry of a write that cannot be retried.
+        this is IllegalArgumentException -> InvalidRequestException(message.orEmpty(), this)
+        // The client is closed, or was built without a plugin the call needs.
+        this is IllegalStateException -> ClientUnavailableException(this)
+        else -> this // unexpected: reported as it is
     }
 
-/** A read's failure as `TaskRepository` names it: the network, or a server that answers wrong. */
-internal fun Throwable.asReadFailure(): Throwable =
+// --8<-- [end:failure-codes]
+
+/** PostgREST's refusal: of a write, the task it was for; of anything else, its status. */
+private fun PostgrestRestException.serverRefusal(call: LibraryCall): Exception =
     when {
-        isNetworkOrConnectivityFailure() -> NetworkUnavailableException(this)
-        httpStatusOrNull() != null -> ServerUnreachableException(this)
-        else -> this
+        call is LibraryCall.Write ->
+            TaskWriteRefusedException(
+                call.table,
+                call.operation,
+                call.taskTitle,
+                toTaskServerError(),
+                this,
+            )
+        statusCode >= HTTP_SERVER_ERROR -> ServerUnreachableException(this)
+        else -> ServerRefusedException(statusCode, code, error, this)
     }
 
-/**
- * Why the last sync stopped, as `TaskRepository` names it: the network, or a server that answered
- * with a failure that may pass. The writes stay queued either way.
- */
-internal fun SyncFailedException.asSyncFailure(): Exception =
-    if (isNetworkOrConnectivityFailure()) NetworkUnavailableException(this)
-    else ServerUnreachableException(this)
-
-/** A Storage call's failure as `TaskRepository` names it, for the object at [objectPath]. */
-internal fun Throwable.asStorageFailure(objectPath: String): Throwable =
+/** Storage's refusal, for the file the call was about. */
+private fun RestException.storageRefusal(call: LibraryCall): Exception =
     when {
-        isNetworkOrConnectivityFailure() -> NetworkUnavailableException(this)
         // Storage answers a missing object with HTTP 400, which supabase-kt reads as this type.
-        this is NotFoundRestException || httpStatusOrNull() == HTTP_NOT_FOUND ->
-            PhotoNotFoundException(objectPath)
-        this is RestException -> PhotoStorageException(statusCode, error, this)
-        else -> this
+        call is LibraryCall.Storage &&
+            (this is NotFoundRestException || statusCode == HTTP_NOT_FOUND) ->
+            PhotoNotFoundException(call.objectPath)
+        statusCode >= HTTP_SERVER_ERROR -> ServerUnreachableException(this)
+        else -> PhotoStorageException(statusCode, error, this)
     }
+
+// --8<-- [start:reportable-failure]
+/**
+ * A failure as one line for the app's log: its type, the HTTP status and whether the network caused
+ * it. Never the message, which may carry a row, a filter value or a token.
+ */
+internal fun Throwable.reportableDescription(): String =
+    "${this::class.simpleName} status=${httpStatusOrNull()} " +
+        "connectivity=${isNetworkOrConnectivityFailure()}"
+
+// --8<-- [end:reportable-failure]
 
 /** PostgREST's refusal as data: its status, the Postgres or PostgREST code and its text. */
 internal fun PostgrestRestException.toTaskServerError(): TaskServerError =

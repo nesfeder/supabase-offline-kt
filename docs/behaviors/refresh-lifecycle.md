@@ -5,9 +5,17 @@ minute, for as long as the flow is collected. Each emission says how it stands i
 `QuerySnapshot.refresh`, and waiting for the network or for the session is reported as waiting,
 never as a failure.
 
-```kotlin
---8<-- "ReadExamples.kt:refresh-state"
-```
+From the samples: [LibraryMappings.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/LibraryMappings.kt) · [TasksModel.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Tasks/TasksModel.swift)
+
+=== "Android"
+
+    ```kotlin
+    --8<-- "data/supabase/LibraryMappings.kt:refresh-state"
+    ```
+
+=== "iOS"
+
+    The iOS sample's section lands with its pull request.
 
 ## The four states
 

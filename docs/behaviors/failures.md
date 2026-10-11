@@ -5,9 +5,20 @@ or keeps the write queued; on the server's, it hands you supabase-kt's own excep
 queued write the server refuses later, on replay, is not thrown at anyone: it goes to the rejected
 list, which your app shows.
 
-```kotlin
---8<-- "QueueExamples.kt:write-failure"
-```
+The samples put every failure a call can throw in their own terms in one place, a branch for each
+kind, so each has a sentence of its own on screen:
+
+From the samples: [LibraryFailures.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/LibraryFailures.kt) · [SampleFailure.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/SampleFailure.swift)
+
+=== "Android"
+
+    ```kotlin
+    --8<-- "data/supabase/LibraryFailures.kt:failure-codes"
+    ```
+
+=== "iOS"
+
+    The iOS sample's section lands with its pull request.
 
 ## How a failure is classified
 
@@ -88,13 +99,21 @@ Each entry is a `RejectedMutation`: the table, the operation, the rows' keys, th
 server's answer as a `ServerError` (`status`, `code`, `message`, `details`, `hint`), and whether it
 can be retried.
 
-```kotlin
---8<-- "QueueExamples.kt:rejected-list"
-```
+From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/OfflineTaskRepository.kt) · [LibraryMappings.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/LibraryMappings.kt) · [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift)
 
-```kotlin
---8<-- "QueueExamples.kt:rejected-actions"
-```
+=== "Android"
+
+    ```kotlin
+    --8<-- "data/supabase/OfflineTaskRepository.kt:rejected-list"
+
+    --8<-- "data/supabase/LibraryMappings.kt:rejected-row"
+
+    --8<-- "data/supabase/OfflineTaskRepository.kt:rejected-actions"
+    ```
+
+=== "iOS"
+
+    The iOS sample's section lands with its pull request.
 
 Retry a write once its cause is fixed, such as a missing parent row or a policy: it rejoins the
 queue at the end under a new id. Postgres puts the offending values in `details` (a duplicate key's

@@ -3,6 +3,7 @@
 package io.github.nesfeder.offlinetasks.ui.sync
 
 import io.github.nesfeder.offlinetasks.data.AppNetworkStatus
+import io.github.nesfeder.offlinetasks.data.ServerCounts
 import io.github.nesfeder.offlinetasks.data.ServerUnreachableException
 import io.github.nesfeder.offlinetasks.data.TaskRepository
 import io.github.nesfeder.offlinetasks.data.TaskWriteRefusedException
@@ -87,8 +88,14 @@ class SyncViewModelTest {
         // When — the tour's "Queue an invalid title"
         viewModel.queueInvalidTitle()
 
-        // Then — the refusal is reported for a message, and not kept as a rejection
-        val refused = assertIs<TaskWriteRefusedException>(failures.reported.first())
+        // Then — the refusal is the line under the action, and not kept as a rejection
+        val result =
+            viewModel
+                .ready { it.tryIt[TryIt.InvalidTitle] is TryItResult.Failed }
+                .tryIt
+                .getValue(TryIt.InvalidTitle)
+        val refused =
+            assertIs<TaskWriteRefusedException>(assertIs<TryItResult.Failed>(result).failure)
         assertEquals("23514", refused.serverError.code)
         assertTrue(viewModel.ready().rejected.isEmpty())
     }
@@ -166,6 +173,44 @@ class SyncViewModelTest {
         testScheduler.runCurrent()
         assertEquals(0, repository.syncStatus.value.pendingMutationCount)
         assertNull(withTimeoutOrNull(10.seconds) { failures.reported.first() })
+    }
+
+    @Test
+    fun a_waiting_change_is_a_row_and_discard_drops_it() = runTest {
+        // Given — a task written offline
+        val repository = repositoryFixture(online = false).repository
+        val viewModel = syncViewModel(repository)
+        repository.addTask("Second thoughts", notes = null)
+        val change = viewModel.ready { it.waiting.isNotEmpty() }.waiting.single()
+        assertEquals("Second thoughts", change.taskTitle)
+
+        // When
+        viewModel.discard(change)
+
+        // Then
+        viewModel.ready { it.waiting.isEmpty() && it.status.pendingMutationCount == 0 }
+    }
+
+    @Test
+    fun the_server_section_reads_the_counts_and_offline_says_why_not() = runTest {
+        // Given
+        val fixture = repositoryFixture(seedSampleTasks = true)
+        val viewModel = syncViewModel(fixture.repository)
+        fixture.repository.awaitServerTasks()
+
+        // When
+        viewModel.askServer()
+
+        // Then
+        val counts = viewModel.ready { it.serverCounts is ServerAnswer.Answered }.serverCounts
+        assertEquals(5, assertIs<ServerAnswer.Answered<ServerCounts>>(counts).value.total)
+
+        // When — offline
+        fixture.repository.setNetworkEnabled(false)
+        viewModel.askServer()
+
+        // Then — the failure is the answer, said in place
+        viewModel.ready { it.serverCounts is ServerAnswer.Failed }
     }
 
     @Test

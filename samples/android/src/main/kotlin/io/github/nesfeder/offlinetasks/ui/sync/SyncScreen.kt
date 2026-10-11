@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.offlinetasks.ui.sync
 
-import android.text.format.DateUtils
+import android.content.res.Resources
+import android.text.format.Formatter
 import androidx.annotation.DrawableRes
 import androidx.annotation.StringRes
 import androidx.compose.foundation.layout.Arrangement
@@ -36,6 +37,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.pluralStringResource
@@ -45,13 +47,24 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import io.github.nesfeder.offlinetasks.R
 import io.github.nesfeder.offlinetasks.data.AppNetworkStatus
+import io.github.nesfeder.offlinetasks.data.BucketListing
+import io.github.nesfeder.offlinetasks.data.LiveUpdatesStatus
 import io.github.nesfeder.offlinetasks.data.RejectedTaskMutation
+import io.github.nesfeder.offlinetasks.data.ServerCounts
+import io.github.nesfeder.offlinetasks.data.SyncStoppedException
+import io.github.nesfeder.offlinetasks.data.Tables
+import io.github.nesfeder.offlinetasks.data.TaskMutationOperation
+import io.github.nesfeder.offlinetasks.data.TaskMutationOutcome
 import io.github.nesfeder.offlinetasks.data.TaskRefreshState
+import io.github.nesfeder.offlinetasks.data.WaitingChange
 import io.github.nesfeder.offlinetasks.platform.SessionState
 import io.github.nesfeder.offlinetasks.ui.components.segmentedScreenAppBarColors
 import io.github.nesfeder.offlinetasks.ui.feedback.AppSnackbarHost
+import io.github.nesfeder.offlinetasks.ui.feedback.failureMessage
 import io.github.nesfeder.offlinetasks.ui.feedback.refusalReason
+import io.github.nesfeder.offlinetasks.ui.feedback.syncStoppedReason
 import io.github.nesfeder.offlinetasks.ui.status.RollingText
+import io.github.nesfeder.offlinetasks.ui.status.relativeTime
 
 /** The Sync destination: the screen wired to its ViewModel. */
 @Composable
@@ -65,9 +78,14 @@ fun SyncRoute(viewModel: SyncViewModel = viewModel(factory = SyncViewModel.Facto
                 onSyncNow = viewModel::syncNow,
                 onDismiss = viewModel::dismiss,
                 onRetry = viewModel::retry,
-                onQueueInvalidTitle = viewModel::queueInvalidTitle,
                 onClearLocalData = viewModel::clearLocalData,
                 onStartOver = viewModel::startOver,
+                onPreferFreshData = viewModel::setPreferFreshData,
+                onLiveUpdates = viewModel::setLiveUpdates,
+                onDiscard = viewModel::discard,
+                onAskServer = viewModel::askServer,
+                onListBucket = viewModel::listBucket,
+                onTryIt = viewModel::tryIt,
             ),
     )
 }
@@ -78,9 +96,14 @@ class SyncActions(
     val onSyncNow: () -> Unit,
     val onDismiss: (RejectedTaskMutation) -> Unit,
     val onRetry: (RejectedTaskMutation) -> Unit,
-    val onQueueInvalidTitle: () -> Unit,
     val onClearLocalData: () -> Unit,
     val onStartOver: () -> Unit,
+    val onPreferFreshData: (Boolean) -> Unit = {},
+    val onLiveUpdates: (Boolean) -> Unit = {},
+    val onDiscard: (WaitingChange) -> Unit = {},
+    val onAskServer: () -> Unit = {},
+    val onListBucket: (offset: Int) -> Unit = {},
+    val onTryIt: (TryIt) -> Unit = {},
 )
 
 /** A step that throws away data, waiting for the user to confirm it. */
@@ -91,8 +114,8 @@ private enum class Confirmation {
 
 /**
  * The library's offline state made visible: the network with a switch to simulate losing it, the
- * writes waiting per table with "Sync now", the list's refresh state, refused writes, and the two
- * ways to start again, each behind a confirmation.
+ * two settings, the waiting writes with "Sync now", the list's refresh state, refused writes, what
+ * the server says, the bucket, the Try it actions, and the two ways to start again.
  */
 @Composable
 fun SyncScreen(state: SyncUiState, actions: SyncActions, modifier: Modifier = Modifier) {
@@ -118,9 +141,12 @@ fun SyncScreen(state: SyncUiState, actions: SyncActions, modifier: Modifier = Mo
             verticalArrangement = Arrangement.spacedBy(ListItemDefaults.SegmentedGap),
         ) {
             connectionGroup(ready, actions)
+            settingsGroup(ready, actions)
             queueGroup(ready, actions)
             refreshGroup(ready)
             rejectedGroup(ready, actions)
+            serverGroup(ready, actions)
+            storageGroup(ready, actions)
             developerGroup(ready, actions)
             localDataGroup(onConfirm = { confirming = it })
             aboutGroup(ready)
@@ -160,27 +186,53 @@ private fun LazyListScope.connectionGroup(state: SyncUiState.Ready, actions: Syn
     }
     item(key = "simulate-offline") {
         val simulating = state.status.network == AppNetworkStatus.Disabled
-        SegmentedListItem(
+        SwitchRow(
+            index = 1,
+            count = 2,
+            icon = R.drawable.ic_wifi_off,
             checked = simulating,
             onCheckedChange = actions.onSimulateOffline,
-            shapes = ListItemDefaults.segmentedShapes(index = 1, count = 2),
-            leadingContent = { Icon(painterResource(R.drawable.ic_wifi_off), null) },
-            trailingContent = { Switch(checked = simulating, onCheckedChange = null) },
-            supportingContent = { Text(stringResource(R.string.sync_simulate_offline_body)) },
-        ) {
-            Text(stringResource(R.string.sync_simulate_offline))
-        }
+            headline = stringResource(R.string.sync_simulate_offline),
+            supporting = stringResource(R.string.sync_simulate_offline_body),
+        )
+    }
+}
+
+private fun LazyListScope.settingsGroup(state: SyncUiState.Ready, actions: SyncActions) {
+    groupTitle("settings", R.string.sync_settings)
+    item(key = "prefer-fresh-data") {
+        SwitchRow(
+            index = 0,
+            count = 2,
+            icon = R.drawable.ic_refresh,
+            checked = state.settings.preferFreshData,
+            onCheckedChange = actions.onPreferFreshData,
+            headline = stringResource(R.string.sync_prefer_fresh_data),
+            supporting = stringResource(R.string.sync_prefer_fresh_data_body),
+        )
+    }
+    item(key = "live-updates") {
+        SwitchRow(
+            index = 1,
+            count = 2,
+            icon = R.drawable.ic_cloud_sync,
+            checked = state.settings.liveUpdates,
+            onCheckedChange = actions.onLiveUpdates,
+            headline = stringResource(R.string.sync_live_updates),
+            supporting = stringResource(state.liveUpdates.description),
+        )
     }
 }
 
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 private fun LazyListScope.queueGroup(state: SyncUiState.Ready, actions: SyncActions) {
     groupTitle("queue", R.string.sync_queue)
+    val rows = state.waiting.size + 1
     item(key = "pending") {
         val pending = state.status.pendingMutationCount
         val canSync = state.status.network == AppNetworkStatus.Online
         SegmentedListItem(
-            shapes = ListItemDefaults.segmentedShapes(index = 0, count = 1),
+            shapes = ListItemDefaults.segmentedShapes(index = 0, count = rows),
             leadingContent = { Icon(painterResource(R.drawable.ic_cloud_upload), null) },
             supportingContent = {
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -199,6 +251,8 @@ private fun LazyListScope.queueGroup(state: SyncUiState.Ready, actions: SyncActi
                                 report.syncedCount,
                                 report.rejected.size,
                                 report.remainingCount,
+                                report.alreadyOnServerCount,
+                                report.heldBehindOtherTablesCount,
                             )
                         )
                     }
@@ -228,6 +282,21 @@ private fun LazyListScope.queueGroup(state: SyncUiState.Ready, actions: SyncActi
                 count = pending,
                 style = MaterialTheme.typography.titleMedium,
             )
+        }
+    }
+    state.waiting.forEachIndexed { index, change ->
+        item(key = "waiting-${change.id}") {
+            SegmentedListItem(
+                shapes = ListItemDefaults.segmentedShapes(index = index + 1, count = rows),
+                trailingContent = {
+                    TextButton(onClick = { actions.onDiscard(change) }) {
+                        Text(stringResource(R.string.action_discard))
+                    }
+                },
+                supportingContent = { Text(relativeTime(change.createdAt)) },
+            ) {
+                Text(waitingChangeText(LocalResources.current, change))
+            }
         }
     }
 }
@@ -268,80 +337,292 @@ private fun LazyListScope.rejectedGroup(state: SyncUiState.Ready, actions: SyncA
     }
     state.rejected.forEachIndexed { index, rejection ->
         item(key = "rejected-${rejection.id}") {
-            SegmentedListItem(
-                shapes = ListItemDefaults.segmentedShapes(index, state.rejected.size),
-                leadingContent = {
-                    Icon(
-                        painterResource(R.drawable.ic_report),
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.error,
-                    )
-                },
-                supportingContent = {
-                    Column {
-                        Text(
-                            rejection.serverError?.let { refusalReason(LocalResources.current, it) }
-                                ?: rejection.message
-                        )
-                        // The server's own answer, as the library keeps it for each refusal.
-                        rejection.serverError?.let { error ->
-                            Text(
-                                text =
-                                    stringResource(
-                                        R.string.sync_rejected_server_answer,
-                                        error.status,
-                                        error.code.orEmpty(),
-                                    ),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            TextButton(onClick = { actions.onRetry(rejection) }) {
-                                Text(stringResource(R.string.action_retry))
-                            }
-                            TextButton(onClick = { actions.onDismiss(rejection) }) {
-                                Text(stringResource(R.string.action_dismiss))
-                            }
-                        }
-                    }
-                },
-            ) {
+            RejectedRow(rejection, index, state.rejected.size, actions)
+        }
+    }
+}
+
+/** A refused write: why, when it was made and refused, its rows, Retry and Dismiss. */
+@Composable
+private fun RejectedRow(
+    rejection: RejectedTaskMutation,
+    index: Int,
+    count: Int,
+    actions: SyncActions,
+) {
+    SegmentedListItem(
+        shapes = ListItemDefaults.segmentedShapes(index, count),
+        leadingContent = {
+            Icon(
+                painterResource(R.drawable.ic_report),
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.error,
+            )
+        },
+        supportingContent = {
+            Column {
                 Text(
+                    rejection.serverError?.let { refusalReason(LocalResources.current, it) }
+                        ?: rejection.message
+                )
+                // The server's own answer, as the library keeps it for each refusal.
+                rejection.serverError?.let { error ->
+                    SmallText(
+                        stringResource(
+                            R.string.sync_rejected_server_answer,
+                            error.status,
+                            error.code.orEmpty(),
+                        )
+                    )
+                }
+                SmallText(
                     stringResource(
-                        R.string.sync_rejected_item,
-                        rejection.taskTitle?.takeIf { it.isNotBlank() }
-                            ?: stringResource(R.string.task_untitled),
+                        R.string.sync_rejected_times,
+                        relativeTime(rejection.createdAt),
+                        relativeTime(rejection.rejectedAt),
                     )
                 )
+                if (rejection.rowKeys.isNotEmpty()) {
+                    SmallText(
+                        stringResource(
+                            R.string.sync_rejected_rows,
+                            rejection.rowKeys.joinToString(),
+                        )
+                    )
+                }
+                if (!rejection.isRetryable) {
+                    SmallText(stringResource(R.string.sync_rejected_not_retryable))
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TextButton(
+                        onClick = { actions.onRetry(rejection) },
+                        enabled = rejection.isRetryable,
+                    ) {
+                        Text(stringResource(R.string.action_retry))
+                    }
+                    TextButton(onClick = { actions.onDismiss(rejection) }) {
+                        Text(stringResource(R.string.action_dismiss))
+                    }
+                }
             }
+        },
+    ) {
+        Text(
+            stringResource(
+                R.string.sync_rejected_item,
+                rejection.taskTitle?.takeIf { it.isNotBlank() }
+                    ?: stringResource(R.string.task_untitled),
+            )
+        )
+    }
+}
+
+private fun LazyListScope.serverGroup(state: SyncUiState.Ready, actions: SyncActions) {
+    groupTitle("server", R.string.sync_server)
+    item(key = "server-counts") {
+        val answer = state.serverCounts
+        ActionRow(
+            index = 0,
+            count = 1,
+            icon = R.drawable.ic_cloud_sync,
+            headline = serverCountsText(answer),
+            supporting = stringResource(R.string.sync_server_body),
+            action = stringResource(R.string.sync_server_ask),
+            enabled = state.session == SessionState.SignedIn && answer != ServerAnswer.Asking,
+            onAction = actions.onAskServer,
+        )
+    }
+}
+
+@Composable
+private fun serverCountsText(answer: ServerAnswer<ServerCounts>): String =
+    when (answer) {
+        ServerAnswer.NotAsked -> stringResource(R.string.sync_server_not_asked)
+        ServerAnswer.Asking -> stringResource(R.string.sync_server_asking)
+        is ServerAnswer.Answered ->
+            stringResource(
+                R.string.sync_server_counts,
+                answer.value.done,
+                answer.value.total,
+                answer.value.doneThisWeek,
+            )
+        is ServerAnswer.Failed -> failureMessage(LocalResources.current, answer.failure)
+    }
+
+private fun LazyListScope.storageGroup(state: SyncUiState.Ready, actions: SyncActions) {
+    groupTitle("storage", R.string.sync_storage)
+    val listing = (state.bucket as? ServerAnswer.Answered)?.value
+    item(key = "bucket") {
+        ActionRow(
+            index = 0,
+            count = 2,
+            icon = R.drawable.ic_photo_library,
+            headline = bucketText(state.bucket),
+            supporting = stringResource(R.string.sync_storage_body),
+            action =
+                stringResource(
+                    if (listing?.hasMore == true) R.string.sync_storage_more
+                    else R.string.sync_storage_list
+                ),
+            enabled = state.session == SessionState.SignedIn && state.bucket != ServerAnswer.Asking,
+            onAction = { actions.onListBucket(nextOffsetOf(state.bucket)) },
+        )
+    }
+    item(key = "signed-upload") {
+        TryItRow(
+            index = 1,
+            count = 2,
+            action = TryIt.SignedUpload,
+            state = state,
+            actions = actions,
+        )
+    }
+}
+
+/** Where the next page of folders starts: after this one when it has more, else from the top. */
+private fun nextOffsetOf(answer: ServerAnswer<BucketListing>): Int {
+    val listing = (answer as? ServerAnswer.Answered)?.value ?: return 0
+    return if (listing.hasMore) listing.nextOffset else 0
+}
+
+@Composable
+private fun bucketText(answer: ServerAnswer<BucketListing>): String {
+    val context = LocalContext.current
+    return when (answer) {
+        ServerAnswer.NotAsked -> stringResource(R.string.sync_storage_not_asked)
+        ServerAnswer.Asking -> stringResource(R.string.sync_server_asking)
+        is ServerAnswer.Answered -> {
+            val files = answer.value.folders.flatMap { it.files }
+            val bytes = files.sumOf { it.sizeBytes ?: 0L }
+            val newest = files.mapNotNull { it.createdAt }.maxOrNull()
+            stringResource(
+                R.string.sync_storage_listing,
+                pluralStringResource(R.plurals.sync_storage_files, files.size, files.size),
+                pluralStringResource(
+                    R.plurals.sync_storage_folders,
+                    answer.value.folders.size,
+                    answer.value.folders.size,
+                ),
+                Formatter.formatShortFileSize(context, bytes),
+                newest?.let { relativeTime(it) } ?: stringResource(R.string.sync_storage_none),
+            )
         }
+        is ServerAnswer.Failed -> failureMessage(LocalResources.current, answer.failure)
     }
 }
 
 private fun LazyListScope.developerGroup(state: SyncUiState.Ready, actions: SyncActions) {
     groupTitle("developer", R.string.sync_developer)
-    item(key = "queue-invalid") {
-        // A task needs its user, so before the first sign-in there is nothing to queue.
-        val signedIn = state.session == SessionState.SignedIn
-        SegmentedListItem(
-            onClick = actions.onQueueInvalidTitle,
-            shapes = ListItemDefaults.segmentedShapes(index = 0, count = 1),
-            enabled = signedIn,
-            leadingContent = { Icon(painterResource(R.drawable.ic_science), null) },
-            supportingContent = {
-                Text(
-                    stringResource(
-                        if (signedIn) R.string.sync_queue_invalid_body
-                        else R.string.sync_queue_invalid_no_session
-                    )
-                )
-            },
-        ) {
-            Text(stringResource(R.string.sync_queue_invalid))
+    val items =
+        listOf(
+            TryIt.InvalidTitle,
+            TryIt.SampleTasks,
+            TryIt.StarterList,
+            TryIt.GroupedDelete,
+            TryIt.TwoFilters,
+            TryIt.CountOpen,
+        )
+    items.forEachIndexed { index, action ->
+        item(key = "try-${action.name}") {
+            TryItRow(
+                index = index,
+                count = items.size,
+                action = action,
+                state = state,
+                actions = actions,
+            )
         }
     }
 }
+
+/** One Try it action: what it calls, and what it did last time, in a line. */
+@Composable
+private fun TryItRow(
+    index: Int,
+    count: Int,
+    action: TryIt,
+    state: SyncUiState.Ready,
+    actions: SyncActions,
+) {
+    // Every action needs its user, so before the first sign-in there is nothing to try.
+    val signedIn = state.session == SessionState.SignedIn
+    val offline =
+        state.status.network.let {
+            it == AppNetworkStatus.Offline || it == AppNetworkStatus.Disabled
+        }
+    // The grouped delete is about being offline: online it would delete this week's done tasks.
+    val enabled =
+        signedIn &&
+            state.tryIt[action] != TryItResult.Running &&
+            (action != TryIt.GroupedDelete || offline)
+    val result = state.tryIt[action]
+    SegmentedListItem(
+        onClick = { actions.onTryIt(action) },
+        shapes = ListItemDefaults.segmentedShapes(index = index, count = count),
+        enabled = enabled,
+        leadingContent = { Icon(painterResource(R.drawable.ic_science), null) },
+        supportingContent = {
+            Column {
+                Text(
+                    when {
+                        !signedIn -> stringResource(R.string.sync_queue_invalid_no_session)
+                        action == TryIt.GroupedDelete && !offline ->
+                            stringResource(R.string.try_grouped_delete_online)
+                        else -> stringResource(action.body)
+                    }
+                )
+                result?.let { SmallText(tryItResultText(action, it)) }
+            }
+        },
+    ) {
+        Text(stringResource(action.title))
+    }
+}
+
+/** What a Try it action did, in one line. */
+@Composable
+private fun tryItResultText(action: TryIt, result: TryItResult): String =
+    when (result) {
+        TryItResult.Running -> stringResource(R.string.try_running)
+        is TryItResult.Written ->
+            when (result.outcome) {
+                TaskMutationOutcome.Applied -> stringResource(R.string.try_applied)
+                is TaskMutationOutcome.Queued -> stringResource(R.string.try_queued)
+            }
+        is TryItResult.Counted ->
+            pluralStringResource(R.plurals.try_counted_open, result.count, result.count)
+        TryItResult.Done ->
+            stringResource(
+                if (action == TryIt.SignedUpload) R.string.try_signed_upload_done
+                else R.string.try_done
+            )
+        TryItResult.NothingToDo -> stringResource(R.string.try_signed_upload_nothing)
+        is TryItResult.Failed -> failureMessage(LocalResources.current, result.failure)
+    }
+
+private val TryIt.title: Int
+    get() =
+        when (this) {
+            TryIt.InvalidTitle -> R.string.sync_queue_invalid
+            TryIt.SampleTasks -> R.string.try_sample_tasks
+            TryIt.StarterList -> R.string.try_starter_list
+            TryIt.GroupedDelete -> R.string.try_grouped_delete
+            TryIt.TwoFilters -> R.string.try_two_filters
+            TryIt.CountOpen -> R.string.try_count_open
+            TryIt.SignedUpload -> R.string.try_signed_upload
+        }
+
+private val TryIt.body: Int
+    get() =
+        when (this) {
+            TryIt.InvalidTitle -> R.string.sync_queue_invalid_body
+            TryIt.SampleTasks -> R.string.try_sample_tasks_body
+            TryIt.StarterList -> R.string.try_starter_list_body
+            TryIt.GroupedDelete -> R.string.try_grouped_delete_body
+            TryIt.TwoFilters -> R.string.try_two_filters_body
+            TryIt.CountOpen -> R.string.try_count_open_body
+            TryIt.SignedUpload -> R.string.try_signed_upload_body
+        }
 
 private fun LazyListScope.localDataGroup(onConfirm: (Confirmation) -> Unit) {
     groupTitle("local-data", R.string.sync_local_data)
@@ -417,22 +698,99 @@ private fun InfoRow(
     }
 }
 
+/** A row with a switch: the whole row toggles it. */
+@Composable
+private fun SwitchRow(
+    index: Int,
+    count: Int,
+    @DrawableRes icon: Int,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+    headline: String,
+    supporting: String,
+) {
+    SegmentedListItem(
+        checked = checked,
+        onCheckedChange = onCheckedChange,
+        shapes = ListItemDefaults.segmentedShapes(index = index, count = count),
+        leadingContent = { Icon(painterResource(icon), null) },
+        trailingContent = { Switch(checked = checked, onCheckedChange = null) },
+        supportingContent = { Text(supporting) },
+    ) {
+        Text(headline)
+    }
+}
+
+/** A row with one button: the headline says what the last press found. */
+@Composable
+private fun ActionRow(
+    index: Int,
+    count: Int,
+    @DrawableRes icon: Int,
+    headline: String,
+    supporting: String,
+    action: String,
+    enabled: Boolean,
+    onAction: () -> Unit,
+) {
+    SegmentedListItem(
+        shapes = ListItemDefaults.segmentedShapes(index = index, count = count),
+        leadingContent = { Icon(painterResource(icon), null) },
+        supportingContent = {
+            Column {
+                Text(supporting)
+                TextButton(onClick = onAction, enabled = enabled) { Text(action) }
+            }
+        },
+    ) {
+        Text(headline)
+    }
+}
+
+/** A line of detail, smaller and quieter than the text above it. */
+@Composable
+private fun SmallText(text: String) {
+    Text(
+        text = text,
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+}
+
 @Composable
 private fun lastSyncText(state: SyncUiState.Ready): String {
     val error = state.status.lastSyncError
     val syncedAt = state.status.lastSyncedAt
     return when {
+        error is SyncStoppedException -> syncStoppedReason(LocalResources.current, error)
         error != null -> stringResource(R.string.sync_last_stopped)
-        syncedAt != null ->
-            stringResource(
-                R.string.sync_last_synced,
-                DateUtils.getRelativeTimeSpanString(
-                    syncedAt.toEpochMilliseconds(),
-                    System.currentTimeMillis(),
-                    DateUtils.SECOND_IN_MILLIS,
-                ),
-            )
+        syncedAt != null -> stringResource(R.string.sync_last_synced, relativeTime(syncedAt))
         else -> stringResource(R.string.sync_never_synced)
+    }
+}
+
+/** A waiting write in words: "Added “Buy milk”", "Deleted a photo". */
+private fun waitingChangeText(resources: Resources, change: WaitingChange): String {
+    val title =
+        change.taskTitle?.takeIf { it.isNotBlank() } ?: resources.getString(R.string.task_untitled)
+    return when {
+        change.table == Tables.TASK_PHOTOS ->
+            resources.getString(
+                when (change.operation) {
+                    TaskMutationOperation.Insert,
+                    TaskMutationOperation.Upsert -> R.string.waiting_photo_added
+                    TaskMutationOperation.Update -> R.string.waiting_photo_moved
+                    TaskMutationOperation.Delete -> R.string.waiting_photo_deleted
+                }
+            )
+        change.operation == TaskMutationOperation.Delete ->
+            resources.getString(R.string.waiting_task_deleted)
+        // An update that sets no title, such as the done switch's, says which change it was not.
+        change.operation == TaskMutationOperation.Update && change.taskTitle == null ->
+            resources.getString(R.string.waiting_task_changed)
+        change.operation == TaskMutationOperation.Update ->
+            resources.getString(R.string.waiting_task_edited, title)
+        else -> resources.getString(R.string.waiting_task_added, title)
     }
 }
 
@@ -480,6 +838,16 @@ private val AppNetworkStatus.description: Int
             AppNetworkStatus.Online -> R.string.network_online_body
             AppNetworkStatus.Offline -> R.string.network_offline_body
             AppNetworkStatus.Disabled -> R.string.network_disabled_body
+        }
+
+private val LiveUpdatesStatus.description: Int
+    get() =
+        when (this) {
+            LiveUpdatesStatus.Off -> R.string.live_updates_off
+            LiveUpdatesStatus.Paused -> R.string.live_updates_paused
+            LiveUpdatesStatus.Connecting -> R.string.live_updates_connecting
+            LiveUpdatesStatus.Connected -> R.string.live_updates_connected
+            LiveUpdatesStatus.Failed -> R.string.live_updates_failed
         }
 
 /** The icon and the text of the Task list row for [refresh]. */

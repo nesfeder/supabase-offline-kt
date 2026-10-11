@@ -3,22 +3,32 @@
 package io.github.nesfeder.offlinetasks.data.supabase
 
 import io.github.jan.supabase.SupabaseClient
+import io.github.jan.supabase.realtime.PostgresAction
+import io.github.jan.supabase.serializer.KotlinXSerializer
 import io.github.nesfeder.offlinetasks.data.AppNetworkStatus
 import io.github.nesfeder.offlinetasks.data.EncodedPhoto
+import io.github.nesfeder.offlinetasks.data.InvalidRequestException
+import io.github.nesfeder.offlinetasks.data.LiveUpdatesStatus
+import io.github.nesfeder.offlinetasks.data.NetworkSwitchedOffException
 import io.github.nesfeder.offlinetasks.data.NetworkUnavailableException
+import io.github.nesfeder.offlinetasks.data.NewTaskOutcome
 import io.github.nesfeder.offlinetasks.data.PhotoUpload
 import io.github.nesfeder.offlinetasks.data.RowsSnapshot
 import io.github.nesfeder.offlinetasks.data.ServerUnreachableException
 import io.github.nesfeder.offlinetasks.data.Tables
 import io.github.nesfeder.offlinetasks.data.Task
+import io.github.nesfeder.offlinetasks.data.TaskFilter
 import io.github.nesfeder.offlinetasks.data.TaskListSnapshot
 import io.github.nesfeder.offlinetasks.data.TaskMutationOperation
 import io.github.nesfeder.offlinetasks.data.TaskMutationOutcome
+import io.github.nesfeder.offlinetasks.data.TaskQuery
 import io.github.nesfeder.offlinetasks.data.TaskRefreshState
 import io.github.nesfeder.offlinetasks.data.TaskWriteRefusedException
+import io.github.nesfeder.offlinetasks.data.WriteNeedsConnectionException
 import io.github.nesfeder.offlinetasks.testing.FakeSteppingClock
 import io.github.nesfeder.offlinetasks.testing.FakeSupabaseServer
 import io.github.nesfeder.offlinetasks.testing.FakeUserSession
+import io.github.nesfeder.supabase.offline.NetworkStatus
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
@@ -26,8 +36,10 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlin.time.Clock
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -74,8 +86,9 @@ class OfflineTaskRepositoryTest {
         // When
         val outcome = repository.addTask("Water the tomatoes", notes = null)
 
-        // Then — sent at once: the server has the row as the app made it
-        assertEquals(TaskMutationOutcome.Applied, outcome)
+        // Then — sent at once: the server has the row as the app made it, and answered with it
+        val saved = assertIs<NewTaskOutcome.Saved>(outcome).task
+        assertEquals("Water the tomatoes", saved.title)
         val row = server.rows(Tables.TASKS).single()
         assertEquals(FakeUserSession.FIRST_USER_ID, row["user_id"]?.jsonPrimitive?.content)
         assertEquals("2026-10-01T09:00:00Z", row["created_at"]?.jsonPrimitive?.content)
@@ -84,6 +97,7 @@ class OfflineTaskRepositoryTest {
         assertFalse(task.hasPendingMutations)
     }
 
+    // --8<-- [start:offline-test]
     @Test
     fun a_task_added_offline_is_listed_at_once_marked_pending_and_sent_on_reconnect() = runTest {
         // Given — the list loaded, then the network switched off
@@ -95,7 +109,7 @@ class OfflineTaskRepositoryTest {
         val outcome = repository.addTask("Newer, made offline", notes = null)
 
         // Then — queued, shown first and marked; nothing reached the server
-        assertIs<TaskMutationOutcome.Queued>(outcome)
+        assertEquals(NewTaskOutcome.SavedOnDevice, outcome)
         val shown = repository.tasks().awaitValue { it.size == 2 }
         assertEquals("Newer, made offline", shown.first().title)
         assertTrue(shown.first().hasPendingMutations)
@@ -110,6 +124,205 @@ class OfflineTaskRepositoryTest {
         repository.tasks().awaitValue { tasks ->
             tasks.size == 2 && tasks.none { it.hasPendingMutations }
         }
+    }
+
+    // --8<-- [end:offline-test]
+
+    @Test
+    fun a_task_that_needs_a_connection_is_listed_at_once_when_it_is_saved() = runTest {
+        // Given — the list read once
+        repository.tasks().awaitValue { it.isEmpty() }
+
+        // When — sent now or never, which the library does not patch into its cache
+        repository.addTask("Call the plumber", notes = null, needsConnection = true)
+
+        // Then — the device's copy has the stored row, with nothing fetched again
+        assertEquals("Call the plumber", repository.cachedTasks()?.singleOrNull()?.title)
+    }
+
+    @Test
+    fun a_task_that_needs_a_connection_is_refused_offline_and_never_queued() = runTest {
+        // Given
+        repository.setNetworkEnabled(false)
+
+        // When / Then — online only: nothing waits in the queue
+        assertFailsWith<NetworkSwitchedOffException> {
+            repository.addTask("Now or never", notes = null, needsConnection = true)
+        }
+        assertEquals(0, repository.pendingMutationCountNow())
+    }
+
+    @Test
+    fun five_sample_tasks_reach_the_server_in_one_write() = runTest {
+        // When
+        val outcome = repository.addSampleTasks()
+
+        // Then
+        assertEquals(TaskMutationOutcome.Applied, outcome)
+        assertEquals(5, server.rows(Tables.TASKS).size)
+        assertEquals(1, server.requests.count { it == "POST /rest/v1/tasks" })
+    }
+
+    @Test
+    fun the_starter_list_imported_twice_changes_nothing() = runTest {
+        // Given
+        repository.importStarterList()
+        val first = server.rows(Tables.TASKS).map { it["id"] }.toSet()
+
+        // When
+        repository.importStarterList()
+
+        // Then — the same rows, once each
+        assertEquals(first, server.rows(Tables.TASKS).map { it["id"] }.toSet())
+        assertEquals(first.size, server.rows(Tables.TASKS).size)
+    }
+
+    @Test
+    fun a_grouped_delete_offline_is_refused_and_nothing_is_queued() = runTest {
+        // Given
+        repository.setNetworkEnabled(false)
+
+        // When / Then — the queue cannot hold a group, and the library says so
+        val refused =
+            assertFailsWith<WriteNeedsConnectionException> {
+                repository.deleteThisWeeksDoneTasks()
+            }
+        assertTrue(refused.libraryMessage.isNotBlank())
+        assertEquals(0, repository.pendingMutationCountNow())
+    }
+
+    @Test
+    fun two_filters_on_one_column_are_refused_before_anything_is_sent() = runTest {
+        // Given
+        val sentBefore = server.requests.size
+
+        // When / Then
+        assertFailsWith<InvalidRequestException> { repository.readWithTwoFiltersOnOneColumn() }
+        assertEquals(sentBefore, server.requests.size)
+    }
+
+    @Test
+    fun mark_all_done_runs_the_database_function_on_the_server() = runTest {
+        // Given
+        repository.addSampleTasks()
+
+        // When
+        val changed = repository.markAllDone()
+
+        // Then
+        assertEquals(5, changed)
+        assertTrue(server.rows(Tables.TASKS).all { it["done"]?.jsonPrimitive?.content == "true" })
+    }
+
+    @Test
+    fun a_discarded_change_is_never_sent() = runTest {
+        // Given — a task made offline
+        repository.setNetworkEnabled(false)
+        repository.addTask("Thrown away", notes = null)
+        val change =
+            withTimeout(WAIT) { repository.waitingChanges().first { it.isNotEmpty() } }.single()
+        assertEquals("Thrown away", change.taskTitle)
+
+        // When
+        repository.discardWaitingChange(change.id)
+        repository.setNetworkEnabled(true)
+        repository.syncPendingMutations()
+
+        // Then
+        assertTrue(server.rows(Tables.TASKS).isEmpty())
+    }
+
+    @Test
+    fun pull_to_refresh_offline_answers_from_the_device_and_says_so() = runTest {
+        // Given — the list fetched once
+        repository.addTask("Fetched", notes = null)
+        assertFalse(repository.refreshTasks().isFromCache)
+        repository.setNetworkEnabled(false)
+
+        // When
+        val provenance = repository.refreshTasks()
+
+        // Then
+        assertTrue(provenance.isFromCache)
+        assertNotNull(provenance.fetchedAt)
+    }
+
+    @Test
+    fun pull_to_refresh_reads_again_the_query_the_screen_shows() = runTest {
+        // Given — the open tasks read once, then one more added on another device
+        val open = TaskQuery(TaskFilter.Open)
+        server.insertRow(Tables.TASKS, serverOnlyTask("From before"))
+        repository.tasks(open).awaitValue { it.size == 1 }
+        server.insertRow(Tables.TASKS, serverOnlyTask("From elsewhere", id = OTHER_TASK_ID))
+
+        // When
+        repository.refreshTasks(open)
+
+        // Then — the device's copy of that query has both, with nothing asked of the server
+        repository.setNetworkEnabled(false)
+        assertEquals(2, repository.tasks(open).first().value?.size)
+    }
+
+    @Test
+    fun a_live_read_that_fails_fails_in_the_apps_terms() = runTest {
+        // Given — Prefer fresh data on, and the network switched off before the open tasks were
+        // ever read, so the device has nothing to fall back on
+        repository.setPreferFreshData(true)
+        repository.setNetworkEnabled(false)
+
+        // When / Then — the app's own failure, which has a sentence of its own on screen
+        assertFailsWith<NetworkSwitchedOffException> {
+            repository.tasks(TaskQuery(TaskFilter.Open)).first()
+        }
+    }
+
+    @Test
+    fun live_updates_pause_while_the_network_is_down_so_a_failed_channel_starts_again() {
+        // A change of the wanted state restarts the channel, so the network's return restarts it.
+        assertEquals(
+            LiveUpdatesStatus.Paused,
+            liveUpdatesWanted(switchedOn = true, signedIn = true, NetworkStatus.OFFLINE),
+        )
+        assertEquals(
+            LiveUpdatesStatus.Paused,
+            liveUpdatesWanted(switchedOn = true, signedIn = true, NetworkStatus.DISABLED),
+        )
+        assertEquals(
+            LiveUpdatesStatus.Connecting,
+            liveUpdatesWanted(switchedOn = true, signedIn = true, NetworkStatus.ONLINE),
+        )
+        assertEquals(
+            LiveUpdatesStatus.Paused,
+            liveUpdatesWanted(switchedOn = true, signedIn = false, NetworkStatus.ONLINE),
+        )
+        assertEquals(
+            LiveUpdatesStatus.Off,
+            liveUpdatesWanted(switchedOn = false, signedIn = true, NetworkStatus.ONLINE),
+        )
+    }
+
+    @Test
+    fun another_devices_change_is_applied_to_the_open_list() = runTest {
+        // Given — the list read once, then the network switched off, so no refresh can run
+        repository.tasks().awaitValue { it.isEmpty() }
+        repository.setNetworkEnabled(false)
+        val updates = LiveUpdates(supabase)
+        val row = serverOnlyTask("From elsewhere")
+
+        // When — Realtime reports a row inserted elsewhere
+        updates.applyTaskChange(PostgresAction.Insert(row, emptyList(), now(), KotlinXSerializer()))
+
+        // Then — the device's copy has it, with nothing asked of the server
+        assertEquals(
+            "From elsewhere",
+            repository.tasks().awaitValue { it.size == 1 }.single().title,
+        )
+
+        // When — and then deleted
+        updates.applyTaskChange(PostgresAction.Delete(row, emptyList(), now(), KotlinXSerializer()))
+
+        // Then
+        repository.tasks().awaitValue { it.isEmpty() }
     }
 
     @Test
@@ -423,16 +636,20 @@ class OfflineTaskRepositoryTest {
         assertTrue(server.requests.none { it.contains("/rest/v1/") })
     }
 
+    /** The time a Realtime change is stamped with; the library does not read it. */
+    private fun now() = Clock.System.now()
+
     /** A task row as the server stores it, for one the app did not make. */
-    private fun serverOnlyTask(title: String): JsonObject = buildJsonObject {
-        put("id", "00000000-0000-4000-8000-0000000000aa")
-        put("user_id", FakeUserSession.FIRST_USER_ID)
-        put("title", title)
-        put("notes", JsonNull)
-        put("done", false)
-        put("created_at", "2026-10-01T08:00:00Z")
-        put("updated_at", "2026-10-01T08:00:00Z")
-    }
+    private fun serverOnlyTask(title: String, id: String = SERVER_TASK_ID): JsonObject =
+        buildJsonObject {
+            put("id", id)
+            put("user_id", FakeUserSession.FIRST_USER_ID)
+            put("title", title)
+            put("notes", JsonNull)
+            put("done", false)
+            put("created_at", "2026-10-01T08:00:00Z")
+            put("updated_at", "2026-10-01T08:00:00Z")
+        }
 
     /** The first non-null rows of this read that [matches], within a bounded wait. */
     private suspend fun <T> Flow<RowsSnapshot<List<T>>>.awaitValue(
@@ -452,6 +669,12 @@ class OfflineTaskRepositoryTest {
 
     private companion object {
         val WAIT = 10.seconds
+
+        /** The id of a task only the server has. */
+        const val SERVER_TASK_ID = "00000000-0000-4000-8000-0000000000aa"
+
+        /** The id of a second task only the server has. */
+        const val OTHER_TASK_ID = "00000000-0000-4000-8000-0000000000ab"
 
         /** How long a read is watched to show it sends nothing. */
         val NO_REQUEST_WAIT = 1.seconds
