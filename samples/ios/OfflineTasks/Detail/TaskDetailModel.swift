@@ -137,10 +137,11 @@ final class TaskDetailModel {
         }
     }
 
-    /// Follows the task's photos.
-    func observePhotos() async {
+    /// Follows the task's photos: while Simulate offline is on (`isSimulatingOffline`), from the
+    /// device alone, never asking the server.
+    func observePhotos(isSimulatingOffline: Bool) async {
         await withDiscardingTaskGroup { group in
-            group.addTask { await self.observePhotoRows() }
+            group.addTask { await self.observePhotoRows(isSimulatingOffline: isSimulatingOffline) }
             group.addTask { await self.observePendingPhotos() }
         }
     }
@@ -219,6 +220,24 @@ final class TaskDetailModel {
         Task { await failures.perform { try await repository.deletePhoto(photo) } }
     }
 
+    /// Makes the task's copy, or brings its copy back in line with it, and says which happened.
+    func duplicate() {
+        guard let task = lookup.task else { return }
+        Task {
+            await failures.perform {
+                let outcome = try await repository.duplicateTask(task)
+                failures.announce(Wording.outcome(outcome, applied: "Copied as “\(Wording.copyTitle(of: task.title))”"))
+            }
+        }
+    }
+
+    /// Links to every photo of the task, each working for an hour; `nil` when they could not be made.
+    func shareLinks() async -> [URL]? {
+        var links: [URL]?
+        await failures.perform { links = try await repository.shareLinks(for: photos) }
+        return links
+    }
+
     // MARK: - Helpers
 
     /// Takes the device's text into the draft, where the user has not typed over it.
@@ -241,7 +260,8 @@ final class TaskDetailModel {
         }
     }
 
-    /// Saves the draft, unless it is what the device holds or its title is blank.
+    /// Saves the draft, as one typed update, unless it is what the device holds or its title is
+    /// blank.
     private func save() {
         guard !isDeleted, let stored, draftTitle != stored.title || draftNotes != stored.notes, !isTitleBlank else {
             return
@@ -252,18 +272,22 @@ final class TaskDetailModel {
         // A task of its own: an edit made just before leaving is still saved.
         Task {
             await failures.perform {
-                try await repository.updateTask(id: taskID, title: title, notes: notes.isEmpty ? nil : notes)
+                try await repository.updateTaskText(id: taskID, title: title, notes: notes.isEmpty ? nil : notes)
             }
         }
     }
 
     /// Follows every photo row the device holds; this task's are picked out.
-    private func observePhotoRows() async {
+    private func observePhotoRows(isSimulatingOffline: Bool) async {
         do {
-            for try await snapshot in repository.photoSnapshots() {
+            // --8<-- [start:sequence-cache-only]
+            // Simulate offline: the device's rows only, without a request the switch would refuse.
+            let readStrategy: SequenceReadStrategy = isSimulatingOffline ? .cacheOnly : .cacheFirstThenNetwork
+            for try await snapshot in repository.photoSnapshots(readStrategy: readStrategy) {
                 photoRows = snapshot.result ?? []
                 updatePhotos()
             }
+            // --8<-- [end:sequence-cache-only]
         } catch is CancellationError {
             return
         } catch {

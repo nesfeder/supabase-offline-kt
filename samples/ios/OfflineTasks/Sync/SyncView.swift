@@ -3,8 +3,8 @@
 import SupabaseOffline
 import SwiftUI
 
-/// The network and Simulate offline, the changes waiting, the list's refresh, the refused changes,
-/// and the two ways to start again.
+/// The network and Simulate offline, the settings, the changes waiting, the list's refresh, the
+/// refused changes, the server and the bucket, Try it, and the two ways to start again.
 struct SyncView: View {
 
     @Environment(AppModel.self) private var app
@@ -19,9 +19,12 @@ struct SyncView: View {
         ScrollViewReader { proxy in
             Form {
                 connection
-                changesWaiting
+                settings
+                waitingChanges
                 refresh
                 refusedChanges.id(Self.refusedChangesID)
+                server
+                storage
                 tryIt
                 localData
                 about
@@ -31,6 +34,7 @@ struct SyncView: View {
             }
         }
         .navigationTitle("Sync")
+        .navigationDestination(for: BucketFolder.self) { BucketBrowserView(folder: $0) }
         .disabled(app.sync.isStartingOver)
         .overlay {
             if app.sync.isStartingOver {
@@ -66,10 +70,28 @@ struct SyncView: View {
         }
     }
 
-    /// The queue, per table, and Sync now.
-    private var changesWaiting: some View {
+    /// The two switches: how the task list reads, and Realtime.
+    private var settings: some View {
+        @Bindable var app = app
+        return Section {
+            Toggle("Prefer fresh data", isOn: $app.prefersFreshData)
+                .accessibilityIdentifier("prefer-fresh-data")
+            Toggle("Live updates", isOn: $app.isLiveUpdatesOn)
+                .accessibilityIdentifier("live-updates")
+        } header: {
+            Text("Settings")
+        } footer: {
+            Text(
+                "Prefer fresh data asks the server before the task list shows anything; off, the list shows what’s saved at once and refreshes alongside. "
+                    + "Live updates applies changes made elsewhere as they happen\(app.mode.isDemo ? " (in demo mode, the stand-in server’s)" : ""). Both last until the app restarts."
+            )
+        }
+    }
+
+    /// Each change waiting, with Discard; Sync now and its report.
+    private var waitingChanges: some View {
         let status = app.syncStatus
-        return Section("Changes waiting") {
+        return Section {
             VStack(alignment: .leading, spacing: 4) {
                 Text(
                     status.pendingMutationCount == 0
@@ -83,13 +105,24 @@ struct SyncView: View {
                 Text(lastSynced(status))
                     .font(.footnote)
                     .foregroundStyle(.secondary)
-                if status.lastSyncError != nil {
-                    Text("The last sync stopped early; the rest waits for the server.")
+                if let lastSyncError = status.lastSyncError {
+                    Text(SampleFailure.sentence(for: lastSyncError))
                         .font(.footnote)
                         .foregroundStyle(.orange)
                 }
             }
             .animation(reduceMotion ? nil : .default, value: status.pendingMutationCount)
+            ForEach(app.sync.waiting) { mutation in
+                HStack {
+                    Text(Wording.waitingChange(mutation, now: .now))
+                        .font(.subheadline)
+                    Spacer()
+                    Button("Discard", role: .destructive) { app.sync.discard(mutation) }
+                        .buttonStyle(.borderless)
+                        .font(.subheadline)
+                }
+                .accessibilityIdentifier("waiting-change")
+            }
             Button(app.sync.isSyncNowRunning ? "Syncing" : "Sync now", systemImage: "arrow.triangle.2.circlepath") {
                 app.sync.syncNow()
             }
@@ -98,10 +131,15 @@ struct SyncView: View {
                 Text("Sync needs the network.").font(.footnote).foregroundStyle(.secondary)
             }
             if let report = app.sync.lastReport {
-                Text("Sent \(report.syncedCount) · refused \(report.rejected.count) · still waiting \(report.remainingCount)")
+                Text(Wording.syncReport(report))
                     .font(.footnote)
                     .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("sync-report")
             }
+        } header: {
+            Text("Waiting changes")
+        } footer: {
+            Text("Discard drops a change without sending it: the task shows again as the server last sent it.")
         }
     }
 
@@ -122,6 +160,9 @@ struct SyncView: View {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Couldn’t save “\(Wording.title(rejection.taskTitle))”").font(.headline)
                     Text(rejection.reason).font(.subheadline)
+                    Text(Wording.refusedChange(rejection))
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
                     if let serverError = rejection.serverError {
                         Text("The server answered HTTP \(serverError.status) · \(serverError.code ?? "no code")")
                             .font(.footnote)
@@ -134,6 +175,9 @@ struct SyncView: View {
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
+                    if !rejection.isRetryable {
+                        Text("It can’t be sent again as it was made.").font(.footnote).foregroundStyle(.secondary)
+                    }
                 }
                 .accessibilityIdentifier("refused-change")
             }
@@ -146,18 +190,59 @@ struct SyncView: View {
         }
     }
 
-    /// A write the server refuses, on purpose.
+    /// What the server holds, asked of it: a count and a database function.
+    private var server: some View {
+        Section {
+            if let summary = app.sync.serverSummary {
+                Text(summary).accessibilityIdentifier("server-summary")
+            }
+            Button(app.sync.isAskingServer ? "Asking…" : "Ask the server", systemImage: "server.rack") {
+                app.sync.askServer()
+            }
+            .disabled(isOffline || app.sync.isAskingServer || app.session.userID == nil)
+        } header: {
+            Text("Server")
+        } footer: {
+            Text(
+                "Counts with an exact count and the database function tasks_done_count(). Neither is ever saved on the device, so they need the network."
+            )
+        }
+    }
+
+    /// The bucket's own listing of the user's files.
+    private var storage: some View {
+        Section {
+            NavigationLink(value: BucketFolder(path: "", title: "Your folders")) {
+                Label("Browse photo files", systemImage: "folder")
+            }
+            .disabled(isOffline || app.session.userID == nil)
+        } header: {
+            Text("Storage")
+        } footer: {
+            Text("Storage’s listing of the task-photos bucket: a folder per task, a file per photo. It needs the network.")
+        }
+    }
+
+    /// One call of each kind the rest of the app does not make, each saying what happened.
     private var tryIt: some View {
         Section {
-            Button("Queue an invalid title") { app.sync.queueInvalidTitle() }
-                .disabled(app.session.userID == nil)
+            ForEach(TryItItem.allCases, id: \.self) { item in
+                VStack(alignment: .leading, spacing: 4) {
+                    Button(item.title) { app.sync.run(item, newestTaskID: app.tasks.rows?.first?.id) }
+                        .disabled(app.session.userID == nil)
+                    Text(app.sync.tryItResults[item] ?? item.call)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+                .accessibilityIdentifier("try-it")
+            }
         } header: {
             Text("Try it")
         } footer: {
             Text(
                 app.session.userID == nil
                     ? "Needs a signed-in user: the app signs in the first time it reaches the internet."
-                    : "Adds a task with a blank title. Online, the server refuses it at once; offline, when it syncs."
+                    : "Each line says which call the item makes, then what happened."
             )
         }
     }
@@ -251,6 +336,33 @@ struct SyncView: View {
         case .signingIn: return "Signing in…"
         case .signedIn: return "Signed in anonymously"
         case .failed: return "Couldn’t sign in; tries again when online"
+        }
+    }
+}
+
+extension TryItItem {
+
+    /// The item's button.
+    var title: String {
+        switch self {
+        case .invalidTitle: "Queue an invalid title"
+        case .sampleTasks: "Add five sample tasks"
+        case .starterList: "Import the starter list"
+        case .tasksWithNotes: "Count tasks with notes"
+        case .groupedDelete: "Delete last week’s done tasks"
+        case .signedUpload: "Upload through a signed URL"
+        }
+    }
+
+    /// The call it makes, shown until it has run.
+    var call: String {
+        switch self {
+        case .invalidTitle: "insert of a JSON row with a blank title: online the server refuses it at once, offline when it syncs."
+        case .sampleTasks: "insert of a list of five rows: one write, one request."
+        case .starterList: "upsert with onConflict and ignoreDuplicates: running it twice changes nothing."
+        case .tasksWithNotes: "filter(\"notes\", operator: \"not.is\", value: \"null\"), the generic filter: asks the server."
+        case .groupedDelete: "delete with gte and lt on created_at, one group the queue can’t hold: offline, refused."
+        case .signedUpload: "createSignedUploadURL, then uploadToSignedURL: a generated photo on your newest task."
         }
     }
 }

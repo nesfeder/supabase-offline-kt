@@ -18,10 +18,15 @@ struct TasksView: View {
     @State private var isAddingTask = false
 
     var body: some View {
+        @Bindable var tasks = app.tasks
         let state = app.tasks.state(session: app.session.state, network: app.syncStatus.network)
         content(for: state)
             .navigationTitle("Tasks")
             .navigationSubtitle(subtitle(for: state))
+            .searchable(text: $tasks.searchText, prompt: "Search titles")
+            .safeAreaInset(edge: .top) {
+                if state.canAddTasks { FilterChips(filter: $tasks.query.filter) }
+            }
             .toolbar {
                 // Every task needs its user: before the first sign-in there is no one to add it for.
                 if state.canAddTasks {
@@ -29,15 +34,26 @@ struct TasksView: View {
                         Button("New task", systemImage: "plus") { isAddingTask = true }
                             .accessibilityIdentifier("new-task")
                     }
+                    ToolbarItem(placement: .secondaryAction) {
+                        Button("Mark all done", systemImage: "checkmark.circle") {
+                            Task { await app.tasks.markAllDone() }
+                        }
+                        .disabled(app.tasks.isMarkingAllDone)
+                    }
                 }
             }
             .sheet(isPresented: $isAddingTask) {
-                NewTaskSheet { title, notes in app.tasks.addTask(title: title, notes: notes) }
+                NewTaskSheet { title, notes, needsConnection in
+                    await app.tasks.addTask(title: title, notes: notes, needsConnection: needsConnection)
+                }
             }
             .navigationDestination(for: TaskRoute.self) { route in
                 TaskDetailView(
                     model: TaskDetailModel(taskID: route.id, repository: app.repository, failures: app.failureSink)
                 )
+            }
+            .navigationDestination(for: PhotoRoute.self) { route in
+                PhotoViewer(model: PhotoViewerModel(photo: route.photo, repository: app.repository, failures: app.failureSink))
             }
     }
 
@@ -59,7 +75,7 @@ struct TasksView: View {
             ContentUnavailableView {
                 Label("Loading your tasks", systemImage: "arrow.down.circle")
             } description: {
-                Text("Nothing is saved on this device yet, so the list comes from the server this once.")
+                Text("Nothing is saved on this device for this list yet, so it comes from the server this once.")
             } actions: {
                 ProgressView()
             }
@@ -67,7 +83,11 @@ struct TasksView: View {
             ContentUnavailableView {
                 Label("Nothing saved on this device yet", systemImage: "icloud.slash")
             } description: {
-                Text("Connect to the internet once to load your tasks. After that they’re here offline too.")
+                Text(
+                    app.tasks.query.isEverything
+                        ? "Connect to the internet once to load your tasks. After that they’re here offline too."
+                        : "Each chip and search asks the server for its own list, and this one hasn’t been read online yet. All is kept for offline."
+                )
             }
         case .loaded(let open, let done):
             list(open: open, done: done)
@@ -82,32 +102,38 @@ struct TasksView: View {
             }
             if !open.isEmpty {
                 Section("Open · \(open.count)") {
-                    ForEach(open) { TaskRowView(task: $0) }
+                    ForEach(open) { TaskRowView(task: $0, photoCount: app.tasks.photoCounts[$0.id]) }
                 }
             }
             if !done.isEmpty {
                 Section("Done · \(done.count)") {
-                    ForEach(done) { TaskRowView(task: $0) }
+                    ForEach(done) { TaskRowView(task: $0, photoCount: app.tasks.photoCounts[$0.id]) }
                 }
             }
         }
         .overlay {
             if open.isEmpty, done.isEmpty {
-                ContentUnavailableView {
-                    Label("No tasks yet", systemImage: "checklist")
-                } description: {
-                    Text("Add one with New task. It’s saved on this device at once and synced when you’re online.")
+                if app.tasks.query.isEverything {
+                    ContentUnavailableView {
+                        Label("No tasks yet", systemImage: "checklist")
+                    } description: {
+                        Text("Add one with New task. It’s saved on this device at once and synced when you’re online.")
+                    }
+                } else {
+                    ContentUnavailableView.search(text: app.tasks.query.trimmedSearch)
                 }
             }
         }
         .refreshable { await app.tasks.refreshList() }
         .animation(reduceMotion ? nil : .snappy, value: open.map(\.id) + done.map(\.id))
+        .task(id: app.tasks.visibleTaskIDs) { await app.tasks.observePhotoCounts(of: app.tasks.visibleTaskIDs) }
     }
 
-    /// "3 open · 2 waiting to sync" under the large title.
+    /// Under the title: where the list shown came from and how old it is, from the last snapshot
+    /// or pull to refresh; before there is a list, the sync headline.
     private func subtitle(for state: TasksListState) -> String {
-        guard case .loaded(let open, _) = state else { return app.headline.subtitle }
-        return "\(open.count) open · \(app.headline.subtitle)"
+        guard case .loaded = state, let provenance = app.tasks.provenance else { return app.headline.subtitle }
+        return Wording.caption(provenance, pendingCount: app.syncStatus.pendingMutationCount, now: .now)
     }
 }
 
@@ -116,6 +142,9 @@ struct TaskRowView: View {
 
     /// The task shown.
     let task: TaskItem
+
+    /// How many photos it has, once read.
+    var photoCount: Int?
 
     @Environment(AppModel.self) private var app
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -149,6 +178,12 @@ struct TaskRowView: View {
                         }
                     }
                     Spacer(minLength: 8)
+                    if let photoCount, photoCount > 0 {
+                        Label("\(photoCount)", systemImage: "photo")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .accessibilityLabel(Wording.count(photoCount, "photo", "photos"))
+                    }
                     if task.hasPendingMutations {
                         Image(systemName: "icloud.and.arrow.up")
                             .foregroundStyle(.secondary)
@@ -193,4 +228,21 @@ struct DemoModeNotice: View {
     /// Why, when the launch arguments asked for it.
     static let requested =
         "The launch arguments asked for demo mode: the app runs on a stand-in kept in memory, and starts empty each launch."
+}
+
+/// The chips above the list: each a filter the server applies.
+struct FilterChips: View {
+
+    /// The chip chosen.
+    @Binding var filter: TaskFilter
+
+    var body: some View {
+        Picker("Show", selection: $filter) {
+            ForEach(TaskFilter.allCases) { Text($0.title).tag($0) }
+        }
+        .pickerStyle(.segmented)
+        .padding(.horizontal)
+        .padding(.bottom, 8)
+        .accessibilityIdentifier("task-filter")
+    }
 }

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 import Foundation
 import SupabaseOffline
+import SupabaseOfflineTesting
 import Testing
 import UIKit
 
@@ -26,11 +27,15 @@ final class TestApp {
     /// The live reads the tabs share, stopped by ``stop()``.
     private var reads: [Task<Void, Never>] = []
 
-    /// A fresh app on a fresh server, signed in as a new user whose sign-out takes `signOutDelay`.
-    init(server: DemoServer = DemoServer(), signOutDelay: Duration = .zero) {
+    /// The live updates, stopped by ``stop()``.
+    private var liveUpdates: Task<Void, Never>?
+
+    /// A fresh app on a fresh server, signed in as a new user whose sign-out takes `signOutDelay`,
+    /// on `clock`'s time when one is given.
+    init(server: DemoServer = DemoServer(), signOutDelay: Duration = .zero, clock: ManualClock? = nil) {
         self.server = server
         session = DemoSession(signOutDelay: signOutDelay)
-        app = AppModel.demo(server: server, session: session)
+        app = AppModel.demo(server: server, session: session, clock: clock)
     }
 
     /// Every read and write.
@@ -53,14 +58,37 @@ final class TestApp {
         let app = app
         reads = [
             Task { await app.tasks.observeTasks() },
+            Task { await app.tasks.observeVisibleTasks(readStrategy: app.listReadStrategy) },
             Task { await app.tasks.observePendingTasks() },
             Task { await app.sync.observe() },
         ]
     }
 
+    /// Shows the list `query` asks for, as choosing a chip or searching does, and waits for it.
+    func show(_ query: TaskQuery) async throws {
+        let app = app
+        app.tasks.query = query
+        startReads()
+        try await eventually("the list is read") { app.tasks.visibleRows != nil }
+    }
+
+    /// Starts Live updates, as the root view does, and waits until the server reports to it.
+    func startLiveUpdates() async throws {
+        let app = app
+        liveUpdates = Task { await app.followLiveUpdates() }
+        try await eventually("the feed is open") { await server.openFeedCount() > 0 }
+    }
+
+    /// Adds a task through New task, and fails the test when it is not saved.
+    func addTask(_ title: String, notes: String = "", needsConnection: Bool = false) async throws {
+        let failure = await app.tasks.addTask(title: title, notes: notes, needsConnection: needsConnection)
+        try #require(failure == nil, "New task failed: \(failure ?? "")")
+    }
+
     /// Stops everything and closes the client.
     func stop() async throws {
         reads.forEach { $0.cancel() }
+        liveUpdates?.cancel()
         run?.cancel()
         try await repository.client.close()
     }

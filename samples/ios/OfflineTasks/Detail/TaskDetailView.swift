@@ -12,6 +12,7 @@ struct TaskDetailView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var pickedPhoto: PhotosPickerItem?
     @State private var isConfirmingDelete = false
+    @State private var sharedLinks: SharedItems?
 
     /// The screen for `model`'s task.
     init(model: TaskDetailModel) {
@@ -24,7 +25,7 @@ struct TaskDetailView: View {
             .navigationBarTitleDisplayMode(.inline)
             .task { await model.observeTask() }
             .task { await model.observePendingTask() }
-            .task { await model.observePhotos() }
+            .task(id: app.isSimulatingOffline) { await model.observePhotos(isSimulatingOffline: app.isSimulatingOffline) }
             .onDisappear { model.saveNow() }
     }
 
@@ -77,11 +78,7 @@ struct TaskDetailView: View {
             } header: {
                 Text("Photos")
             } footer: {
-                Text(
-                    canChangePhotos
-                        ? "Photos are uploaded as you add them."
-                        : "Photos upload when you’re online. The ones already here still show."
-                )
+                Text(photosFooter)
             }
         }
         .toolbar {
@@ -95,7 +92,17 @@ struct TaskDetailView: View {
             ToolbarItem(placement: .bottomBar) {
                 Button("Delete task", systemImage: "trash", role: .destructive) { isConfirmingDelete = true }
             }
+            ToolbarItem(placement: .primaryAction) {
+                Menu("More", systemImage: "ellipsis") {
+                    Button("Duplicate task", systemImage: "plus.square.on.square") { model.duplicate() }
+                    Button("Share all photos of this task", systemImage: "link") {
+                        Task { sharedLinks = await model.shareLinks().map(SharedItems.init) }
+                    }
+                    .disabled(model.photos.isEmpty || !canChangePhotos)
+                }
+            }
         }
+        .sheet(item: $sharedLinks) { ShareSheet(items: $0.items) }
         .onChange(of: pickedPhoto) { _, item in
             guard let item else { return }
             model.attach(item)
@@ -120,12 +127,15 @@ struct TaskDetailView: View {
         } else {
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 88), spacing: 8)], spacing: 8) {
                 ForEach(model.photos) { photo in
-                    PhotoThumbnail(
-                        image: model.images[photo.id] ?? .loading,
-                        canDelete: canChangePhotos
-                    ) {
-                        model.deletePhoto(photo)
+                    NavigationLink(value: PhotoRoute(photo: photo)) {
+                        PhotoThumbnail(
+                            image: model.images[photo.id] ?? .loading,
+                            canDelete: canChangePhotos
+                        ) {
+                            model.deletePhoto(photo)
+                        }
                     }
+                    .buttonStyle(.plain)
                     .task(id: PhotoLoadKey(photoID: photo.id, canReachNetwork: canChangePhotos)) {
                         await model.loadImage(for: photo)
                     }
@@ -136,6 +146,16 @@ struct TaskDetailView: View {
             }
             .padding(.vertical, 4)
         }
+    }
+
+    /// What the Photos section says about where its photos come from.
+    private var photosFooter: String {
+        if app.isSimulatingOffline {
+            return "Simulate offline is on: these are the photos saved on this device, read without asking the server."
+        }
+        return canChangePhotos
+            ? "Photos are uploaded as you add them. Tap one to open it."
+            : "Photos upload when you’re online. The ones already here still show."
     }
 
     /// What deleting does to the task's photos, as the delete confirmation says it.
@@ -152,12 +172,6 @@ struct TaskDetailView: View {
     private func syncSymbol(for task: TaskItem) -> String {
         task.hasPendingMutations ? "icloud.and.arrow.up" : "checkmark.icloud"
     }
-}
-
-/// What a thumbnail's loading depends on: the photo, and whether the server can be asked.
-private struct PhotoLoadKey: Hashable {
-    let photoID: String
-    let canReachNetwork: Bool
 }
 
 /// One photo, or what stands in for it.

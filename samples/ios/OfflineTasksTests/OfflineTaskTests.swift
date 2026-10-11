@@ -19,8 +19,8 @@ struct OfflineTaskTests {
         try await test.setOffline(true)
 
         // When
-        test.app.tasks.addTask(title: "Buy milk", notes: "Two liters")
-        test.app.tasks.addTask(title: "Call the bank", notes: "")
+        try await test.addTask("Buy milk", notes: "Two liters")
+        try await test.addTask("Call the bank")
         let milk = try await test.task(titled: "Buy milk")
         let bank = try await test.task(titled: "Call the bank")
         let detail = TaskDetailModel(taskID: milk.id, repository: test.repository, failures: test.app.failureSink)
@@ -72,7 +72,7 @@ struct OfflineTaskTests {
         try await test.start()
 
         // When
-        test.app.tasks.addTask(title: "Water the plants", notes: "")
+        try await test.addTask("Water the plants")
         let task = try await test.task(titled: "Water the plants")
 
         // Then
@@ -89,8 +89,10 @@ struct OfflineTaskTests {
         let test = TestApp()
         try await test.start()
         try await test.setOffline(true)
-        test.app.sync.queueInvalidTitle()
+        test.app.sync.run(.invalidTitle, newestTaskID: nil)
         try await eventually("it is queued") { test.app.syncStatus.pendingMutationCount == 1 }
+        try await eventually("Try it says so") { test.app.sync.tryItResults[.invalidTitle] != nil }
+        #expect(test.app.sync.tryItResults[.invalidTitle] == "Queued; the server refuses it when it syncs, and it shows under Refused changes.")
 
         // When
         try await test.setOffline(false)
@@ -118,19 +120,19 @@ struct OfflineTaskTests {
         try await test.stop()
     }
 
-    @Test("A blank title sent online is refused at once and said in an alert, not listed")
-    func refusedAtOnceIsAnAlert() async throws {
+    @Test("A blank title sent online is refused at once and said under its Try it item, not listed")
+    func refusedAtOnceIsSaid() async throws {
         // Given
         let test = TestApp()
         try await test.start()
 
         // When
-        test.app.sync.queueInvalidTitle()
+        test.app.sync.run(.invalidTitle, newestTaskID: nil)
 
         // Then
-        try await eventually("the app says so") { test.app.failure != nil }
+        try await eventually("Try it says so") { test.app.sync.tryItResults[.invalidTitle] != nil }
         #expect(
-            test.app.failure?.message
+            test.app.sync.tryItResults[.invalidTitle]
                 == "Couldn’t save “(no title)”. The server refused it: a title can’t be blank or longer than 200 characters."
         )
         #expect(test.app.sync.rejected.isEmpty)
@@ -145,13 +147,13 @@ struct OfflineTaskTests {
         let test = TestApp()
         try await test.start()
         let firstUser = try #require(test.session.userID)
-        test.app.tasks.addTask(title: "Synced before", notes: "")
+        try await test.addTask("Synced before")
         try await eventually("it reaches the server") { await test.server.rows(of: Tables.tasks).count == 1 }
         await test.server.intercept { request, userID in
             let isStuck = request.method == "POST" && String(decoding: request.body, as: UTF8.self).contains("Stuck in the queue")
             return isStuck && userID == firstUser ? .status(503) : nil
         }
-        test.app.tasks.addTask(title: "Stuck in the queue", notes: "")
+        try await test.addTask("Stuck in the queue")
         try await eventually("the server failed it once") {
             await test.server.requests.contains { $0.body.contains("Stuck in the queue") }
         }
@@ -195,7 +197,7 @@ struct OfflineTaskTests {
         let test = TestApp()
         try await test.start()
         let user = try #require(test.session.userID)
-        test.app.tasks.addTask(title: "Walk the dog", notes: "")
+        try await test.addTask("Walk the dog")
         try await eventually("it reaches the server") { await test.server.rows(of: Tables.tasks).count == 1 }
         try await test.setOffline(true)
 
@@ -221,7 +223,7 @@ struct OfflineTaskTests {
         let test = TestApp(signOutDelay: .milliseconds(300))
         try await test.start()
         let firstUser = try #require(test.session.userID)
-        test.app.tasks.addTask(title: "The first user's task", notes: "")
+        try await test.addTask("The first user's task")
         try await eventually("it reaches the server") { await test.server.rows(of: Tables.tasks).count == 1 }
         let openList = LiveRecording(test.repository.taskSnapshots())
         try await eventually("the open list shows it") { openList.last?.result?.count == 1 }
@@ -261,7 +263,7 @@ struct OfflineTaskTests {
         // Given
         let test = TestApp()
         try await test.start()
-        test.app.tasks.addTask(title: "Fix the fence", notes: "")
+        try await test.addTask("Fix the fence")
         let task = try await test.task(titled: "Fix the fence")
         try await test.repository.attachPhoto(taskID: task.id, photo: try await PhotoEncoder.encode(jpegFixture()))
         #expect(await test.server.objectPaths().count == 1)

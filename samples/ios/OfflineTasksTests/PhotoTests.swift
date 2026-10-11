@@ -16,10 +16,10 @@ struct PhotoTests {
         // Given: a task with a photo, online
         let test = TestApp()
         try await test.start()
-        test.app.tasks.addTask(title: "Paint the door", notes: "")
+        try await test.addTask("Paint the door")
         let task = try await test.task(titled: "Paint the door")
         let detail = TaskDetailModel(taskID: task.id, repository: test.repository, failures: test.app.failureSink)
-        let watching = Task { await detail.observePhotos() }
+        let watching = Task { await detail.observePhotos(isSimulatingOffline: false) }
         try await test.repository.attachPhoto(taskID: task.id, photo: try await PhotoEncoder.encode(jpegFixture()))
         try await eventually("the photo is listed") { detail.photos.count == 1 }
         let photo = try #require(detail.photos.first)
@@ -61,7 +61,7 @@ struct PhotoTests {
         // Given
         let test = TestApp()
         try await test.start()
-        test.app.tasks.addTask(title: "Sort the shed", notes: "")
+        try await test.addTask("Sort the shed")
         let task = try await test.task(titled: "Sort the shed")
         try await test.setOffline(true)
 
@@ -82,7 +82,7 @@ struct PhotoTests {
         // Given: the server refuses every photo row, as it does when the task is gone from it
         let test = TestApp()
         try await test.start()
-        test.app.tasks.addTask(title: "Mend the gate", notes: "")
+        try await test.addTask("Mend the gate")
         let task = try await test.task(titled: "Mend the gate")
         try await eventually("the task reaches the server") { await test.server.rows(of: Tables.tasks).count == 1 }
         let refusal = Self.missingTaskRefusal
@@ -112,7 +112,7 @@ struct PhotoTests {
         // Given: the server fails every photo row in a way that may pass
         let test = TestApp()
         try await test.start()
-        test.app.tasks.addTask(title: "Oil the hinges", notes: "")
+        try await test.addTask("Oil the hinges")
         let task = try await test.task(titled: "Oil the hinges")
         try await eventually("the task reaches the server") { await test.server.rows(of: Tables.tasks).count == 1 }
         await test.server.intercept { request, _ in

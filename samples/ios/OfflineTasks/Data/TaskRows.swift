@@ -79,6 +79,54 @@ nonisolated struct ObjectPathRow: Decodable, Sendable {
     }
 }
 
+/// The text a task's screen edits, sent as one typed update. A cleared note is written as an
+/// explicit `null`, so the server's copy clears too, where a synthesized `Encodable` would leave
+/// the column out.
+nonisolated struct TaskTextPatch: Encodable, Sendable {
+    let title: String
+    let notes: String?
+
+    /// The table's column names.
+    enum CodingKeys: String, CodingKey {
+        case title
+        case notes
+    }
+
+    func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(title, forKey: .title)
+        try container.encode(notes, forKey: .notes)
+    }
+}
+
+/// A `tasks` row as Realtime reports it. Its times stay the text the server sent, as a cached
+/// answer from PostgREST keeps them, so the record is applied exactly as it arrived.
+nonisolated struct ReportedTaskRow: Codable, Sendable {
+    let id: String
+    let userID: String
+    let title: String
+    let notes: String?
+    let done: Bool
+    let createdAt: String
+    let updatedAt: String
+
+    /// The table's column names.
+    enum CodingKeys: String, CodingKey {
+        case id
+        case userID = "user_id"
+        case title
+        case notes
+        case done
+        case createdAt = "created_at"
+        case updatedAt = "updated_at"
+    }
+}
+
+/// The key of a row the server reports deleted: all a Realtime delete carries.
+nonisolated struct RowKey: Codable, Sendable {
+    let id: String
+}
+
 extension TaskRow {
 
     /// The task, marked when `pendingIDs` holds its id.

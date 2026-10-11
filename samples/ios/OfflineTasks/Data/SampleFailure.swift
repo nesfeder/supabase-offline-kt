@@ -3,9 +3,10 @@
 import Foundation
 import SupabaseOffline
 
-/// A failure the app tells the user about, in its own words. ``TaskRepository`` turns the
-/// library's ``OfflineError`` into one of these, so every screen says the same thing for the same
-/// failure.
+/// A failure the app tells the user about in its own words, where the app knows more than the
+/// library's error says: which task a refused write was, or that a photo's file is gone. Every
+/// other failure reaches the user as the library reported it, an ``OfflineError``, in the sentence
+/// ``sentence(for:)`` gives its code.
 nonisolated enum SampleFailure: Error, Equatable {
 
     /// The server refused a write sent at once, because the network was up and nothing waited
@@ -16,13 +17,7 @@ nonisolated enum SampleFailure: Error, Equatable {
     /// The call needs the server, and the network is off or out of reach.
     case needsNetwork
 
-    /// The network is up, but the server failed to answer properly.
-    case serverUnreachable
-
-    /// A pull to refresh offline: the list shown is the one saved on the device.
-    case offlineRefresh
-
-    /// Storage refused an upload, a download or a delete.
+    /// Storage refused an upload, a download or a change.
     case storageRefused(status: Int, message: String)
 
     /// The picked image could not be read or decoded.
@@ -31,54 +26,40 @@ nonisolated enum SampleFailure: Error, Equatable {
     /// The photo's file is in neither the device's cache nor the bucket.
     case photoMissing
 
-    /// Anything else; the user is told to try again.
-    case unexpected
+    /// Realtime's feed could not be reached, or sent a change the app could not read.
+    case liveUpdatesStopped
 
     /// What to tell the user, in a sentence or two.
     var message: String {
         switch self {
         case .writeRefused(let taskTitle, let serverError):
-            let title = Wording.title(taskTitle)
-            return "Couldn’t save “\(title)”. \(Wording.refusalReason(serverError))"
+            return "Couldn’t save “\(Wording.title(taskTitle))”. \(Wording.refusalReason(serverError))"
         case .needsNetwork:
             return "That needs the network, and you’re offline."
-        case .serverUnreachable:
-            return "The server couldn’t be reached. Try again in a moment."
-        case .offlineRefresh:
-            return "You’re offline — showing what’s saved on this device."
         case .storageRefused(let status, let message):
             return "Storage refused it (\(status)): \(message)"
         case .photoUnreadable:
             return "That image couldn’t be read."
         case .photoMissing:
             return "This photo’s file is missing."
-        case .unexpected:
-            return "Something went wrong. Try again."
+        case .liveUpdatesStopped:
+            return "Live updates stopped: the server’s change feed couldn’t be reached. Pull to refresh still works."
         }
     }
 }
 
-extension SampleFailure {
+nonisolated extension SampleFailure {
 
-    /// A write's failure: the server's refusal of a write sent at once, or the network.
+    // --8<-- [start:write-failure]
+    /// A write's failure: the server's refusal of a write sent at once, named by its task. Any
+    /// other failure stays the library's, for ``sentence(for:)``.
     static func write(_ error: any Error, taskTitle: String?) -> any Error {
-        guard let offline = error as? OfflineError else { return error }
-        if offline.isNetworkOrConnectivityFailure || offline.code == .mutationNotQueueable {
-            return SampleFailure.needsNetwork
+        guard let offline = error as? OfflineError, offline.code == .server, let serverError = offline.serverError else {
+            return error
         }
-        if offline.code == .server, let serverError = offline.serverError {
-            return SampleFailure.writeRefused(taskTitle: taskTitle, serverError: serverError)
-        }
-        return error
+        return SampleFailure.writeRefused(taskTitle: taskTitle, serverError: serverError)
     }
-
-    /// A read's failure: the network, or a server that answers with an error.
-    static func read(_ error: any Error) -> any Error {
-        guard let offline = error as? OfflineError else { return error }
-        if offline.isNetworkOrConnectivityFailure { return SampleFailure.needsNetwork }
-        if offline.httpStatus != nil { return SampleFailure.serverUnreachable }
-        return error
-    }
+    // --8<-- [end:write-failure]
 
     /// A Storage call's failure. Storage answers a missing object with its own `not_found` code
     /// (on an HTTP 400 or 404).
@@ -92,8 +73,47 @@ extension SampleFailure {
 
     /// What to tell the user about `error`, whatever it is; never empty.
     static func message(for error: any Error) -> String {
-        (error as? SampleFailure ?? .unexpected).message
+        if let failure = error as? SampleFailure { return failure.message }
+        if let offline = error as? OfflineError { return sentence(for: offline) }
+        return "Something went wrong. Try again."
     }
+
+    // --8<-- [start:failure-codes]
+    /// The app's sentence for each of the library's failures, by its code.
+    static func sentence(for error: OfflineError) -> String {
+        switch error.code {
+        case .networkDisabled:
+            return "Simulate offline is on, and that needs the server. Switch it off on the Sync tab."
+        case .connectivity:
+            return "That needs the network, and the server can’t be reached. Try again when you’re online."
+        case .cacheMiss:
+            return "Nothing for that is saved on this device yet. Open it once while you’re online."
+        case .mutationNotQueueable:
+            return "That change can’t wait in the queue, and the server can’t be reached, so nothing was changed. (\(error.message))"
+        case .syncFailed:
+            return "The last sync stopped early\(Wording.serverAnswer(status: error.httpStatus, code: error.serverError?.code)). The rest waits, and is sent on the next try."
+        case .server:
+            return error.serverError.map(Wording.refusalReason) ?? "The server refused it."
+        case .clientClosed:
+            return "The app’s offline data is closed. Restart the app."
+        case .accessToken:
+            return "Your sign-in couldn’t be read, so nothing was sent. It’s tried again with the next request."
+        case .invalidRequest:
+            return "The app asked for something that can’t be sent as written. Nothing was sent."
+        case .decoding:
+            return "The server’s answer couldn’t be read as the app expects."
+        case .encoding:
+            return "The change couldn’t be written out to send. Nothing was saved."
+        case .configuration:
+            return "The app’s offline storage couldn’t be opened. Restart the app."
+        case .unexpected:
+            return "Something went wrong. Try again."
+        default:
+            // A code a later release of the library adds.
+            return "Something went wrong (\(error.code)). Try again."
+        }
+    }
+    // --8<-- [end:failure-codes]
 }
 
 /// Words the app uses in more than one place.
@@ -108,6 +128,11 @@ nonisolated enum Wording {
         return title
     }
 
+    /// The title of a task's copy.
+    static func copyTitle(of title: String) -> String {
+        TaskRules.truncated("Copy of \(title)", to: TaskRules.titleMaxLength)
+    }
+
     /// Why the server refused a write, from the constraint or the status it named.
     static func refusalReason(_ serverError: OfflineError.ServerError) -> String {
         if serverError.message.contains("tasks_title_length") {
@@ -120,6 +145,13 @@ nonisolated enum Wording {
             return "The server refused it: its task isn’t on the server."
         }
         return "The server refused it (\(serverError.status)): \(serverError.message)"
+    }
+
+    /// ": the server answered 503 · PGRST001" for a sync that stopped on a server's answer; "" when
+    /// it stopped for want of the network.
+    static func serverAnswer(status: Int?, code: String?) -> String {
+        guard let status else { return "" }
+        return ": the server answered \(status)" + (code.map { " · \($0)" } ?? "")
     }
 
     /// `count` and the noun for it, singular for one: "1 change", "3 changes".
