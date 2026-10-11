@@ -98,12 +98,34 @@ final class TestApp {
         try #require(failure == nil, "New task failed: \(failure ?? "")")
     }
 
-    /// Stops everything and closes the client.
+    /// Adds a photo to task `taskID` as Add photo does, and waits until the uploader has stored it:
+    /// its file and its row on the server, and the device's own copy gone.
+    @discardableResult
+    func addPhoto(to taskID: String) async throws -> TaskPhoto {
+        let pending = try await repository.filePhoto(try await PhotoEncoder.encode(jpegFixture()), forTask: taskID)
+        let repository = repository
+        let server = server
+        try await eventually("the photo is uploaded") {
+            guard repository.pendingPhotos.photo(id: pending.id) == nil else { return false }
+            return await server.rows(of: Tables.taskPhotos).contains { $0["id"] == .string(pending.id) }
+        }
+        return TaskPhotoRow(pending).photo(pendingIDs: [])
+    }
+
+    /// The photo waiting to upload with id `id`, once `condition` holds for it.
+    func pendingPhoto(_ id: String, _ description: String, where condition: @escaping (PendingPhoto) -> Bool) async throws -> PendingPhoto {
+        let queue = repository.pendingPhotos
+        try await eventually(description) { queue.photo(id: id).map(condition) ?? false }
+        return try #require(queue.photo(id: id))
+    }
+
+    /// Stops everything, closes the client, and deletes the photos left waiting.
     func stop() async throws {
         reads.forEach { $0.cancel() }
         liveUpdates?.cancel()
         run?.cancel()
         try await repository.client.close()
+        try repository.pendingPhotos.removeAll()
     }
 
     /// Switches Simulate offline, and waits for the client to report it.

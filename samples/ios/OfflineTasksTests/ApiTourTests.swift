@@ -193,7 +193,7 @@ struct ApiTourTests {
         let test = TestApp(server: server, session: session)
         try await test.start()
         let old = try await test.task(titled: "Old and done")
-        try await test.repository.attachPhoto(taskID: old.id, photo: try await PhotoEncoder.encode(jpegFixture()))
+        try await test.addPhoto(to: old.id)
 
         // When
         test.app.sync.run(.groupedDelete, newestTaskID: nil)

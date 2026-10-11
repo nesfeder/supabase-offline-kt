@@ -98,7 +98,7 @@ final class PendingPhotoUploader {
                 return
             } catch {
                 do {
-                    try pendingPhotos.markFailed(next, reason: SampleFailure.message(for: error), isRetryable: SampleFailure.isRetryable(error))
+                    try pendingPhotos.markFailed(next, reason: SampleFailure.uploadMessage(for: error), isRetryable: SampleFailure.isRetryable(error))
                 } catch {
                     failures.report(error)
                 }

@@ -7,7 +7,8 @@ import Testing
 
 @testable import OfflineTasks
 
-/// Photos through the offline bucket: uploaded online, kept once shown, shown offline.
+/// Photos through the offline bucket: uploaded by the app's own queue, kept once shown, shown
+/// offline.
 @Suite("Photos on the offline client", .serialized)
 struct PhotoTests {
 
@@ -20,8 +21,8 @@ struct PhotoTests {
         let task = try await test.task(titled: "Paint the door")
         let detail = TaskDetailModel(taskID: task.id, repository: test.repository, failures: test.app.failureSink)
         let watching = Task { await detail.observePhotos(isSimulatingOffline: false) }
-        try await test.repository.attachPhoto(taskID: task.id, photo: try await PhotoEncoder.encode(jpegFixture()))
-        try await eventually("the photo is listed") { detail.photos.count == 1 }
+        try await test.addPhoto(to: task.id)
+        try await eventually("the stored photo is listed") { detail.photos.count == 1 && detail.photos.first?.pendingUpload == nil }
         let photo = try #require(detail.photos.first)
         let userID = try #require(test.session.userID)
         #expect(photo.objectPath == "\(userID)/\(task.id)/\(photo.id).jpg")
@@ -56,28 +57,7 @@ struct PhotoTests {
         try await test.stop()
     }
 
-    @Test("Offline, Add photo fails at once with the network's reason and nothing is uploaded")
-    func attachOfflineNeedsTheNetwork() async throws {
-        // Given
-        let test = TestApp()
-        try await test.start()
-        try await test.addTask("Sort the shed")
-        let task = try await test.task(titled: "Sort the shed")
-        try await test.setOffline(true)
-
-        // When
-        let failure = await #expect(throws: SampleFailure.self) {
-            try await test.repository.attachPhoto(taskID: task.id, photo: try await PhotoEncoder.encode(jpegFixture()))
-        }
-
-        // Then
-        #expect(failure == .needsNetwork)
-        #expect(failure?.message == "That needs the network, and you’re offline.")
-        #expect(await test.server.objectPaths().isEmpty)
-        try await test.stop()
-    }
-
-    @Test("A photo whose row the server refuses at once takes its file with it")
+    @Test("A photo whose row the server refuses at once takes its file with it, and stays failed")
     func refusedRowRemovesItsFile() async throws {
         // Given: the server refuses every photo row, as it does when the task is gone from it
         let test = TestApp()
@@ -92,18 +72,15 @@ struct PhotoTests {
         }
 
         // When
-        let failure = await #expect(throws: SampleFailure.self) {
-            try await test.repository.attachPhoto(taskID: task.id, photo: try await PhotoEncoder.encode(jpegFixture()))
-        }
+        let filed = try await test.repository.filePhoto(try await PhotoEncoder.encode(jpegFixture()), forTask: task.id)
 
-        // Then: the refusal is said, and the file uploaded for the row is gone
-        guard case .writeRefused(_, let serverError)? = failure else {
-            Issue.record("Expected a refused write, got \(String(describing: failure))")
-            return
-        }
-        #expect(serverError.code == "23503")
+        // Then: the refusal is said, the file uploaded for the row is gone, and the device's copy stays
+        let failed = try await test.pendingPhoto(filed.id, "the upload fails") { $0.state != .waiting && $0.state != .uploading }
+        #expect(failed.state == .failed(reason: "The server refused it: its task isn’t on the server.", isRetryable: false))
+        #expect(failed.attempts == 1)
         #expect(await test.server.requests.contains { $0.method == "POST" && $0.path.hasPrefix("/storage/v1/object/") })
         #expect(await test.server.objectPaths().isEmpty)
+        #expect(FileManager.default.fileExists(atPath: test.repository.pendingPhotos.jpegURL(ofPhoto: filed.id).path(percentEncoded: false)))
         try await test.stop()
     }
 
@@ -121,10 +98,11 @@ struct PhotoTests {
         }
 
         // When
-        let photo = try await test.repository.attachPhoto(taskID: task.id, photo: try await PhotoEncoder.encode(jpegFixture()))
+        let filed = try await test.repository.filePhoto(try await PhotoEncoder.encode(jpegFixture()), forTask: task.id)
 
-        // Then: the file stays for the row the queue will send
-        #expect(await test.server.objectPaths() == [photo.objectPath])
+        // Then: the file stays for the row the queue will send, and the device's copy has gone
+        try await eventually("the upload ends") { test.repository.pendingPhotos.photos.isEmpty }
+        #expect(await test.server.objectPaths() == [filed.objectPath])
         #expect(try await test.repository.client.pendingMutationCount(table: Tables.taskPhotos) == 1)
         try await test.stop()
     }
@@ -161,7 +139,7 @@ struct PhotoActionTests {
         let painted = try await test.task(titled: "Paint the door")
         let sanded = try await test.task(titled: "Sand the door")
         try await eventually("both reach the server") { await test.server.rows(of: Tables.tasks).count == 2 }
-        let photo = try await test.repository.attachPhoto(taskID: painted.id, photo: try await PhotoEncoder.encode(jpegFixture()))
+        let photo = try await test.addPhoto(to: painted.id)
         return (test, photo, sanded)
     }
 

@@ -166,11 +166,11 @@ final class PendingPhotoQueue {
         try createFolder()
         try await Self.write(jpeg, to: jpegURL(ofPhoto: photo.id))
         try writeRecord(of: photo)
-        photos.append(photo)
+        photos.insert(photo, at: photos.firstIndex { $0.pickedAt > photo.pickedAt } ?? photos.endIndex)
     }
 
-    /// The next photo of `userID` to upload, marked as uploading; `nil` when none waits, or while
-    /// uploads are held.
+    /// The photo of `userID` picked first of those waiting, marked as uploading; `nil` when none
+    /// waits, or while uploads are held.
     func startNextUpload(of userID: String) throws -> PendingPhoto? {
         guard !isHeld, let next = photos.first(where: { $0.userID == userID && $0.state == .waiting }) else { return nil }
         try update(next.id) { $0.state = .uploading }

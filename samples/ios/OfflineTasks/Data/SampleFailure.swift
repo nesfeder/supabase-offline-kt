@@ -85,6 +85,13 @@ nonisolated extension SampleFailure {
         return SampleFailure.storageRefused(status: serverError.status, message: serverError.message)
     }
 
+    /// What a photo waiting to upload says about `error`, its last attempt's failure: a refused
+    /// row by the server's reason alone, as a photo has no title to name it by.
+    static func uploadMessage(for error: any Error) -> String {
+        if case .writeRefused(_, let serverError)? = error as? SampleFailure { return Wording.refusalReason(serverError) }
+        return message(for: error)
+    }
+
     /// Whether another attempt at what failed with `error` can succeed: not when the server
     /// refused it for good (a 4xx but 408 and 429: a policy, a constraint, a missing task), nor
     /// when the photo cannot be read.
