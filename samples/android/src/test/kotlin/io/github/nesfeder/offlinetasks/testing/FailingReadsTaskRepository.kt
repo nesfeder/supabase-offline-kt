@@ -6,6 +6,7 @@ import io.github.nesfeder.offlinetasks.data.PhotoListSnapshot
 import io.github.nesfeder.offlinetasks.data.RejectedTaskMutation
 import io.github.nesfeder.offlinetasks.data.RowsSnapshot
 import io.github.nesfeder.offlinetasks.data.TaskListSnapshot
+import io.github.nesfeder.offlinetasks.data.TaskQuery
 import io.github.nesfeder.offlinetasks.data.TaskRepository
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
@@ -21,7 +22,8 @@ class FailingReadsTaskRepository(
     private val failure: Exception,
 ) : TaskRepository by delegate {
 
-    override fun tasks(): Flow<TaskListSnapshot> = loadedThenFailing(delegate.tasks())
+    override fun tasks(query: TaskQuery): Flow<TaskListSnapshot> =
+        loadedThenFailing(delegate.tasks(query))
 
     override fun task(id: String): Flow<TaskListSnapshot> = loadedThenFailing(delegate.task(id))
 

@@ -85,6 +85,9 @@ dependencies {
     implementation(platform(libs.supabase.bom))
     implementation(libs.supabase.auth.kt)
     implementation(libs.supabase.postgrest.kt)
+    // Live updates. Not in the version catalog, which lists what the library itself builds on; the
+    // BOM above sets its version, so it moves with the pinned supabase-kt.
+    implementation("io.github.jan-tennert.supabase:realtime-kt")
     implementation(libs.supabase.storage.kt)
     implementation(libs.ktor.client.okhttp)
 

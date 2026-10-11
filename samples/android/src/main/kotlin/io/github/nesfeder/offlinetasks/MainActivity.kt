@@ -23,4 +23,9 @@ class MainActivity : ComponentActivity() {
             OfflineTasksTheme { if (isConfigured) OfflineTasksApp() else NotConfiguredScreen() }
         }
     }
+
+    override fun onStart() {
+        super.onStart()
+        (application as OfflineTasksApplication).syncInForeground()
+    }
 }

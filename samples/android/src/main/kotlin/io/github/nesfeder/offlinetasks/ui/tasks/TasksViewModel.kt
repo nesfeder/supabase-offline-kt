@@ -8,45 +8,61 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import io.github.nesfeder.offlinetasks.data.AppNetworkStatus
+import io.github.nesfeder.offlinetasks.data.AppSyncStatus
+import io.github.nesfeder.offlinetasks.data.NetworkUnavailableException
+import io.github.nesfeder.offlinetasks.data.ReadProvenance
 import io.github.nesfeder.offlinetasks.data.RejectedTaskMutation
 import io.github.nesfeder.offlinetasks.data.Task
+import io.github.nesfeder.offlinetasks.data.TaskFilter
 import io.github.nesfeder.offlinetasks.data.TaskListSnapshot
+import io.github.nesfeder.offlinetasks.data.TaskQuery
 import io.github.nesfeder.offlinetasks.data.TaskRefreshState
 import io.github.nesfeder.offlinetasks.data.TaskRepository
 import io.github.nesfeder.offlinetasks.offlineTasksApplication
 import io.github.nesfeder.offlinetasks.platform.SessionState
 import io.github.nesfeder.offlinetasks.ui.feedback.FailureReports
+import io.github.nesfeder.offlinetasks.ui.feedback.Notice
+import io.github.nesfeder.offlinetasks.ui.feedback.Notices
 import io.github.nesfeder.offlinetasks.ui.feedback.launchReporting
 import io.github.nesfeder.offlinetasks.ui.feedback.reportingFailures
 import io.github.nesfeder.offlinetasks.ui.status.SyncHeadline
 import io.github.nesfeder.offlinetasks.ui.status.syncHeadlineOf
 import io.github.nesfeder.offlinetasks.ui.status.withSyncedMoment
+import kotlin.time.Duration.Companion.milliseconds
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.shareIn
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 
-/** Which tasks the list shows. */
-enum class TaskFilter {
-    All,
-    Open,
-    Done,
-}
+/** How long typing must pause before the search is sent. */
+private val SEARCH_DELAY = 300.milliseconds
+
+/**
+ * The caption under the list's title after a pull to refresh: where its answer came from, and how
+ * many changes still wait.
+ */
+data class RefreshCaption(val provenance: ReadProvenance, val pendingCount: Int)
 
 /** What the Tasks screen shows. */
 sealed interface TasksUiState {
     /** The one sentence about syncing: the subtitle and the banner. */
     val headline: SyncHeadline
-    val filter: TaskFilter
+    val query: TaskQuery
 
     /**
      * No one is signed in yet, so there is nothing to show and nothing can be added: the first
@@ -54,29 +70,33 @@ sealed interface TasksUiState {
      */
     data class NoSession(
         override val headline: SyncHeadline,
-        override val filter: TaskFilter,
+        override val query: TaskQuery,
         val isSigningIn: Boolean,
     ) : TasksUiState
 
     /**
-     * Nothing is saved on this device yet. [isLoading] is true while the server is being asked,
-     * false when there is no network to ask it with.
+     * Nothing is saved on this device for the query yet. [isLoading] is true while the server is
+     * being asked, false when there is no network to ask it with.
      */
     data class NoDataYet(
         override val headline: SyncHeadline,
-        override val filter: TaskFilter,
+        override val query: TaskQuery,
         val isLoading: Boolean,
     ) : TasksUiState
 
-    /** The tasks, split into open and done and filtered; both lists may be empty. */
+    /** The tasks the query selects, split into open and done; both lists may be empty. */
     data class Loaded(
         override val headline: SyncHeadline,
-        override val filter: TaskFilter,
+        override val query: TaskQuery,
         val openTasks: List<Task>,
         val doneTasks: List<Task>,
-        /** Open tasks whatever the filter, for the subtitle. */
+        /** Open tasks whatever the query, for the subtitle. */
         val openCount: Int,
         val isRefreshing: Boolean,
+        /** How many photos each task shown has; a task with none is absent. */
+        val photoCounts: Map<String, Int> = emptyMap(),
+        /** Where the last pull to refresh's answer came from; null before the first. */
+        val caption: RefreshCaption? = null,
     ) : TasksUiState
 }
 
@@ -88,30 +108,35 @@ sealed interface TasksMessage {
     /** The server refused a queued write. */
     data class Rejected(val rejection: RejectedTaskMutation) : TasksMessage
 
-    /** Pull-to-refresh needs the network; the saved list stays. */
+    /** Pull to refresh found neither the server nor a copy on this device a day old. */
     data object RefreshNeedsNetwork : TasksMessage
 }
 
 /**
- * The Tasks screen's state: the live task list, the sync headline, the filter, and deletions that
- * can still be undone. A swiped-away task is only hidden until its snackbar goes; then it is
- * deleted, unless the user chose Undo.
+ * The Tasks screen's state: the live task list for the chips and the search, the sync headline,
+ * the photo counts, deletions that can still be undone, and Mark all done. A swiped-away task is
+ * only hidden until its snackbar goes; then it is deleted, unless the user chose Undo.
  *
  * @param sessionState whether anyone is signed in: nothing can be shown or added before.
  * @param commitScope where deletions run; it outlives this ViewModel, so a task swiped away just
  *   before the screen goes is still deleted.
  * @param failures where a failed read, write or refresh is reported, to be shown as a message.
+ * @param notices where Mark all done says how many it changed.
  */
+@OptIn(ExperimentalCoroutinesApi::class, FlowPreview::class)
 class TasksViewModel(
     private val repository: TaskRepository,
     private val sessionState: StateFlow<SessionState>,
     private val commitScope: CoroutineScope,
     private val failures: FailureReports,
+    private val notices: Notices = Notices(),
 ) : ViewModel() {
 
     private val filter = MutableStateFlow(TaskFilter.All)
+    private val search = MutableStateFlow("")
     private val hiddenTaskIds = MutableStateFlow<Set<String>>(emptySet())
     private val isRefreshing = MutableStateFlow(false)
+    private val caption = MutableStateFlow<ReadProvenance?>(null)
 
     /** Tasks swiped away whose deletion can still be undone. */
     private val undoableDeletions = mutableSetOf<String>()
@@ -120,14 +145,38 @@ class TasksViewModel(
     /** The refused writes still on the list, so an announcement waiting unseen can be dropped. */
     private val currentRejectionIds = MutableStateFlow<Set<Long>>(emptySet())
 
-    private val snapshots: Flow<TaskListSnapshot> =
+    /** The query sent to the server: the chip at once, the search once typing pauses. */
+    private val query: Flow<TaskQuery> =
+        combine(filter, search.debounce { if (it.isEmpty()) 0.milliseconds else SEARCH_DELAY }) {
+                chip,
+                text ->
+                TaskQuery(chip, text)
+            }
+            .distinctUntilChanged()
+
+    private val snapshots: Flow<Pair<TaskQuery, TaskListSnapshot>> =
+        query
+            .flatMapLatest { asked ->
+                repository.tasks(asked).reportingFailures(failures).map { asked to it }
+            }
+            .shareIn(viewModelScope, SharingStarted.WhileSubscribed(), replay = 1)
+
+    /** Every task, for the open count and the headline, whatever the query. */
+    private val allTasks: Flow<TaskListSnapshot> =
         repository
             .tasks()
             .reportingFailures(failures)
             .shareIn(viewModelScope, SharingStarted.WhileSubscribed(), replay = 1)
 
+    private val photoCounts: Flow<Map<String, Int>> =
+        snapshots
+            .map { (_, snapshot) -> snapshot.value.orEmpty().map { it.id } }
+            .distinctUntilChanged()
+            .flatMapLatest { ids -> repository.photoCounts(ids).reportingFailures(failures) }
+            .onStart { emit(emptyMap()) }
+
     private val headlines: Flow<SyncHeadline> =
-        combine(repository.syncStatus, snapshots.map { it.refresh }, ::syncHeadlineOf)
+        combine(repository.syncStatus, allTasks.map { it.refresh }, ::syncHeadlineOf)
             .withSyncedMoment()
 
     /**
@@ -139,34 +188,49 @@ class TasksViewModel(
             message !is TasksMessage.Rejected || message.rejection.id in currentRejectionIds.value
         }
 
+    /** The text in the search field, as typed. */
+    val searchText: StateFlow<String> = search
+
     /** The screen's state. */
     val uiState: StateFlow<TasksUiState> =
         combine(
-                combine(snapshots, repository.syncStatus, sessionState, ::Triple),
+                combine(snapshots, allTasks, repository.syncStatus, sessionState, ::ListInputs),
                 headlines,
-                filter,
                 hiddenTaskIds,
-                isRefreshing,
-            ) { (snapshot, status, session), headline, filter, hidden, refreshing ->
-                if (session != SessionState.SignedIn) {
-                    TasksUiState.NoSession(headline, filter, isSigningIn = status.network.canAsk())
+                combine(isRefreshing, caption, photoCounts, ::Extras),
+                search,
+            ) { inputs, headline, hidden, extras, typed ->
+                val (asked, snapshot) = inputs.snapshot
+                // The field shows the text as typed, ahead of the query it sends after a pause.
+                val shownQuery = asked.copy(search = typed)
+                if (inputs.session != SessionState.SignedIn) {
+                    TasksUiState.NoSession(
+                        headline,
+                        shownQuery,
+                        isSigningIn = inputs.status.network.canAsk(),
+                    )
                 } else {
-                    stateOf(snapshot, status.network, headline, filter, hidden, refreshing)
+                    stateOf(snapshot, inputs, headline, shownQuery, hidden, extras)
                 }
             }
             .stateIn(
                 viewModelScope,
                 SharingStarted.WhileSubscribed(5_000),
-                TasksUiState.NoDataYet(SyncHeadline.UpToDate, TaskFilter.All, isLoading = true),
+                TasksUiState.NoDataYet(SyncHeadline.UpToDate, TaskQuery(), isLoading = true),
             )
 
     init {
-        announceNewRejections()
+        announceRejections()
     }
 
-    /** Shows only [newFilter]'s tasks. */
+    /** Asks the server for [newFilter]'s tasks. */
     fun setFilter(newFilter: TaskFilter) {
         filter.value = newFilter
+    }
+
+    /** Asks the server for tasks whose title contains [text], once typing pauses. */
+    fun setSearch(text: String) {
+        search.value = text
     }
 
     /** Marks [task] done or open again. */
@@ -204,68 +268,102 @@ class TasksViewModel(
         undoableDeletions.toList().forEach(::commitDelete)
     }
 
-    /** Pull-to-refresh: asks the server for the list again, or says why it cannot. */
+    /**
+     * Pull to refresh: asks the server for the list again, and keeps where the answer came from
+     * for the caption. Offline it answers from this device, when the copy is a day old at most.
+     */
     fun refresh() {
-        val network = repository.syncStatus.value.network
-        if (network == AppNetworkStatus.Offline || network == AppNetworkStatus.Disabled) {
-            messageChannel.trySend(TasksMessage.RefreshNeedsNetwork)
-            return
-        }
         viewModelScope.launchReporting(failures) {
             isRefreshing.value = true
             try {
-                repository.refreshTasks()
+                caption.value = repository.refreshTasks()
+            } catch (offline: NetworkUnavailableException) {
+                messageChannel.trySend(TasksMessage.RefreshNeedsNetwork)
             } finally {
                 isRefreshing.value = false
             }
         }
     }
 
-    /** Announces each write refused while this screen exists; older ones are on the Sync screen. */
-    private fun announceNewRejections() {
+    /**
+     * Marks every open task done on the server, says how many, and refreshes the list: a
+     * function's changes reach the device by a read.
+     */
+    fun markAllDone() {
+        commitScope.launchReporting(failures) {
+            notices.post(Notice.MarkedDone(repository.markAllDone()))
+            caption.value = repository.refreshTasks()
+        }
+    }
+
+    /**
+     * Announces the newest refusal waiting at launch, read once, then each write refused while
+     * this screen exists; the rest are on the Sync screen.
+     */
+    private fun announceRejections() {
         viewModelScope.launchReporting(failures) {
-            var seen: Set<Long>? = null
+            val waiting = repository.rejectedMutationsNow()
+            currentRejectionIds.value = waiting.mapTo(HashSet()) { it.id }
+            waiting.firstOrNull()?.let { messageChannel.trySend(TasksMessage.Rejected(it)) }
+            var seen: Set<Long> = waiting.mapTo(HashSet()) { it.id }
             repository.rejectedMutations().collect { rejections ->
                 currentRejectionIds.value = rejections.mapTo(HashSet()) { it.id }
-                val known = seen
-                if (known != null) {
-                    rejections
-                        .filter { it.id !in known }
-                        .reversed()
-                        .forEach { messageChannel.trySend(TasksMessage.Rejected(it)) }
-                }
-                seen = rejections.mapTo(HashSet()) { it.id } + known.orEmpty()
+                rejections
+                    .filter { it.id !in seen }
+                    .reversed()
+                    .forEach { messageChannel.trySend(TasksMessage.Rejected(it)) }
+                seen = seen + rejections.map { it.id }
             }
         }
     }
 
     private fun stateOf(
         snapshot: TaskListSnapshot,
-        network: AppNetworkStatus,
+        inputs: ListInputs,
         headline: SyncHeadline,
-        filter: TaskFilter,
+        query: TaskQuery,
         hidden: Set<String>,
-        refreshing: Boolean,
+        extras: Extras,
     ): TasksUiState {
         val tasks = snapshot.value
         if (tasks == null) {
             return TasksUiState.NoDataYet(
                 headline = headline,
-                filter = filter,
-                isLoading = network.canAsk() && snapshot.refresh !is TaskRefreshState.Stalled,
+                query = query,
+                isLoading =
+                    inputs.status.network.canAsk() && snapshot.refresh !is TaskRefreshState.Stalled,
             )
         }
         val visible = tasks.filter { it.id !in hidden }
         val (done, open) = visible.partition { it.isDone }
+        val allOpen = inputs.all.value.orEmpty().count { !it.isDone && it.id !in hidden }
         return TasksUiState.Loaded(
             headline = headline,
-            filter = filter,
-            openTasks = if (filter == TaskFilter.Done) emptyList() else open,
-            doneTasks = if (filter == TaskFilter.Open) emptyList() else done,
-            openCount = open.size,
-            isRefreshing = refreshing,
+            query = query,
+            openTasks = open,
+            doneTasks = done,
+            openCount = allOpen,
+            isRefreshing = extras.isRefreshing,
+            photoCounts = extras.photoCounts,
+            caption =
+                extras.caption?.let { RefreshCaption(it, inputs.status.pendingMutationCount) },
         )
     }
+
+    /** The reads the state is built from. */
+    private data class ListInputs(
+        val snapshot: Pair<TaskQuery, TaskListSnapshot>,
+        val all: TaskListSnapshot,
+        val status: AppSyncStatus,
+        val session: SessionState,
+    )
+
+    /** What the list shows beside its rows. */
+    private data class Extras(
+        val isRefreshing: Boolean,
+        val caption: ReadProvenance?,
+        val photoCounts: Map<String, Int>,
+    )
 
     companion object {
         /** Builds the ViewModel from the app's single repository. */
@@ -277,6 +375,7 @@ class TasksViewModel(
                     sessionState = application.session.state,
                     commitScope = application.applicationScope,
                     failures = application.failures,
+                    notices = application.notices,
                 )
             }
         }

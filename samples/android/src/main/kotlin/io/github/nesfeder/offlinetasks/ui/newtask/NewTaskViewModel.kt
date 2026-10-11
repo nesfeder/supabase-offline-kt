@@ -6,12 +6,15 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
+import io.github.nesfeder.offlinetasks.data.NewTaskOutcome
 import io.github.nesfeder.offlinetasks.data.TASK_NOTES_MAX_LENGTH
 import io.github.nesfeder.offlinetasks.data.TASK_TITLE_MAX_LENGTH
 import io.github.nesfeder.offlinetasks.data.TaskRepository
 import io.github.nesfeder.offlinetasks.data.takeCharacters
 import io.github.nesfeder.offlinetasks.offlineTasksApplication
 import io.github.nesfeder.offlinetasks.ui.feedback.FailureReports
+import io.github.nesfeder.offlinetasks.ui.feedback.Notice
+import io.github.nesfeder.offlinetasks.ui.feedback.Notices
 import io.github.nesfeder.offlinetasks.ui.feedback.launchReporting
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -21,8 +24,16 @@ import kotlinx.coroutines.flow.update
 
 /** What the New-task screen shows. */
 sealed interface NewTaskUiState {
-    /** The form, as typed so far. [canAdd] is true once the title is a title the server takes. */
-    data class Editing(val title: String, val notes: String, val canAdd: Boolean) : NewTaskUiState
+    /**
+     * The form, as typed so far. [canAdd] is true once the title is a title the server takes;
+     * [needsConnection] sends the task now or not at all, never queued.
+     */
+    data class Editing(
+        val title: String,
+        val notes: String,
+        val canAdd: Boolean,
+        val needsConnection: Boolean = false,
+    ) : NewTaskUiState
 
     /** The task is added (or queued) with this [title] and [notes]; the screen closes. */
     data class Added(val title: String, val notes: String) : NewTaskUiState
@@ -34,11 +45,13 @@ sealed interface NewTaskUiState {
  *
  * @param writeScope where the write runs; it outlives this screen, which closes at once.
  * @param failures where a refused write is reported, to be shown on the screen in front by then.
+ * @param notices where the outcome is said: saved on the server, or on this device.
  */
 class NewTaskViewModel(
     private val repository: TaskRepository,
     private val writeScope: CoroutineScope,
     private val failures: FailureReports,
+    private val notices: Notices = Notices(),
 ) : ViewModel() {
 
     private val state = MutableStateFlow<NewTaskUiState>(NewTaskUiState.Editing("", "", false))
@@ -56,15 +69,35 @@ class NewTaskViewModel(
         edit { it.copy(notes = takeCharacters(notes, TASK_NOTES_MAX_LENGTH)) }
     }
 
-    /** Adds the task. It is on the device at once, so the screen can close straight away. */
+    /** Chooses whether the task is sent now or not at all, rather than queued when offline. */
+    fun onNeedsConnectionChange(needsConnection: Boolean) {
+        state.update { current ->
+            if (current is NewTaskUiState.Editing) current.copy(needsConnection = needsConnection)
+            else current
+        }
+    }
+
+    /**
+     * Adds the task. The screen closes straight away, and the outcome is said on the screen in
+     * front: saved, with the time the server stored it, or saved on this device.
+     */
     fun add() {
         val form = state.value as? NewTaskUiState.Editing ?: return
         if (!form.canAdd) return
         state.value = NewTaskUiState.Added(form.title, form.notes)
+        val title = form.title.trim()
         writeScope.launchReporting(failures) {
-            repository.addTask(
-                title = form.title.trim(),
-                notes = form.notes.trim().ifEmpty { null },
+            val outcome =
+                repository.addTask(
+                    title = title,
+                    notes = form.notes.trim().ifEmpty { null },
+                    needsConnection = form.needsConnection,
+                )
+            notices.post(
+                when (outcome) {
+                    is NewTaskOutcome.Saved -> Notice.TaskSaved(title, outcome.task.createdAt)
+                    NewTaskOutcome.SavedOnDevice -> Notice.TaskSavedOnDevice(title)
+                }
             )
         }
     }
@@ -86,6 +119,7 @@ class NewTaskViewModel(
                     repository = application.repository,
                     writeScope = application.applicationScope,
                     failures = application.failures,
+                    notices = application.notices,
                 )
             }
         }

@@ -64,7 +64,9 @@ begin
   where p.schemaname = 'storage'
     and p.tablename = 'objects'
     and p.policyname not in (
-      'task-photos: owner reads', 'task-photos: owner uploads', 'task-photos: owner deletes'
+      'task-photos: owner reads', 'task-photos: owner uploads', 'task-photos: owner deletes',
+      -- The later migration's own policy, so this file still runs again after it.
+      'task-photos: owner updates'
     )
     and concat(p.qual, ' ', p.with_check) like '%task-photos%';
   if other_policies is not null then

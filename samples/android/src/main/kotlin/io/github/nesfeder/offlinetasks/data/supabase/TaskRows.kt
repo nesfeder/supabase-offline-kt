@@ -37,6 +37,24 @@ internal data class NewTaskRow(
     @SerialName("created_at") val createdAt: String,
 )
 
+/**
+ * A `tasks` row exactly as the server holds it, every column and no defaults, as Realtime sends it:
+ * applied to the cache, it replaces the cached row whole.
+ */
+@Serializable
+internal data class TaskRecord(
+    val id: String,
+    @SerialName("user_id") val userId: String,
+    val title: String,
+    val notes: String?,
+    val done: Boolean,
+    @SerialName("created_at") val createdAt: String,
+    @SerialName("updated_at") val updatedAt: String,
+)
+
+/** The title and notes of a task, as autosave sends them; null notes clear them on the server. */
+@Serializable internal data class TaskTextPatch(val title: String, val notes: String?)
+
 /** A row of `task_photos` as a read shows it. */
 @Serializable
 internal data class TaskPhotoRow(

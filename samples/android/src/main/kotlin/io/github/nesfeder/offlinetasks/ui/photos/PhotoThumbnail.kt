@@ -26,7 +26,6 @@ import io.github.nesfeder.offlinetasks.R
 import io.github.nesfeder.offlinetasks.data.TaskPhoto
 import io.github.nesfeder.offlinetasks.ui.navigation.SharedElement
 import io.github.nesfeder.offlinetasks.ui.navigation.SharedKeys
-import java.io.File
 
 /**
  * A photo, cropped to fill its tile, drawn from the device's copy. [canReachServer] is a key: when
@@ -60,7 +59,7 @@ fun PhotoThumbnail(
             is PhotoFileState.OnDevice -> {
                 SharedElement(SharedKeys.photo(photo.id), Modifier.fillMaxSize()) {
                     AsyncImage(
-                        model = File(state.path),
+                        model = state.uri,
                         contentDescription = stringResource(R.string.photo_description),
                         contentScale = ContentScale.Crop,
                         modifier = Modifier.fillMaxSize(),

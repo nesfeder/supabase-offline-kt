@@ -14,8 +14,12 @@ import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.ButtonGroupDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.LargeFlexibleTopAppBar
 import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
@@ -36,6 +40,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -54,6 +59,9 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import io.github.nesfeder.offlinetasks.R
 import io.github.nesfeder.offlinetasks.data.Task
+import io.github.nesfeder.offlinetasks.data.TaskFilter
+import io.github.nesfeder.offlinetasks.data.TaskQuery
+import io.github.nesfeder.offlinetasks.ui.status.relativeTime
 import io.github.nesfeder.offlinetasks.ui.components.EmptyState
 import io.github.nesfeder.offlinetasks.ui.components.segmentedScreenAppBarColors
 import io.github.nesfeder.offlinetasks.ui.feedback.AppSnackbarHost
@@ -144,6 +152,8 @@ fun TasksRoute(
         state = state,
         selectedTaskId = selectedTaskId,
         onFilterChange = viewModel::setFilter,
+        onSearchChange = viewModel::setSearch,
+        onMarkAllDone = viewModel::markAllDone,
         onDoneChange = viewModel::setDone,
         onDelete = viewModel::delete,
         onRefresh = viewModel::refresh,
@@ -155,8 +165,9 @@ fun TasksRoute(
 }
 
 /**
- * The task list: a large flexible app bar with the sync subtitle, the status banner, the filter,
- * open and done sections, pull-to-refresh and the New-task button.
+ * The task list: a large flexible app bar with the sync subtitle and Mark all done, the caption of
+ * the last pull to refresh, the status banner, the search and the filters, open and done sections,
+ * pull-to-refresh and the New-task button.
  *
  * @param selectedTaskId the task open beside the list, if any, which its row shows as selected.
  */
@@ -171,6 +182,8 @@ fun TasksScreen(
     onNewTask: () -> Unit,
     modifier: Modifier = Modifier,
     selectedTaskId: String? = null,
+    onSearchChange: (String) -> Unit = {},
+    onMarkAllDone: () -> Unit = {},
 ) {
     val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
     val listState = rememberLazyListState()
@@ -183,6 +196,9 @@ fun TasksScreen(
                 colors = segmentedScreenAppBarColors(),
                 title = { Text(stringResource(R.string.tasks_title)) },
                 subtitle = { TasksSubtitle(state) },
+                actions = {
+                    if (state !is TasksUiState.NoSession) TasksMenu(onMarkAllDone)
+                },
                 scrollBehavior = scrollBehavior,
             )
         },
@@ -213,22 +229,27 @@ fun TasksScreen(
             ) {
                 // Before the first sign-in nothing can be changed, so no banner promises to save
                 // it.
+                (state as? TasksUiState.Loaded)?.caption?.let { caption ->
+                    item(key = "caption") { RefreshCaptionText(caption) }
+                }
                 if (state !is TasksUiState.NoSession) {
                     item(key = "banner") {
                         SyncStatusBanner(state.headline, Modifier.padding(bottom = 8.dp))
                     }
+                    item(key = "search") { SearchField(state.query.search, onSearchChange) }
                 }
-                item(key = "filter") { TaskFilterButtons(state.filter, onFilterChange) }
+                item(key = "filter") { TaskFilterButtons(state.query.filter, onFilterChange) }
                 when (state) {
                     is TasksUiState.NoSession -> item(key = "no-session") { NoSession(state) }
                     is TasksUiState.NoDataYet -> item(key = "no-data-yet") { NoDataYet(state) }
                     is TasksUiState.Loaded ->
                         if (state.openTasks.isEmpty() && state.doneTasks.isEmpty()) {
-                            item(key = "empty") { NoTasks(state.filter) }
+                            item(key = "empty") { NoTasks(state.query) }
                         } else {
                             taskSection(
                                 key = "open",
                                 tasks = state.openTasks,
+                                photoCounts = state.photoCounts,
                                 selectedTaskId = selectedTaskId,
                                 onDoneChange = onDoneChange,
                                 onDelete = onDelete,
@@ -237,6 +258,7 @@ fun TasksScreen(
                             taskSection(
                                 key = "done",
                                 tasks = state.doneTasks,
+                                photoCounts = state.photoCounts,
                                 selectedTaskId = selectedTaskId,
                                 onDoneChange = onDoneChange,
                                 onDelete = onDelete,
@@ -327,7 +349,75 @@ private fun subtitleStatus(headline: SyncHeadline): String =
             )
     }
 
-/** All / Open / Done, as a connected button group with one choice. */
+/** The app bar's menu: Mark all done, which a database function does on the server. */
+@Composable
+private fun TasksMenu(onMarkAllDone: () -> Unit) {
+    var expanded by remember { mutableStateOf(false) }
+    IconButton(onClick = { expanded = true }) {
+        Icon(painterResource(R.drawable.ic_more_vert), stringResource(R.string.action_more))
+    }
+    DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+        DropdownMenuItem(
+            text = { Text(stringResource(R.string.tasks_mark_all_done)) },
+            onClick = {
+                expanded = false
+                onMarkAllDone()
+            },
+        )
+    }
+}
+
+/**
+ * Under the title after a pull to refresh: "Updated just now" when the server answered, "From
+ * this device, 3 min ago" when it could not, and how many changes still wait.
+ */
+@Composable
+private fun RefreshCaptionText(caption: RefreshCaption) {
+    val provenance = caption.provenance
+    val fetched = provenance.fetchedAt?.let { relativeTime(it) }
+    val source =
+        when {
+            !provenance.isFromCache && fetched != null ->
+                stringResource(R.string.tasks_caption_updated, fetched)
+            fetched != null -> stringResource(R.string.tasks_caption_from_device, fetched)
+            else -> stringResource(R.string.tasks_caption_from_device_never)
+        }
+    val text =
+        if (provenance.hasPendingMutations && caption.pendingCount > 0) {
+            stringResource(
+                R.string.tasks_subtitle,
+                source,
+                pluralStringResource(
+                    R.plurals.status_waiting,
+                    caption.pendingCount,
+                    caption.pendingCount,
+                ),
+            )
+        } else {
+            source
+        }
+    Text(
+        text = text,
+        style = MaterialTheme.typography.bodyMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(start = 4.dp, bottom = 8.dp),
+    )
+}
+
+/** The search field: the title must contain the text, which the server checks. */
+@Composable
+private fun SearchField(text: String, onChange: (String) -> Unit) {
+    OutlinedTextField(
+        value = text,
+        onValueChange = onChange,
+        modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+        singleLine = true,
+        placeholder = { Text(stringResource(R.string.tasks_search)) },
+        leadingIcon = { Icon(painterResource(R.drawable.ic_search), null) },
+    )
+}
+
+/** All / Open / Done / Recent, as a connected button group with one choice. */
 @Composable
 private fun TaskFilterButtons(selected: TaskFilter, onSelect: (TaskFilter) -> Unit) {
     Row(
@@ -364,12 +454,14 @@ private val TaskFilter.label: Int
             TaskFilter.All -> R.string.filter_all
             TaskFilter.Open -> R.string.filter_open
             TaskFilter.Done -> R.string.filter_done
+            TaskFilter.Recent -> R.string.filter_recent
         }
 
 /** One section of the list, with its header; nothing when [tasks] is empty. */
 private fun LazyListScope.taskSection(
     key: String,
     tasks: List<Task>,
+    photoCounts: Map<String, Int>,
     selectedTaskId: String?,
     onDoneChange: (Task, Boolean) -> Unit,
     onDelete: (Task) -> Unit,
@@ -400,6 +492,7 @@ private fun LazyListScope.taskSection(
         val motion = MaterialTheme.motionScheme
         TaskRow(
             task = task,
+            photoCount = photoCounts[task.id] ?: 0,
             selected = task.id == selectedTaskId,
             shapes = ListItemDefaults.segmentedShapes(index = index, count = tasks.size),
             onDoneChange = onDoneChange,
@@ -448,12 +541,22 @@ private fun NoDataYet(state: TasksUiState.NoDataYet) {
 }
 
 @Composable
-private fun NoTasks(filter: TaskFilter) {
+private fun NoTasks(query: TaskQuery) {
+    if (query.search.isNotBlank()) {
+        EmptyState(
+            icon = R.drawable.ic_search,
+            title = stringResource(R.string.tasks_empty_search_title, query.search.trim()),
+            body = stringResource(R.string.tasks_empty_search_body),
+        )
+        return
+    }
     val (title, body) =
-        when (filter) {
+        when (query.filter) {
             TaskFilter.All -> R.string.tasks_empty_title to R.string.tasks_empty_body
             TaskFilter.Open -> R.string.tasks_empty_open_title to R.string.tasks_empty_open_body
             TaskFilter.Done -> R.string.tasks_empty_done_title to R.string.tasks_empty_done_body
+            TaskFilter.Recent ->
+                R.string.tasks_empty_recent_title to R.string.tasks_empty_recent_body
         }
     EmptyState(
         icon = R.drawable.ic_checklist,

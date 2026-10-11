@@ -27,6 +27,50 @@ fun interface PhotoEncoder {
 data class PhotoFile(val path: String, val fetchedAt: Instant, val sizeBytes: Long)
 
 /**
+ * Everything the app can say about one photo's file: Storage's own record of it, its links, and
+ * the copy on this device.
+ *
+ * @property existsInBucket whether Storage has the file now.
+ * @property sizeBytes the file's size in the bucket.
+ * @property publicUrl the file's public link; the bucket is private, so it answers with an error.
+ * @property authenticatedUrl the link a request with the user's token may read.
+ * @property cachedFile the copy on this device, or null when there is none.
+ */
+data class PhotoDetails(
+    val existsInBucket: Boolean,
+    val sizeBytes: Long,
+    val contentType: String?,
+    val createdAt: Instant?,
+    val updatedAt: Instant?,
+    val etag: String?,
+    val publicUrl: String,
+    val authenticatedUrl: String,
+    val cachedFile: PhotoFile?,
+)
+
+/** One file in the bucket, as Storage lists it. */
+data class BucketFile(
+    val name: String,
+    val sizeBytes: Long?,
+    val createdAt: Instant?,
+    val updatedAt: Instant?,
+    val lastAccessedAt: Instant?,
+)
+
+/** One task's folder in the bucket, `<user id>/<task id>/`, with its files, newest first. */
+data class BucketFolder(val taskId: String, val files: List<BucketFile>)
+
+/**
+ * One page of the user's task folders in the bucket; [hasMore] when another page follows, from
+ * [nextOffset].
+ */
+data class BucketListing(
+    val folders: List<BucketFolder>,
+    val hasMore: Boolean,
+    val nextOffset: Int,
+)
+
+/**
  * The progress of attaching one photo: the upload, then the row. A failure is not a value: the flow
  * fails with it, as an upload does.
  */
@@ -39,7 +83,7 @@ sealed interface PhotoUpload {
 }
 
 /** The request needs the server, and the network is off or unavailable. */
-class NetworkUnavailableException(cause: Throwable? = null) :
+open class NetworkUnavailableException(cause: Throwable? = null) :
     Exception("The network is unavailable", cause)
 
 /** The network is up but the server does not answer, or answers with an error. */

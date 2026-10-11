@@ -4,29 +4,46 @@ package io.github.nesfeder.offlinetasks.data.inmemory
 
 import io.github.nesfeder.offlinetasks.data.AppNetworkStatus
 import io.github.nesfeder.offlinetasks.data.AppSyncStatus
+import io.github.nesfeder.offlinetasks.data.BucketFile
+import io.github.nesfeder.offlinetasks.data.BucketFolder
+import io.github.nesfeder.offlinetasks.data.BucketListing
 import io.github.nesfeder.offlinetasks.data.EncodedPhoto
+import io.github.nesfeder.offlinetasks.data.InvalidRequestException
+import io.github.nesfeder.offlinetasks.data.LiveUpdatesStatus
+import io.github.nesfeder.offlinetasks.data.NetworkSwitchedOffException
 import io.github.nesfeder.offlinetasks.data.NetworkUnavailableException
+import io.github.nesfeder.offlinetasks.data.NewTaskOutcome
+import io.github.nesfeder.offlinetasks.data.NotSavedOnDeviceException
+import io.github.nesfeder.offlinetasks.data.PhotoDetails
 import io.github.nesfeder.offlinetasks.data.PhotoFile
 import io.github.nesfeder.offlinetasks.data.PhotoListSnapshot
 import io.github.nesfeder.offlinetasks.data.PhotoNotFoundException
 import io.github.nesfeder.offlinetasks.data.PhotoStorageException
 import io.github.nesfeder.offlinetasks.data.PhotoUpload
+import io.github.nesfeder.offlinetasks.data.ReadProvenance
 import io.github.nesfeder.offlinetasks.data.RejectedTaskMutation
 import io.github.nesfeder.offlinetasks.data.RowsSnapshot
+import io.github.nesfeder.offlinetasks.data.ServerCounts
 import io.github.nesfeder.offlinetasks.data.ServerUnreachableException
+import io.github.nesfeder.offlinetasks.data.SyncSettings
 import io.github.nesfeder.offlinetasks.data.Tables
 import io.github.nesfeder.offlinetasks.data.Task
+import io.github.nesfeder.offlinetasks.data.TaskFilter
 import io.github.nesfeder.offlinetasks.data.TaskListSnapshot
 import io.github.nesfeder.offlinetasks.data.TaskMutationOutcome
 import io.github.nesfeder.offlinetasks.data.TaskPhoto
+import io.github.nesfeder.offlinetasks.data.TaskQuery
 import io.github.nesfeder.offlinetasks.data.TaskRefreshState
 import io.github.nesfeder.offlinetasks.data.TaskRepository
 import io.github.nesfeder.offlinetasks.data.TaskSyncReport
 import io.github.nesfeder.offlinetasks.data.TaskWriteRefusedException
+import io.github.nesfeder.offlinetasks.data.WaitingChange
+import io.github.nesfeder.offlinetasks.data.WriteNeedsConnectionException
 import io.github.nesfeder.offlinetasks.data.photoObjectPath
 import kotlin.coroutines.cancellation.CancellationException
 import kotlin.time.Clock
 import kotlin.time.Duration
+import kotlin.time.Duration.Companion.days
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
@@ -36,12 +53,15 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onStart
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -55,6 +75,19 @@ private const val REJECTED_MUTATIONS_KEPT = 100
 
 /** How many progress steps a simulated upload reports. */
 private const val UPLOAD_STEPS = 10
+
+/** How old the device's copy may be and still answer pull to refresh, as the real one allows. */
+private val REFRESH_MAX_AGE = 1.days
+
+/** How far back the Recent filter reaches. */
+private val RECENT = 7.days
+
+/** How many task folders one page of the bucket's listing shows. */
+private const val FOLDERS_PER_PAGE = 10
+
+/** The titles of the sample tasks and of the starter list, as the real repository's. */
+private val SAMPLE_TITLES = List(5) { "Sample task ${it + 1}" }
+private val STARTER_TITLES = listOf("Water the plants", "Call the dentist", "Buy milk")
 
 /**
  * A [TaskRepository] that keeps everything in memory, with a simulated server behind a simulated
@@ -116,6 +149,22 @@ class InMemoryTaskRepository(
 
     override val isStorageFailing: StateFlow<Boolean> = publishedStorageFailing.asStateFlow()
 
+    private val switches = MutableStateFlow(SyncSettings())
+
+    override val settings: StateFlow<SyncSettings> = switches.asStateFlow()
+
+    // Nothing pushes changes in memory: connected means only that the switch is on and the app's
+    // network is not switched off.
+    override val liveUpdatesStatus: StateFlow<LiveUpdatesStatus> =
+        combine(switches, publishedSyncStatus) { switch, status ->
+                when {
+                    !switch.liveUpdates -> LiveUpdatesStatus.Off
+                    status.network == AppNetworkStatus.Disabled -> LiveUpdatesStatus.Paused
+                    else -> LiveUpdatesStatus.Connected
+                }
+            }
+            .stateIn(scope, SharingStarted.Eagerly, LiveUpdatesStatus.Connected)
+
     init {
         // Last: the watcher may run at once, on another thread, and needs every field above.
         scope.launch {
@@ -125,8 +174,15 @@ class InMemoryTaskRepository(
         }
     }
 
-    override fun tasks(): Flow<TaskListSnapshot> = observe {
-        it.taskSnapshot(rows = { true }, writes = { true })
+    override fun tasks(query: TaskQuery): Flow<TaskListSnapshot> {
+        val since = clock.now() - RECENT
+        val search = query.search.trim()
+        return observe {
+            it.taskSnapshot(
+                rows = { task -> task.matches(query.filter, since) && task.title.contains(search, ignoreCase = true) },
+                writes = { true },
+            )
+        }
     }
 
     override fun task(id: String): Flow<TaskListSnapshot> = observe {
@@ -145,19 +201,95 @@ class InMemoryTaskRepository(
         it.photoSnapshot(newestFirst = true, rows = { true }, writes = { true })
     }
 
-    override suspend fun addTask(title: String, notes: String?): TaskMutationOutcome {
-        val now = clock.now()
-        val task =
-            Task(
-                id = newId(),
-                userId = state.value.userId,
-                title = title,
-                notes = notes,
-                isDone = false,
-                createdAt = now,
-                updatedAt = now,
-            )
+    override fun photoPage(count: Int): Flow<PhotoListSnapshot> =
+        allPhotos().map { snapshot -> snapshot.copy(value = snapshot.value?.take(count)) }
+
+    override fun photoCounts(taskIds: List<String>): Flow<Map<String, Int>> =
+        state
+            .map { current ->
+                current
+                    .visibleRows()
+                    ?.photos
+                    ?.values
+                    ?.filter { it.taskId in taskIds }
+                    ?.groupingBy { it.taskId }
+                    ?.eachCount()
+                    .orEmpty()
+            }
+            .distinctUntilChanged()
+
+    override suspend fun addTask(
+        title: String,
+        notes: String?,
+        needsConnection: Boolean,
+    ): NewTaskOutcome {
+        // Online only: sent now or not at all, as an OnlineOnly write is.
+        if (needsConnection) unreachableServerError()?.let { throw it }
+        val task = newTask(title, notes)
+        return when (write { QueuedMutation.InsertTask(it, task) }) {
+            TaskMutationOutcome.Applied -> NewTaskOutcome.Saved(task)
+            is TaskMutationOutcome.Queued -> NewTaskOutcome.SavedOnDevice
+        }
+    }
+
+    override suspend fun duplicateTask(id: String): NewTaskOutcome {
+        val original = state.value.visibleRows()?.tasks?.get(id) ?: throw NotSavedOnDeviceException()
+        val copy = newTask("${original.title} (copy)", original.notes).copy(isDone = original.isDone)
+        return when (write { QueuedMutation.InsertTask(it, copy) }) {
+            TaskMutationOutcome.Applied -> NewTaskOutcome.Saved(copy)
+            is TaskMutationOutcome.Queued -> NewTaskOutcome.SavedOnDevice
+        }
+    }
+
+    override suspend fun addSampleTasks(): TaskMutationOutcome =
+        SAMPLE_TITLES.map { title ->
+                val task = newTask(title, notes = null)
+                write { QueuedMutation.InsertTask(it, task) }
+            }
+            .lastOrNull { it is TaskMutationOutcome.Queued } ?: TaskMutationOutcome.Applied
+
+    override suspend fun importStarterList(): TaskMutationOutcome {
+        val userId = state.value.userId
+        val existing = state.value.visibleRows()?.tasks.orEmpty()
+        return STARTER_TITLES.mapIndexedNotNull { index, title ->
+                val id = "$userId-starter-$index"
+                if (id in existing) return@mapIndexedNotNull null // a second import changes nothing
+                val task = newTask(title, notes = null).copy(id = id)
+                write { QueuedMutation.InsertTask(it, task) }
+            }
+            .lastOrNull { it is TaskMutationOutcome.Queued } ?: TaskMutationOutcome.Applied
+    }
+
+    override suspend fun addTaskWithBlankTitle(): TaskMutationOutcome {
+        val task = newTask("   ", notes = null)
         return write { QueuedMutation.InsertTask(it, task) }
+    }
+
+    override suspend fun deleteThisWeeksDoneTasks(): TaskMutationOutcome {
+        unreachableServerError()?.let {
+            throw WriteNeedsConnectionException("A delete with a logical group cannot be queued", it)
+        }
+        val since = clock.now() - RECENT
+        val done =
+            state.value.visibleRows()?.tasks?.values.orEmpty().filter {
+                it.isDone && it.createdAt >= since
+            }
+        done.forEach { task -> write { QueuedMutation.DeleteTask(it, task.id) } }
+        return TaskMutationOutcome.Applied
+    }
+
+    /** A new task for the signed-in user, made now. */
+    private fun newTask(title: String, notes: String?): Task {
+        val now = clock.now()
+        return Task(
+            id = newId(),
+            userId = state.value.userId,
+            title = title,
+            notes = notes,
+            isDone = false,
+            createdAt = now,
+            updatedAt = now,
+        )
     }
 
     override suspend fun updateTask(
@@ -238,6 +370,99 @@ class InMemoryTaskRepository(
     override suspend fun cachedPhotoFile(photo: TaskPhoto): PhotoFile? =
         photoFiles.find(photo.fileName)
 
+    override suspend fun photoUriIfCached(photo: TaskPhoto): String? =
+        photoFiles.find(photo.fileName)?.let { "file://${it.path}" }
+
+    override suspend fun photoUri(photo: TaskPhoto): String =
+        "file://${downloadPhotoFile(photo).path}"
+
+    override suspend fun photoFileToShare(photo: TaskPhoto): String = downloadPhotoFile(photo).path
+
+    override suspend fun photoDetails(photo: TaskPhoto): PhotoDetails {
+        unreachableServerError()?.let { throw it }
+        val bytes = server.download(photo.objectPath)
+        return PhotoDetails(
+            existsInBucket = bytes != null,
+            sizeBytes = bytes?.size?.toLong() ?: 0,
+            contentType = "image/jpeg",
+            createdAt = photo.createdAt,
+            updatedAt = photo.createdAt,
+            etag = null,
+            publicUrl = "$FAKE_STORAGE_URL/public/${photo.objectPath}",
+            authenticatedUrl = "$FAKE_STORAGE_URL/authenticated/${photo.objectPath}",
+            cachedFile = photoFiles.find(photo.fileName),
+        )
+    }
+
+    override suspend fun photoShareLink(photo: TaskPhoto): String {
+        unreachableServerError()?.let { throw it }
+        return "$FAKE_STORAGE_URL/sign/${photo.objectPath}?width=512"
+    }
+
+    override suspend fun photoShareLinks(photos: List<TaskPhoto>): List<String> {
+        unreachableServerError()?.let { throw it }
+        return photos.map { "$FAKE_STORAGE_URL/sign/${it.objectPath}" }
+    }
+
+    override suspend fun replacePhoto(photo: TaskPhoto, replacement: EncodedPhoto) = detached {
+        unreachableServerError()?.let { throw it }
+        storageRefusal()?.let { throw it }
+        if (!server.replaceFile(photo.objectPath, replacement.jpeg)) {
+            throw PhotoNotFoundException(photo.objectPath)
+        }
+        photoFiles.delete(photo.fileName)
+    }
+
+    override suspend fun movePhoto(photo: TaskPhoto, taskId: String): TaskMutationOutcome = detached {
+        unreachableServerError()?.let { throw it }
+        storageRefusal()?.let { throw it }
+        val newPath = photoObjectPath(photo.userId, taskId, photo.id)
+        if (!server.moveFile(photo.objectPath, newPath)) throw PhotoNotFoundException(photo.objectPath)
+        write { QueuedMutation.MovePhoto(it, photo.id, taskId, newPath) }
+    }
+
+    override suspend fun copyPhoto(photo: TaskPhoto, taskId: String): TaskMutationOutcome = detached {
+        unreachableServerError()?.let { throw it }
+        storageRefusal()?.let { throw it }
+        val copyId = newId()
+        val copyPath = photoObjectPath(photo.userId, taskId, copyId)
+        if (!server.copyFile(photo.objectPath, copyPath)) throw PhotoNotFoundException(photo.objectPath)
+        val copy = photo.copy(id = copyId, taskId = taskId, objectPath = copyPath, createdAt = clock.now())
+        write { QueuedMutation.InsertPhoto(it, copy) }
+    }
+
+    override suspend fun listBucket(offset: Int): BucketListing {
+        unreachableServerError()?.let { throw it }
+        val folders = server.filesOf(state.value.userId).toSortedMap().entries.toList()
+        val page = folders.drop(offset).take(FOLDERS_PER_PAGE)
+        return BucketListing(
+            folders =
+                page.map { (taskId, files) ->
+                    BucketFolder(
+                        taskId,
+                        files.map { (path, size) ->
+                            BucketFile(path.substringAfterLast('/'), size.toLong(), null, null, null)
+                        },
+                    )
+                },
+            hasMore = folders.size > offset + page.size,
+            nextOffset = offset + page.size,
+        )
+    }
+
+    override suspend fun uploadThroughSignedUrl(): TaskPhoto? = detached {
+        unreachableServerError()?.let { throw it }
+        val newest =
+            state.value.visibleRows()?.photos?.values?.maxByOrNull { it.createdAt }
+                ?: return@detached null
+        val bytes = server.download(newest.objectPath) ?: throw PhotoNotFoundException(newest.objectPath)
+        val photoId = newId()
+        val path = photoObjectPath(newest.userId, newest.taskId, photoId)
+        server.upload(path, bytes)
+        val copy = newest.copy(id = photoId, objectPath = path, createdAt = clock.now())
+        write { QueuedMutation.InsertPhoto(it, copy) }
+        copy
+    }
     override suspend fun downloadPhotoFile(photo: TaskPhoto): PhotoFile {
         photoFiles.find(photo.fileName)?.let {
             return it
@@ -255,8 +480,32 @@ class InMemoryTaskRepository(
             .map { current -> current.queue.count { table == null || it.table == table } }
             .distinctUntilChanged()
 
+    override suspend fun pendingMutationCountNow(): Int = state.value.queue.size
+
+    override fun waitingChanges(): Flow<List<WaitingChange>> =
+        state
+            .map { current ->
+                current.queue.map { mutation ->
+                    WaitingChange(
+                        id = mutation.id,
+                        table = mutation.table,
+                        operation = mutation.operation,
+                        createdAt = current.queuedAt[mutation.id] ?: clock.now(),
+                        rowKey = mutation.rowKey,
+                        taskTitle = mutation.taskTitle,
+                    )
+                }
+            }
+            .distinctUntilChanged()
+
+    override suspend fun discardWaitingChange(id: Long) {
+        updateState { it.copy(queue = it.queue.filterNot { mutation -> mutation.id == id }) }
+    }
+
     override fun rejectedMutations(): Flow<List<RejectedTaskMutation>> =
         state.map { it.rejected }.distinctUntilChanged()
+
+    override suspend fun rejectedMutationsNow(): List<RejectedTaskMutation> = state.value.rejected
 
     override suspend fun dismissRejectedMutation(id: Long) {
         updateState { it.withoutRejection(id) }
@@ -285,12 +534,58 @@ class InMemoryTaskRepository(
         }
     }
 
-    override suspend fun refreshTasks() {
-        // A one-shot read that must reach the server, as a NetworkOnly select is: off the network
-        // it fails at once, and against a failing server it fails once the attempt has.
-        if (state.value.network != AppNetworkStatus.Online) throw NetworkUnavailableException()
+    override suspend fun refreshTasks(): ReadProvenance {
+        // As a NetworkFirst select with a day's maxAge: off the network it answers from the
+        // device's copy when it is a day old at most, and against a failing server it fails.
+        val before = state.value
+        if (before.network != AppNetworkStatus.Online) {
+            val fetchedAt = before.fetchedAt
+            if (before.cache == null || fetchedAt == null || clock.now() - fetchedAt > REFRESH_MAX_AGE) {
+                throw NetworkUnavailableException()
+            }
+            return ReadProvenance(true, fetchedAt, before.queue.isNotEmpty())
+        }
         detached { refreshFromServer(force = true) }
         unreachableServerError()?.let { throw it }
+        val after = state.value
+        return ReadProvenance(false, after.fetchedAt, after.queue.isNotEmpty())
+    }
+
+    override suspend fun openTaskCountNow(): Int? =
+        state.value.visibleRows()?.tasks?.values?.count { !it.isDone }
+
+    override fun setPreferFreshData(prefer: Boolean) {
+        switches.update { it.copy(preferFreshData = prefer) }
+    }
+
+    override fun setLiveUpdates(enabled: Boolean) {
+        switches.update { it.copy(liveUpdates = enabled) }
+    }
+
+    override suspend fun markAllDone(): Int {
+        unreachableServerError()?.let { throw it }
+        delay(latency)
+        return server.completeAllTasks(state.value.userId, clock.now())
+    }
+
+    override suspend fun serverCounts(): ServerCounts {
+        unreachableServerError()?.let { throw it }
+        val tasks = server.rowsOf(state.value.userId).tasks.values
+        val since = clock.now() - RECENT
+        return ServerCounts(
+            done = tasks.count { it.isDone },
+            total = tasks.size,
+            doneThisWeek = tasks.count { it.isDone && it.createdAt >= since },
+        )
+    }
+
+    override suspend fun countOpenTasksOnServer(): Int {
+        unreachableServerError()?.let { throw it }
+        return server.rowsOf(state.value.userId).tasks.values.count { !it.isDone }
+    }
+
+    override suspend fun readWithTwoFiltersOnOneColumn() {
+        throw InvalidRequestException("Two top-level filters on column created_at")
     }
 
     override suspend fun setNetworkEnabled(enabled: Boolean) {
@@ -417,10 +712,12 @@ class InMemoryTaskRepository(
 
     private fun enqueue(build: (mutationId: Long) -> QueuedMutation): QueuedMutation {
         lateinit var queued: QueuedMutation
+        val now = clock.now()
         updateState { current ->
             queued = build(current.nextMutationId)
             current.copy(
                 queue = current.queue + queued,
+                queuedAt = current.queuedAt + (queued.id to now),
                 nextMutationId = current.nextMutationId + 1,
             )
         }
@@ -491,11 +788,12 @@ class InMemoryTaskRepository(
                             id = head.id,
                             table = head.table,
                             operation = head.operation,
-                            rowKey = head.rowKey,
+                            rowKeys = listOfNotNull(head.rowKey),
                             taskTitle = head.taskTitle,
                             serverError = answer.error,
                             message = answer.error.message,
                             rejectedAt = clock.now(),
+                            createdAt = current.queuedAt[head.id] ?: clock.now(),
                         )
                     updateState {
                         if (keepRefusal) it.refused(head, rejection) else it.abandoned(head)
@@ -570,9 +868,10 @@ class InMemoryTaskRepository(
         }
 
     /** Why the server cannot be reached right now, or null when it can. */
-    private fun unreachableServerError(): Throwable? {
+    private fun unreachableServerError(): Exception? {
         val current = state.value
         return when {
+            current.network == AppNetworkStatus.Disabled -> NetworkSwitchedOffException()
             current.network != AppNetworkStatus.Online -> NetworkUnavailableException()
             current.serverOutage -> ServerUnreachableException()
             else -> null
@@ -595,6 +894,18 @@ private sealed interface ReplayStep {
     data class Refused(val rejection: RejectedTaskMutation) : ReplayStep
 }
 
+/** Where the in-memory bucket's links point: nowhere real. */
+private const val FAKE_STORAGE_URL = "https://in-memory.test/storage/v1/object/task-photos"
+
+/** Whether this task is one [filter] selects; Recent means made since [since]. */
+private fun Task.matches(filter: TaskFilter, since: Instant): Boolean =
+    when (filter) {
+        TaskFilter.All -> true
+        TaskFilter.Open -> !isDone
+        TaskFilter.Done -> isDone
+        TaskFilter.Recent -> createdAt >= since
+    }
+
 /** The name of a photo's file in the device's [PhotoFileStore]. */
 private val TaskPhoto.fileName: String
     get() = "$id.jpg"
@@ -608,6 +919,8 @@ private data class DeviceState(
     val confirmedByServer: Boolean = false,
     val refresh: TaskRefreshState = TaskRefreshState.Idle,
     val queue: List<QueuedMutation> = emptyList(),
+    /** When each queued write was made, by its id. */
+    val queuedAt: Map<Long, Instant> = emptyMap(),
     val rejected: List<RejectedTaskMutation> = emptyList(),
     /** The refused writes themselves, by rejection id, for a retry. */
     val rejectedWrites: Map<Long, QueuedMutation> = emptyMap(),

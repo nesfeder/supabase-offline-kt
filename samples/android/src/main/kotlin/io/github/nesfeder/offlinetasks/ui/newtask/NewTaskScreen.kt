@@ -4,19 +4,23 @@ package io.github.nesfeder.offlinetasks.ui.newtask
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
@@ -30,6 +34,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.unit.dp
@@ -61,6 +66,7 @@ fun NewTaskRoute(
         state = state,
         onTitleChange = viewModel::onTitleChange,
         onNotesChange = viewModel::onNotesChange,
+        onNeedsConnectionChange = viewModel::onNeedsConnectionChange,
         onAdd = viewModel::add,
         onClose = close,
     )
@@ -78,12 +84,14 @@ fun NewTaskScreen(
     onAdd: () -> Unit,
     onClose: () -> Unit,
     modifier: Modifier = Modifier,
+    onNeedsConnectionChange: (Boolean) -> Unit = {},
 ) {
     val (title, notes, canAdd) =
         when (state) {
             is NewTaskUiState.Editing -> Triple(state.title, state.notes, state.canAdd)
             is NewTaskUiState.Added -> Triple(state.title, state.notes, false)
         }
+    val needsConnection = (state as? NewTaskUiState.Editing)?.needsConnection == true
     val titleFocus = remember { FocusRequester() }
     LaunchedEffect(Unit) { titleFocus.requestFocus() }
     SharedBounds(SharedKeys.NEW_TASK, modifier.fillMaxSize()) {
@@ -145,6 +153,7 @@ fun NewTaskScreen(
                             KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
                         modifier = Modifier.fillMaxWidth(),
                     )
+                    NeedsConnectionSwitch(needsConnection, onNeedsConnectionChange)
                 }
                 Button(
                     onClick = onAdd,
@@ -155,6 +164,29 @@ fun NewTaskScreen(
                 }
             }
         }
+    }
+}
+
+/**
+ * "Needs a connection": off, the task is saved on this device when the server cannot be reached
+ * and synced later; on, it is sent now or not at all.
+ */
+@Composable
+private fun NeedsConnectionSwitch(checked: Boolean, onChange: (Boolean) -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth().toggleable(checked, role = Role.Switch, onValueChange = onChange),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(stringResource(R.string.new_task_needs_connection))
+            Text(
+                stringResource(R.string.new_task_needs_connection_body),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Switch(checked = checked, onCheckedChange = null)
     }
 }
 
