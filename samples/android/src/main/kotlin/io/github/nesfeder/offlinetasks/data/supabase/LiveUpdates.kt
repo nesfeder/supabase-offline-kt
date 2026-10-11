@@ -31,9 +31,9 @@ private const val SCHEMA = "public"
  */
 class LiveUpdates(private val supabase: SupabaseClient) {
 
-    private val offline = supabase.offline
-
     // --8<-- [start:live-updates]
+    private val offline = supabase.offline // the plugin, as every call below reaches it
+
     /**
      * Subscribes to both tables and applies each change until the caller is canceled, then leaves
      * the channel. [onConnected] hears whether the channel is subscribed.

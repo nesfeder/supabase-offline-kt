@@ -38,6 +38,7 @@ import kotlinx.serialization.json.jsonPrimitive
 // The library's values in the app's own terms. The screens never see a library type, so these
 // are the one place each is read; the sample's tests build them with the testing artifact.
 
+// --8<-- [start:refresh-state]
 /** This snapshot in the app's terms, its rows decoded by [rows] when there are any. */
 internal fun <T> QuerySnapshot.toRowsSnapshot(rows: (PostgrestResult) -> T): RowsSnapshot<T> =
     RowsSnapshot(
@@ -48,7 +49,6 @@ internal fun <T> QuerySnapshot.toRowsSnapshot(rows: (PostgrestResult) -> T): Row
         refresh = refresh.toTaskRefreshState(),
     )
 
-// --8<-- [start:refresh-state]
 /** Where the refresh behind a live read stands, one case for each of the library's four. */
 internal fun RefreshState.toTaskRefreshState(): TaskRefreshState =
     when (this) {
@@ -135,11 +135,11 @@ internal fun RejectedMutation.toRejectedTaskMutation(): RejectedTaskMutation =
         isRetryable = isRetryable, // false when its body was too long to keep
     )
 
-// --8<-- [end:rejected-row]
-
 /** The server's answer to a refused write, kept as data so it survives a restart. */
 internal fun ServerError.toTaskServerError(): TaskServerError =
     TaskServerError(status = status, code = code, message = message, details = details, hint = hint)
+
+// --8<-- [end:rejected-row]
 
 /** A write's outcome without the server's answer: applied, or queued under an id. */
 internal fun MutationOutcome.toTaskMutationOutcome(): TaskMutationOutcome =
@@ -148,8 +148,11 @@ internal fun MutationOutcome.toTaskMutationOutcome(): TaskMutationOutcome =
         is MutationOutcome.Queued -> TaskMutationOutcome.Queued(pendingMutation.id)
     }
 
-/** A cached file's facts in the app's terms. */
+// --8<-- [start:cached-file]
+/** A cached file's facts in the app's terms: where it is, when it was fetched, how large. */
 internal fun CachedFile.toPhotoFile(): PhotoFile = PhotoFile(path, fetchedAt, sizeBytes)
+
+// --8<-- [end:cached-file]
 
 /** The `id` values in the row keys of these queued writes. */
 internal fun List<PendingMutation>.rowIds(): Set<String> =

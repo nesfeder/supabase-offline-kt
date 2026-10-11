@@ -508,10 +508,11 @@ class OfflineTaskRepository(
         insertPhotoRow(photoId, newest.userId, newest.taskId, path, newest.width, newest.height)
     }
 
+    // --8<-- [start:pending-count]
+    /** The queue's size as it changes, for [table] alone or for every table when it is null. */
     override fun pendingMutationCount(table: String?): Flow<Int> =
         offline.pendingMutationCountFlow(table)
 
-    // --8<-- [start:pending-count]
     /** The queue's size, read once: the badge has it before the status's first update. */
     override suspend fun pendingMutationCountNow(): Int = offline.pendingMutationCount()
 

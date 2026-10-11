@@ -65,7 +65,8 @@ Each emission is a `QuerySnapshot`, and its fields are true together:
 upsert adds comes after the server's rows, whatever the query's order and limit, and lacks the
 columns the server fills in until the server has the write: sort on the device when the order
 matters, and decode into a type whose server-filled fields are optional. Next to rows the screen
-already shows, `refresh` says whether to show a note:
+already shows, `refresh` says whether to show a note. The sample maps each snapshot to its own
+type in one place, and the refresh with it:
 
 From the samples: [LibraryMappings.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/LibraryMappings.kt) · [TasksModel.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Tasks/TasksModel.swift)
 
