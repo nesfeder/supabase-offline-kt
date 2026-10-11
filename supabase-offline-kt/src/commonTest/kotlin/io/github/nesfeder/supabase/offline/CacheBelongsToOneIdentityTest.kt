@@ -612,6 +612,32 @@ class CacheBelongsToOneIdentityTest {
         }
 
     @Test
+    fun a_change_of_user_whose_drop_fails_before_it_commits_fetches_nothing_again_and_again() =
+        runTest {
+            // Given — A signed in, with a reactive read showing A's rows, over a database that
+            // refuses to record a new owner, as a full disk would
+            val server = newServer()
+            val client = launchClient(server, signedInAs = "A")
+            val job = backgroundScope.launch { client.from(TABLE).selectAsFlow().collect {} }
+            advanceTimeBy(5.seconds)
+            runCurrent()
+            queryCacheDao.failUpsertOf = { row ->
+                row.table == RESERVED_TABLE_NAME && row.cacheKey == CACHE_OWNER_CACHE_KEY
+            }
+            val before = server.requests.size
+
+            // When — B signs in, and every drop of A's cache fails before it commits
+            client.supabaseClient.signInForTest("B")
+            awaitUntil { server.requests.size - before >= 200 }
+            job.cancel()
+
+            // Then — the cache is still recorded as A's, and the reads did not loop
+            val sent = server.requests.size - before
+            assertTrue(sent < 10, "$sent requests after the failed drops")
+            assertEquals(ownerRecordOf("user:A"), recordedOwner())
+        }
+
+    @Test
     fun a_change_of_user_drops_the_file_cache_and_its_rows() = runTest {
         // Given — A's copy of an object cached
         val server = newServer()
