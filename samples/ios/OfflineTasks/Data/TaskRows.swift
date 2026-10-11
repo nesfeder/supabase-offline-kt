@@ -27,6 +27,28 @@ nonisolated struct TaskRow: Codable, Sendable {
 }
 // --8<-- [end:row]
 
+/// A `tasks` row as the server stored it, with `updated_at`, the time the server set on it.
+nonisolated struct StoredTaskRow: Codable, Sendable {
+    let id: String
+    let userID: String
+    let title: String
+    let notes: String?
+    let done: Bool
+    let createdAt: Date
+    let updatedAt: Date
+
+    /// The table's column names.
+    enum CodingKeys: String, CodingKey {
+        case id
+        case userID = "user_id"
+        case title
+        case notes
+        case done
+        case createdAt = "created_at"
+        case updatedAt = "updated_at"
+    }
+}
+
 /// A new row of `tasks`. It carries its owner and its creation time, so a task made offline sorts
 /// where it belongs before the server has it; `updated_at` is the server's to set.
 nonisolated struct NewTaskRow: Encodable, Sendable {

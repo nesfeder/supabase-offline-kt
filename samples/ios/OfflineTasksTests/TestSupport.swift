@@ -31,12 +31,18 @@ final class TestApp {
     private var liveUpdates: Task<Void, Never>?
 
     /// A fresh app on `server`, signed in as `session`'s user or a new one whose sign-out takes
-    /// `signOutDelay`, on `clock`'s time when one is given.
-    init(server: DemoServer = DemoServer(), session: DemoSession? = nil, signOutDelay: Duration = .zero, clock: ManualClock? = nil) {
+    /// `signOutDelay`, on `clock`'s time when one is given, its connectivity `networkAvailability`.
+    init(
+        server: DemoServer = DemoServer(),
+        session: DemoSession? = nil,
+        signOutDelay: Duration = .zero,
+        clock: ManualClock? = nil,
+        networkAvailability: @escaping @Sendable () -> AsyncStream<Bool> = { AsyncStream { $0.yield(true) } }
+    ) {
         self.server = server
         let session = session ?? DemoSession(signOutDelay: signOutDelay)
         self.session = session
-        app = AppModel.demo(server: server, session: session, clock: clock)
+        app = AppModel.demo(server: server, session: session, clock: clock, networkAvailability: networkAvailability)
     }
 
     /// Every read and write.
@@ -77,6 +83,13 @@ final class TestApp {
         let app = app
         liveUpdates = Task { await app.followLiveUpdates() }
         try await eventually("the feed is open") { await server.openFeedCount() > 0 }
+    }
+
+    /// Stops Live updates, as the root view does when what it follows changes, and waits until the
+    /// server has closed the feed.
+    func stopLiveUpdates() async throws {
+        liveUpdates?.cancel()
+        try await eventually("the feed is closed") { await server.openFeedCount() == 0 }
     }
 
     /// Adds a task through New task, and fails the test when it is not saved.

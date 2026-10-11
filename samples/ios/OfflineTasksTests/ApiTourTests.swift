@@ -72,6 +72,26 @@ struct ApiTourTests {
         try await test.stop()
     }
 
+    @Test("New task's saved time is the updated_at the server set, not the device's created_at")
+    func newTaskShowsTheServersTime() async throws {
+        // Given
+        let test = TestApp()
+        try await test.start()
+
+        // When
+        let result = try await test.repository.addTask(title: "Buy milk", notes: nil, needsConnection: true)
+
+        // Then
+        let row = try #require(await test.server.rows(of: Tables.tasks).first)
+        guard case .string(let updatedAt)? = row["updated_at"], case .saved(let storedAt) = result else {
+            Issue.record("Expected a stored row with its updated_at, got \(result)")
+            return
+        }
+        let serverTime = try Date(updatedAt, strategy: Date.ISO8601FormatStyle(includingFractionalSeconds: true))
+        #expect(abs(storedAt.timeIntervalSince(serverTime)) < 0.001)
+        try await test.stop()
+    }
+
     @Test("Add five sample tasks is one insert of five rows")
     func sampleTasks() async throws {
         // Given
@@ -384,6 +404,37 @@ struct ApiTourTests {
         try await eventually("the change shows") { test.app.tasks.tasks?.first?.title == "Buy oat milk" }
         #expect(test.app.tasks.tasks?.first?.isDone == true)
         #expect(await test.server.requests.filter { $0.method == "GET" }.count == readsBefore)
+        try await test.stop()
+    }
+
+    @Test("Live updates stops when the network drops, and catches up on what it missed when it is back")
+    func liveUpdatesCatchUpAfterADrop() async throws {
+        // Given: Live updates following a task, on a device whose connectivity the test sets
+        let (signal, network) = AsyncStream<Bool>.makeStream()
+        network.yield(true)
+        let test = TestApp(networkAvailability: { signal })
+        try await test.start()
+        try await eventually("the device is online") { test.app.syncStatus.network == .online }
+        try await test.addTask("Buy milk")
+        let task = try await test.task(titled: "Buy milk")
+        try await test.startLiveUpdates()
+
+        // When: the network drops, and the task changes on another device meanwhile
+        network.yield(false)
+        try await eventually("Live updates stops following") { !test.app.liveUpdatesKey.isOn }
+        try await test.stopLiveUpdates()
+        await test.server.changeElsewhere(task: task.id, ["title": "Buy oat milk"])
+        let photoReadsBefore = await test.server.requests.filter { $0.path == "/rest/v1/\(Tables.taskPhotos)" }.count
+
+        // Then: back online, Live updates joins again and reads both lists, so the change shows
+        network.yield(true)
+        try await eventually("Live updates follows again") { test.app.liveUpdatesKey.isOn }
+        try await test.startLiveUpdates()
+        try await eventually("the lists are read again") {
+            await test.server.requests.filter { $0.path == "/rest/v1/\(Tables.taskPhotos)" }.count > photoReadsBefore
+        }
+        try await eventually("the change made during the drop shows") { test.app.tasks.tasks?.first?.title == "Buy oat milk" }
+        network.finish()
         try await test.stop()
     }
 }

@@ -117,9 +117,11 @@ final class AppModel {
         TaskRepository.readStrategy(prefersFreshData: prefersFreshData)
     }
 
-    /// What Live updates follows: on, for the signed-in user, unless Simulate offline cuts the app off.
+    /// What Live updates follows: on, for the signed-in user, while the network can be reached. A
+    /// drop, real or Simulate offline, ends the subscription, and its return makes a new one.
     var liveUpdatesKey: LiveUpdatesKey {
-        LiveUpdatesKey(userID: session.userID, isOn: isLiveUpdatesOn && !isSimulatingOffline)
+        let isReachable = syncStatus.network == .online || syncStatus.network == .unknown
+        return LiveUpdatesKey(userID: session.userID, isOn: isLiveUpdatesOn && isReachable)
     }
 
     // MARK: - Running
@@ -137,14 +139,17 @@ final class AppModel {
 
     // --8<-- [start:live-updates-apply]
     /// Applies the server's row changes as they arrive, for as long as the calling task runs: the
-    /// root view runs it while Live updates is on and a user is signed in.
+    /// root view runs it while Live updates is on, a user is signed in and the network can be
+    /// reached. Each time the subscription joins, the lists are read again, to catch up with
+    /// what changed while it was not there.
     func followLiveUpdates() async {
         guard liveUpdatesKey.isOn, liveUpdatesKey.userID != nil else { return }
         do {
-            let changes = changeSource.changes(of: [Tables.tasks, Tables.taskPhotos])
-            if repository.canReachNetwork { try await repository.readListsAgain() }
-            for try await change in changes {
-                try await repository.apply(change)
+            for try await event in changeSource.changes(of: [Tables.tasks, Tables.taskPhotos]) {
+                switch event {
+                case .joined: try await repository.readListsAgain()
+                case .change(let change): try await repository.apply(change)
+                }
             }
         } catch is CancellationError {
             return
@@ -293,7 +298,7 @@ struct LiveUpdatesKey: Hashable {
     /// The signed-in user; `nil` before there is one.
     let userID: String?
 
-    /// Whether Live updates is on and Simulate offline is off.
+    /// Whether Live updates is on and the network can be reached.
     let isOn: Bool
 }
 
@@ -372,14 +377,15 @@ extension AppModel {
         mode: LaunchMode = .demo(reason: .requested),
         server: DemoServer = DemoServer(),
         session: DemoSession = DemoSession(),
-        clock: ManualClock? = nil
+        clock: ManualClock? = nil,
+        networkAvailability: @escaping @Sendable () -> AsyncStream<Bool> = { AsyncStream { $0.yield(true) } }
     ) -> AppModel {
         // --8<-- [start:in-memory-client]
         let client = SupabaseOfflineClient.inMemory(
             config: ClientSettings.config(
                 accessToken: { await session.accessToken() },
-                // The in-memory client watches no network monitor: say it is online.
-                networkAvailability: { AsyncStream { $0.yield(true) } }
+                // The in-memory client watches no network monitor: by default, say it is online.
+                networkAvailability: networkAvailability
             ),
             server: server.fakeServer,
             clock: clock

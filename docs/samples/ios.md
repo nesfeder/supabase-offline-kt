@@ -111,7 +111,8 @@ it is read from the list the device already holds.
 **New task** has a **Needs a connection** switch. Off, the default, the task is kept on the device
 and sent when it can be, and the app says "Saved on this device"; on, it goes straight to the
 server or not at all, so offline the sheet says why and keeps your text. Online, either way, the
-app says the time the server stored it at, from the row the server sends back.
+app says the time the server stored it at: the row's `updated_at`, which the server sets, from the
+row it sends back (`created_at` is the device's time).
 
 ![The task list offline: two tasks marked as not synced yet, and the status above the tab bar counting two changes saved on the device](../assets/samples/ios/offline-changes.png){ width="270" loading=lazy }
 

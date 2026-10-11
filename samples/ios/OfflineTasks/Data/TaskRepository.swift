@@ -232,8 +232,8 @@ final class TaskRepository {
 
     // --8<-- [start:first-write]
     /// Adds a task with a new id, the signed-in user and the device's clock as its creation time,
-    /// and says what happened: the server stored it, at the time it gives back, or it waits in the
-    /// queue on this device.
+    /// and says what happened: the server stored it, at the `updated_at` it set and gives back, or
+    /// it waits in the queue on this device.
     func addTask(title: String, notes: String?, needsConnection: Bool = false) async throws -> NewTaskResult {
         let row = NewTaskRow(
             id: DeviceID.make(),
@@ -248,14 +248,14 @@ final class TaskRepository {
                 .insert(row, mutationStrategy: Self.mutationStrategy(needsConnection: needsConnection))
                 .select()
                 .single()
-                .execute(TaskRow.self)
+                .execute(StoredTaskRow.self)
         }
         switch outcome {
         case .applied(let result):
             // A write sent only straight to the server is never put into the device's lists:
             // the app puts in the row the server stored, as it would a row Realtime reports.
             if needsConnection { try await client.applyServerRecord(table: Tables.tasks, record: result.value) }
-            return .saved(storedAt: result.value.createdAt)
+            return .saved(storedAt: result.value.updatedAt)
         case .queued(let pendingMutation):
             return .savedOnDevice(pendingMutationID: pendingMutation.id)
         }
@@ -582,7 +582,7 @@ final class TaskRepository {
 /// What New task reports once its write returns.
 nonisolated enum NewTaskResult: Equatable, Sendable {
 
-    /// The server stored it, at `storedAt`, the creation time it gave back.
+    /// The server stored it, at `storedAt`: the `updated_at` the server set and gave back.
     case saved(storedAt: Date)
 
     /// It waits in the mutation queue under `pendingMutationID`, and is sent when the network allows.

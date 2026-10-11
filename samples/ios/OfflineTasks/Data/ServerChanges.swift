@@ -15,17 +15,31 @@ nonisolated enum ServerChange: Equatable, Sendable {
     case deleted(table: String, oldRecord: [String: OfflineJSON])
 }
 
+/// What a subscription to the server's row changes delivers.
+nonisolated enum ServerFeedEvent: Equatable, Sendable {
+
+    /// The subscription is open: every change from now on arrives. What changed before is not
+    /// replayed, so the app reads its lists again.
+    case joined
+
+    /// A row changed on the server.
+    case change(ServerChange)
+}
+
 /// Where the server's row changes come from: Supabase Realtime for a project, the stand-in server
 /// in demo mode.
 nonisolated protocol ServerChangeSource: Sendable {
 
-    /// The changes to `tables` from now on, until the iteration ends; it fails when the source
+    /// The subscription to `tables`' changes, until the iteration ends; it fails when the source
     /// cannot be reached or reports a change it cannot read.
-    func changes(of tables: [String]) -> AsyncThrowingStream<ServerChange, any Error>
+    func changes(of tables: [String]) -> AsyncThrowingStream<ServerFeedEvent, any Error>
 }
 
 /// The project's row changes from Supabase Realtime, through supabase-swift, with the signed-in
-/// user's token, so row-level security lets through that user's rows only.
+/// user's token. An insert or an update reaches the app only when the tables' policies let the user
+/// read the row; a delete is not filtered (Supabase applies no row-level security to delete
+/// events), so every subscriber receives each deleted row's `id`, here a random UUID that says
+/// nothing.
 nonisolated final class RealtimeChangeSource: ServerChangeSource {
 
     /// The Realtime connection; it connects when a channel subscribes.
@@ -39,7 +53,7 @@ nonisolated final class RealtimeChangeSource: ServerChangeSource {
         )
     }
 
-    func changes(of tables: [String]) -> AsyncThrowingStream<ServerChange, any Error> {
+    func changes(of tables: [String]) -> AsyncThrowingStream<ServerFeedEvent, any Error> {
         let realtime = realtime
         return AsyncThrowingStream { continuation in
             let channel = realtime.channel("offline-tasks")
@@ -61,19 +75,20 @@ nonisolated final class RealtimeChangeSource: ServerChangeSource {
     }
 
     // --8<-- [start:live-updates]
-    /// Subscribes `channel` to every insert, update and delete of `tables`, and hands each change
-    /// to `report` until the subscription is canceled.
+    /// Subscribes `channel` to every insert, update and delete of `tables`, says when it has
+    /// joined, and hands on each change until the subscription is canceled.
     private static func listen(
         to tables: [String],
         on channel: RealtimeChannelV2,
-        report: @escaping @Sendable (ServerChange) -> Void
+        report: @escaping @Sendable (ServerFeedEvent) -> Void
     ) async throws {
         let streams = tables.map { table in (table, channel.postgresChange(AnyAction.self, schema: "public", table: table)) }
         try await channel.subscribeWithError()
+        report(.joined)
         try await withThrowingDiscardingTaskGroup { group in
             for (table, actions) in streams {
                 group.addTask {
-                    for await action in actions { report(try ServerChange(action, table: table)) }
+                    for await action in actions { report(.change(try ServerChange(action, table: table))) }
                 }
             }
         }

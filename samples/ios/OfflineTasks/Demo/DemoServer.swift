@@ -54,7 +54,7 @@ actor DemoServer: ServerChangeSource {
     private var interception: (@Sendable (FakeServer.Request, String?) -> FakeServer.Response?)?
 
     /// The Realtime-like feeds open now, with the tables each follows.
-    private var feeds: [UUID: (tables: Set<String>, continuation: AsyncThrowingStream<ServerChange, any Error>.Continuation)] = [:]
+    private var feeds: [UUID: (tables: Set<String>, continuation: AsyncThrowingStream<ServerFeedEvent, any Error>.Continuation)] = [:]
 
     /// Every request so far, in order.
     private(set) var requests: [RecordedRequest] = []
@@ -118,17 +118,18 @@ actor DemoServer: ServerChangeSource {
 
     // MARK: - Realtime
 
-    nonisolated func changes(of tables: [String]) -> AsyncThrowingStream<ServerChange, any Error> {
-        let (stream, continuation) = AsyncThrowingStream<ServerChange, any Error>.makeStream()
+    nonisolated func changes(of tables: [String]) -> AsyncThrowingStream<ServerFeedEvent, any Error> {
+        let (stream, continuation) = AsyncThrowingStream<ServerFeedEvent, any Error>.makeStream()
         let id = UUID()
         Task { await self.open(feed: id, tables: Set(tables), continuation: continuation) }
         continuation.onTermination = { _ in Task { await self.close(feed: id) } }
         return stream
     }
 
-    /// Starts reporting changes to `tables` through `continuation`.
-    private func open(feed id: UUID, tables: Set<String>, continuation: AsyncThrowingStream<ServerChange, any Error>.Continuation) {
+    /// Starts reporting changes to `tables` through `continuation`, which hears first that it joined.
+    private func open(feed id: UUID, tables: Set<String>, continuation: AsyncThrowingStream<ServerFeedEvent, any Error>.Continuation) {
         feeds[id] = (tables, continuation)
+        continuation.yield(.joined)
     }
 
     /// Stops reporting to feed `id`.
@@ -142,7 +143,7 @@ actor DemoServer: ServerChangeSource {
         switch change {
         case .saved(let name, _), .deleted(let name, _): table = name
         }
-        for feed in feeds.values where feed.tables.contains(table) { feed.continuation.yield(change) }
+        for feed in feeds.values where feed.tables.contains(table) { feed.continuation.yield(.change(change)) }
     }
 
     // MARK: - Answering
