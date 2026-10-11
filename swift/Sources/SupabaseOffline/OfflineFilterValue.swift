@@ -11,142 +11,142 @@ public import Foundation
 public protocol OfflineFilterValue: Sendable {
 
     /// The value as PostgREST reads it, such as `true`, `42` or `2026-10-07T09:30:00Z`.
-    var filterText: String { get }
+    var offlineFilterText: String { get }
 }
 
 extension OfflineFilterValue where Self: RawRepresentable, RawValue: OfflineFilterValue {
 
     /// The raw value's text.
-    public var filterText: String { rawValue.filterText }
+    public var offlineFilterText: String { rawValue.offlineFilterText }
 }
 
 extension String: OfflineFilterValue {
 
     /// The string itself.
-    public var filterText: String { self }
+    public var offlineFilterText: String { self }
 }
 
 extension Bool: OfflineFilterValue {
 
     /// `true` or `false`.
-    public var filterText: String { self ? "true" : "false" }
+    public var offlineFilterText: String { self ? "true" : "false" }
 }
 
 extension Int: OfflineFilterValue {
 
     /// The number in decimal.
-    public var filterText: String { String(self) }
+    public var offlineFilterText: String { String(self) }
 }
 
 extension Int8: OfflineFilterValue {
 
     /// The number in decimal.
-    public var filterText: String { String(self) }
+    public var offlineFilterText: String { String(self) }
 }
 
 extension Int16: OfflineFilterValue {
 
     /// The number in decimal.
-    public var filterText: String { String(self) }
+    public var offlineFilterText: String { String(self) }
 }
 
 extension Int32: OfflineFilterValue {
 
     /// The number in decimal.
-    public var filterText: String { String(self) }
+    public var offlineFilterText: String { String(self) }
 }
 
 extension Int64: OfflineFilterValue {
 
     /// The number in decimal.
-    public var filterText: String { String(self) }
+    public var offlineFilterText: String { String(self) }
 }
 
 extension UInt: OfflineFilterValue {
 
     /// The number in decimal.
-    public var filterText: String { String(self) }
+    public var offlineFilterText: String { String(self) }
 }
 
 extension UInt8: OfflineFilterValue {
 
     /// The number in decimal.
-    public var filterText: String { String(self) }
+    public var offlineFilterText: String { String(self) }
 }
 
 extension UInt16: OfflineFilterValue {
 
     /// The number in decimal.
-    public var filterText: String { String(self) }
+    public var offlineFilterText: String { String(self) }
 }
 
 extension UInt32: OfflineFilterValue {
 
     /// The number in decimal.
-    public var filterText: String { String(self) }
+    public var offlineFilterText: String { String(self) }
 }
 
 extension UInt64: OfflineFilterValue {
 
     /// The number in decimal.
-    public var filterText: String { String(self) }
+    public var offlineFilterText: String { String(self) }
 }
 
 extension Double: OfflineFilterValue {
 
     /// The shortest decimal that reads back as this number, such as `9.5`, or `1.0E-7` outside
     /// 0.001 to 10 million; `NaN`, `Infinity` or `-Infinity` for the special values.
-    public var filterText: String { FilterNumberText.text(forFloatingPoint: description) }
+    public var offlineFilterText: String { FilterNumberText.text(forFloatingPoint: description) }
 }
 
 extension Float: OfflineFilterValue {
 
     /// The shortest decimal that reads back as this number, written as a `Double` is.
-    public var filterText: String { FilterNumberText.text(forFloatingPoint: description) }
+    public var offlineFilterText: String { FilterNumberText.text(forFloatingPoint: description) }
 }
 
 extension Decimal: OfflineFilterValue {
 
     /// The number in plain decimal, every digit kept.
-    public var filterText: String { description }
+    public var offlineFilterText: String { description }
 }
 
 extension UUID: OfflineFilterValue {
 
     /// The UUID in lower case, as Postgres writes one.
-    public var filterText: String { uuidString.lowercased() }
+    public var offlineFilterText: String { uuidString.lowercased() }
 }
 
 extension Date: OfflineFilterValue {
 
     /// The date in UTC, ISO 8601, to the microsecond: `2026-10-07T09:30:00Z`, `…:00.250Z` or
     /// `…:00.250125Z`.
-    public var filterText: String { PostgresTimestamp.text(for: self) }
+    public var offlineFilterText: String { PostgresTimestamp.text(for: self) }
 }
 
 extension Optional: OfflineFilterValue where Wrapped: OfflineFilterValue {
 
     /// The wrapped value's text, or `null`.
-    public var filterText: String { map(\.filterText) ?? "null" }
+    public var offlineFilterText: String { map(\.offlineFilterText) ?? "null" }
 }
 
 extension Array: OfflineFilterValue where Element: OfflineFilterValue {
 
     /// A Postgres array literal, such as `{work,"at home"}`: elements quoted where Postgres needs
     /// it, `NULL` for a `nil` one, nested arrays as nested literals.
-    public var filterText: String { PostgresArrayLiteral.text(of: map { $0 }) }
+    public var offlineFilterText: String { PostgresArrayLiteral.text(of: map { $0 }) }
 }
 
 extension OfflineJSON: OfflineFilterValue {
 
     /// A string as itself, a number or boolean as written, `null`, an array as a Postgres array
     /// literal and an object as JSON text with its keys sorted (for a `jsonb` containment).
-    public var filterText: String {
+    public var offlineFilterText: String {
         switch self {
         case .null: return "null"
-        case .bool(let value): return value.filterText
-        case .int(let value): return value.filterText
-        case .double(let value): return value.filterText
+        case .bool(let value): return value.offlineFilterText
+        case .int(let value): return value.offlineFilterText
+        case .double(let value): return value.offlineFilterText
         case .string(let value): return value
         case .array(let elements): return PostgresArrayLiteral.text(of: elements)
         case .object: return sortedJSONText
@@ -177,8 +177,8 @@ protocol FilterValueList {
 
 extension Array: FilterValueList where Element: OfflineFilterValue {
 
-    /// Each element's ``OfflineFilterValue/filterText``.
-    var elementTexts: [String] { map(\.filterText) }
+    /// Each element's ``OfflineFilterValue/offlineFilterText``.
+    var elementTexts: [String] { map(\.offlineFilterText) }
 }
 
 /// An element of a Postgres array literal that writes itself rather than being quoted: a nested
@@ -192,7 +192,7 @@ protocol PostgresArrayElement {
 extension Array: PostgresArrayElement where Element: OfflineFilterValue {
 
     /// The nested literal.
-    var arrayElementText: String { filterText }
+    var arrayElementText: String { offlineFilterText }
 }
 
 extension Optional: PostgresArrayElement where Wrapped: OfflineFilterValue {
@@ -210,8 +210,8 @@ extension OfflineJSON: PostgresArrayElement {
     var arrayElementText: String {
         switch self {
         case .null: return "NULL"
-        case .array: return filterText
-        default: return PostgresArrayLiteral.quotedIfNeeded(filterText)
+        case .array: return offlineFilterText
+        default: return PostgresArrayLiteral.quotedIfNeeded(offlineFilterText)
         }
     }
 }
@@ -227,7 +227,7 @@ enum PostgresArrayLiteral {
     /// One element inside the braces.
     static func elementText(for element: any OfflineFilterValue) -> String {
         if let element = element as? any PostgresArrayElement { return element.arrayElementText }
-        return quotedIfNeeded(element.filterText)
+        return quotedIfNeeded(element.offlineFilterText)
     }
 
     /// `text` in double quotes, with `"` and `\` escaped, when Postgres would otherwise read it

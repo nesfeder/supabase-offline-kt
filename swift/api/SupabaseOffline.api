@@ -1,8 +1,8 @@
 // The public interface of SupabaseOffline, from its symbol graph; scripts/api-compat.py rates a
 // change to it. Do not edit: scripts/check-swift-public-api.py --products DIR --update writes it.
 platform iOS 16.0
-property Array.filterText | var filterText: String { get } | where Element: OfflineFilterValue
-property Bool.filterText | var filterText: String { get }
+property Array.offlineFilterText | var offlineFilterText: String { get } | where Element: OfflineFilterValue
+property Bool.offlineFilterText | var offlineFilterText: String { get }
 struct CachedFile | struct CachedFile
 property CachedFile.fetchedAt | let fetchedAt: Date
 property CachedFile.path | let path: String
@@ -13,9 +13,9 @@ enum.case Count.estimated | case estimated
 enum.case Count.exact | case exact
 init Count.init(rawValue:) | init?(rawValue: String)
 enum.case Count.planned | case planned
-property Date.filterText | var filterText: String { get }
-property Decimal.filterText | var filterText: String { get }
-property Double.filterText | var filterText: String { get }
+property Date.offlineFilterText | var offlineFilterText: String { get }
+property Decimal.offlineFilterText | var offlineFilterText: String { get }
+property Double.offlineFilterText | var offlineFilterText: String { get }
 enum FilterOperator | enum FilterOperator
 enum.case FilterOperator.adj | case adj
 enum.case FilterOperator.cd | case cd
@@ -42,12 +42,12 @@ enum.case FilterOperator.plfts | case plfts
 enum.case FilterOperator.sl | case sl
 enum.case FilterOperator.sr | case sr
 enum.case FilterOperator.wfts | case wfts
-property Float.filterText | var filterText: String { get }
-property Int.filterText | var filterText: String { get }
-property Int16.filterText | var filterText: String { get }
-property Int32.filterText | var filterText: String { get }
-property Int64.filterText | var filterText: String { get }
-property Int8.filterText | var filterText: String { get }
+property Float.offlineFilterText | var offlineFilterText: String { get }
+property Int.offlineFilterText | var offlineFilterText: String { get }
+property Int16.offlineFilterText | var offlineFilterText: String { get }
+property Int32.offlineFilterText | var offlineFilterText: String { get }
+property Int64.offlineFilterText | var offlineFilterText: String { get }
+property Int8.offlineFilterText | var offlineFilterText: String { get }
 enum MutationOperation | enum MutationOperation
 enum.case MutationOperation.delete | case delete
 init MutationOperation.init(rawValue:) | init?(rawValue: String)
@@ -195,14 +195,13 @@ type.property OfflineError.syncFailed | static var syncFailed: OfflineError.Code
 property OfflineError.underlyingError | let underlyingError: (any Error)?
 type.property OfflineError.unexpected | static var unexpected: OfflineError.Code { get }
 protocol OfflineFilterValue | protocol OfflineFilterValue : Sendable
-requirement OfflineFilterValue.filterText | var filterText: String { get }
-property OfflineFilterValue.filterText | var filterText: String { get } | where Self: RawRepresentable, Self.RawValue: OfflineFilterValue
+requirement OfflineFilterValue.offlineFilterText | var offlineFilterText: String { get }
+property OfflineFilterValue.offlineFilterText | var offlineFilterText: String { get } | where Self: RawRepresentable, Self.RawValue: OfflineFilterValue
 enum OfflineJSON | enum OfflineJSON
 enum.case OfflineJSON.array(_:) | case array([OfflineJSON])
 enum.case OfflineJSON.bool(_:) | case bool(Bool)
 enum.case OfflineJSON.double(_:) | case double(Double)
 method OfflineJSON.encode(to:) | func encode(to encoder: any Encoder) throws
-property OfflineJSON.filterText | var filterText: String { get }
 init OfflineJSON.init(arrayLiteral:) | init(arrayLiteral elements: OfflineJSON...)
 init OfflineJSON.init(booleanLiteral:) | init(booleanLiteral value: Bool)
 init OfflineJSON.init(dictionaryLiteral:) | init(dictionaryLiteral elements: (String, OfflineJSON)...)
@@ -214,6 +213,7 @@ init OfflineJSON.init(stringLiteral:) | init(stringLiteral value: String)
 enum.case OfflineJSON.int(_:) | case int(Int)
 enum.case OfflineJSON.null | case null
 enum.case OfflineJSON.object(_:) | case object([String : OfflineJSON])
+property OfflineJSON.offlineFilterText | var offlineFilterText: String { get }
 enum.case OfflineJSON.string(_:) | case string(String)
 struct OfflineMutationRequestBuilder | struct OfflineMutationRequestBuilder
 method OfflineMutationRequestBuilder.applying(_:) | func applying(_ change: OfflineQueryChange) -> OfflineMutationRequestBuilder
@@ -297,7 +297,7 @@ init OfflineTextSearchType.init(rawValue:) | init?(rawValue: String)
 enum.case OfflineTextSearchType.phrase | case phrase
 enum.case OfflineTextSearchType.plain | case plain
 enum.case OfflineTextSearchType.websearch | case websearch
-property Optional.filterText | var filterText: String { get } | where Wrapped: OfflineFilterValue
+property Optional.offlineFilterText | var offlineFilterText: String { get } | where Wrapped: OfflineFilterValue
 struct PendingMutation | struct PendingMutation
 property PendingMutation.body | let body: OfflineJSON?
 property PendingMutation.createdAt | let createdAt: Date
@@ -363,7 +363,7 @@ enum SequenceReadStrategy | enum SequenceReadStrategy
 enum.case SequenceReadStrategy.cacheFirstThenNetwork | case cacheFirstThenNetwork
 enum.case SequenceReadStrategy.cacheOnly | case cacheOnly
 enum.case SequenceReadStrategy.networkFirstThenCache | case networkFirstThenCache
-property String.filterText | var filterText: String { get }
+property String.offlineFilterText | var offlineFilterText: String { get }
 class SupabaseOfflineClient | final class SupabaseOfflineClient
 enum SupabaseOfflineClient.CacheSize | enum CacheSize
 enum.case SupabaseOfflineClient.CacheSize.bytes(_:) | case bytes(Int)
@@ -429,12 +429,12 @@ struct SyncStatusSequence.Iterator | struct Iterator
 method SyncStatusSequence.Iterator.next() | mutating func next() async throws -> SyncStatusSequence.Element?
 method SyncStatusSequence.makeAsyncIterator() | func makeAsyncIterator() -> SyncStatusSequence.Iterator
 property SyncStatusSequence.value | var value: SyncStatus { get }
-property UInt.filterText | var filterText: String { get }
-property UInt16.filterText | var filterText: String { get }
-property UInt32.filterText | var filterText: String { get }
-property UInt64.filterText | var filterText: String { get }
-property UInt8.filterText | var filterText: String { get }
-property UUID.filterText | var filterText: String { get }
+property UInt.offlineFilterText | var offlineFilterText: String { get }
+property UInt16.offlineFilterText | var offlineFilterText: String { get }
+property UInt32.offlineFilterText | var offlineFilterText: String { get }
+property UInt64.offlineFilterText | var offlineFilterText: String { get }
+property UInt8.offlineFilterText | var offlineFilterText: String { get }
+property UUID.offlineFilterText | var offlineFilterText: String { get }
 conformance CachedFile | Swift.Equatable
 conformance CachedFile | Swift.Hashable
 conformance CachedFile | Swift.Sendable
