@@ -27,13 +27,11 @@ the Sync tab, and everything sent when the network returns.
 
 ### Android
 
-<!-- The recording: open this file in GitHub's editor and drop android.mp4 on the line below. -->
-_Recording coming._
+https://github.com/user-attachments/assets/b14debd5-d5a8-40c2-a3ea-af8383539811
 
 ### iOS
 
-<!-- The recording: open this file in GitHub's editor and drop ios.mp4 on the line below. -->
-_Recording coming._
+https://github.com/user-attachments/assets/d0c7d5ee-dbc1-42ab-be43-4f7170e2a79b
 
 ## Quick start
 
