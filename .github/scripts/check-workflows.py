@@ -62,14 +62,17 @@ It fails when:
      - The documentation site: each release workflow has a job that calls docs-publish.yml at the
        released tag, after finish, holding exactly the Pages and OIDC permissions and
        `contents: read`, passing no secret, and skipped on a dry run. The Swift API reference it
-       places under /swift/ is built (build-swift-docs.sh) and uploaded (artifact swift-reference)
-       by release.yml's framework job alone, which holds no secret and no environment; release.yml's
-       docs job names that artifact, and the resume's, whose run has none, names none. No other job
-       of a release workflow downloads an artifact but the framework's zip, by name alone (no other
-       run, no token) into the runner's temporary directory, and none holds an Actions permission.
-       docs-publish.yml's build job holds `contents: read` alone, downloads only the artifact the
-       caller names, from the calling run with the default token, into site/swift, and runs, sources,
-       `uses:` or works in nothing under the site.
+       places under /swift/ is built (build-swift-docs.sh) and uploaded (artifact swift-reference,
+       one tar) by release.yml's framework job alone, which holds no secret and no environment;
+       release.yml's docs job names that artifact, and the resume's, whose run has none, names none.
+       No other job of a release workflow downloads an artifact but the framework's zip, by name
+       alone (no other run, no token) into the runner's temporary directory, and none holds an
+       Actions permission. docs-publish.yml's build job holds `contents: read` alone, downloads only
+       the artifact the caller names, when it names one, from the calling run with the default token,
+       into the runner's temporary directory, and directly after that unpacks it into site/swift with
+       the one pinned step (`mkdir -p` and `tar -xf … -C site/swift --strip-components=1`, which
+       writes files and runs nothing); no other step runs, sources, `uses:` or works in anything
+       under the site, or names that temporary directory.
      - What they run: only the Central steps run a Maven Central publish task, and only
        release.yml releases, waiting until Central says PUBLISHED; the snapshot job's publish step
        runs only for a -SNAPSHOT version; no job of either release workflow, nor the snapshot job,
@@ -183,7 +186,21 @@ FRAMEWORK_ARTIFACT = "swift-framework"
 FRAMEWORK_DOWNLOAD = {"name": FRAMEWORK_ARTIFACT, "path": "${{ runner.temp }}/swift-release"}
 # docs-publish.yml's build job: what its one download takes, and where it puts it.
 DOCS_BUILD_JOB = ("docs-publish.yml", "build")
-REFERENCE_DOWNLOAD = {"name": "${{ inputs.swift-reference }}", "path": "site/swift"}
+REFERENCE_IF = "inputs.swift-reference != ''"
+REFERENCE_DOWNLOAD = {"name": "${{ inputs.swift-reference }}",
+                      "path": "${{ runner.temp }}/swift-reference-artifact"}
+# The artifact is one tar (DocC's file names hold colons, which the artifact store refuses). This
+# step, to the letter, is the one that may write under the site: it writes files and runs nothing.
+REFERENCE_UNPACK = {
+    "name": "Unpack the Swift API reference",
+    "if": REFERENCE_IF,
+    "run": ("mkdir -p site/swift\n"
+            "tar -xf \"$RUNNER_TEMP/swift-reference-artifact/swift-reference.tar\""
+            " -C site/swift --strip-components=1"),
+}
+# The runner's temporary directory, where the tar lies, however it is spelled.
+NAMES_RUNNER_TEMP = re.compile(r"RUNNER_TEMP|runner\s*(?:\.\s*temp|\[\s*'temp')|/_temp\b"
+                               r"|swift-reference-artifact", re.IGNORECASE)
 # A test of a path (`[[ -f site/… ]]`) reads the site; anything else naming it may run or move it.
 SITE_TEST = re.compile(r"\[\[\s*!?\s*-[fde]\s+site/\S*")
 # The site directory named as a path, however it is spelled: `site/x`, `./site/x`, `"$X/site/x"`,
@@ -739,6 +756,11 @@ def verify_problems(where: str, job: dict, steps: list[dict]) -> list[str]:
     return problems
 
 
+def is_reference_unpack(step: dict) -> bool:
+    """Whether `step` is the pinned unpack of the Swift reference, to the letter, keys included."""
+    return dict(step, run=str(step.get("run", "")).rstrip("\n")) == REFERENCE_UNPACK
+
+
 def docs_build_problems(name: str, document: dict) -> list[str]:
     """Rule 9: docs-publish.yml's build job places the Swift reference and does nothing else with it."""
     jobs = document.get("jobs") if isinstance(document.get("jobs"), dict) else {}
@@ -753,19 +775,42 @@ def docs_build_problems(name: str, document: dict) -> list[str]:
     defaults = ((job.get("defaults") or {}).get("run") or {}) if isinstance(job.get("defaults"), dict) else {}
     if TOUCHES_SITE.search(str(defaults.get("working-directory", ""))):
         problems.append(f"{where} runs its steps in the site's directory by default")
-    for step in steps_of(job):
+    if NAMES_RUNNER_TEMP.search(str(defaults.get("working-directory", ""))):
+        problems.append(f"{where} runs its steps in the runner's temporary directory by default")
+    steps = steps_of(job)
+    downloads = [index for index, step in enumerate(steps)
+                 if str(step.get("uses", "")).startswith("actions/download-artifact@")]
+    unpacks = [index for index, step in enumerate(steps) if is_reference_unpack(step)]
+    for index, step in enumerate(steps):
         uses = str(step.get("uses", ""))
         with_ = step.get("with") if isinstance(step.get("with"), dict) else {}
         if TOUCHES_SITE.search(uses) or TOUCHES_SITE.search(str(step.get("working-directory", ""))):
             problems.append(f"{where} runs a step from, or in, the site's directory"
                             f" ({uses or step.get('working-directory')})")
-        if uses.startswith("actions/download-artifact@") and with_ != REFERENCE_DOWNLOAD:
-            problems.append(f"{where} downloads with {with_}, not exactly {REFERENCE_DOWNLOAD}: the"
-                            " caller's artifact, from the calling run with the default token, into"
-                            " site/swift alone")
+        if index in downloads:
+            if with_ != REFERENCE_DOWNLOAD:
+                problems.append(f"{where} downloads with {with_}, not exactly {REFERENCE_DOWNLOAD}: the"
+                                " caller's artifact, from the calling run with the default token, into"
+                                " the runner's temporary directory alone")
+            if step.get("if") != REFERENCE_IF:
+                problems.append(f"{where} downloads the Swift reference if {step.get('if')!r}, not"
+                                f" {REFERENCE_IF!r}")
+            continue
+        if index in unpacks:
+            continue
         if TOUCHES_SITE.search(SITE_TEST.sub("", str(step.get("run", "")))):
             problems.append(f"{where} runs a step that uses what the site holds beyond testing a"
                             " path: nothing from the Swift reference is run, moved or changed")
+        if NAMES_RUNNER_TEMP.search(json.dumps(step)):
+            problems.append(f"{where} runs a step that names the runner's temporary directory, where"
+                            " the Swift reference's tar lies: only its download and its unpack may")
+    if downloads and not unpacks:
+        problems.append(f"{where} downloads the Swift reference but does not unpack it with exactly"
+                        f" the step {REFERENCE_UNPACK}")
+    elif len(unpacks) > 1:
+        problems.append(f"{where} unpacks the Swift reference {len(unpacks)} times, not once")
+    elif unpacks and unpacks[0] - 1 not in downloads:
+        problems.append(f"{where} unpacks the Swift reference other than directly after its download")
     return problems
 
 
@@ -1051,7 +1096,12 @@ jobs:
       - run: mkdocs build --strict
       - if: inputs.swift-reference != ''
         uses: actions/download-artifact@0123456789abcdef0123456789abcdef01234567
-        with: {name: '${{ inputs.swift-reference }}', path: site/swift}
+        with: {name: '${{ inputs.swift-reference }}', path: '${{ runner.temp }}/swift-reference-artifact'}
+      - name: Unpack the Swift API reference
+        if: inputs.swift-reference != ''
+        run: |
+          mkdir -p site/swift
+          tar -xf "$RUNNER_TEMP/swift-reference-artifact/swift-reference.tar" -C site/swift --strip-components=1
       - run: |
           if [[ ! -f site/swift/documentation/supabaseoffline/index.html ]]; then
             echo "Published without the Swift API reference: /swift/ is not part of this site."
@@ -1229,6 +1279,15 @@ GUARD_LINE = f"      {DEPENDABOT_GUARD}\n"
 # of COMPLIANT_DOCS_PUBLISH's build job.
 PUBLISH_STAGING = "      - run: python3 scripts/swift-release.py publish --dry-run --out t\n"
 DOCS_CHECK_STEP = "      - run: |\n"
+# COMPLIANT_DOCS_PUBLISH's download and unpack steps, which the Swift reference's cases rewrite.
+DOCS_DOWNLOAD_PATH = "path: '${{ runner.temp }}/swift-reference-artifact'}"
+DOCS_DOWNLOAD_STEP = ("      - if: inputs.swift-reference != ''\n"
+                      "        uses: actions/download-artifact@0123456789abcdef0123456789abcdef01234567\n"
+                      "        with: {name: '${{ inputs.swift-reference }}', " + DOCS_DOWNLOAD_PATH + "\n")
+DOCS_UNPACK_HEAD = "      - name: Unpack the Swift API reference\n        if: inputs.swift-reference != ''\n"
+DOCS_UNPACK_STEP = (DOCS_UNPACK_HEAD + "        run: |\n          mkdir -p site/swift\n"
+                    "          tar -xf \"$RUNNER_TEMP/swift-reference-artifact/swift-reference.tar\""
+                    " -C site/swift --strip-components=1\n")
 
 
 def release_with_publish_steps(steps: str) -> str:
@@ -1785,8 +1844,8 @@ CASES: list[tuple[str, str, str | None, str]] = [
     ("the site's build downloading another run's artifact with a token", "docs-publish.yml",
      COMPLIANT_DOCS_PUBLISH.replace("permissions: {contents: read}",
                                     "permissions: {contents: read, actions: read}")
-     .replace("path: site/swift}",
-              "path: site/swift, run-id: '1', github-token: '${{ github.token }}'}"),
+     .replace(DOCS_DOWNLOAD_PATH, "path: '${{ runner.temp }}/swift-reference-artifact', run-id: '1',"
+              " github-token: '${{ github.token }}'}"),
      "job build downloads with"),
     ("the site's build running a script from the Swift reference", "docs-publish.yml",
      docs_publish_with_step("      - run: bash site/swift/prepare.sh\n"),
@@ -1795,7 +1854,7 @@ CASES: list[tuple[str, str, str | None, str]] = [
      docs_publish_with_step("      - run: cd site && ./swift/prepare.sh\n"),
      "job build runs a step that uses what the site holds"),
     ("the Swift reference placed over the site's root", "docs-publish.yml",
-     COMPLIANT_DOCS_PUBLISH.replace("path: site/swift}", "path: site}"),
+     COMPLIANT_DOCS_PUBLISH.replace(DOCS_DOWNLOAD_PATH, "path: site}"),
      "job build downloads with"),
     ("the site's build holding a Pages token", "docs-publish.yml",
      COMPLIANT_DOCS_PUBLISH.replace("permissions: {contents: read}",
@@ -1821,6 +1880,52 @@ CASES: list[tuple[str, str, str | None, str]] = [
     ("the site's build using an action from the site", "docs-publish.yml",
      docs_publish_with_step("      - uses: ./site/swift\n"),
      "job build runs a step from, or in, the site's directory"),
+    ("the Swift reference's tar downloaded into the site, where the reference itself once went",
+     "docs-publish.yml",
+     COMPLIANT_DOCS_PUBLISH.replace(DOCS_DOWNLOAD_PATH, "path: site/swift}"),
+     "job build downloads with"),
+    ("the Swift reference downloaded when the caller names none", "docs-publish.yml",
+     COMPLIANT_DOCS_PUBLISH.replace(DOCS_DOWNLOAD_STEP,
+                                    DOCS_DOWNLOAD_STEP.replace("      - if: inputs.swift-reference != ''\n"
+                                                               "        uses:", "      - uses:")),
+     "job build downloads the Swift reference if None"),
+    ("the Swift reference unpacked with a flag that keeps absolute names", "docs-publish.yml",
+     COMPLIANT_DOCS_PUBLISH.replace("tar -xf \"$RUNNER_TEMP", "tar -xPf \"$RUNNER_TEMP"),
+     "job build downloads the Swift reference but does not unpack it with exactly the step"),
+    ("the Swift reference unpacked over the site's root", "docs-publish.yml",
+     COMPLIANT_DOCS_PUBLISH.replace("-C site/swift --strip", "-C site --strip"),
+     "job build downloads the Swift reference but does not unpack it with exactly the step"),
+    ("the Swift reference unpacked when the caller names none", "docs-publish.yml",
+     COMPLIANT_DOCS_PUBLISH.replace(DOCS_UNPACK_HEAD, "      - name: Unpack the Swift API reference\n"),
+     "job build downloads the Swift reference but does not unpack it with exactly the step"),
+    ("the Swift reference unpacked twice", "docs-publish.yml",
+     docs_publish_with_step(DOCS_UNPACK_STEP),
+     "job build unpacks the Swift reference 2 times, not once"),
+    ("the Swift reference unpacked in another working directory", "docs-publish.yml",
+     COMPLIANT_DOCS_PUBLISH.replace(DOCS_UNPACK_HEAD, DOCS_UNPACK_HEAD + "        working-directory: docs\n"),
+     "job build downloads the Swift reference but does not unpack it with exactly the step"),
+    ("the Swift reference's tar running a command on each file", "docs-publish.yml",
+     COMPLIANT_DOCS_PUBLISH.replace("--strip-components=1\n", "--strip-components=1 --to-command=sh\n"),
+     "job build downloads the Swift reference but does not unpack it with exactly the step"),
+    ("the Swift reference downloaded and never unpacked", "docs-publish.yml",
+     COMPLIANT_DOCS_PUBLISH.replace(DOCS_UNPACK_STEP, ""),
+     "job build downloads the Swift reference but does not unpack it with exactly the step"),
+    ("the Swift reference unpacked before its download", "docs-publish.yml",
+     COMPLIANT_DOCS_PUBLISH.replace(DOCS_DOWNLOAD_STEP + DOCS_UNPACK_STEP,
+                                    DOCS_UNPACK_STEP + DOCS_DOWNLOAD_STEP),
+     "job build unpacks the Swift reference other than directly after its download"),
+    ("the Swift reference unpacked with no download", "docs-publish.yml",
+     COMPLIANT_DOCS_PUBLISH.replace(DOCS_DOWNLOAD_STEP, ""),
+     "job build unpacks the Swift reference other than directly after its download"),
+    ("the site's build running the tar's contents without naming the site", "docs-publish.yml",
+     docs_publish_with_step("      - run: tar -xOf \"$RUNNER_TEMP/swift-reference-artifact/swift-reference.tar\""
+                            " | sh\n"),
+     "job build runs a step that names the runner's temporary directory"),
+    ("the site's build working in the runner's temporary directory by default", "docs-publish.yml",
+     COMPLIANT_DOCS_PUBLISH.replace("    permissions: {contents: read}\n    steps:",
+                                    "    permissions: {contents: read}\n"
+                                    "    defaults: {run: {working-directory: '${{ runner.temp }}'}}\n    steps:"),
+     "job build runs its steps in the runner's temporary directory by default"),
     ("publish downloading another run's framework with a token", "release.yml",
      release_with_publish_steps(
          "      - uses: actions/download-artifact@0123456789abcdef0123456789abcdef01234567\n"
