@@ -16,8 +16,8 @@ python3 scripts/check-published-artifacts.py
 
 On a Mac with Xcode (CI uses 26.6), these run CI's iOS suites: the engine's on an iOS simulator,
 then the engine's again with the Swift bridge's on the system SQLite, the one the Swift package
-links. CI does not run the Swift package's own tests: run `scripts/test-swift-package.sh` whenever
-you change the bridge or `swift/` (see "The Swift package").
+links. CI's iOS job then runs the Swift package's tests, its documentation build, a main-actor
+consumer and the iOS sample's tests, each a script in `scripts/` (see "The Swift package").
 
 ```bash
 ./gradlew :supabase-offline-kt:iosSimulatorArm64Test :supabase-offline-kt-testing:iosSimulatorArm64Test
@@ -323,10 +323,8 @@ another build of it instead, such as the release's. To open the package in Xcode
 open `swift/Package.swift`. An Xcode that opened it before `swift/LocalCore/` held the framework
 reports that the local binary target "does not contain a binary artifact": once the framework is
 there, File > Packages > Resolve Package Versions (or reopening the package) picks it up.
-CI does not run `scripts/test-swift-package.sh`; the release runs it on GitHub's macOS runner
-against the release framework. So a change to the bridge or to `swift/` should run it locally
-before review, and a framework change that breaks the package is caught at the latest by the
-release's `framework` job, before anything is published.
+CI runs the same script in the iOS job, on a framework it builds, and the release runs it again on
+GitHub's macOS runner against the release framework, before anything is published.
 
 `swift/` is not what a Swift developer sees. A release publishes part of it to the package's own
 repository, `nesfeder/supabase-offline-swift`: `Package.swift` up to its `// MARK: Development only`

@@ -21,7 +21,10 @@ It fails when:
      its condition does not start with the Dependabot guard as a conjunct of its own, so a run
      Dependabot pushed or started never holds the token.
   7. ci.yml's ios-tests does not start with the step that stops it on any runner but GitHub's
-     own, or the job or that step may continue on error.
+     own, or the job or that step may continue on error; or it does not run, in this order and
+     each in a step that always runs, the simulator's creation, the core framework's build, the
+     Swift package's tests, its documentation and the main-actor consumer, followed by the iOS
+     sample's tests under exactly the ios-sample condition below.
   8. a workflow other than ci.yml runs on a schedule and is not listed below; or a listed one
      triggers on anything but its schedule and a manual run, grants default permissions, has
      other jobs than its own, or reads a secret (a stored token would bypass the permissions
@@ -112,6 +115,15 @@ HOSTED_LABEL = re.compile(
     r"|windows-latest|windows-\d+(-arm)?"
 )
 IOS_JOB = ("ci.yml", "ios-tests")
+# The Swift steps of the iOS job, in their order, each in a step that always runs; then the iOS
+# sample's tests, only when the changes job says the sample changed.
+IOS_SWIFT_STEPS = ("bash .github/scripts/create-simulator.sh",
+                   "bash .github/scripts/run-gradle.sh"
+                   " :supabase-offline-swift-bridge:assembleSupabaseOfflineCoreDebugXCFramework",
+                   "bash scripts/test-swift-package.sh", "bash scripts/build-swift-docs.sh",
+                   "bash scripts/build-swift-consumer.sh")
+IOS_SAMPLE_STEP = "bash scripts/test-ios-sample.sh"
+IOS_SAMPLE_IF = "needs.changes.outputs.ios-sample == 'true'"
 FAN_IN = ("ci.yml", "final-status")
 FAN_IN_IF = "always()"
 # Jobs of ci.yml the fan-in must not need: a failure there must never block a merge.
@@ -326,6 +338,30 @@ def hosted_guard_problems(name: str, job_id: str, job: dict) -> list[str]:
             problems.append(f"{where}: {label} may continue on error")
     if guard.get("if") != HOSTED_GUARD_IF or "exit 1" not in str(guard.get("run")):
         problems.append(f"{where} does not start by checking that it is on a GitHub-hosted runner")
+    return problems + ios_swift_step_problems(where, steps_of(job))
+
+
+def runs_command(step: dict, command: str) -> bool:
+    """Whether a step's script runs the command, as its first line or a later one."""
+    run = str(step.get("run", ""))
+    return run.strip().startswith(command) or f"\n{command}" in run
+
+
+def ios_swift_step_problems(where: str, steps: list[dict]) -> list[str]:
+    """Rule 7: the iOS job's Swift steps run in order, and the sample's under its condition."""
+    problems = []
+    positions = []
+    for command in IOS_SWIFT_STEPS + (IOS_SAMPLE_STEP,):
+        condition = IOS_SAMPLE_IF if command == IOS_SAMPLE_STEP else None
+        running = [index for index, step in enumerate(steps) if runs_command(step, command)]
+        if len(running) != 1 or any(steps[index].get("if") != condition
+                                    or steps[index].get("continue-on-error", False) is not False
+                                    for index in running):
+            when = f"under exactly `if: {condition}`" if condition else "in a step that always runs"
+            problems.append(f"{where} does not run `{command}` once, {when}")
+        positions += running[:1]
+    if positions != sorted(positions):
+        problems.append(f"{where} runs its Swift steps out of order")
     return problems
 
 
@@ -981,6 +1017,16 @@ jobs:
       - if: {HOSTED_GUARD_IF}
         run: exit 1
       - run: echo
+      - run: bash .github/scripts/create-simulator.sh
+      - run: >-
+          bash .github/scripts/run-gradle.sh
+          :supabase-offline-swift-bridge:assembleSupabaseOfflineCoreDebugXCFramework
+          -Psupabase.offline.iosSqlite=system
+      - run: bash scripts/test-swift-package.sh --simulator u --derived-data d
+      - run: bash scripts/build-swift-docs.sh --derived-data d --out r
+      - run: bash scripts/build-swift-consumer.sh --simulator u --derived-data d
+      - if: {IOS_SAMPLE_IF}
+        run: bash scripts/test-ios-sample.sh --simulator u --derived-data d
   docs: {{needs: changes, uses: $/.github/workflows/docs-check.yml}}
   coverage-upload:
     needs: changes
@@ -1411,6 +1457,64 @@ CASES: list[tuple[str, str, str | None, str]] = [
                           "    needs: changes\n    runs-on: macos-26\n"
                           "    continue-on-error: ${{ true }}\n"),
      "the job may continue on error"),
+    # Rule 7: the Swift steps of the iOS job.
+    ("ios-tests without its simulator", "ci.yml",
+     COMPLIANT_CI.replace("      - run: bash .github/scripts/create-simulator.sh\n", ""),
+     "does not run `bash .github/scripts/create-simulator.sh` once"),
+    ("ios-tests without the core framework's build", "ci.yml",
+     COMPLIANT_CI.replace("assembleSupabaseOfflineCoreDebugXCFramework",
+                          "assembleSupabaseOfflineCoreReleaseXCFramework"),
+     "assembleSupabaseOfflineCoreDebugXCFramework` once"),
+    ("ios-tests without the Swift package's tests", "ci.yml",
+     COMPLIANT_CI.replace("      - run: bash scripts/test-swift-package.sh --simulator u"
+                          " --derived-data d\n", ""),
+     "does not run `bash scripts/test-swift-package.sh` once"),
+    ("the Swift package's tests switched off", "ci.yml",
+     COMPLIANT_CI.replace("      - run: bash scripts/test-swift-package.sh",
+                          "      - if: false\n        run: bash scripts/test-swift-package.sh"),
+     "does not run `bash scripts/test-swift-package.sh` once, in a step that always runs"),
+    ("the Swift package's tests may continue on error", "ci.yml",
+     COMPLIANT_CI.replace("      - run: bash scripts/test-swift-package.sh",
+                          "      - continue-on-error: true\n"
+                          "        run: bash scripts/test-swift-package.sh"),
+     "does not run `bash scripts/test-swift-package.sh` once, in a step that always runs"),
+    ("ios-tests without the Swift documentation", "ci.yml",
+     COMPLIANT_CI.replace("      - run: bash scripts/build-swift-docs.sh --derived-data d --out r\n",
+                          ""),
+     "does not run `bash scripts/build-swift-docs.sh` once"),
+    ("the Swift documentation only on main", "ci.yml",
+     COMPLIANT_CI.replace("      - run: bash scripts/build-swift-docs.sh",
+                          "      - if: github.ref == 'refs/heads/main'\n"
+                          "        run: bash scripts/build-swift-docs.sh"),
+     "does not run `bash scripts/build-swift-docs.sh` once, in a step that always runs"),
+    ("ios-tests without the main-actor consumer", "ci.yml",
+     COMPLIANT_CI.replace("      - run: bash scripts/build-swift-consumer.sh --simulator u"
+                          " --derived-data d\n", ""),
+     "does not run `bash scripts/build-swift-consumer.sh` once"),
+    ("ios-tests without the iOS sample's tests", "ci.yml",
+     COMPLIANT_CI.replace(f"      - if: {IOS_SAMPLE_IF}\n        run: bash scripts/test-ios-sample.sh"
+                          " --simulator u --derived-data d\n", ""),
+     "does not run `bash scripts/test-ios-sample.sh` once"),
+    ("the iOS sample's tests under another condition", "ci.yml",
+     COMPLIANT_CI.replace(f"      - if: {IOS_SAMPLE_IF}\n",
+                          "      - if: needs.changes.outputs.sample == 'true'\n"),
+     "does not run `bash scripts/test-ios-sample.sh` once, under exactly"),
+    ("the iOS sample's tests on every run but with their condition dropped", "ci.yml",
+     COMPLIANT_CI.replace(f"      - if: {IOS_SAMPLE_IF}\n        run: bash scripts/test-ios-sample.sh",
+                          "      - run: bash scripts/test-ios-sample.sh"),
+     "does not run `bash scripts/test-ios-sample.sh` once, under exactly"),
+    ("the Swift package's tests run twice", "ci.yml",
+     COMPLIANT_CI.replace("      - run: bash scripts/build-swift-consumer.sh",
+                          "      - run: bash scripts/test-swift-package.sh --simulator u\n"
+                          "      - run: bash scripts/build-swift-consumer.sh"),
+     "does not run `bash scripts/test-swift-package.sh` once"),
+    ("the documentation built before the package's tests", "ci.yml",
+     COMPLIANT_CI.replace("      - run: bash scripts/test-swift-package.sh --simulator u --derived-data d\n"
+                          "      - run: bash scripts/build-swift-docs.sh --derived-data d --out r\n",
+                          "      - run: bash scripts/build-swift-docs.sh --derived-data d --out r\n"
+                          "      - run: bash scripts/test-swift-package.sh --simulator u"
+                          " --derived-data d\n"),
+     "runs its Swift steps out of order"),
     # Rule 9: releases.
     ("the release workflow on a pull request", "release.yml",
      COMPLIANT_RELEASE.replace("on:\n  workflow_dispatch:", "on:\n  pull_request:\n  workflow_dispatch:"),

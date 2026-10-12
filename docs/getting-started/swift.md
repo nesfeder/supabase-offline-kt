@@ -158,6 +158,6 @@ and the screen's model iterates it, keeping each snapshot's rows:
 The [Swift API reference](https://nesfeder.github.io/supabase-offline-kt/swift/documentation/supabaseoffline/)
 has the rest: moving calls from supabase-swift, what is kept, queued and refused offline, telling
 failures apart, and testing an app against the in-memory client. Every code sample on this page is
-the [iOS sample](../samples/ios.md)'s own code, which its tests build and run; the
+the [iOS sample](../samples/ios.md)'s own code, which CI builds and tests; the
 [guided tour](../samples/tour.md) shows the rest of the API in it. [Under the hood](../help/under-the-hood.md) says what the
 package's binary holds and what that means for an app.

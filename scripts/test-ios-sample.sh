@@ -7,8 +7,8 @@
 # The tests run in demo mode: nothing reaches a Supabase project.
 #
 # Usage, from the repository root, once swift/LocalCore holds the framework
-# (scripts/prepare-local-swift-package.sh, or scripts/test-swift-package.sh, which copies the same
-# build there):
+# (scripts/prepare-local-swift-package.sh, or in CI scripts/test-swift-package.sh, which copies the
+# same build there):
 #   scripts/test-ios-sample.sh --simulator <UDID> --derived-data <DIR>
 #
 # Everything xcodebuild writes goes under the derived-data directory, the sample's remote packages
