@@ -256,10 +256,14 @@ jobs:
           retention-days: 90
 
       # The docs job's docs-publish.yml places it under /swift/, beside the MkDocs pages.
+      # Packed as one tar first: DocC names its JSON by symbol, and an operator's name holds
+      # colons (`!=(_:_:).json`), which the artifact store refuses as a file name.
+      - name: Pack the Swift API reference
+        run: tar -C "$RUNNER_TEMP" -cf "$RUNNER_TEMP/swift-reference.tar" swift-reference
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: swift-reference
-          path: ${{ runner.temp }}/swift-reference
+          path: ${{ runner.temp }}/swift-reference.tar
           if-no-files-found: error
           retention-days: 90
 
