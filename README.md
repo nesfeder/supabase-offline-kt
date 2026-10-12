@@ -8,6 +8,33 @@ a cache on the device when the server cannot be reached, writes made offline wai
 device and are sent, in the order they were made, when the network comes back, and Storage
 downloads are kept on disk. You keep supabase-kt's own calls, filters and request DSL.
 
+## See it
+
+The same tasks app on both platforms, in one minute each: a task added online, the network switched
+off, a task with a photo added offline and shown at once with its waiting mark, the queue listed on
+the Sync tab, and everything sent when the network returns.
+
+<table>
+  <tr>
+    <th>Android</th>
+    <th>iOS</th>
+  </tr>
+  <tr>
+    <td><img src="docs/assets/samples/readme/android-waiting-to-upload.png" width="300" alt="The Android sample's task screen offline: a photo picked from New task, marked Waiting to upload"></td>
+    <td><img src="docs/assets/samples/readme/ios-waiting-to-upload.png" width="300" alt="The iOS sample's task screen offline: a photo picked from New task, marked Waiting to upload"></td>
+  </tr>
+</table>
+
+### Android
+
+<!-- The recording: open this file in GitHub's editor and drop android.mp4 on the line below. -->
+_Recording coming._
+
+### iOS
+
+<!-- The recording: open this file in GitHub's editor and drop ios.mp4 on the line below. -->
+_Recording coming._
+
 ## Quick start
 
 ### Add the dependency
