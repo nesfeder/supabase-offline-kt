@@ -11,6 +11,7 @@
     <string name="action_discard">Discard</string>
     <string name="action_dismiss">Dismiss</string>
     <string name="action_more">More options</string>
+    <string name="action_remove">Remove</string>
     <string name="action_retry">Retry</string>
     <string name="action_undo">Undo</string>
     <string name="action_view">View</string>
@@ -102,6 +103,8 @@
     <string name="field_counter">%1$d / %2$d</string>
     <string name="new_task_needs_connection">Needs a connection</string>
     <string name="new_task_needs_connection_body">Sent now or not at all. Off, a task made offline is saved on this device and syncs later.</string>
+    <string name="new_task_photos_body">They wait on this device and upload when you’re online.</string>
+    <string name="new_task_remove_photo">Remove photo</string>
 
     <!-- Task detail -->
     <string name="detail_sync_synced">Synced</string>
@@ -111,8 +114,8 @@
     <string name="detail_done">Done</string>
     <string name="detail_done_supporting">Done tasks move to the end of the list</string>
     <string name="detail_photos">Photos</string>
-    <string name="detail_photos_supporting">Photos are uploaded as you add them.</string>
-    <string name="detail_photos_offline">Photos upload when you’re online. The ones already here still show.</string>
+    <string name="detail_photos_supporting">Photos you add show at once and upload while the app is open.</string>
+    <string name="detail_photos_offline">Photos you add wait on this device and upload when you’re online.</string>
     <string name="detail_add_photo">Add photo</string>
     <string name="detail_photos_device_only">Showing photos saved on this device: Simulate offline is on.</string>
     <string name="detail_duplicate">Duplicate task</string>
@@ -148,6 +151,14 @@
     <string name="photo_delete">Delete photo</string>
     <string name="photo_delete_offline">Photos can be deleted only while you’re online.</string>
     <string name="photo_unreadable">That image couldn’t be read.</string>
+    <string name="photo_pending_waiting">Waiting to upload</string>
+    <string name="photo_pending_uploading">Uploading</string>
+    <string name="photo_pending_failed">Upload failed</string>
+    <plurals name="photo_upload_failed">
+        <item quantity="one">Upload failed after %1$d try. %2$s</item>
+        <item quantity="other">Upload failed after %1$d tries. %2$s</item>
+    </plurals>
+    <string name="photo_pending_note">Not uploaded yet: Details, Share link, Replace, Move and Duplicate need the photo on the server.</string>
     <string name="photos_show_more">Show more</string>
     <string name="photo_share">Share</string>
     <string name="photo_share_link">Share link</string>

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.offlinetasks.data.supabase
 
+import io.github.nesfeder.offlinetasks.data.PendingPhoto
 import io.github.nesfeder.offlinetasks.data.Task
 import io.github.nesfeder.offlinetasks.data.TaskPhoto
 import kotlin.time.Instant
@@ -78,6 +79,18 @@ internal data class NewTaskPhotoRow(
     val height: Int?,
     @SerialName("created_at") val createdAt: String,
 )
+
+/** The row of a pending photo, created when it was picked, so it sorts where it was shown. */
+internal fun PendingPhoto.toNewTaskPhotoRow(): NewTaskPhotoRow =
+    NewTaskPhotoRow(
+        id = photoId,
+        userId = userId,
+        taskId = taskId,
+        objectPath = objectPath,
+        width = width,
+        height = height,
+        createdAt = pickedAt.toString(),
+    )
 
 /** The domain task, marked pending when [pendingIds] holds its id. */
 internal fun TaskRow.toTask(pendingIds: Set<String>): Task =

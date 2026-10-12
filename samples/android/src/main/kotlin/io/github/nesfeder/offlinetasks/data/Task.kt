@@ -36,8 +36,10 @@ data class Task(
 )
 
 /**
- * A row of `task_photos`: one JPEG in the private `task-photos` bucket at [objectPath], which is
- * always `<user id>/<task id>/<photo id>.jpg` in lower case.
+ * A photo of a task: a row of `task_photos`, one JPEG in the private `task-photos` bucket at
+ * [objectPath], which is always `<user id>/<task id>/<photo id>.jpg` in lower case. With a
+ * [pendingUpload], a photo picked on this device whose upload has not finished: it has no row or no
+ * cached file yet, and it shows from the device's own copy.
  */
 data class TaskPhoto(
     val id: String,
@@ -49,6 +51,8 @@ data class TaskPhoto(
     val createdAt: Instant,
     /** True while this photo's row waits in the mutation queue. */
     val hasPendingMutations: Boolean = false,
+    /** Where its upload stands, while it waits in the app's pending-photo queue; else null. */
+    val pendingUpload: PendingUpload? = null,
 )
 
 /** The only object path the schema allows for a photo; the ids are lower-case UUID text. */

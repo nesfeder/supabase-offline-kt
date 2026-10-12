@@ -11,7 +11,6 @@ import io.github.nesfeder.offlinetasks.data.AppNetworkStatus
 import io.github.nesfeder.offlinetasks.data.AppSyncStatus
 import io.github.nesfeder.offlinetasks.data.NewTaskOutcome
 import io.github.nesfeder.offlinetasks.data.PhotoEncoder
-import io.github.nesfeder.offlinetasks.data.PhotoUpload
 import io.github.nesfeder.offlinetasks.data.TASK_NOTES_MAX_LENGTH
 import io.github.nesfeder.offlinetasks.data.TASK_TITLE_MAX_LENGTH
 import io.github.nesfeder.offlinetasks.data.Task
@@ -62,9 +61,6 @@ enum class TaskDetailSyncState {
     Syncing,
 }
 
-/** One photo on its way up, with how much has arrived. */
-data class UploadProgress(val id: Long, val fraction: Float)
-
 /** What the task detail screen shows. */
 sealed interface TaskDetailUiState {
     /**
@@ -87,9 +83,9 @@ sealed interface TaskDetailUiState {
         val isTitleBlank: Boolean,
         val isDone: Boolean,
         val syncState: TaskDetailSyncState,
+        /** The task's photos, oldest first: the server's, and those still waiting to upload. */
         val photos: List<TaskPhoto>,
-        val uploads: List<UploadProgress>,
-        /** Photos are uploaded and deleted only when the server can be reached. */
+        /** The server can be reached: links to the photos can be made now. */
         val canChangePhotos: Boolean,
         /** Simulate offline is on, so the photos are read from this device alone. */
         val photosFromDeviceOnly: Boolean = false,
@@ -106,8 +102,8 @@ sealed interface TaskDetailMessage {
 }
 
 /**
- * One task: its live row and photos, the title and notes saved as you type, the done switch, photo
- * uploads with progress, and deletion.
+ * One task: its live row and photos, the title and notes saved as you type, the done switch, photos
+ * added to the app's pending-photo queue (online or offline), and deletion.
  *
  * @param writeScope where writes run; it outlives this screen, so an edit typed just before leaving
  *   is still saved.
@@ -133,8 +129,6 @@ class TaskDetailViewModel(
 
     /** The title and notes the device holds, which the draft is compared with. */
     private var stored: Draft? = null
-    private val uploads = MutableStateFlow<List<UploadProgress>>(emptyList())
-    private var nextUploadId = 1L
     private val messageChannel = Channel<TaskDetailMessage>(Channel.BUFFERED)
     private val task = MutableStateFlow<TaskLookup>(TaskLookup.Unknown)
 
@@ -147,10 +141,9 @@ class TaskDetailViewModel(
                 task,
                 draft,
                 repository.photos(taskId).map { it.value.orEmpty() }.reportingFailures(failures),
-                uploads,
                 repository.syncStatus,
-            ) { lookup, draft, photos, uploads, status ->
-                stateOf(lookup, draft, photos, uploads, status)
+            ) { lookup, draft, photos, status ->
+                stateOf(lookup, draft, photos, status)
             }
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), opening)
 
@@ -187,22 +180,27 @@ class TaskDetailViewModel(
         writeScope.launchReporting(failures) { repository.setTaskDone(taskId, isDone) }
     }
 
-    /** Re-encodes the image at [contentUri] and uploads it, reporting progress as it goes. */
-    fun attachPhoto(contentUri: String) {
-        val uploadId = nextUploadId++
-        uploads.update { it + UploadProgress(uploadId, 0f) }
-        viewModelScope.launchReporting(failures) {
-            try {
-                val photo = photoEncoder.encode(contentUri)
-                repository.attachPhoto(taskId, photo).collect { progress ->
-                    if (progress is PhotoUpload.Uploading) {
-                        setUploadProgress(uploadId, progress.fraction)
-                    }
-                }
-            } finally {
-                uploads.update { list -> list.filterNot { it.id == uploadId } }
-            }
+    // --8<-- [start:pending-photo-add]
+    /**
+     * Add photo: re-encodes the image at [contentUri] and files it in the app's pending-photo
+     * queue, where it shows at once and waits for the network if it must.
+     */
+    fun addPhoto(contentUri: String) {
+        writeScope.launchReporting(failures) {
+            repository.addPhoto(taskId, photoEncoder.encode(contentUri))
         }
+    }
+
+    // --8<-- [end:pending-photo-add]
+
+    /** Uploads the failed pending [photo] again, as soon as the network allows. */
+    fun retryPhoto(photo: TaskPhoto) {
+        viewModelScope.launchReporting(failures) { repository.retryPendingPhoto(photo.id) }
+    }
+
+    /** Deletes the pending [photo] from this device: it was never uploaded. */
+    fun removePhoto(photo: TaskPhoto) {
+        writeScope.launchReporting(failures) { repository.removePendingPhoto(photo.id) }
     }
 
     /** The device's copy of [photo], fetched first if needed. */
@@ -215,16 +213,22 @@ class TaskDetailViewModel(
             val notice =
                 when (repository.duplicateTask(taskId)) {
                     is NewTaskOutcome.Saved -> Notice.TaskDuplicated(title, savedOnDevice = false)
-                    NewTaskOutcome.SavedOnDevice ->
+                    is NewTaskOutcome.SavedOnDevice ->
                         Notice.TaskDuplicated(title, savedOnDevice = true)
                 }
             notices.post(notice)
         }
     }
 
-    /** Makes a link to each photo of this task, for an hour, and hands them to the share sheet. */
+    /**
+     * Makes a link to each photo of this task in the bucket, for an hour, and hands them to the
+     * share sheet; a photo still waiting to upload has no file there to link to.
+     */
     fun shareAllPhotos() {
-        val photos = (uiState.value as? TaskDetailUiState.Editing)?.photos.orEmpty()
+        val photos =
+            (uiState.value as? TaskDetailUiState.Editing)?.photos.orEmpty().filter {
+                it.pendingUpload == null
+            }
         if (photos.isEmpty()) return
         viewModelScope.launchReporting(failures) {
             messageChannel.send(TaskDetailMessage.ShareLinks(repository.photoShareLinks(photos)))
@@ -265,17 +269,10 @@ class TaskDetailViewModel(
         }
     }
 
-    private fun setUploadProgress(uploadId: Long, fraction: Float) {
-        uploads.update { list ->
-            list.map { if (it.id == uploadId) it.copy(fraction = fraction) else it }
-        }
-    }
-
     private fun stateOf(
         lookup: TaskLookup,
         draft: Draft?,
         photos: List<TaskPhoto>,
-        uploads: List<UploadProgress>,
         status: AppSyncStatus,
     ): TaskDetailUiState =
         when (lookup) {
@@ -291,7 +288,6 @@ class TaskDetailViewModel(
                     isDone = lookup.task.isDone,
                     syncState = syncStateOf(lookup.task, status),
                     photos = photos,
-                    uploads = uploads,
                     canChangePhotos = status.network == AppNetworkStatus.Online,
                     photosFromDeviceOnly = status.network == AppNetworkStatus.Disabled,
                 )

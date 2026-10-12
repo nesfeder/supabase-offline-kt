@@ -29,7 +29,8 @@ import io.github.nesfeder.offlinetasks.ui.navigation.SharedKeys
 
 /**
  * A photo, cropped to fill its tile, drawn from the device's copy. [canReachServer] is a key: when
- * the server comes back in reach, a photo that was not on the device is fetched.
+ * the server comes back in reach, a photo that was not on the device is fetched. A photo still
+ * waiting to upload is drawn from its own file, with a strip saying where its upload stands.
  *
  * @param showOnDeviceMark whether to mark a photo that is on the device ("available offline").
  */
@@ -42,8 +43,10 @@ fun PhotoThumbnail(
     modifier: Modifier = Modifier,
     showOnDeviceMark: Boolean = false,
 ) {
+    // Read again once the upload is done: the device's own copy then gives way to the cache's.
+    val isPending = photo.pendingUpload != null
     val file by
-        produceState<PhotoFileState>(PhotoFileState.Loading, photo.id, canReachServer) {
+        produceState<PhotoFileState>(PhotoFileState.Loading, photo.id, canReachServer, isPending) {
             value = loadFile(photo)
         }
     val shape = MaterialTheme.shapes.large
@@ -65,7 +68,10 @@ fun PhotoThumbnail(
                         modifier = Modifier.fillMaxSize(),
                     )
                 }
-                if (showOnDeviceMark) {
+                val pending = photo.pendingUpload
+                if (pending != null) {
+                    PendingUploadMark(pending, Modifier.align(Alignment.BottomCenter))
+                } else if (showOnDeviceMark) {
                     Icon(
                         painter = painterResource(R.drawable.ic_offline_pin_filled),
                         contentDescription = stringResource(R.string.photo_on_device),

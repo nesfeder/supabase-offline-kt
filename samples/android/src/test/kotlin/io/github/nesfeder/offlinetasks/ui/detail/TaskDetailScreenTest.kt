@@ -74,7 +74,7 @@ class TaskDetailScreenTest {
                 .getBoundsInRoot()
         val toolbarButton =
             compose
-                .onNodeWithContentDescription(context.getString(R.string.detail_add_photo))
+                .onNodeWithContentDescription(context.getString(R.string.detail_delete))
                 .getBoundsInRoot()
         assertTrue(
             snackbar.bottom <= toolbarButton.top,
@@ -91,7 +91,6 @@ class TaskDetailScreenTest {
             isDone = false,
             syncState = TaskDetailSyncState.Synced,
             photos = emptyList(),
-            uploads = emptyList(),
             canChangePhotos = true,
         )
 }

@@ -4,18 +4,19 @@ package io.github.nesfeder.offlinetasks.ui.photos
 
 import io.github.nesfeder.offlinetasks.data.EncodedPhoto
 import io.github.nesfeder.offlinetasks.data.PhotoStorageException
-import io.github.nesfeder.offlinetasks.data.PhotoUpload
 import io.github.nesfeder.offlinetasks.data.inmemory.InMemoryTaskRepository
 import io.github.nesfeder.offlinetasks.testing.FailingReadsTaskRepository
 import io.github.nesfeder.offlinetasks.testing.MainDispatcherRule
+import io.github.nesfeder.offlinetasks.testing.addUploadedPhoto
 import io.github.nesfeder.offlinetasks.testing.awaitServerTasks
 import io.github.nesfeder.offlinetasks.testing.repositoryFixture
 import io.github.nesfeder.offlinetasks.ui.feedback.FailureReports
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertIs
+import kotlin.test.assertTrue
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.test.runTest
 import org.junit.Rule
 
@@ -27,10 +28,13 @@ class PhotoViewModelsTest {
 
     @Test
     fun a_photo_storage_refuses_shows_as_unavailable_in_its_tile() = runTest {
-        // Given — a photo not on this device, and Storage refusing
-        val repository = repositoryFixture(seedSampleTasks = true).repository
+        // Given — a photo not on this device (its upload left it there; the cache dropped it), and
+        // Storage refusing
+        val fixture = repositoryFixture(seedSampleTasks = true)
+        val repository = fixture.repository
         val taskId = repository.awaitServerTasks().first().id
         val photo = repository.attachedPhoto(taskId)
+        fixture.photoFiles.deleteAll()
         repository.setStorageFailing(true)
         val viewModel = PhotosViewModel(repository, failures)
 
@@ -39,6 +43,38 @@ class PhotoViewModelsTest {
 
         // Then — a state its tile draws, not an exception in the composition
         assertEquals(PhotoFileState.Unavailable, file)
+    }
+
+    @Test
+    fun the_viewer_offers_a_pending_photo_nothing_of_the_bucket_and_delete_removes_it() = runTest {
+        // Given — the viewer on a photo waiting offline
+        val repository = repositoryFixture(seedSampleTasks = true).repository
+        val taskId = repository.awaitServerTasks().first().id
+        repository.setNetworkEnabled(false)
+        repository.addPhoto(taskId, EncodedPhoto(byteArrayOf(1), width = 1, height = 1))
+        val photo =
+            repository.allPhotos().first { it.value.orEmpty().isNotEmpty() }.value.orEmpty().first()
+        val viewModel = PhotoViewerViewModel(photo.id, repository, failures)
+
+        // When
+        val showing =
+            assertIs<PhotoViewerUiState.Showing>(
+                viewModel.uiState.first { it is PhotoViewerUiState.Showing }
+            )
+
+        // Then — no file in the bucket to change, but it can be deleted, offline too
+        assertTrue(showing.isPending)
+        assertFalse(showing.canChange)
+        assertTrue(showing.canDelete)
+
+        // When
+        viewModel.delete()
+
+        // Then — gone from the device
+        assertEquals(
+            PhotoViewerUiState.Gone,
+            viewModel.uiState.first { it == PhotoViewerUiState.Gone },
+        )
     }
 
     @Test
@@ -93,10 +129,5 @@ class PhotoViewModelsTest {
     }
 
     private suspend fun InMemoryTaskRepository.attachedPhoto(taskId: String) =
-        assertIs<PhotoUpload.Attached>(
-                attachPhoto(taskId, EncodedPhoto(byteArrayOf(1), width = 1, height = 1))
-                    .toList()
-                    .last()
-            )
-            .photo
+        addUploadedPhoto(taskId)
 }

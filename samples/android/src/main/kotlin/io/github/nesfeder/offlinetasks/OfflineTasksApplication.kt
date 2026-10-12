@@ -6,6 +6,7 @@ import android.app.Application
 import android.util.Log
 import androidx.lifecycle.ViewModelProvider.AndroidViewModelFactory.Companion.APPLICATION_KEY
 import androidx.lifecycle.viewmodel.CreationExtras
+import io.github.nesfeder.offlinetasks.data.PendingPhotoDirectory
 import io.github.nesfeder.offlinetasks.data.PhotoEncoder
 import io.github.nesfeder.offlinetasks.data.TaskRepository
 import io.github.nesfeder.offlinetasks.data.supabase.OfflineTaskRepository
@@ -16,7 +17,9 @@ import io.github.nesfeder.offlinetasks.platform.createSampleSupabaseClient
 import io.github.nesfeder.offlinetasks.platform.validatedInternet
 import io.github.nesfeder.offlinetasks.ui.feedback.FailureReports
 import io.github.nesfeder.offlinetasks.ui.feedback.Notices
+import io.github.nesfeder.offlinetasks.ui.feedback.failureMessage
 import io.github.nesfeder.offlinetasks.ui.feedback.launchReporting
+import java.io.File
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -79,10 +82,28 @@ class OfflineTasksApplication : Application() {
                 debugBuild = BuildConfig.DEBUG,
             ) ?: return
         session = AnonymousSession(supabase, applicationScope).also { it.start() }
-        repository = OfflineTaskRepository(supabase, session, applicationScope)
+        repository =
+            OfflineTaskRepository(
+                supabase = supabase,
+                session = session,
+                scope = applicationScope,
+                pendingPhotos = pendingPhotoDirectory(),
+                describeFailure = { failure -> failureMessage(resources, failure) },
+            )
         photoEncoder = JpegPhotoEncoder(contentResolver)
         isConfigured = true
     }
+
+    // --8<-- [start:pending-photo-record]
+    /**
+     * Where photos picked on this device wait for their upload: `<filesDir>/pending-photos`, the
+     * app's own, beside the library's `<filesDir>/supabase_offline` and never inside it. The backup
+     * rules leave it out, as they leave out every file.
+     */
+    private fun pendingPhotoDirectory(): PendingPhotoDirectory =
+        PendingPhotoDirectory(File(filesDir, PENDING_PHOTOS_DIRECTORY))
+
+    // --8<-- [end:pending-photo-record]
 
     // --8<-- [start:foreground]
     /**
@@ -98,6 +119,9 @@ class OfflineTasksApplication : Application() {
 
 /** The log tag of the app's own messages. */
 private const val TAG = "OfflineTasks"
+
+/** The directory under the app's files that holds the photos waiting to upload. */
+private const val PENDING_PHOTOS_DIRECTORY = "pending-photos"
 
 /** The app's [OfflineTasksApplication], for a ViewModel factory's initializer. */
 val CreationExtras.offlineTasksApplication: OfflineTasksApplication

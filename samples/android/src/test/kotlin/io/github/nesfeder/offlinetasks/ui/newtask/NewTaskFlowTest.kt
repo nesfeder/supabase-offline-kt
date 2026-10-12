@@ -15,6 +15,7 @@ import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import io.github.nesfeder.offlinetasks.R
 import io.github.nesfeder.offlinetasks.data.inmemory.InMemoryTaskRepository
+import io.github.nesfeder.offlinetasks.testing.FakePhotoEncoder
 import io.github.nesfeder.offlinetasks.testing.FakePhotoFileStore
 import io.github.nesfeder.offlinetasks.ui.feedback.FailureReports
 import io.github.nesfeder.offlinetasks.ui.theme.OfflineTasksTheme
@@ -62,7 +63,7 @@ class NewTaskFlowTest {
                 networkAvailability = flowOf(false),
                 seedSampleTasks = false,
             )
-        val viewModel = NewTaskViewModel(repository, scope, FailureReports())
+        val viewModel = NewTaskViewModel(repository, FakePhotoEncoder(), scope, FailureReports())
         var closed = false
         compose.setContent {
             OfflineTasksTheme(dynamicColor = false) {
