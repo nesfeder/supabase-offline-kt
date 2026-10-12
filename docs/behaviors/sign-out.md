@@ -62,21 +62,10 @@ cache belong to one identity at a time: a signed-in user, or nobody signed in.
   open through the clear that refreshes fetches again with whatever token the provider returns
   then.
 
-<small>`CacheBelongsToOneIdentityTest.a_signed_out_answer_is_never_served_to_the_user_who_signs_in_next`,
-`CacheBelongsToOneIdentityTest.signing_in_over_another_user_drops_the_cache_and_keeps_every_queued_write`,
-`CacheBelongsToOneIdentityTest.a_change_of_user_drops_the_file_cache_and_its_rows`,
-`CacheBelongsToOneIdentityTest.a_restart_between_the_change_of_user_and_the_drop_never_serves_the_last_users_rows`,
-`CacheBelongsToOneIdentityTest.without_the_auth_plugin_the_cache_is_one_anonymous_identitys_for_good`,
-`CacheOwnershipTest.a_response_or_write_that_began_before_a_drop_is_kept_out_of_the_cache_not_the_queue`</small>
-
 Queued writes follow their owner. A write is recorded with the user who made it; another user's
 writes are never listed, counted, sent, discarded or retried, and their ids do nothing. With Auth
 installed, a queued write is sent with its owner's token or not at all, so user A's writes wait,
 untouched, while user B is signed in, and go when A signs back in.
-<small>`PerIdentityQueueTest.a_pass_replays_only_the_current_identitys_writes_and_is_not_blocked_by_others`,
-`PerIdentityQueueTest.counts_and_the_overlay_show_only_the_current_identitys_writes`,
-`ReplayTokenBindingTest.a_signed_out_write_is_not_sent_with_a_user_who_signs_in_meanwhile`,
-`QueueVisibilityAcrossUsersTest.a_users_queued_writes_are_invisible_to_another_user_who_cannot_discard_them`</small>
 
 ## While a stored session restores
 
@@ -90,15 +79,9 @@ private object refused on the anon key reads as "not found", which keeps its cac
 answered from it. Under row-level security the anon key reaches less than the user does, so such a
 write, `rpc` or Storage call can be refused, and a private download with nothing cached fails:
 make them after `supabase.auth.awaitInitialization()`.
-<small>`WritesWhileRestoringTest.an_online_write_is_queued_until_the_session_settles_then_sent_as_the_user`,
-`WritesWhileRestoringTest.an_online_only_write_is_sent_at_once_with_the_token_sent_meanwhile`,
-`StorageWhileRestoringTest.a_download_is_sent_at_once_on_the_anon_key_and_cached`,
-`StorageWhileRestoringTest.an_upload_is_sent_at_once_on_the_anon_key`,
-`StorageNotFoundWhileUnsettledTest.a_not_found_while_the_session_restores_is_answered_from_the_cached_copy`</small>
 
 An expired session offline is still its user's: a write made with it is queued as that user's and
 sent once the token is refreshed.
-<small>`ExpiredSessionWriteTest.a_write_with_an_expired_session_offline_is_queued_as_its_users`</small>
 
 ## Deleting an account
 

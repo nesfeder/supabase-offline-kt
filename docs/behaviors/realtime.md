@@ -93,7 +93,3 @@ From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabas
     ```
 
 Nothing happens for a table nothing caches.
-
-## Pinned by
-
-`ApplyServerRecordTest`, `ApplyServerRecordToAnotherSchemaTest`.

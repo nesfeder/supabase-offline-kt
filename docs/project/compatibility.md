@@ -186,8 +186,8 @@ From the samples: [TaskQueries.kt](https://github.com/nesfeder/supabase-offline-
 
 The refusal sees a parameter that holds two values. It cannot see the calls that replace one: a
 second top-level `or { }` group replaces the first, and a text search replaces a filter written
-before it on the same column. Combine those into one group too. A test pins what supabase-kt sends,
-so the day it sends every value this rule is revisited before the pin moves.
+before it on the same column. Combine those into one group too. The day supabase-kt sends every
+value, this rule is revisited before the pin moves.
 
 **Pattern lists.** supabase-kt quotes a pattern of `likeAll`, `likeAny`, `ilikeAll` or `ilikeAny`
 only when it holds one of `,.:()`, so Postgres reads an empty pattern, `NULL`, a pattern edged with
@@ -195,7 +195,7 @@ white space or one holding a brace as something else, and an empty list as no pa
 `delete { filter { likeAll("code", listOf("")) } }` sends `code=like(all).{}`, which matches every
 row. The library refuses such a list, at the top level or in a group, with
 `IllegalArgumentException` before anything is sent or queued. Match such a pattern with a single
-`like` or `ilike` filter. A test pins what supabase-kt sends.
+`like` or `ilike` filter.
 
 **An app that asks for supabase-kt 3.7 or 3.8 itself** gets it: Gradle picks the higher version,
 so the library's pin is a floor, not a ceiling.
