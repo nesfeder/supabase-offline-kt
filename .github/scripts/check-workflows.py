@@ -10,9 +10,9 @@ It fails when:
      the set below;
   2. a workflow triggers on push without a literal branch or tag filter, so Dependabot's own
      branches would start it, or filters on a Dependabot branch or on every tag;
-  3. any job but ci.yml's ios-tests names the self-hosted runner, anywhere in the job, or runs on
-     anything but a literal GitHub-hosted label; a job calls a reusable workflow other than one of
-     this repository's at the same commit (`$/`); or ios-tests' routing differs from the one below;
+  3. any job names a self-hosted runner, anywhere in the job, or runs on anything but a literal
+     GitHub-hosted label; or a job calls a reusable workflow other than one of this repository's at
+     the same commit (`$/`);
   4. ci.yml's final-status does not need every other job but the coverage jobs, needs one of them
      (a Codecov outage must never block a merge), or its condition differs from the one below;
   5. a `uses: $/...` reference names an action or workflow that does not exist;
@@ -20,10 +20,8 @@ It fails when:
      workflow's default permissions do; or a listed job holds other permissions than its own, or
      its condition does not start with the Dependabot guard as a conjunct of its own, so a run
      Dependabot pushed or started never holds the token.
-  7. ci.yml's ios-tests takes IOS_RUNNER from anything but changes' ios-runner, does not start with
-     the self-hosted guard and the home record, or does not end with the clean-up and the
-     comparison, both under always(); or a step sets IOS_RUNNER for itself; or the job or one of
-     those four steps may continue on error.
+  7. ci.yml's ios-tests does not start with the step that stops it on any runner but GitHub's
+     own, or the job or that step may continue on error.
   8. a workflow other than ci.yml runs on a schedule and is not listed below; or a listed one
      triggers on anything but its schedule and a manual run, grants default permissions, has
      other jobs than its own, or reads a secret (a stored token would bypass the permissions
@@ -113,18 +111,9 @@ HOSTED_LABEL = re.compile(
     r"|macos-latest|macos-\d+(-intel|-large|-xlarge)?"
     r"|windows-latest|windows-\d+(-arm)?"
 )
-ROUTED_JOB = ("ci.yml", "ios-tests")
-ROUTED_RUNS_ON = ("${{ needs.changes.outputs.ios-runner == 'local' && fromJSON('[\"self-hosted\","
-                  " \"macOS\", \"ARM64\", \"offline-kt\"]') || 'macos-26' }}")
+IOS_JOB = ("ci.yml", "ios-tests")
 FAN_IN = ("ci.yml", "final-status")
-FAN_IN_IF = ("always() && (github.event.action != 'labeled'"
-             " || github.event.label.name == 'full-ci')")
-IOS_RUNNER_ENV = "${{ needs.changes.outputs.ios-runner }}"
-LOCAL_ONLY = "env.IOS_RUNNER == 'local'"
-ALWAYS_LOCAL = "always() && env.IOS_RUNNER == 'local'"
-SELF_HOSTED_GUARD_IF = "runner.environment != 'github-hosted' && env.IOS_RUNNER != 'local'"
-HOME_SNAPSHOT = "$/.github/actions/home-snapshot"
-CLEAN_UP = "bash .github/scripts/clean-up-local-runner.sh"
+FAN_IN_IF = "always()"
 # Jobs of ci.yml the fan-in must not need: a failure there must never block a merge.
 FAN_IN_EXEMPT = {"coverage-upload", "coverage-rehearsal", "snapshot"}
 # The jobs that may mint an OIDC token, each for one service, with exactly these permissions:
@@ -135,7 +124,7 @@ OIDC_JOBS = {
     ("release.yml", "docs"): {"contents": "read", "pages": "write", "id-token": "write"},
     ("release-resume.yml", "docs"): {"contents": "read", "pages": "write", "id-token": "write"},
 }
-# How every such job's condition begins; the rule for the iOS tests' runner is the same.
+# How every such job's condition begins.
 DEPENDABOT_GUARD = ("github.actor != 'dependabot[bot]'"
                     " && github.triggering_actor != 'dependabot[bot]'")
 CI_TRIGGERS = {"pull_request", "push", "merge_group", "schedule", "workflow_dispatch"}
@@ -240,7 +229,7 @@ RELEASE_ACTIONS = ("actions/checkout@", "actions/setup-java@", "gradle/actions/w
 PUSH_TO_MAIN = re.compile(r"\bpush\b[^\n]*[\s:](refs/heads/)?main\b")
 # A Gradle task that can publish to Maven Central: the aggregate `publish` or any Central task.
 CENTRAL_TASK = re.compile(r"\bpublish(?:\b|\w*MavenCentral\w*)")
-CI_PULL_REQUEST_TYPES = ["opened", "synchronize", "reopened", "ready_for_review", "labeled"]
+CI_PULL_REQUEST_TYPES = ["opened", "synchronize", "reopened"]
 # Workflows that only their schedule or a maintainer can start, never a pull request, a push or
 # Dependabot, with each job's exact permissions. Every other scheduled workflow but ci.yml fails.
 # The canary builds an unreviewed upstream release with a read-only token; only `report`, which
@@ -310,10 +299,6 @@ def trigger_problems(name: str, triggers: object) -> list[str]:
 
 def runner_problems(name: str, job_id: str, job: dict) -> list[str]:
     """Rule 3."""
-    if (name, job_id) == ROUTED_JOB:
-        if job.get("runs-on") != ROUTED_RUNS_ON:
-            return [f"{name}: {job_id} runs on {job.get('runs-on')!r}, not the reviewed routing"]
-        return []
     problems = []
     if SELF_HOSTED.search(json.dumps(job)):
         problems.append(f"{name}: job {job_id} names the self-hosted runner")
@@ -328,41 +313,19 @@ def runner_problems(name: str, job_id: str, job: dict) -> list[str]:
     return problems
 
 
-def protection_problems(name: str, job_id: str, job: dict) -> list[str]:
-    """Rule 7: the steps that protect the self-hosted runner are where they must be."""
-    if (name, job_id) != ROUTED_JOB:
+def hosted_guard_problems(name: str, job_id: str, job: dict) -> list[str]:
+    """Rule 7: the iOS tests stop before their checkout on anything but GitHub's own runner."""
+    if (name, job_id) != IOS_JOB:
         return []
     where = f"{name}: {job_id}"
     problems = []
-    env = job.get("env") if isinstance(job.get("env"), dict) else {}
-    if env.get("IOS_RUNNER") != IOS_RUNNER_ENV:
-        problems.append(f"{where} takes IOS_RUNNER from {env.get('IOS_RUNNER')!r}, not"
-                        f" {IOS_RUNNER_ENV!r}")
-    steps = job.get("steps") if isinstance(job.get("steps"), list) else []
-    steps = [step if isinstance(step, dict) else {} for step in steps]
-    if len(steps) < 4:
-        return problems + [f"{where} has too few steps to hold its protections"]
-
-    def snapshot(step: dict, mode: str) -> bool:
-        return step.get("uses") == HOME_SNAPSHOT and step.get("with") == {"mode": mode}
-
-    guard, record, clean_up, compare = steps[0], steps[1], steps[-2], steps[-1]
-    for step in steps:
-        if isinstance(step.get("env"), dict) and "IOS_RUNNER" in step["env"]:
-            problems.append(f"{where}: a step sets IOS_RUNNER for itself")
-    # A step or job that may continue on error would let the job pass with a red comparison.
-    for label, node in (("the job", job), ("the guard", guard), ("the record", record),
-                        ("the clean-up", clean_up), ("the comparison", compare)):
+    guard = steps_of(job)[0] if steps_of(job) else {}
+    # A guard that may continue on error, or in a job that may, would let the job go on anyway.
+    for label, node in (("the job", job), ("the guard", guard)):
         if node.get("continue-on-error", False) is not False:
             problems.append(f"{where}: {label} may continue on error")
-    if guard.get("if") != SELF_HOSTED_GUARD_IF or "exit 1" not in str(guard.get("run")):
-        problems.append(f"{where} does not start with the self-hosted guard")
-    if not snapshot(record, "record") or record.get("if") != LOCAL_ONLY:
-        problems.append(f"{where} does not record the home directory right after the guard")
-    if clean_up.get("run") != CLEAN_UP or clean_up.get("if") != ALWAYS_LOCAL:
-        problems.append(f"{where} does not clean up under always() as its last step but one")
-    if not snapshot(compare, "compare") or compare.get("if") != ALWAYS_LOCAL:
-        problems.append(f"{where} does not compare the home directory under always() last")
+    if guard.get("if") != HOSTED_GUARD_IF or "exit 1" not in str(guard.get("run")):
+        problems.append(f"{where} does not start by checking that it is on a GitHub-hosted runner")
     return problems
 
 
@@ -977,8 +940,9 @@ def check_tree(root: Path) -> list[str]:
         problems += trigger_problems(path.name, document.get("on"))
         jobs = document.get("jobs") or {}
         for job_id, job in jobs.items():
-            problems += runner_problems(path.name, job_id, job if isinstance(job, dict) else {})
-            problems += protection_problems(path.name, job_id, job if isinstance(job, dict) else {})
+            job = job if isinstance(job, dict) else {}
+            problems += runner_problems(path.name, job_id, job)
+            problems += hosted_guard_problems(path.name, job_id, job)
         problems += fan_in_problems(path.name, jobs)
         problems += self_reference_problems(root, path.name, document)
         problems += oidc_problems(path.name, document)
@@ -1001,7 +965,7 @@ def check_tree(root: Path) -> list[str]:
 COMPLIANT_CI = f"""\
 on:
   pull_request:
-    types: [opened, synchronize, reopened, ready_for_review, labeled]
+    types: [opened, synchronize, reopened]
   push:
     branches: [main]
   merge_group:
@@ -1012,22 +976,11 @@ jobs:
   changes: {{runs-on: ubuntu-slim, steps: [{{uses: $/.github/actions/setup}}]}}
   ios-tests:
     needs: changes
-    runs-on: >-
-      {ROUTED_RUNS_ON}
-    env:
-      IOS_RUNNER: {IOS_RUNNER_ENV}
+    runs-on: macos-26
     steps:
-      - if: {SELF_HOSTED_GUARD_IF}
+      - if: {HOSTED_GUARD_IF}
         run: exit 1
-      - if: {LOCAL_ONLY}
-        uses: {HOME_SNAPSHOT}
-        with: {{mode: record}}
       - run: echo
-      - if: {ALWAYS_LOCAL}
-        run: {CLEAN_UP}
-      - if: {ALWAYS_LOCAL}
-        uses: {HOME_SNAPSHOT}
-        with: {{mode: compare}}
   docs: {{needs: changes, uses: $/.github/workflows/docs-check.yml}}
   coverage-upload:
     needs: changes
@@ -1268,7 +1221,6 @@ jobs:
         run: echo
 """
 COMPLIANT_ACTION = "runs: {using: composite, steps: [{run: echo, shell: bash}]}\n"
-ROUTING_LINE = "      ${{ needs.changes.outputs.ios-runner == 'local'"
 
 # The first line of the compliant coverage-upload condition, which several cases rewrite.
 GUARD_LINE = f"      {DEPENDABOT_GUARD}\n"
@@ -1325,13 +1277,20 @@ CASES: list[tuple[str, str, str | None, str]] = [
      COMPLIANT_CI.replace("changes: {runs-on: ubuntu-slim",
                           "changes: {runs-on: [self-hosted, offline-kt]"),
      "job changes names the self-hosted runner"),
-    ("ios-tests with no hosted fallback", "ci.yml",
-     COMPLIANT_CI.replace(" || 'macos-26' }}", " }}"), "not the reviewed routing"),
+    ("ios-tests back on the self-hosted runner", "ci.yml",
+     COMPLIANT_CI.replace("runs-on: macos-26", "runs-on: [self-hosted, macOS, ARM64, offline-kt]"),
+     "job ios-tests names the self-hosted runner"),
+    ("ios-tests routed by the old expression", "ci.yml",
+     COMPLIANT_CI.replace("runs-on: macos-26",
+                          "runs-on: ${{ needs.changes.outputs.ios-runner == 'local'"
+                          " && fromJSON('[\"self-hosted\", \"macOS\", \"ARM64\", \"offline-kt\"]')"
+                          " || 'macos-26' }}"),
+     "job ios-tests names the self-hosted runner"),
     ("fan-in missing a job", "ci.yml",
      COMPLIANT_CI.replace("needs: [changes, ios-tests, docs]", "needs: [changes, docs]"),
      "not every other job"),
     ("fan-in without always()", "ci.yml",
-     COMPLIANT_CI.replace("if: always() && ", "if: "), "final-status runs if"),
+     COMPLIANT_CI.replace("    if: always()\n", "    if: success()\n"), "final-status runs if"),
     ("misspelled $/ action", "ci.yml",
      COMPLIANT_CI.replace("$/.github/actions/setup", "$/.github/actions/setpu"),
      "names nothing in the repository"),
@@ -1349,15 +1308,18 @@ CASES: list[tuple[str, str, str | None, str]] = [
      "on: workflow_dispatch\njobs:\n  a:\n    strategy: {matrix: {os: [OFFLINE-KT]}}\n"
      "    runs-on: ${{ matrix.os }}\n    steps: [{run: echo}]\n",
      "names the self-hosted runner"),
-    ("ios-tests routing widened but still ending in a hosted label", "ci.yml",
-     COMPLIANT_CI.replace("${{ needs.changes.outputs.ios-runner == 'local'",
-                          "${{ (needs.changes.outputs.ios-runner == 'local' || true)"),
-     "not the reviewed routing"),
+    ("ios-tests on a variable that falls back to a hosted label", "ci.yml",
+     COMPLIANT_CI.replace("runs-on: macos-26", "runs-on: ${{ vars.IOS_RUNNER || 'macos-26' }}"),
+     "job ios-tests runs on"),
     ("a hosted-looking label the runner could be given", "extra.yml",
      "on: workflow_dispatch\njobs:\n  a:\n    runs-on: macos-offline-kt\n"
      "    steps: [{run: echo}]\n", "not a literal hosted label"),
     ("fan-in if: always() && false", "ci.yml",
-     COMPLIANT_CI.replace("if: always() && (", "if: always() && false && ("),
+     COMPLIANT_CI.replace("    if: always()\n", "    if: always() && false\n"),
+     "final-status runs if"),
+    ("fan-in skipped on a label event again", "ci.yml",
+     COMPLIANT_CI.replace("    if: always()\n", "    if: always() && (github.event.action !="
+                          " 'labeled' || github.event.label.name == 'full-ci')\n"),
      "final-status runs if"),
     ("ci.yml gains a create trigger", "ci.yml",
      COMPLIANT_CI.replace("  merge_group:\n", "  merge_group:\n  create:\n"), "ci.yml: triggers"),
@@ -1365,7 +1327,10 @@ CASES: list[tuple[str, str, str | None, str]] = [
      COMPLIANT_CI.replace("  merge_group:\n", "  merge_group:\n  issue_comment:\n"),
      "ci.yml: triggers"),
     ("ci.yml pull_request gains a type", "ci.yml",
-     COMPLIANT_CI.replace("ready_for_review, labeled]", "ready_for_review, labeled, edited]"),
+     COMPLIANT_CI.replace("synchronize, reopened]", "synchronize, reopened, edited]"),
+     "pull_request types"),
+    ("ci.yml pull_request starts on labels again", "ci.yml",
+     COMPLIANT_CI.replace("synchronize, reopened]", "synchronize, reopened, labeled]"),
      "pull_request types"),
     ("push filtered to a literal dependabot branch", "extra.yml",
      "on: {push: {branches: ['dependabot/gradle/x']}}\njobs: {a: {runs-on: ubuntu-latest}}\n",
@@ -1421,36 +1386,30 @@ CASES: list[tuple[str, str, str | None, str]] = [
      COMPLIANT_CI.replace("permissions: {contents: read}\n",
                           "permissions: {contents: read, id-token: write}\n", 1),
      "job coverage-rehearsal can mint an OIDC token"),
-    # The third review's probes of the steps that protect the self-hosted runner.
-    ("ios-tests without its self-hosted guard", "ci.yml",
-     COMPLIANT_CI.replace(f"      - if: {SELF_HOSTED_GUARD_IF}\n        run: exit 1\n", ""),
-     "does not start with the self-hosted guard"),
-    ("home record switched off", "ci.yml",
-     COMPLIANT_CI.replace(f"      - if: {LOCAL_ONLY}\n", "      - if: false\n"),
-     "does not record the home directory"),
-    ("IOS_RUNNER fed from another output", "ci.yml",
-     COMPLIANT_CI.replace(f"IOS_RUNNER: {IOS_RUNNER_ENV}",
-                          "IOS_RUNNER: ${{ needs.changes.outputs.kotlin }}"),
-     "takes IOS_RUNNER from"),
-    ("clean-up without always()", "ci.yml",
-     COMPLIANT_CI.replace(f"      - if: {ALWAYS_LOCAL}\n        run:",
-                          f"      - if: {LOCAL_ONLY}\n        run:"),
-     "does not clean up under always()"),
-    ("home comparison removed", "ci.yml",
-     COMPLIANT_CI.replace(f"      - if: {ALWAYS_LOCAL}\n        uses: {HOME_SNAPSHOT}\n"
-                          "        with: {mode: compare}\n", ""),
-     "does not compare the home directory"),
-    ("the comparison may continue on error", "ci.yml",
-     COMPLIANT_CI.replace("        with: {mode: compare}\n",
-                          "        with: {mode: compare}\n        continue-on-error: true\n"),
-     "the comparison may continue on error"),
-    ("the record sets IOS_RUNNER for itself", "ci.yml",
-     COMPLIANT_CI.replace("        with: {mode: record}\n",
-                          "        with: {mode: record}\n        env: {IOS_RUNNER: local}\n"),
-     "a step sets IOS_RUNNER for itself"),
+    # Rule 7: the iOS tests' check that they are on GitHub's own runner.
+    ("ios-tests without its hosted-runner guard", "ci.yml",
+     COMPLIANT_CI.replace(f"      - if: {HOSTED_GUARD_IF}\n        run: exit 1\n", ""),
+     "ios-tests does not start by checking that it is on a GitHub-hosted runner"),
+    ("the hosted-runner guard switched off", "ci.yml",
+     COMPLIANT_CI.replace(f"      - if: {HOSTED_GUARD_IF}\n", "      - if: false\n"),
+     "ios-tests does not start by checking that it is on a GitHub-hosted runner"),
+    ("the hosted-runner guard that never fails", "ci.yml",
+     COMPLIANT_CI.replace(f"      - if: {HOSTED_GUARD_IF}\n        run: exit 1\n",
+                          f"      - if: {HOSTED_GUARD_IF}\n        run: exit 0\n"),
+     "ios-tests does not start by checking that it is on a GitHub-hosted runner"),
+    ("the hosted-runner guard after another step", "ci.yml",
+     COMPLIANT_CI.replace(f"      - if: {HOSTED_GUARD_IF}\n        run: exit 1\n      - run: echo\n",
+                          f"      - run: echo\n      - if: {HOSTED_GUARD_IF}\n        run: exit 1\n"),
+     "ios-tests does not start by checking that it is on a GitHub-hosted runner"),
+    ("the hosted-runner guard may continue on error", "ci.yml",
+     COMPLIANT_CI.replace(f"      - if: {HOSTED_GUARD_IF}\n        run: exit 1\n",
+                          f"      - if: {HOSTED_GUARD_IF}\n        run: exit 1\n"
+                          "        continue-on-error: true\n"),
+     "the guard may continue on error"),
     ("ios-tests may continue on error", "ci.yml",
-     COMPLIANT_CI.replace("    env:\n      IOS_RUNNER:",
-                          "    continue-on-error: ${{ true }}\n    env:\n      IOS_RUNNER:"),
+     COMPLIANT_CI.replace("    needs: changes\n    runs-on: macos-26\n",
+                          "    needs: changes\n    runs-on: macos-26\n"
+                          "    continue-on-error: ${{ true }}\n"),
      "the job may continue on error"),
     # Rule 9: releases.
     ("the release workflow on a pull request", "release.yml",
@@ -2146,7 +2105,7 @@ def write_compliant_tree(root: Path) -> None:
     (root / ".github" / "workflows" / "release-resume.yml").write_text(COMPLIANT_RESUME)
     (root / ".github" / "workflows" / "docs-publish.yml").write_text(COMPLIANT_DOCS_PUBLISH)
     (root / ".github" / "workflows" / "upstream-canary.yml").write_text(COMPLIANT_CANARY)
-    for action in ("setup", "home-snapshot"):
+    for action in ("setup",):
         (root / ".github" / "actions" / action).mkdir(parents=True)
         (root / ".github" / "actions" / action / "action.yml").write_text(COMPLIANT_ACTION)
 
