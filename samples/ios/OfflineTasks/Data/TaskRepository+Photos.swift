@@ -4,8 +4,9 @@ import Foundation
 import SupabaseOffline
 
 /// The photos: files in the private `task-photos` bucket, through the offline client's Storage,
-/// which keeps every download on the device. Storage writes are never queued: each one here needs
-/// the network, and a photo's row is written only once its file is where the row says.
+/// which keeps every download on the device. The library never queues a Storage write: each one
+/// here needs the network, and a photo's row is written only once its file is where the row says.
+/// A new photo waits in the app's own queue first (`TaskRepository+PendingPhotos.swift`).
 extension TaskRepository {
 
     /// How long a shared link to a photo works.
@@ -23,35 +24,30 @@ extension TaskRepository {
     // --8<-- [end:bucket]
 
     // --8<-- [start:upload]
-    /// Uploads `photo` for the task, then writes its row. The file goes first, so a row never names
-    /// a file that is not there; a row the server refuses at once takes its file with it.
+    /// Uploads the JPEG of `pending`, a photo picked on this device, to the path its record names.
     ///
-    /// - Throws: ``SampleFailure/needsNetwork`` at once while offline: uploads are never queued.
-    @discardableResult
-    func attachPhoto(taskID: String, photo: EncodedPhoto) async throws -> TaskPhoto {
-        guard canReachNetwork else { throw SampleFailure.needsNetwork }
-        let userID = try signedInUserID()
-        let photoID = DeviceID.make()
-        let objectPath = PhotoPath.objectPath(userID: userID, taskID: taskID, photoID: photoID)
+    /// - Throws: ``SampleFailure/needsNetwork`` offline, and Storage's refusal as
+    ///   ``SampleFailure/storageRefused(status:message:)``.
+    func uploadFile(of pending: PendingPhoto, jpeg: Data) async throws {
         do {
             try await photoBucket.upload(
-                objectPath,
-                data: photo.jpeg,
+                pending.objectPath,
+                data: jpeg,
                 options: OfflineBucketApi.UploadOptions(
                     // The bucket takes JPEGs only.
-                    contentType: "image/jpeg",
+                    contentType: pending.contentType,
                     // A path is never reused, so there is nothing to write over.
                     upsert: false,
                     // Kept with the file, for Storage's own listing and the Details sheet.
-                    userMetadata: ["task_id": .string(taskID)]
+                    userMetadata: ["task_id": .string(pending.taskID)]
                 )
             )
+        } catch let error as OfflineError where error.httpStatus == 409 || error.serverError?.code == "Duplicate" {
+            // Already there: the path holds an id this device made, so only an earlier attempt at
+            // this photo, whose answer was lost, can have stored it.
         } catch {
-            throw SampleFailure.storage(error)
+            throw SampleFailure.upload(error)
         }
-        let row = TaskPhotoRow(photoID: photoID, userID: userID, taskID: taskID, objectPath: objectPath, photo: photo)
-        try await insertRow(of: row)
-        return row.photo(pendingIDs: [])
     }
     // --8<-- [end:upload]
 
@@ -285,19 +281,22 @@ extension TaskRepository {
 
     // MARK: - Helpers
 
-    /// Writes a photo's row once its file is in the bucket. A row the server refuses at once
+    // --8<-- [start:pending-photo-upload]
+    /// Writes a photo's row once its file is in the bucket, as an upsert that ignores a row already
+    /// there: a retry after a lost answer writes nothing twice. A row the server refuses at once
     /// (its task deleted on the server meanwhile, say) takes its file with it, as far as Storage
     /// allows; a row that is only queued keeps its file.
     func insertRow(of row: TaskPhotoRow) async throws {
         do {
             try await write(taskTitle: nil) {
-                try await client.from(Tables.taskPhotos).insert(row).execute()
+                try await client.from(Tables.taskPhotos).upsert(row, onConflict: "id", ignoreDuplicates: true).execute()
             }
         } catch let refusal as SampleFailure {
             if case .writeRefused = refusal { try? await photoBucket.remove(paths: [row.objectPath]) }
             throw refusal
         }
     }
+    // --8<-- [end:pending-photo-upload]
 
     /// Deletes the files at `paths`, in batches; a missing file is no error.
     func deleteFiles(_ paths: [String]) async throws {

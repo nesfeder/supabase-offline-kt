@@ -64,6 +64,10 @@ nonisolated struct TaskPhoto: Identifiable, Hashable, Sendable {
 
     /// Whether its row waits in the mutation queue.
     let hasPendingMutations: Bool
+
+    /// Where its upload stands while it waits on this device, picked here and not uploaded yet;
+    /// `nil` once its file is stored.
+    var pendingUpload: PendingPhoto.State?
 }
 
 /// The rules the schema enforces, so the app can stop a write the server would refuse.

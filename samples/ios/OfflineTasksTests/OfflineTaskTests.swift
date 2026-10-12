@@ -265,7 +265,7 @@ struct OfflineTaskTests {
         try await test.start()
         try await test.addTask("Fix the fence")
         let task = try await test.task(titled: "Fix the fence")
-        try await test.repository.attachPhoto(taskID: task.id, photo: try await PhotoEncoder.encode(jpegFixture()))
+        try await test.addPhoto(to: task.id)
         #expect(await test.server.objectPaths().count == 1)
         let requestsBefore = await test.server.requests.count
 
