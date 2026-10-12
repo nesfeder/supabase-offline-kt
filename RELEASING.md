@@ -126,8 +126,8 @@ public.
 runners, macOS included, are free for a public repository. What it takes is time. The `framework`
 job runs on GitHub's macOS runner from nothing (no cache is restored in a release): Gradle, the
 Kotlin/Native toolchain, both iOS builds of the library and the bridge, two release links, then the
-Swift package's build and tests on a simulator. The first dry run took <measured minutes> minutes
-of macOS, beside about 20 Linux minutes; a real release takes the same plus Central's wait.
+Swift package's build and tests on a simulator. It takes about 20 minutes of macOS, as it did in
+the 0.1.0 release, beside about 20 Linux minutes; a real release takes the same plus Central's wait.
 
 ## 3. Release
 
@@ -328,7 +328,7 @@ standard hosted runners, Linux and macOS alike, cost nothing for a public reposi
 
 | Run | Linux minutes | macOS minutes |
 | --- | --- | --- |
-| Dry run | about 20: `verify` about 12, `publish` about 7 | <measured minutes> (`framework`, measured on the first dry run) |
-| Release | about 27 plus Central's wait for PUBLISHED, usually 5 to 30; `docs` about 2 | <measured minutes> (`framework`) |
+| Dry run | about 20: `verify` about 12, `publish` about 7 | about 20 (`framework`) |
+| Release | about 27 plus Central's wait for PUBLISHED, usually 5 to 30; `docs` about 2 | 20 (`framework`, measured in the 0.1.0 release) |
 | Release resume | about 3, with `docs` | none |
 | Snapshot (a push to `main`) | about 7, beside CI's own run | none |
