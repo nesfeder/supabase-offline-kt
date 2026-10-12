@@ -26,12 +26,10 @@ DUE: dict[str, Callable[[Plan], bool]] = {
     "formatting": lambda plan: bool(plan["formatting"]),
     "static-checks": lambda plan: bool(plan["kotlin"] or plan["workflows"]),
     "jvm-tests": lambda plan: bool(plan["kotlin"]),
-    "ios-tests": lambda plan: bool(plan["kotlin"] and plan["ios-allowed"]),
+    "ios-tests": lambda plan: bool(plan["kotlin"]),
     "docs": lambda plan: bool(plan["docs"]),
 }
-BOOLEAN_OUTPUTS = ("kotlin", "docs", "workflows", "formatting", "ios-allowed", "ios-held")
-RUNNER_NAMES = {"local": "the self-hosted runner (label offline-kt)",
-                "hosted": "GitHub's macos-26 runner"}
+BOOLEAN_OUTPUTS = ("kotlin", "docs", "workflows", "formatting")
 
 
 def read_plan(outputs: object) -> tuple[Plan | None, list[str]]:
@@ -45,16 +43,6 @@ def read_plan(outputs: object) -> tuple[Plan | None, list[str]]:
         if value not in ("true", "false"):
             problems.append(f"output {key} is {value!r}, not true or false")
         plan[key] = value == "true"
-    runner = outputs.get("ios-runner")
-    if runner not in RUNNER_NAMES:
-        problems.append(f"output ios-runner is {runner!r}, not local or hosted")
-    plan["ios-runner"] = runner
-    plan["ios-hold"] = outputs.get("ios-hold") or ""
-    if not problems:
-        if plan["ios-held"] != (plan["kotlin"] and not plan["ios-allowed"]):
-            problems.append("output ios-held disagrees with kotlin and ios-allowed")
-        if plan["ios-allowed"] == bool(plan["ios-hold"]):
-            problems.append("output ios-hold disagrees with ios-allowed")
     return (None if problems else plan), problems
 
 
@@ -80,8 +68,7 @@ def check(needs: dict) -> tuple[bool, list[str]]:
             due_text, expected = "unknown", None
         else:
             due = DUE[job](plan)
-            held = job == "ios-tests" and plan["ios-held"]
-            due_text = "due" if due else ("held" if held else "not due")
+            due_text = "due" if due else "not due"
             expected = "success" if due else "skipped"
         ok = expected is not None and result == expected
         passed = passed and ok
@@ -89,14 +76,6 @@ def check(needs: dict) -> tuple[bool, list[str]]:
         lines.append(f"| {job} | {due_text} | {result} | {verdict} |")
 
     lines.append("")
-    if plan is not None:
-        if plan["kotlin"]:
-            where = RUNNER_NAMES[str(plan["ios-runner"])]
-            lines.append(f"iOS tests: {'ran on ' + where if plan['ios-allowed'] else 'held'}.")
-        if plan["ios-held"]:
-            lines.append(f"**The iOS tests were due and held ({plan['ios-hold']}).** This check is"
-                         " named apart from `All Green`, so it cannot satisfy the required"
-                         " check.")
     lines.extend(f"- {problem}" for problem in problems)
     return passed, lines
 
@@ -122,10 +101,6 @@ def main() -> None:
     if summary_path:
         with open(summary_path, "a", encoding="utf-8") as summary:
             summary.write(report)
-    plan, _ = read_plan((needs.get("changes") or {}).get("outputs"))
-    if plan is not None and plan["ios-held"]:
-        print(f"::warning title=iOS tests not run::The iOS tests were due and held"
-              f" ({plan['ios-hold']}). This run's fan-in is not the required All Green check.")
     if not passed:
         print("::error::A job's result does not match the plan; see the table above.")
         sys.exit(1)
@@ -133,8 +108,7 @@ def main() -> None:
 
 def outputs(**overrides: str) -> dict[str, str]:
     """A well-formed changes output for the self-test, with some values replaced."""
-    base = {"kotlin": "true", "docs": "true", "workflows": "true", "formatting": "false",
-            "ios-runner": "hosted", "ios-allowed": "true", "ios-hold": "", "ios-held": "false"}
+    base = {"kotlin": "true", "docs": "true", "workflows": "true", "formatting": "false"}
     base.update(overrides)
     return base
 
@@ -153,7 +127,6 @@ def needs_of(plan_outputs: dict | None, **results: str) -> dict:
     return base
 
 
-HELD = outputs(**{"ios-allowed": "false", "ios-hold": "draft pull request", "ios-held": "true"})
 DOCS_ONLY = outputs(kotlin="false", workflows="false")
 CASES: list[tuple[str, dict, bool]] = [
     ("everything due and green", needs_of(outputs()), True),
@@ -161,10 +134,8 @@ CASES: list[tuple[str, dict, bool]] = [
      True),
     ("docs-only change: tests skipped", needs_of(DOCS_ONLY, static_checks="skipped",
      jvm_tests="skipped", ios_tests="skipped"), True),
-    ("iOS held on a draft, skipped", needs_of(HELD, ios_tests="skipped"), True),
-    ("iOS on the self-hosted runner, green", needs_of(outputs(**{"ios-runner": "local"})), True),
     ("iOS due but skipped", needs_of(outputs(), ios_tests="skipped"), False),
-    ("iOS held but ran", needs_of(HELD), False),
+    ("iOS not due but ran", needs_of(outputs(kotlin="false"), jvm_tests="skipped"), False),
     ("a test job failed", needs_of(outputs(), jvm_tests="failure"), False),
     ("a job was canceled", needs_of(outputs(), ios_tests="cancelled"), False),
     ("formatting due but skipped", needs_of(outputs(formatting="true")), False),
@@ -177,10 +148,6 @@ CASES: list[tuple[str, dict, bool]] = [
     ("empty outputs, everything skipped", needs_of({}, static_checks="skipped",
      jvm_tests="skipped", ios_tests="skipped", docs="skipped"), False),
     ("malformed boolean", needs_of(outputs(kotlin="yes")), False),
-    ("unknown runner", needs_of(outputs(**{"ios-runner": "mac"})), False),
-    ("held disagrees with allowed", needs_of(outputs(**{"ios-held": "true"})), False),
-    ("hold reason without a hold", needs_of(outputs(**{"ios-hold": "draft pull request"})),
-     False),
     ("a job missing from needs", needs_of(outputs(), docs="absent"), False),
     ("a job with no plan", needs_of(outputs(), swift_package="success"), False),
 ]

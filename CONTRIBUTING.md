@@ -1,10 +1,34 @@
 # Contributing
 
-Thank you for helping. Instructions for building and testing the library itself will follow; for
-now, this file covers reporting a problem, labels, formatting, changing the public API, what is
-published, releasing, test coverage, the documentation site, how dependency updates are handled,
-and continuous integration: the `full-ci` label, and what to do when CI fails for a reason outside
-the change.
+Thank you for helping. The build needs JDK 17; the Gradle wrapper brings everything else. The
+commands below run what CI's Android host job runs: both modules' tests on the JVM with their
+coverage floor, the public API records, and the published artifacts against their record. CI's
+checks that need no build are scripts, each with a `--self-test`: `scripts/check-spelling.py`,
+`scripts/check-api-visibility.sh`, `scripts/check-no-console.py` and
+`scripts/check-public-signatures.py`.
+
+```bash
+./gradlew :supabase-offline-kt:testAndroidHostTest :supabase-offline-kt-testing:testAndroidHostTest \
+    :supabase-offline-kt:koverVerify :supabase-offline-kt-testing:koverVerify \
+    :supabase-offline-kt:checkKotlinAbi :supabase-offline-kt-testing:checkKotlinAbi
+python3 scripts/check-published-artifacts.py
+```
+
+On a Mac with Xcode (CI uses 26.6), these run CI's iOS suites: the engine's on an iOS simulator,
+then the engine's again with the Swift bridge's on the system SQLite, the one the Swift package
+links. CI's iOS job then runs the Swift package's tests, its documentation build, a main-actor
+consumer and the iOS sample's tests, each a script in `scripts/` (see "The Swift package").
+
+```bash
+./gradlew :supabase-offline-kt:iosSimulatorArm64Test :supabase-offline-kt-testing:iosSimulatorArm64Test
+./gradlew :supabase-offline-kt:iosSimulatorArm64Test :supabase-offline-swift-bridge:iosSimulatorArm64Test \
+    -Psupabase.offline.iosSqlite=system
+```
+
+The rest of this file covers reporting a problem, labels, formatting, changing the public API, what
+is published, the Swift package, releasing, test coverage, the documentation site, how dependency
+updates are handled, and continuous integration: pull requests from forks, and what to do when CI
+fails for a reason outside the change.
 
 ## Reporting a problem
 
@@ -12,8 +36,7 @@ Open an issue from one of the
 [forms](https://github.com/nesfeder/supabase-offline-kt/issues/new/choose): a bug report asks for
 the versions, the platform, whether it happens online, offline or on reconnect, and a minimal
 reproduction; a feature request asks for the problem you want solved. Questions go to
-[Discussions](https://github.com/nesfeder/supabase-offline-kt/discussions), which open when the
-repository goes public.
+[Discussions](https://github.com/nesfeder/supabase-offline-kt/discussions).
 
 **A security vulnerability is never reported in an issue.** Report it privately, as
 [SECURITY.md](https://github.com/nesfeder/supabase-offline-kt/blob/main/SECURITY.md) describes.
@@ -37,7 +60,7 @@ A pull request that moves a held dependency by hand (see "Held dependencies") al
 `upstream-pin`, `toolchain` or `persistence`, the labels the Dependabot triage workflow gives
 Dependabot's updates of the same dependencies. Any other type needs no label and is listed under
 "Other changes". `dependencies`, `gradle`, `github-actions` and `docs-toolchain` are Dependabot's
-own, and no person applies them. `full-ci` is described under "Continuous integration".
+own, and no person applies them.
 
 ## Formatting
 
@@ -300,11 +323,8 @@ another build of it instead, such as the release's. To open the package in Xcode
 open `swift/Package.swift`. An Xcode that opened it before `swift/LocalCore/` held the framework
 reports that the local binary target "does not contain a binary artifact": once the framework is
 there, File > Packages > Resolve Package Versions (or reopening the package) picks it up.
-CI runs the same script in the iOS job on the self-hosted runner, and the release runs it on
-GitHub's macOS runner against the release framework. GitHub's own runners do not run it in CI (the
-merge queue and the weekly run skip it, to save macOS minutes), so a change to the bridge or to
-`swift/` should run it locally before review, and a framework change that breaks the package is
-caught at the latest by the release's `framework` job, before anything is published.
+CI runs the same script in the iOS job, on a framework it builds, and the release runs it again on
+GitHub's macOS runner against the release framework, before anything is published.
 
 `swift/` is not what a Swift developer sees. A release publishes part of it to the package's own
 repository, `nesfeder/supabase-offline-swift`: `Package.swift` up to its `// MARK: Development only`
@@ -543,8 +563,8 @@ security update, which the `ignore` rules in `.github/dependabot.yml` do not blo
 ## Continuous integration
 
 Every pull request runs `.github/workflows/ci.yml`. Its last job, **All Green**, is the one check
-a pull request needs. Most failures are the change's own. This section covers two kinds that are
-not.
+a pull request needs. Most failures are the change's own; "When a run fails on a download" covers
+the kind that is not.
 
 ### Pull requests from forks
 
@@ -552,19 +572,6 @@ A pull request from a fork runs the workflow files as the fork's branch has them
 has them. GitHub gives such a run no secrets and a read-only token, but the steps are the
 contributor's: read every change under `.github/` in an outside pull request before you approve
 its run.
-
-### The two iOS routes
-
-The iOS tests run on one of two routes: GitHub's macOS runner, or the self-hosted Mac (the rule
-is at the top of `ci.yml`). The two can have different iOS simulator runtimes installed, and so
-different system SQLite versions under the suite's system-SQLite build. A failure that appears on
-one route only may be that difference: compare the runtime each run's simulator used before you
-look for anything else.
-
-In CI, only the self-hosted route runs the Swift package's tests (`scripts/test-swift-package.sh`):
-a run on GitHub's macOS runner, as every merge-queue and weekly run is, runs the Kotlin iOS tests
-alone, and the release runs the Swift tests once more against its own framework. So run the script
-yourself before review whenever you change the bridge or `swift/`.
 
 ### When a run fails on a download
 
@@ -578,14 +585,14 @@ A job can fail because something it downloads is briefly unavailable. Each of th
   network error. One file gives up after at most 340 seconds, and the job's 15-minute timeout
   leaves room for both files to use every retry.
 - **An action, before the first step.** The runner downloads every action a job uses in its "Set up
-  job" step, on GitHub's runners and on a self-hosted one alike. That download is the runner's own,
-  and nothing in the workflow controls it. Each attempt has 100 seconds, and the runner makes three
-  attempts, 10 to 30 seconds apart, with a warning for each one that fails. After the third, the
-  job fails with "Failed to download archive … after 3 attempts". That is at most about six minutes
-  for each action; only if several of a job's actions stall at once can it reach the job's
-  timeout, which is then a download failure too. A job whose only error is "The request was
-  canceled due to the configured HttpClient.Timeout of 100 seconds elapsing" was canceled while it
-  waited, so the runner never retried: re-run it.
+  job" step. That download is the runner's own, and nothing in the workflow controls it. Each
+  attempt has 100 seconds, and the runner makes three attempts, 10 to 30 seconds apart, with a
+  warning for each one that fails. After the third, the job fails with "Failed to download archive
+  … after 3 attempts". That is at most about six minutes for each action; only if several of a
+  job's actions stall at once can it reach the job's timeout, which is then a download failure
+  too. A job whose only error is "The request was canceled due to the configured
+  HttpClient.Timeout of 100 seconds elapsing" was canceled while it waited, so the runner never
+  retried: re-run it.
 - **Other downloads in a step:** `setup-java`'s JDK, the Gradle wrapper's distribution, the build's
   dependencies and the documentation toolchain, when one of them fails with the same kinds of
   error.
@@ -605,52 +612,3 @@ If the step that failed its checksum ran after "Restore the formatter downloads"
 that entry first (the repository's Actions → Caches page, or `gh cache delete <key>` with the key
 the restore step printed), then find out how it got there: the job saves the files only after both
 have passed their checksums.
-
-### Dependabot's pull requests and the `full-ci` label, while the repository is private
-
-While the repository is private, CI holds the iOS tests on every run of a Dependabot pull request,
-and its check reads `All Green (iOS tests held)`, which does not satisfy the required `All Green`.
-To run them, a maintainer reads Dependabot's push and then adds the `full-ci` label: that labeled
-event, and only that one, runs the whole graph, the iOS tests included. The label counts only when a
-person adds it. When Dependabot pushes again, the check reads held again: read the new push, then
-remove the label and add it again. Adding any other label runs nothing. Once the repository is
-public, the iOS tests run on every pull request and the label is not needed.
-
-### The self-hosted runner, while the repository is private
-
-While the repository is private, the iOS tests may run on a self-hosted Mac instead of GitHub's
-macOS runner (the rule is at the top of `ci.yml`). The job gives the build a home and directories of
-its own, and its last two steps remove everything the job made and then compare the runner
-account's home directory with a record taken before the first step. What that comparison records,
-and what it cannot see, is in
-[the snapshot's README](https://github.com/nesfeder/supabase-offline-kt/blob/main/.github/actions/home-snapshot/README.md).
-
-**The comparison fails the job.** It lists each changed path, but it cannot tell whether the job
-changed it or something else running as the same user did. If the path is not one the job writes,
-re-run the job; if the same path comes back, it belongs in the snapshot's exclusion list, with its
-reason.
-
-One kind of red comes from the runners themselves, and is read, not excluded: a red that names
-only a runner's new `bin.*`, `externals.*` or `update.finished` is the runner updating itself,
-which its `_diag` log records. Re-run the job. (The two marker files a runner's service rewrites
-daily, `.runner_migrated` and `.credentials_migrated`, are excluded: a job cannot reconfigure a
-runner. Their rewrite also moves the runner directory's own times, so that directory is recorded
-by name only, with everything inside it watched.)
-
-**A job killed before its last two steps** (the Mac restarted or slept, or the runner service
-stopped) cleans up nothing itself. What the next job on the runner does about it:
-
-| Left behind | Removed by |
-| --- | --- |
-| The job's home, Gradle User Home, Kotlin/Native and temporary directories | The runner, which empties its temporary folder when the next job starts |
-| Processes still running from those directories | The runner's orphan-process clean-up, and the next job's clean-up step |
-| The JDK `setup-java` installed | The next job's clean-up step |
-| The job's simulator, its logs in `~/Library/Logs/CoreSimulator`, and CoreSimulator's folders for it in the per-user temporary directory | The next job to start at least an hour later, which deletes simulators the CI jobs made that are older than that |
-| Any change to the home directory | Nothing: the next job's record step lists what changed since the killed job's record, as a warning that names that run |
-
-A maintainer then does two things by hand:
-
-- Read that warning, and undo anything in it that the killed job wrote. It also lists what anything
-  else on the machine changed in between, so compare it with what the job writes.
-- Look in `~/Library/Logs/DiagnosticReports` for a crash report from a step that crashed, such as
-  `xcodebuild`. The snapshot does not reach that deep, and nothing removes it.

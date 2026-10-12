@@ -41,7 +41,7 @@ jobs:
     if: >-
       github.actor != 'dependabot[bot]' && github.triggering_actor != 'dependabot[bot]'
       && (github.repository == 'nesfeder/supabase-offline-kt' && github.ref == 'refs/heads/main')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     environment: release
     permissions:

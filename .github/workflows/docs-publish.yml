@@ -45,7 +45,7 @@ env:
 jobs:
   build:
     name: Build the site for GitHub Pages
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: read
@@ -109,7 +109,7 @@ jobs:
     needs: build
     # Every job that can mint an OIDC token carries this guard (.github/scripts/check-workflows.py).
     if: github.actor != 'dependabot[bot]' && github.triggering_actor != 'dependabot[bot]'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       pages: write # publish the site artifact to GitHub Pages

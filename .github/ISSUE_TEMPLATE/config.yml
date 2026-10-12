@@ -1,6 +1,5 @@
 # Every issue starts from a form: blank issues are off for everyone without write access.
-# Questions go to Discussions, which the owner turns on the day the repository goes public
-# (scripts/go-public.sh sets it). Until then that link leads nowhere.
+# Questions go to Discussions, which scripts/go-public.sh turns on.
 blank_issues_enabled: false
 contact_links:
   - name: Ask a question

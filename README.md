@@ -1,4 +1,5 @@
 [![CI](https://github.com/nesfeder/supabase-offline-kt/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/nesfeder/supabase-offline-kt/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/nesfeder/supabase-offline-kt/graph/badge.svg)](https://codecov.io/gh/nesfeder/supabase-offline-kt)
 
 # supabase-offline-kt
 

@@ -1,11 +1,6 @@
 # actionlint, for anyone who runs it locally. CI audits the workflows with zizmor and checks their
 # structure with .github/scripts/check-workflows.py.
 
-# The self-hosted runner, which only ci.yml's ios-tests may use while the repository is private.
-self-hosted-runner:
-  labels:
-    - offline-kt
-
 # actionlint 1.7.12, the newest release, predates GitHub's self-repository syntax (`uses: $/…`, an
 # action or reusable workflow from this repository at the commit being run) and reports it as a
 # malformed reference. These patterns silence exactly that report; check-workflows.py checks that

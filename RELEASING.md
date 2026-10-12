@@ -50,13 +50,26 @@ settings. The workflows never create or change any of them.
 - [x] GitHub Pages: **Settings → Pages → Source** is **GitHub Actions**, and the `github-pages`
   environment allows deployments from `main` only, where both release workflows run. The release's
   `docs` job publishes through it. A Pages site is public even while the repository is private.
-- [ ] Before the first release whose Swift package anyone else should resolve, make both
-  repositories public: SwiftPM fetches the package and downloads the framework without signing in,
-  so a package or a release asset in a private repository cannot be resolved.
-- [ ] When the repository becomes public, add the owner as the required reviewer of `release`
-  (GitHub does not offer it on a private repository). From then on every release, and every
-  resume, waits for that approval. Do the snapshot step below at the same time.
 - [ ] To publish snapshots, see [Snapshots](#snapshots).
+
+### Going public
+
+Before the first release whose Swift package anyone else should resolve, both repositories become
+public: SwiftPM fetches the package and downloads the framework without signing in, so a package or
+a release asset in a private repository cannot be resolved. The steps, in the order
+`scripts/go-public.sh` gives:
+
+- [ ] Remove every self-hosted runner from this repository (**Settings → Actions → Runners**): on
+  a public repository, a fork's pull request can edit a workflow to run on one.
+  `gh api repos/nesfeder/supabase-offline-kt/actions/runners --jq .total_count` prints `0`.
+- [ ] Make both repositories public: `nesfeder/supabase-offline-swift`, then this one
+  (**Settings → General → Danger Zone → Change visibility**).
+- [ ] Run `scripts/go-public.sh`, which lists each setting GitHub offers only on a public
+  repository with its value and its target, then `scripts/go-public.sh --apply`, which sets them
+  and reads them back. It refuses while the repository is private or a runner is registered.
+- [ ] Add the owner as the required reviewer of `release` (GitHub does not offer it on a private
+  repository). From then on every release, and every resume, waits for that approval. Decide
+  [snapshots](#snapshots) at the same time.
 
 ## 1. Prepare the release
 
@@ -109,13 +122,12 @@ public.
    job's summary gives its size and checksum), and `swift-package-tree` is exactly the tree the
    Swift package's repository would receive, with its rendered `Package.swift`.
 
-**What a dry run costs while the repository is private.** The `framework` job runs on GitHub's
-macOS runner, which bills ten times Linux, from nothing (no cache is restored in a release):
-Gradle, the Kotlin/Native toolchain, both iOS builds of the library and the bridge, two release
-links, then the Swift package's build and tests on a simulator. Expect about 25 minutes of macOS,
-about 250 of the 3,000 billable minutes a month, beside about 20 Linux minutes; a real release
-costs the same plus Central's wait. The first rehearsal measures it; correct this paragraph with
-the number. Once the repository is public, GitHub's standard runners cost nothing.
+**What a dry run costs.** Nothing: the repository is public, and GitHub's standard hosted
+runners, macOS included, are free for a public repository. What it takes is time. The `framework`
+job runs on GitHub's macOS runner from nothing (no cache is restored in a release): Gradle, the
+Kotlin/Native toolchain, both iOS builds of the library and the bridge, two release links, then the
+Swift package's build and tests on a simulator. It takes about 20 minutes of macOS, as it did in
+the 0.1.0 release, beside about 20 Linux minutes; a real release takes the same plus Central's wait.
 
 ## 3. Release
 
@@ -311,12 +323,12 @@ There are no Swift package snapshots.
 ## What a run costs
 
 Each job starts from nothing: no cache is restored in a publishing workflow, so the build runs
-only what the released commit holds. macOS minutes bill at ten times Linux while the repository is
-private; the macOS figures are estimates until the first rehearsal measures them.
+only what the released commit holds. None of it is billed: the repository is public, and GitHub's
+standard hosted runners, Linux and macOS alike, cost nothing for a public repository.
 
-| Run | Linux minutes | macOS minutes (billed ×10 while private) |
+| Run | Linux minutes | macOS minutes |
 | --- | --- | --- |
-| Dry run | about 20: `verify` about 12, `publish` about 7 | about 25 (`framework`) |
-| Release | about 27 plus Central's wait for PUBLISHED, usually 5 to 30; `docs` about 2 | about 25 (`framework`) |
+| Dry run | about 20: `verify` about 12, `publish` about 7 | about 20 (`framework`) |
+| Release | about 27 plus Central's wait for PUBLISHED, usually 5 to 30; `docs` about 2 | 20 (`framework`, measured in the 0.1.0 release) |
 | Release resume | about 3, with `docs` | none |
 | Snapshot (a push to `main`) | about 7, beside CI's own run | none |
