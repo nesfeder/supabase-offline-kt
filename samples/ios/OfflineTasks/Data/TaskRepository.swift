@@ -394,14 +394,13 @@ final class TaskRepository {
     }
     // --8<-- [end:json-insert]
 
-    /// Deletes a task: its photos waiting to upload, then its photo files (only online: Storage
-    /// writes are never queued, so offline they stay in the bucket), then its photo rows, then the
+    /// Deletes a task: its photo files (only online: Storage writes are never queued, so offline
+    /// they stay in the bucket), then its photos waiting to upload, then its photo rows, then the
     /// task.
     ///
     /// - Throws: ``SampleFailure/storageRefused(status:message:)`` when Storage refuses to delete
-    ///   the files, before anything on the server is deleted.
+    ///   the files, before anything else is deleted: the task and its waiting photos stay.
     func deleteTask(id: String) async throws {
-        try pendingPhotos.removePhotos(ofTask: id)
         let photos = try await cachedPhotos(ofTask: id)
         if canReachNetwork {
             if let photos {
@@ -410,6 +409,8 @@ final class TaskRepository {
                 try await deleteFiles(photoPathsOnServer { $0.eq("task_id", value: id) })
             }
         }
+        // Then its photos still on this device: one whose upload has not returned yet gets no row.
+        try pendingPhotos.removePhotos(ofTask: id)
         // The server's cascade would delete the photo rows, but the cache never sees a cascade.
         if photos == nil || photos?.isEmpty == false {
             try await write(taskTitle: nil) {
@@ -423,8 +424,9 @@ final class TaskRepository {
         // --8<-- [end:delete-task]
     }
 
-    /// Deletes the done tasks made last week. Online, their photos' files and rows go first, as
-    /// Delete task does; offline, the tasks' grouped delete is refused before anything is deleted.
+    /// Deletes the done tasks made last week. Online, their photos' files, then their photos waiting
+    /// to upload, then their photo rows go first, as Delete task does; offline, the tasks' grouped
+    /// delete is refused before anything is deleted.
     func deleteLastWeeksDoneTasks(now: Date = .now) async throws {
         let lastWeek = TaskQuery.week(before: now)
         if canReachNetwork {
@@ -437,8 +439,8 @@ final class TaskRepository {
                 .value
                 .map(\.id)
             guard !taskIDs.isEmpty else { return }
-            for taskID in taskIDs { try pendingPhotos.removePhotos(ofTask: taskID) }
             try await deleteFiles(photoPathsOnServer { $0.in("task_id", values: taskIDs) })
+            for taskID in taskIDs { try pendingPhotos.removePhotos(ofTask: taskID) }
             try await write(taskTitle: nil) {
                 try await client.from(Tables.taskPhotos).delete().in("task_id", values: taskIDs).execute()
             }

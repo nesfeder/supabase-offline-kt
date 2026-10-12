@@ -298,6 +298,8 @@ From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabas
     --8<-- "Data/TaskRepository+PendingPhotos.swift:pending-photo-upload"
 
     --8<-- "Data/TaskRepository+Photos.swift:upload"
+
+    --8<-- "Data/TaskRepository+Photos.swift:pending-photo-upload"
     ```
 
     Through the Swift package Storage's refusal keeps its own `Duplicate` code whatever the HTTP

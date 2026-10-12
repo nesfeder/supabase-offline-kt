@@ -56,8 +56,8 @@ final class TasksModel {
     /// The ids of the tasks a queued write touches.
     private(set) var pendingIDs: Set<String> = []
 
-    /// How many photos each task on screen has, by task id, once read.
-    private(set) var photoCounts: [String: Int] = [:]
+    /// The ids of the photo rows of each task on screen, by task id, once read.
+    private(set) var photoIDs: [String: Set<String>] = [:]
 
     /// How many tasks were open at launch, read once for the tab's badge until the list is known.
     private(set) var openCountAtLaunch: Int?
@@ -214,12 +214,12 @@ final class TasksModel {
     /// Follows how many photos each task on screen has, in one query for all of them.
     func observePhotoCounts(of taskIDs: [String]) async {
         guard !taskIDs.isEmpty, repository.session.userID != nil else {
-            photoCounts = [:]
+            photoIDs = [:]
             return
         }
         do {
             for try await snapshot in repository.photoSnapshots(ofTasks: taskIDs) {
-                photoCounts = Dictionary(grouping: snapshot.result ?? [], by: \.taskID).mapValues(\.count)
+                photoIDs = Dictionary(grouping: snapshot.result ?? [], by: \.taskID).mapValues { Set($0.map(\.id)) }
             }
         } catch is CancellationError {
             return
@@ -281,11 +281,12 @@ final class TasksModel {
     }
 
     /// How many photos task `taskID` has: its rows read so far, and the photos picked on this
-    /// device that wait to upload; `nil` while neither is known.
+    /// device that wait to upload, each once (a just-uploaded photo is both for a moment); `nil`
+    /// while neither is known.
     func photoCount(ofTask taskID: String) -> Int? {
-        let waiting = repository.pendingPhotos.photos(ofTask: taskID).count
-        guard let stored = photoCounts[taskID] else { return waiting > 0 ? waiting : nil }
-        return stored + waiting
+        let waiting = Set(repository.pendingPhotos.photos(ofTask: taskID).map(\.id))
+        guard let stored = photoIDs[taskID] else { return waiting.isEmpty ? nil : waiting.count }
+        return stored.union(waiting).count
     }
 
     /// Marks `task` done or open again.

@@ -4,7 +4,7 @@ import Foundation
 import SupabaseOffline
 
 /// The Photos screen: every photo the user has, newest first, a page at a time, each marked once
-/// it is on this device; the photos picked here that wait to upload come first, marked as such.
+/// it is on this device; the photos picked here that wait to upload are among them, marked as such.
 @Observable
 final class PhotosModel {
 

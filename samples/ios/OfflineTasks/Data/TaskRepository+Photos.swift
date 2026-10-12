@@ -281,6 +281,7 @@ extension TaskRepository {
 
     // MARK: - Helpers
 
+    // --8<-- [start:pending-photo-upload]
     /// Writes a photo's row once its file is in the bucket, as an upsert that ignores a row already
     /// there: a retry after a lost answer writes nothing twice. A row the server refuses at once
     /// (its task deleted on the server meanwhile, say) takes its file with it, as far as Storage
@@ -295,6 +296,7 @@ extension TaskRepository {
             throw refusal
         }
     }
+    // --8<-- [end:pending-photo-upload]
 
     /// Deletes the files at `paths`, in batches; a missing file is no error.
     func deleteFiles(_ paths: [String]) async throws {

@@ -301,6 +301,80 @@ struct PendingPhotoTests {
         try await test.stop()
     }
 
+    @Test("A task delete Storage refuses keeps the task's photos waiting to upload")
+    func refusedDeleteKeepsWaitingPhotos() async throws {
+        // Given: a task with a stored photo and one Storage refused, which waits until removed
+        let (test, task, waiting) = try await Self.taskWithStoredAndWaitingPhoto(titled: "Fix the shelf")
+        await test.server.intercept(Self.refusingFileDeletes(with: Self.policyRefusal))
+
+        // When
+        let failure = await #expect(throws: SampleFailure.self) { try await test.repository.deleteTask(id: task.id) }
+
+        // Then: nothing is deleted, the waiting photo and its JPEG included
+        #expect(failure == .storageRefused(status: 400, message: "new row violates row-level security policy"))
+        #expect(test.repository.pendingPhotos.photo(id: waiting.id) != nil)
+        #expect(FileManager.default.fileExists(atPath: test.repository.pendingPhotos.jpegURL(ofPhoto: waiting.id).path(percentEncoded: false)))
+        #expect(await test.server.rows(of: Tables.tasks).count == 1)
+        try await test.stop()
+    }
+
+    @Test("A grouped delete Storage refuses keeps the tasks' photos waiting to upload")
+    func refusedGroupedDeleteKeepsWaitingPhotos() async throws {
+        // Given: a done task from last week with a stored photo and one Storage refused
+        let session = DemoSession()
+        let userID = try #require(session.userID)
+        let lastWeek = TaskQuery.week(before: .now).start + 3_600
+        let old = TaskRow(id: DeviceID.make(), userID: userID, title: "Old and done", notes: nil, done: true, createdAt: lastWeek)
+        let test = TestApp(server: DemoServer(tasks: [old]), session: session)
+        try await test.start()
+        try await test.addPhoto(to: old.id)
+        await test.server.intercept(Self.failingUploads(with: Self.policyRefusal))
+        let waiting = try await test.repository.filePhoto(try await PhotoEncoder.encode(jpegFixture()), forTask: old.id)
+        _ = try await test.pendingPhoto(waiting.id, "the upload is refused") { $0.state != .waiting && $0.state != .uploading }
+        await test.server.intercept(Self.refusingFileDeletes(with: Self.policyRefusal))
+
+        // When
+        await #expect(throws: SampleFailure.self) { try await test.repository.deleteLastWeeksDoneTasks() }
+
+        // Then
+        #expect(test.repository.pendingPhotos.photo(id: waiting.id) != nil)
+        #expect(await test.server.rows(of: Tables.tasks).count == 1)
+        try await test.stop()
+    }
+
+    @Test("A task's photo count counts a photo once while it is both a row and waiting")
+    func photoCountCountsEachPhotoOnce() async throws {
+        // Given: a task with a stored photo, its count read
+        let (test, task, waiting) = try await Self.taskWithStoredAndWaitingPhoto(titled: "Hang the clock")
+        let counting = Task { await test.app.tasks.observePhotoCounts(of: [task.id]) }
+        try await eventually("the waiting photo and the row are counted") { test.app.tasks.photoCount(ofTask: task.id) == 2 }
+        try await test.setOffline(true)
+        let storedIDs = await test.server.rows(of: Tables.taskPhotos).compactMap { row -> String? in
+            guard case .string(let id)? = row["id"] else { return nil }
+            return id
+        }
+        let storedID = try #require(storedIDs.first)
+
+        // When: a record of the stored photo too, as between its row write and the record's removal
+        let overlap = PendingPhoto(
+            id: storedID,
+            taskID: task.id,
+            userID: waiting.userID,
+            objectPath: PhotoPath.objectPath(userID: waiting.userID, taskID: task.id, photoID: storedID),
+            pickedAt: .now,
+            contentType: "image/jpeg",
+            width: 24,
+            height: 16
+        )
+        try await test.repository.pendingPhotos.add(overlap, jpeg: try jpegFixture())
+
+        // Then
+        #expect(test.repository.pendingPhotos.photos(ofTask: task.id).count == 2)
+        #expect(test.app.tasks.photoCount(ofTask: task.id) == 2)
+        counting.cancel()
+        try await test.stop()
+    }
+
     @Test("Clear local cache deletes every photo waiting to upload")
     func clearEmptiesTheQueue() async throws {
         // Given
@@ -379,6 +453,29 @@ struct PendingPhotoTests {
     }
 
     // MARK: - Helpers
+
+    /// A started app with a task titled `title` on the server, one stored photo of it, and one
+    /// Storage refused for good, which waits until removed.
+    private static func taskWithStoredAndWaitingPhoto(titled title: String) async throws -> (TestApp, TaskItem, PendingPhoto) {
+        let test = TestApp()
+        try await test.start()
+        try await test.addTask(title)
+        let task = try await test.task(titled: title)
+        try await eventually("the task reaches the server") { await test.server.rows(of: Tables.tasks).count == 1 }
+        try await test.addPhoto(to: task.id)
+        await test.server.intercept(Self.failingUploads(with: Self.policyRefusal))
+        let waiting = try await test.repository.filePhoto(try await PhotoEncoder.encode(jpegFixture()), forTask: task.id)
+        _ = try await test.pendingPhoto(waiting.id, "the upload is refused") { $0.state != .waiting && $0.state != .uploading }
+        await test.server.intercept(nil)
+        return (test, task, waiting)
+    }
+
+    /// An interception answering every delete of files with `response`.
+    private static func refusingFileDeletes(with response: FakeServer.Response) -> @Sendable (FakeServer.Request, String?) -> FakeServer.Response? {
+        { request, _ in
+            request.method == "DELETE" && request.url.path().hasSuffix("/storage/v1/object/task-photos") ? response : nil
+        }
+    }
 
     /// The user the queue tests' photos belong to.
     private static let userID = DeviceID.make()

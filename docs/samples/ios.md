@@ -311,8 +311,9 @@ app's own sections.
   The app tries again each time the network comes back; until then the list says it is not signed
   in yet.
 - **A photo stays "Upload failed".** Its reason is Storage's own answer: check that the
-  `task-photos` bucket exists, private, as [Set up Supabase](supabase-setup.md) creates it. The
-  first migration is all an upload needs.
+  `task-photos` bucket exists, private, with its policies, as [Set up Supabase](supabase-setup.md)
+  creates it; the first migration is all an upload needs. A refusal like that is final for the
+  photo, so Retry stays switched off: remove the photo, fix the cause, and add it again.
 - **Mark all done or Ask the server fails online, or Replace and Move are refused.** The project
   lacks the second migration: run it from [Set up Supabase](supabase-setup.md).
 - **Live updates stopped.** The app could not subscribe: check that `tasks` and `task_photos` are in
