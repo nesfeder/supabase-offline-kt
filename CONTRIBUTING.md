@@ -14,8 +14,8 @@ checks that need no build are scripts, each with a `--self-test`: `scripts/check
 python3 scripts/check-published-artifacts.py
 ```
 
-On a Mac with Xcode (CI uses 26.6), these run CI's iOS job: the engine's suites on an iOS
-simulator, then the engine and the Swift bridge on the system SQLite, the one the Swift package
+On a Mac with Xcode (CI uses 26.6), these run CI's iOS suites: the engine's on an iOS simulator,
+then the engine's again with the Swift bridge's on the system SQLite, the one the Swift package
 links. CI does not run the Swift package's own tests: run `scripts/test-swift-package.sh` whenever
 you change the bridge or `swift/` (see "The Swift package").
 
@@ -323,10 +323,10 @@ another build of it instead, such as the release's. To open the package in Xcode
 open `swift/Package.swift`. An Xcode that opened it before `swift/LocalCore/` held the framework
 reports that the local binary target "does not contain a binary artifact": once the framework is
 there, File > Packages > Resolve Package Versions (or reopening the package) picks it up.
-CI does not run it; the release runs it on GitHub's macOS runner against the release framework.
-So a change to the bridge or to `swift/` should run it locally before review, and a framework
-change that breaks the package is caught at the latest by the release's `framework` job, before
-anything is published.
+CI does not run `scripts/test-swift-package.sh`; the release runs it on GitHub's macOS runner
+against the release framework. So a change to the bridge or to `swift/` should run it locally
+before review, and a framework change that breaks the package is caught at the latest by the
+release's `framework` job, before anything is published.
 
 `swift/` is not what a Swift developer sees. A release publishes part of it to the package's own
 repository, `nesfeder/supabase-offline-swift`: `Package.swift` up to its `// MARK: Development only`
@@ -587,13 +587,14 @@ A job can fail because something it downloads is briefly unavailable. Each of th
   network error. One file gives up after at most 340 seconds, and the job's 15-minute timeout
   leaves room for both files to use every retry.
 - **An action, before the first step.** The runner downloads every action a job uses in its "Set up
-  job" step. That download is the runner's own, and nothing in the workflow controls it. Each attempt has 100 seconds, and the runner makes three
-  attempts, 10 to 30 seconds apart, with a warning for each one that fails. After the third, the
-  job fails with "Failed to download archive … after 3 attempts". That is at most about six minutes
-  for each action; only if several of a job's actions stall at once can it reach the job's
-  timeout, which is then a download failure too. A job whose only error is "The request was
-  canceled due to the configured HttpClient.Timeout of 100 seconds elapsing" was canceled while it
-  waited, so the runner never retried: re-run it.
+  job" step. That download is the runner's own, and nothing in the workflow controls it. Each
+  attempt has 100 seconds, and the runner makes three attempts, 10 to 30 seconds apart, with a
+  warning for each one that fails. After the third, the job fails with "Failed to download archive
+  … after 3 attempts". That is at most about six minutes for each action; only if several of a
+  job's actions stall at once can it reach the job's timeout, which is then a download failure
+  too. A job whose only error is "The request was canceled due to the configured
+  HttpClient.Timeout of 100 seconds elapsing" was canceled while it waited, so the runner never
+  retried: re-run it.
 - **Other downloads in a step:** `setup-java`'s JDK, the Gradle wrapper's distribution, the build's
   dependencies and the documentation toolchain, when one of them fails with the same kinds of
   error.
