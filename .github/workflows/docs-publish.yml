@@ -1,8 +1,9 @@
 name: Docs publish
 
 # Builds the site and publishes it to GitHub Pages. It runs only when started by hand
-# (workflow_dispatch) or called by the release workflow (workflow_call); nothing on a pull request
-# or a push reaches it, and CI calls docs-check.yml instead, which cannot publish.
+# (workflow_dispatch) or called (workflow_call) by a release workflow or by Docs republish
+# (docs-republish.yml); nothing on a pull request or a push reaches it, and CI calls docs-check.yml
+# instead, which cannot publish.
 #
 # The repository is set up for it: Settings > Pages > Source is GitHub Actions, which created the
 # `github-pages` environment, and that environment deploys from `main` only. Its branch policy is
@@ -16,7 +17,7 @@ name: Docs publish
 # (scripts/build-swift-docs.sh) and uploads it as an artifact of the run, which the caller names
 # in `swift-reference`; it is placed at site/swift/, beside the MkDocs pages, in the one Pages
 # artifact. A publish without it (by hand, or a caller that names none) leaves /swift/ out of the
-# site and says so in the run's summary.
+# site and says so in the run's summary. Docs republish publishes main with a Release run's copy.
 
 on:
   workflow_call:
