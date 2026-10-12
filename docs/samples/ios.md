@@ -220,7 +220,8 @@ data** makes the task list ask the server before it shows anything, the device's
 server cannot be reached; off, the default, the saved rows show at once and are refreshed alongside.
 **Live updates**, on by default, subscribes to Realtime's changes to `tasks` and `task_photos` and
 applies each to the device's lists: edit a task in the dashboard's Table Editor and it changes in the
-app without a refresh. Simulate offline pauses it, since it cuts the app off from the server.
+app without a refresh. Simulate offline and a lost network pause it, and it subscribes again, reading
+both lists again, when the network is back.
 
 ### Ask the server
 

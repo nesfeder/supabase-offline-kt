@@ -160,7 +160,7 @@ The [documentation site](https://nesfeder.github.io/supabase-offline-kt/), also 
 [`docs/`](./docs/index.md): [the architecture](./docs/project/architecture.md), with the whole
 public API and what the library promises;
 [compatibility and versioning](./docs/project/compatibility.md); and
-[the sample app](./docs/samples/index.md).
+[the sample apps](./docs/samples/index.md).
 
 ## Contributing
 
