@@ -126,18 +126,3 @@ The last write wins: the library does not merge or resolve conflicting writes.
 Storage answers a request for a missing object with HTTP 400 and a 404 in its body, which
 supabase-kt raises as `NotFoundRestException`, so `httpStatusOrNull()` reads 400: test for the type.
 The offline bucket drops its cached copy when the server says so ([Storage caching](storage.md)).
-
-## Pinned by
-
-`HeadSendTest.a_refusal_at_the_head_is_thrown_and_the_write_leaves_the_queue`,
-`HeadSendTest.a_503_at_the_head_leaves_the_write_queued`,
-`MutationQueueTransientFailureTest.a_write_that_keeps_meeting_503_is_never_dropped`,
-`MutationQueueTransientFailureTest.a_write_that_keeps_meeting_connectivity_failures_is_never_dropped`,
-`RejectedMutationListTest.a_permanent_rejection_keeps_the_write_and_the_servers_reason`,
-`RejectedMutationListTest.the_list_keeps_the_newest_hundred`,
-`RejectedMutationListTest.a_filter_that_can_no_longer_be_read_is_refused_for_that_reason`,
-`SchemaCacheMissTest.a_table_still_missing_after_ten_spaced_misses_is_rejected`,
-`DiscardPendingMutationTest.discarding_the_write_the_server_keeps_failing_lets_the_rest_through`,
-`MutationQueueIdempotentReplayTest.a_genuine_duplicate_id_is_refused_and_lands_on_the_rejected_list`,
-`MutationQueueIdempotentReplayTest.an_insert_whose_key_the_server_generates_is_inserted_twice_when_its_response_was_lost`,
-`FailureClassificationTest.a_write_that_could_not_be_queued_or_sent_is_a_connectivity_failure`.

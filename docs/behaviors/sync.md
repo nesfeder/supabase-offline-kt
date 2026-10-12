@@ -201,24 +201,37 @@ The library sends only while your app's process runs. To send from the backgroun
 worker on Android, a `BGTaskScheduler` task on iOS), never from a second process
 ([Project setup](../getting-started/setup.md#a-data-directory-and-a-second-process)).
 
-## Pinned by
+## At a glance
 
-| Fact | Test |
-|---|---|
-| `syncPendingMutations` reports what it sent, what the server refused (with its `ServerError`) and what is still queued. | `SyncReportTest.a_sync_reports_what_it_sent_what_was_refused_and_what_remains` |
-| Offline it returns at once, with the writes still queued, and `syncStatus.lastSyncError` says the network. | `SyncReportTest.a_sync_while_offline_returns_with_the_writes_still_queued_and_says_why` |
-| `lastSyncError` carries the status and code, never the server's text, a filter value or a token. | `SyncReportTest.the_failure_a_sync_reports_carries_no_filter_value_or_server_text` |
-| An insert whose earlier send had in fact arrived is counted in `alreadyOnServerCount`, not inserted twice. | `SyncReportTest.an_insert_whose_earlier_send_had_arrived_is_counted_as_already_on_the_server` |
-| A sync that meets the library sending the same writes waits for it, then returns with what is still queued after both. | `SyncReportTest.a_sync_that_meets_the_library_sending_the_same_writes_waits_and_reports_what_remains` |
-| With `autoSync` on, the network coming back, network access turned back on, and the session settling anew send queued writes by themselves. | `AutoSyncTest.the_network_coming_back_sends_queued_writes_by_itself`, `AutoSyncTest.turning_network_access_back_on_sends_queued_writes_by_itself`, `AutoSyncTest.the_session_settling_with_writes_queued_sends_them_unless_auto_sync_is_off` |
-| With `autoSync = false` those three send nothing, but an online write queued behind an earlier one is still sent without the app asking. | `AutoSyncTest.with_auto_sync_off_the_network_coming_back_sends_nothing`, `AutoSyncTest.with_auto_sync_off_turning_network_access_back_on_sends_nothing`, `AutoSyncTest.with_auto_sync_off_an_online_write_behind_a_queued_one_is_sent_without_the_app_asking` |
-| After a pass stopped on a server's `Retry-After`, the library's own next pass waits at least that long, at most an hour. | `RetryAfterTest.the_next_pass_waits_at_least_as_long_as_the_server_asked`, `RetryAfterTest.a_server_cannot_hold_the_library_back_for_more_than_an_hour` |
-| `syncStatus` follows the queue, the rejected list and the passes, and says when the queue was last emptied. | `SyncStatusTest.the_status_follows_the_queue_and_says_when_it_was_emptied`, `SyncStatusTest.the_status_counts_the_current_users_refused_writes`, `SyncStatusTest.the_status_says_a_pass_is_running_while_one_is` |
-| `syncStatus.network` is `DISABLED` as soon as `disableNetwork()` returns; a new client starts with access on. | `NetworkSwitchTest.the_status_says_disabled_as_soon_as_the_switch_returns_and_not_after_it_is_back_on`, `NetworkSwitchTest.a_new_client_starts_with_network_access_on` |
-| While access is off, a Storage download is answered from the file cache, and an upload, a delete or a move throws `NetworkDisabledException`, leaving the cache as it was. | `StorageWhileNetworkDisabledTest.a_download_while_access_is_off_is_answered_from_the_file_cache`, `StorageWhileNetworkDisabledTest.uploads_and_deletes_while_access_is_off_throw_and_leave_the_cache_alone` |
-| A sync for one table stops at a write that has an earlier write of the user queued in another table, and counts what it held back. | `SyncReportTest.a_sync_of_one_table_holds_its_writes_behind_an_earlier_one_in_another_table`, `MutationQueueReplayOrderTest.a_table_sync_does_not_send_a_write_ahead_of_an_earlier_one_in_another_table` |
-| A failure that may pass, a server's `5xx` included, stops the whole pass rather than skipping ahead. | `MutationQueueReplayOrderTest.a_connectivity_failure_stops_the_whole_sweep`, `MutationQueueReplayOrderTest.a_server_error_stops_the_whole_sweep_instead_of_skipping_ahead` |
-| While the monitor says offline, the library makes one failed attempt by itself, then waits for the network, the session or the app; when the server answers, it keeps sending. | `AutoSyncTest.a_device_offline_makes_one_attempt_by_itself_until_the_network_comes_back`, `AutoSyncTest.a_monitor_stuck_offline_holds_nothing_back_when_the_server_answers` |
-| A reconnection sends at once, however long a wait failed passes built; a server's `Retry-After` still holds. | `AutoSyncTest.a_reconnection_sends_at_once_however_long_a_wait_failed_passes_built`, `RetryAfterTest.an_edge_does_not_cut_short_the_wait_the_server_asked_for` |
-| A client without Auth sends what an earlier run left queued when it opens, and only that: a write made as it opens is sent at once, by itself. | `AutoSyncTest.a_client_without_auth_sends_what_an_earlier_run_left_queued_when_it_opens`, `AutoSyncTest.a_write_made_while_a_client_without_auth_opens_is_not_taken_for_one_an_earlier_run_left` |
-| The status counts what an earlier run left queued from the moment the client opens. | `SyncStatusTest.the_status_counts_what_an_earlier_run_left_queued_before_it_is_first_read` |
+- `syncPendingMutations` reports what it sent, what the server refused (with its `ServerError`) and
+  what is still queued.
+- Offline it returns at once, with the writes still queued, and `syncStatus.lastSyncError` says the
+  network.
+- `lastSyncError` carries the status and code, never the server's text, a filter value or a token.
+- An insert whose earlier send had in fact arrived is counted in `alreadyOnServerCount`, not
+  inserted twice.
+- A sync that meets the library sending the same writes waits for it, then returns with what is
+  still queued after both.
+- With `autoSync` on, the network coming back, network access turned back on, and the session
+  settling anew send queued writes by themselves.
+- With `autoSync = false` those three send nothing, but an online write queued behind an earlier one
+  is still sent without the app asking.
+- After a pass stopped on a server's `Retry-After`, the library's own next pass waits at least that
+  long, at most an hour.
+- `syncStatus` follows the queue, the rejected list and the passes, and says when the queue was last
+  emptied.
+- `syncStatus.network` is `DISABLED` as soon as `disableNetwork()` returns; a new client starts with
+  access on.
+- While access is off, a Storage download is answered from the file cache, and an upload, a delete
+  or a move throws `NetworkDisabledException`, leaving the cache as it was.
+- A sync for one table stops at a write that has an earlier write of the user queued in another
+  table, and counts what it held back.
+- A failure that may pass, a server's `5xx` included, stops the whole pass rather than skipping
+  ahead.
+- While the monitor says offline, the library makes one failed attempt by itself, then waits for the
+  network, the session or the app; when the server answers, it keeps sending.
+- A reconnection sends at once, however long a wait failed passes built; a server's `Retry-After`
+  still holds.
+- A client without Auth sends what an earlier run left queued when it opens, and only that: a write
+  made as it opens is sent at once, by itself.
+- The status counts what an earlier run left queued from the moment the client opens.

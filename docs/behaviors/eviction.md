@@ -36,11 +36,6 @@ its place by that time too. Up to 500 lists a live reader shows are kept whateve
 the oldest list nobody reads goes in their place, so a reader never drops to "no data". Past 500
 live lists, or for a reader that starts while a pass is deleting, a list a reader needs can go: a
 `CacheFirstThenNetwork` reader then fetches it again, and a `CacheOnly` reader shows no data.
-<small>`LiveEvictionTest.eviction_keeps_the_oldest_payload_while_a_reader_shows_it`,
-`QueryCacheEvictionTest.eviction_removes_oldest_rows_until_within_limit_keeping_newest`,
-`QueryCacheEvictionTest.eviction_drains_below_the_ceiling_to_the_hysteresis_floor`,
-`QueryCacheEvictionTest.unlimited_cache_never_evicts`,
-`QueryCacheEvictionTest.add_payload_enforces_on_the_write_interval_for_small_writes`</small>
 
 SQLite keeps the pages a delete frees for its next writes, so the database file does not shrink
 when lists are evicted, and it can be larger than the bound; `clearLocalData()` rewrites the
