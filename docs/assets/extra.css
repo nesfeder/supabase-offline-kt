@@ -1,23 +1,23 @@
 /*
- * Site colors for the "custom" primary and accent in mkdocs.yml: greens in the family of
- * Supabase's. Measured contrast ratios (WCAG 2) are in the pull request that set them; every text
- * color here is at least 4.5:1 against the background it is drawn on, including the inactive
- * navigation tabs, which Material draws at 70% opacity on the header color.
+ * Site colors for the "custom" primary and accent in mkdocs.yml: a deep blue header with blue
+ * links and accents. Measured contrast ratios (WCAG 2) are in the comments below; every text color
+ * here is at least 4.5:1 against the background it is drawn on, including the inactive navigation
+ * tabs, which Material draws at 70% opacity on the header color.
  */
 
 [data-md-color-primary="custom"] {
-  /* Header and tab bar background. White on it: 7.96:1; inactive tabs (white at 70%): 4.82:1. */
-  --md-primary-fg-color: #175c3f;
-  --md-primary-fg-color--light: #3ecf8e;
-  --md-primary-fg-color--dark: #104630;
+  /* Header and tab bar background. White on it: 8.72:1; inactive tabs (white at 70%): 5.12:1. */
+  --md-primary-fg-color: #1e40af;
+  --md-primary-fg-color--light: #60a5fa;
+  --md-primary-fg-color--dark: #1e3a8a;
   --md-primary-bg-color: #ffffff;
   --md-primary-bg-color--light: rgba(255, 255, 255, 0.7);
 }
 
 [data-md-color-accent="custom"] {
-  /* Hover and focus color. On white: 4.55:1; white text on it: 4.55:1. */
-  --md-accent-fg-color: #00875a;
-  --md-accent-fg-color--transparent: rgba(0, 135, 90, 0.1);
+  /* Hover and focus color. On white: 6.70:1; white text on it: 6.70:1. */
+  --md-accent-fg-color: #1d4ed8;
+  --md-accent-fg-color--transparent: rgba(29, 78, 216, 0.1);
   --md-accent-bg-color: #ffffff;
   --md-accent-bg-color--light: rgba(255, 255, 255, 0.7);
 }
@@ -32,8 +32,8 @@
 }
 
 [data-md-color-scheme="default"][data-md-color-primary="custom"] {
-  /* Links, lighter than the header green so they stand apart from body text. On white: 5.24:1. */
-  --md-typeset-a-color: #1e7b52;
+  /* Links, lighter than the header blue so they stand apart from body text. On white: 6.70:1. */
+  --md-typeset-a-color: #1d4ed8;
 }
 
 [data-md-color-scheme="slate"] {
@@ -53,23 +53,25 @@
 }
 
 [data-md-color-scheme="slate"][data-md-color-primary="custom"] {
-  --md-primary-fg-color: #175c3f;
-  --md-primary-fg-color--dark: #104630;
-  /* Links on the dark background: 7.51:1. */
-  --md-typeset-a-color: #3ecf8e;
+  /* A darker header. White on it: 10.36:1; inactive tabs (white at 70%): 5.94:1. */
+  --md-primary-fg-color: #1e3a8a;
+  --md-primary-fg-color--dark: #172554;
+  /* Links on the dark background: 8.31:1. */
+  --md-typeset-a-color: #93c5fd;
 }
 
 [data-md-color-scheme="slate"][data-md-color-accent="custom"] {
-  --md-accent-fg-color: #6ee7b7;
-  --md-accent-fg-color--transparent: rgba(110, 231, 183, 0.1);
+  --md-accent-fg-color: #93c5fd;
+  --md-accent-fg-color--transparent: rgba(147, 197, 253, 0.1);
   /* Text drawn on the bright accent (button hover, back-to-top hover) is dark, not white. */
-  --md-accent-bg-color: #0d2419;
-  --md-accent-bg-color--light: rgba(13, 36, 25, 0.7);
+  --md-accent-bg-color: #0b1a3a;
+  --md-accent-bg-color--light: rgba(11, 26, 58, 0.7);
 }
 
 /*
  * The search box in the desktop header: Material draws the placeholder in 70% white, which falls
- * to 3.79:1 when the box lightens on hover. Full white measures 5.85:1 there.
+ * to 4.08:1 when the box lightens on hover. Full white measures 6.47:1 there (4.57:1 and 7.40:1 on
+ * the dark scheme's darker header).
  */
 @media screen and (min-width: 60em) {
   .md-search__input::placeholder {
@@ -77,7 +79,7 @@
   }
 }
 
-/* Outlined buttons take the header green by default, which is too dark on the dark background. */
+/* Outlined buttons take the header blue by default, which is too dark on the dark background. */
 [data-md-color-scheme="slate"] .md-typeset .md-button:not(.md-button--primary) {
   color: var(--md-typeset-a-color);
 }

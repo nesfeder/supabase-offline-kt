@@ -3,7 +3,7 @@
 The library keeps three things on the device: the answers to your list reads, the writes it has
 not sent yet, and the files you downloaded. A read is answered by the server or from those
 answers, with the unsent writes laid over it; a write is saved first and sent when nothing waits
-ahead of it. The tables at the end of each Behaviors page name the test that pins each fact.
+ahead of it.
 
 ## The three local stores
 

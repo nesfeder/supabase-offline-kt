@@ -75,15 +75,3 @@ change is refused, since it cannot hold that change, and the refresh asks again.
 before `clearLocalData()` is refused and not asked again, since it may carry the cleared session's
 token; one that left before the cache passed to a new owner is not written, and the refresh asks
 again.
-
-## Pinned by
-
-The schedule and the states: `CacheFirstWithParallelRefreshTest.refresh_failure_does_not_terminate_flow`,
-`CacheFirstWithParallelRefreshTest.exhausted_fast_retries_keep_the_flow_alive_and_report_stalled`,
-`CacheFirstWithParallelRefreshTest.reports_in_flight_then_stalled_then_idle_on_late_success`,
-`CacheFirstWithParallelRefreshTest.each_wake_up_triggers_one_immediate_retry`,
-`CacheFirstWithParallelRefreshTest.a_wake_up_after_success_does_not_re_run_the_refresh`,
-`ReactiveRefreshOfflineTest.offline_the_refresh_says_stalled_once_its_fast_retries_are_spent`,
-`QuerySnapshotTest.a_refresh_that_cannot_reach_a_network_known_to_be_down_is_paused_not_stalled`.
-Old answers: `StaleRefreshWatermarkTest.stale_non_empty_response_is_dropped_and_the_local_write_survives`,
-`StaleRefreshWatermarkTest.a_response_that_left_before_sign_out_never_repopulates_the_cleared_cache`.
