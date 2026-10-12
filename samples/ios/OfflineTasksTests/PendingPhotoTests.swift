@@ -36,9 +36,12 @@ struct PendingPhotoTests {
         let later = PendingPhotoQueue(folder: folder)
         #expect(throws: SampleFailure.pendingPhotoUnreadable(count: 1)) { try later.load() }
 
-        // Then: both are back, oldest picked first; the one being uploaded waits again
+        // Then: both are back, oldest picked first; the one being uploaded waits again, that
+        // attempt counted
         #expect(later.photos.map(\.id) == [first.id, second.id])
-        #expect(later.photos.first == first)
+        var interrupted = first
+        interrupted.attempts = 1
+        #expect(later.photos.first == interrupted)
         #expect(later.photos.last?.state == .failed(reason: "Storage refused it (403): no", isRetryable: false))
         #expect(later.photos.last?.attempts == 1)
         #expect(try await later.jpeg(of: first) == Data([0xFF, 0xD8, 1]))
@@ -193,6 +196,44 @@ struct PendingPhotoTests {
         try await test.setOffline(false)
         try await eventually("the upload lands once the network is back") { test.repository.pendingPhotos.photos.isEmpty }
         #expect(await test.server.objectPaths().count == 2)
+        try await test.stop()
+    }
+
+    @Test("A retry after a lost answer finds the file stored, and writes no second file or row")
+    func retryAfterALostAnswer() async throws {
+        // Given: an earlier attempt stored the photo's file and row, and its answer was lost
+        let test = TestApp()
+        try await test.start()
+        try await test.addTask("Fix the tap")
+        let task = try await test.task(titled: "Fix the tap")
+        try await eventually("the task reaches the server") { await test.server.rows(of: Tables.tasks).count == 1 }
+        let encoded = try await PhotoEncoder.encode(jpegFixture())
+        let userID = try #require(test.session.userID)
+        let photoID = DeviceID.make()
+        let lost = PendingPhoto(
+            id: photoID,
+            taskID: task.id,
+            userID: userID,
+            objectPath: PhotoPath.objectPath(userID: userID, taskID: task.id, photoID: photoID),
+            pickedAt: .now,
+            contentType: "image/jpeg",
+            width: encoded.width,
+            height: encoded.height,
+            attempts: 1
+        )
+        try await test.repository.uploadFile(of: lost, jpeg: encoded.jpeg)
+        try await test.repository.insertRow(of: TaskPhotoRow(lost))
+        let requestsBefore = await test.server.requests.count
+
+        // When: the photo waits again, as after the app closed mid-upload
+        try await test.repository.pendingPhotos.add(lost, jpeg: encoded.jpeg)
+
+        // Then: it is done without a second upload, and the server holds one file and one row
+        try await eventually("the retry ends") { test.repository.pendingPhotos.photos.isEmpty }
+        let requests = await test.server.requests[requestsBefore...]
+        #expect(!requests.contains { $0.method == "POST" && $0.path.hasPrefix("/storage/v1/object/task-photos/") })
+        #expect(await test.server.objectPaths() == [lost.objectPath])
+        #expect(await test.server.rows(of: Tables.taskPhotos).count == 1)
         try await test.stop()
     }
 

@@ -38,7 +38,9 @@ extension TaskRepository {
     /// server never holds a row whose file is missing; a row the server refuses at once takes the
     /// file with it, and a queued row waits behind its task's queued insert.
     func uploadPendingPhoto(_ pending: PendingPhoto) async throws {
-        try await uploadFile(of: pending, jpeg: try await pendingPhotos.jpeg(of: pending))
+        if await !isStoredByAnEarlierTry(pending) {
+            try await uploadFile(of: pending, jpeg: try await pendingPhotos.jpeg(of: pending))
+        }
         guard pendingPhotos.photo(id: pending.id) != nil else {
             // Removed while its file was on the way (Remove, Delete task, Clear): no row, no file.
             try? await photoBucket.remove(paths: [pending.objectPath])
@@ -49,6 +51,13 @@ extension TaskRepository {
         // offline from the library's copy. If it fails, the photo loads like any other when online.
         _ = try? await photoBucket.ensureCachedFile(path: pending.objectPath)
         try pendingPhotos.remove(id: pending.id)
+    }
+
+    /// Whether an earlier try at `pending` stored its file, its answer lost on the way: asked of
+    /// Storage on a retry only. Storage's "already exists" to the upload counts as stored too.
+    private func isStoredByAnEarlierTry(_ pending: PendingPhoto) async -> Bool {
+        guard pending.attempts > 0 else { return false }
+        return (try? await photoBucket.exists(path: pending.objectPath)) == true
     }
     // --8<-- [end:pending-photo-upload]
 

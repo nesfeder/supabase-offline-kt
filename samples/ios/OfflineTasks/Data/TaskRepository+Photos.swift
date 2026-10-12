@@ -281,13 +281,14 @@ extension TaskRepository {
 
     // MARK: - Helpers
 
-    /// Writes a photo's row once its file is in the bucket. A row the server refuses at once
+    /// Writes a photo's row once its file is in the bucket, as an upsert that ignores a row already
+    /// there: a retry after a lost answer writes nothing twice. A row the server refuses at once
     /// (its task deleted on the server meanwhile, say) takes its file with it, as far as Storage
     /// allows; a row that is only queued keeps its file.
     func insertRow(of row: TaskPhotoRow) async throws {
         do {
             try await write(taskTitle: nil) {
-                try await client.from(Tables.taskPhotos).insert(row).execute()
+                try await client.from(Tables.taskPhotos).upsert(row, onConflict: "id", ignoreDuplicates: true).execute()
             }
         } catch let refusal as SampleFailure {
             if case .writeRefused = refusal { try? await photoBucket.remove(paths: [row.objectPath]) }

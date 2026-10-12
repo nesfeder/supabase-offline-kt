@@ -134,7 +134,7 @@ final class PendingPhotoQueue {
     // MARK: - Changing
 
     /// Reads the records an earlier launch left. A photo that was uploading when the app closed
-    /// waits again, and a JPEG whose record was never written is deleted.
+    /// waits again, that attempt counted, and a JPEG whose record was never written is deleted.
     ///
     /// - Throws: ``SampleFailure/pendingPhotoUnreadable(count:)`` when a record cannot be read; the
     ///   ones that can are listed all the same.
@@ -147,7 +147,10 @@ final class PendingPhotoQueue {
             do {
                 let record = try Data(contentsOf: folder.appending(path: name))
                 var photo = try PendingPhotoCoding.decoder.decode(PendingPhoto.self, from: record)
-                if photo.state == .uploading { photo.state = .waiting }
+                if photo.state == .uploading {
+                    photo.state = .waiting
+                    photo.attempts += 1
+                }
                 loaded.append(photo)
             } catch {
                 unreadable += 1
