@@ -30,6 +30,12 @@ on:
 
 permissions: {}
 
+# One republish at a time, never canceled halfway. Not `docs-publish` or `pages`, which the called
+# workflow takes.
+concurrency:
+  group: docs-republish
+  cancel-in-progress: false
+
 defaults:
   run:
     shell: bash

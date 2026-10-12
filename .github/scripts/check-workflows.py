@@ -97,15 +97,17 @@ It fails when:
        `contents: write`.
  10. The documentation site's republish (docs-republish.yml), which publishes main's site with the
      Swift API reference a Release run built, is started by hand alone, with the one string input
-     release_run_id, grants nothing by default and has two jobs. `fetch` holds `actions: read` alone
-     and runs three steps: first the pinned check of the run (the dispatch is on main, the id is a
-     number, and the run is this repository's, from its own commit, of release.yml, started by hand,
-     on main, successful, and a real release whose finish job ran, found by the name release.yml
-     gives that job), then the download of that run's swift-reference and its upload into this run,
-     each with exactly the pinned inputs. `publish` needs fetch alone, holds exactly the release docs
-     job's permissions under the repository and main guard, passes no secret, and calls
-     docs-publish.yml with that artifact and no ref, so the site is built from main. Every action it
-     uses is pinned to a full commit SHA, and no job or step of it may continue on error.
+     release_run_id, grants nothing by default, runs one at a time in its own concurrency group
+     (never the called workflow's, which would wait on itself) and has two jobs. `fetch` holds
+     `actions: read` alone and runs three steps: first the pinned check of the run (the dispatch is
+     on main, the id is a number, and the run is this repository's, from its own commit, of
+     release.yml, started by hand, on main, successful, and a real release whose finish job ran,
+     found by the name release.yml gives that job), then the download of that run's swift-reference
+     and its upload into this run, each with exactly the pinned inputs. `publish` needs fetch alone,
+     holds exactly the release docs job's permissions under the repository and main guard, passes
+     no secret, and calls docs-publish.yml with that artifact and no ref, so the site is built from
+     main. Every action it uses is pinned to a full commit SHA, and no job or step of it may
+     continue on error.
 
 The check stops accidents, not intent: a pull request runs its own copy of this script.
 """
@@ -283,6 +285,7 @@ REPUBLISH_PERMISSIONS = {"fetch": {"actions": "read"},
                          "publish": {"contents": "read", "pages": "write", "id-token": "write"}}
 REPUBLISH_IF = DEPENDABOT_GUARD + " && (" + REPOSITORY_GUARD + " && " + MAIN_ONLY + ")"
 REPUBLISH_INPUT = "release_run_id"
+REPUBLISH_CONCURRENCY = {"group": "docs-republish", "cancel-in-progress": False}
 # release.yml's finish job, which a dry run skips: the check finds it by this name.
 FINISH_JOB_NAME = "Tag and announce the release"
 # Each check the step makes, as a line of its own: what it proves, and the line.
@@ -933,6 +936,8 @@ def republish_problems(name: str, document: dict) -> list[str]:
                         f" {REPUBLISH_INPUT}")
     if document.get("permissions") != {}:
         problems.append(f"{name}: its default permissions are {document.get('permissions')!r}, not {{}}")
+    if document.get("concurrency") != REPUBLISH_CONCURRENCY:
+        problems.append(f"{name}: its concurrency is {document.get('concurrency')!r}, not {REPUBLISH_CONCURRENCY}")
     jobs = document.get("jobs") if isinstance(document.get("jobs"), dict) else {}
     if set(jobs) != set(REPUBLISH_PERMISSIONS):
         problems.append(f"{name}: jobs {sorted(jobs)}, not {sorted(REPUBLISH_PERMISSIONS)}")
@@ -1450,6 +1455,7 @@ on:
     inputs:
       {REPUBLISH_INPUT}: {{description: d, type: string, required: true}}
 permissions: {{}}
+concurrency: {{group: docs-republish, cancel-in-progress: false}}
 jobs:
   fetch:
     runs-on: ubuntu-24.04
@@ -2324,7 +2330,7 @@ CASES: list[tuple[str, str, str | None, str]] = [
      republish_with_check(6, REPUBLISH_CHECKS[6][1].replace("== main ]]", "== * ]]")),
      "job fetch does not check that the run was on main"),
     ("the republish taking a failed run", REPUBLISH,
-     republish_with_check(7, REPUBLISH_CHECKS[7][1].replace("== success ]]", "!= cancelled ]]")),
+     republish_with_check(7, REPUBLISH_CHECKS[7][1].replace("== success ]]", "!= failure ]]")),
      "job fetch does not check that the run succeeded"),
     ("the republish taking a dry run", REPUBLISH, republish_with_check(8, ""),
      "job fetch does not check that the run was a real release, not a dry run"),
@@ -2387,6 +2393,9 @@ CASES: list[tuple[str, str, str | None, str]] = [
     ("the republish started by a push", REPUBLISH,
      COMPLIANT_REPUBLISH.replace("on:\n", "on:\n  push:\n    branches: [main]\n", 1),
      "is not started by hand alone"),
+    ("the republish sharing the called workflow's concurrency group", REPUBLISH,
+     COMPLIANT_REPUBLISH.replace("group: docs-republish,", "group: docs-publish,"),
+     "docs-republish.yml: its concurrency is"),
     ("the republish gains a job", REPUBLISH,
      COMPLIANT_REPUBLISH + "  extra: {runs-on: ubuntu-24.04, steps: [{run: echo}]}\n",
      "docs-republish.yml: jobs"),
