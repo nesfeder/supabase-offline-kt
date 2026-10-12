@@ -320,7 +320,7 @@ struct PendingPhotoTests {
         try await test.stop()
     }
 
-    @Test("Start over deletes every photo waiting to upload, and the next user's photos upload")
+    @Test("Start over deletes every photo waiting to upload and any file one stored, and the next user's photos upload")
     func startOverEmptiesTheQueue() async throws {
         // Given: a photo Storage refused for good, which stays until removed
         let test = TestApp()
@@ -333,6 +333,8 @@ struct PendingPhotoTests {
         let failed = try await test.pendingPhoto(refused.id, "the upload is refused") { $0.state != .waiting && $0.state != .uploading }
         #expect(failed.state == .failed(reason: "Storage refused it (400): new row violates row-level security policy", isRetryable: false))
         await test.server.intercept(nil)
+        // As if Storage had stored it after all, its answer lost: a file no row names.
+        try await test.repository.uploadFile(of: refused, jpeg: try await test.repository.pendingPhotos.jpeg(of: refused))
 
         // When
         try await test.repository.startOver()

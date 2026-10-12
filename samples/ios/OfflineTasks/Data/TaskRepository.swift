@@ -595,6 +595,8 @@ final class TaskRepository {
     /// The deletes are sent now or not at all: queued, they would outlive the user they are for.
     private func deleteEverything(of userID: String) async throws {
         try await deleteFiles(photoPathsOnServer { $0.eq("user_id", value: userID) })
+        // The files of its photos waiting to upload too: an upload whose answer was lost may have stored one.
+        try await deleteFiles(pendingPhotos.photos.filter { $0.userID == userID }.map(\.objectPath))
         try await write(taskTitle: nil) {
             try await client.from(Tables.taskPhotos).delete(mutationStrategy: .onlineOnly).eq("user_id", value: userID).execute()
         }
