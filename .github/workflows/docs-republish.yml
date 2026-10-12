@@ -1,0 +1,114 @@
+name: Docs republish
+
+# Publishes the documentation site again between releases: built from main, with the Swift API
+# reference a Release run built. Started by hand alone; RELEASING.md, "Republish the site", says
+# when, and which run to name.
+#
+# The Swift API reference is DocC, which only the release's macOS job builds; it keeps it as that
+# run's artifact `swift-reference`. docs-publish.yml downloads an artifact from its own run alone,
+# and it cannot be given `actions: read` to reach another run's: GitHub checks a called workflow's
+# permissions against its caller before any job starts, and Release's docs job holds no Actions
+# permission. So `fetch` copies the artifact into this run, and `publish` calls docs-publish.yml as
+# Release's docs job does, with no ref, so the site is built from this run's own ref, main.
+#
+# fetch checks the run before it downloads anything: a run of this repository's Release workflow,
+# started by hand on main from this repository's own commit, that succeeded, and was a real release
+# (its finish job ran; a dry run skips it). A fork's pull request can upload an artifact of the
+# same name from a run of its own, so no other run's artifact may reach the site. The artifact is
+# data: it is downloaded and uploaded again, never opened, and docs-publish.yml places it under
+# /swift/ and runs nothing from it. .github/scripts/check-workflows.py pins both jobs.
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_run_id:
+        description: >-
+          The id of the Release run whose Swift API reference to publish (the number in the run's
+          URL): a real release, not a dry run, that succeeded
+        type: string
+        required: true
+
+permissions: {}
+
+# One republish at a time, never canceled halfway. Not `docs-publish` or `pages`, which the called
+# workflow takes.
+concurrency:
+  group: docs-republish
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  fetch:
+    name: Take the Swift API reference from the Release run
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      actions: read # read the Release run and its jobs, and download its artifact
+    steps:
+      # Pinned to the letter by .github/scripts/check-workflows.py, which also fails when release.yml's
+      # finish job, which this step finds by its name, is renamed.
+      - name: Check the Release run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ inputs.release_run_id }}
+        run: |
+          if [[ "$GITHUB_REF" != refs/heads/main ]]; then
+            echo "::error::Run this workflow on main: the site is built from the branch it runs on."
+            exit 1
+          fi
+          if [[ ! "$RUN_ID" =~ ^[1-9][0-9]*$ ]]; then
+            echo "::error::release_run_id is the number in a Release run's URL."
+            exit 1
+          fi
+          run="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID")"
+          finish="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/jobs?per_page=100" --jq '[.jobs[] | select(.name == "Tag and announce the release") | .conclusion // "none"] | join(",")')"
+          problems=()
+          [[ "$(jq -r .repository.full_name <<< "$run")" == "$GITHUB_REPOSITORY" ]] || problems+=("it is not a run of $GITHUB_REPOSITORY")
+          [[ "$(jq -r .head_repository.full_name <<< "$run")" == "$GITHUB_REPOSITORY" ]] || problems+=("its commit is not from $GITHUB_REPOSITORY, as a fork's pull request's is")
+          [[ "$(jq -r .path <<< "$run")" == .github/workflows/release.yml ]] || problems+=("it is not a run of the Release workflow")
+          [[ "$(jq -r .event <<< "$run")" == workflow_dispatch ]] || problems+=("it was not started by hand")
+          [[ "$(jq -r .head_branch <<< "$run")" == main ]] || problems+=("it did not run on main")
+          [[ "$(jq -r .conclusion <<< "$run")" == success ]] || problems+=("it did not succeed")
+          [[ "$finish" == success ]] || problems+=("it was not a real release: its finish job did not run, as on a dry run")
+          for problem in "${problems[@]}"; do
+            echo "::error::Release run $RUN_ID: $problem."
+          done
+          if [[ ${#problems[@]} -ne 0 ]]; then
+            exit 1
+          fi
+          echo "The Swift API reference of Release run $RUN_ID, built from $(jq -r .head_sha <<< "$run")." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Download the Release run's Swift API reference
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: swift-reference
+          path: ${{ runner.temp }}/swift-reference
+          run-id: ${{ inputs.release_run_id }}
+          github-token: ${{ github.token }}
+
+      # Under the same name, in this run, where docs-publish.yml's build job downloads it.
+      - name: Upload it into this run
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: swift-reference
+          path: ${{ runner.temp }}/swift-reference/swift-reference.tar
+          if-no-files-found: error
+          retention-days: 1
+
+  # As Release's docs job, with the same permissions, but with no ref: the site is built from main.
+  publish:
+    name: Publish the documentation site
+    needs: fetch
+    if: >-
+      github.actor != 'dependabot[bot]' && github.triggering_actor != 'dependabot[bot]'
+      && (github.repository == 'nesfeder/supabase-offline-kt' && github.ref == 'refs/heads/main')
+    permissions:
+      contents: read # the checkout of main the site is built from
+      pages: write # the called workflow's deploy job publishes the site to GitHub Pages
+      id-token: write # the OIDC token that deploy job exchanges with the Pages service
+    uses: $/.github/workflows/docs-publish.yml
+    with:
+      swift-reference: swift-reference

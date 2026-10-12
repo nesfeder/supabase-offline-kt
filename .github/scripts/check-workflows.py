@@ -95,6 +95,19 @@ It fails when:
        secret but the deploy key.
      - In every workflow, a checkout keeps its credentials only in a job that holds
        `contents: write`.
+ 10. The documentation site's republish (docs-republish.yml), which publishes main's site with the
+     Swift API reference a Release run built, is started by hand alone, with the one string input
+     release_run_id, grants nothing by default, runs one at a time in its own concurrency group
+     (never the called workflow's, which would wait on itself) and has two jobs. `fetch` holds
+     `actions: read` alone and runs three steps: first the pinned check of the run (the dispatch is
+     on main, the id is a number, and the run is this repository's, from its own commit, of
+     release.yml, started by hand, on main, successful, and a real release whose finish job ran,
+     found by the name release.yml gives that job), then the download of that run's swift-reference
+     and its upload into this run, each with exactly the pinned inputs. `publish` needs fetch alone,
+     holds exactly the release docs job's permissions under the repository and main guard, passes
+     no secret, and calls docs-publish.yml with that artifact and no ref, so the site is built from
+     main. Every action it uses is pinned to a full commit SHA, and no job or step of it may
+     continue on error.
 
 The check stops accidents, not intent: a pull request runs its own copy of this script.
 """
@@ -106,6 +119,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import textwrap
 from pathlib import Path
 
 SELF_HOSTED = re.compile(r"(?<![A-Za-z0-9_-])(offline-kt|self-hosted)(?![A-Za-z0-9_-])",
@@ -138,6 +152,7 @@ OIDC_JOBS = {
     ("docs-publish.yml", "deploy"): {"pages": "write", "id-token": "write"},
     ("release.yml", "docs"): {"contents": "read", "pages": "write", "id-token": "write"},
     ("release-resume.yml", "docs"): {"contents": "read", "pages": "write", "id-token": "write"},
+    ("docs-republish.yml", "publish"): {"contents": "read", "pages": "write", "id-token": "write"},
 }
 # How every such job's condition begins.
 DEPENDABOT_GUARD = ("github.actor != 'dependabot[bot]'"
@@ -264,6 +279,73 @@ COLLECT = "/" + "usr/bin/" + BUILD_USER_SCRIPT + " collect "
 RUNS_GRADLE = re.compile(r"gradlew|run-gradle|gradle-wrapper|GradleWrapperMain"
                          r"|(^|[\s;&|(`/])gradle(\s|$)")
 GRADLE_ARGUMENT = re.compile(r"[-:A-Za-z0-9=._]+")
+# The site's republish: main's site with a Release run's Swift API reference, after checking that run.
+REPUBLISH = "docs-republish.yml"
+REPUBLISH_PERMISSIONS = {"fetch": {"actions": "read"},
+                         "publish": {"contents": "read", "pages": "write", "id-token": "write"}}
+REPUBLISH_IF = DEPENDABOT_GUARD + " && (" + REPOSITORY_GUARD + " && " + MAIN_ONLY + ")"
+REPUBLISH_INPUT = "release_run_id"
+REPUBLISH_CONCURRENCY = {"group": "docs-republish", "cancel-in-progress": False}
+# release.yml's finish job, which a dry run skips: the check finds it by this name.
+FINISH_JOB_NAME = "Tag and announce the release"
+# Each check the step makes, as a line of its own: what it proves, and the line.
+REPUBLISH_CHECKS = (
+    ("it runs on main", 'if [[ "$GITHUB_REF" != refs/heads/main ]]; then'),
+    ("the run id is a number", 'if [[ ! "$RUN_ID" =~ ^[1-9][0-9]*$ ]]; then'),
+    ("the run is this repository's",
+     '[[ "$(jq -r .repository.full_name <<< "$run")" == "$GITHUB_REPOSITORY" ]]'
+     ' || problems+=("it is not a run of $GITHUB_REPOSITORY")'),
+    ("the run's commit is this repository's, not a fork's",
+     '[[ "$(jq -r .head_repository.full_name <<< "$run")" == "$GITHUB_REPOSITORY" ]]'
+     ' || problems+=("its commit is not from $GITHUB_REPOSITORY, as a fork\'s pull request\'s is")'),
+    ("the run is of the Release workflow",
+     '[[ "$(jq -r .path <<< "$run")" == .github/workflows/release.yml ]]'
+     ' || problems+=("it is not a run of the Release workflow")'),
+    ("the run was started by hand",
+     '[[ "$(jq -r .event <<< "$run")" == workflow_dispatch ]] || problems+=("it was not started by hand")'),
+    ("the run was on main",
+     '[[ "$(jq -r .head_branch <<< "$run")" == main ]] || problems+=("it did not run on main")'),
+    ("the run succeeded",
+     '[[ "$(jq -r .conclusion <<< "$run")" == success ]] || problems+=("it did not succeed")'),
+    ("the run was a real release, not a dry run",
+     '[[ "$finish" == success ]]'
+     ' || problems+=("it was not a real release: its finish job did not run, as on a dry run")'),
+    ("it fails when a check does", 'if [[ ${#problems[@]} -ne 0 ]]; then'),
+)
+REPUBLISH_CHECK = {
+    "name": "Check the Release run",
+    "env": {"GH_TOKEN": "${{ github.token }}", "RUN_ID": "${{ inputs.release_run_id }}"},
+    "run": "\n".join((
+        REPUBLISH_CHECKS[0][1],
+        '  echo "::error::Run this workflow on main: the site is built from the branch it runs on."',
+        "  exit 1",
+        "fi",
+        REPUBLISH_CHECKS[1][1],
+        '  echo "::error::release_run_id is the number in a Release run\'s URL."',
+        "  exit 1",
+        "fi",
+        'run="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID")"',
+        'finish="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/jobs?per_page=100" --jq'
+        f' \'[.jobs[] | select(.name == "{FINISH_JOB_NAME}") | .conclusion // "none"] | join(",")\')"',
+        "problems=()",
+        *(line for _, line in REPUBLISH_CHECKS[2:-1]),
+        'for problem in "${problems[@]}"; do',
+        '  echo "::error::Release run $RUN_ID: $problem."',
+        "done",
+        REPUBLISH_CHECKS[-1][1],
+        "  exit 1",
+        "fi",
+        'echo "The Swift API reference of Release run $RUN_ID, built from $(jq -r .head_sha <<< "$run")."'
+        ' >> "$GITHUB_STEP_SUMMARY"',
+    )),
+}
+# The two steps after the check: that run's artifact, downloaded with the job's token, then uploaded
+# under the same name into this run, where docs-publish.yml's build job downloads it.
+REPUBLISH_DOWNLOAD = {"name": SWIFT_REFERENCE, "path": "${{ runner.temp }}/swift-reference",
+                      "run-id": "${{ inputs.release_run_id }}", "github-token": "${{ github.token }}"}
+REPUBLISH_UPLOAD = {"name": SWIFT_REFERENCE, "path": "${{ runner.temp }}/swift-reference/swift-reference.tar",
+                    "if-no-files-found": "error", "retention-days": 1}
+PINNED_ACTION = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_./-]+@[0-9a-f]{40}")
 
 
 def load_yaml(path: Path) -> object:
@@ -819,6 +901,98 @@ def docs_build_problems(name: str, document: dict) -> list[str]:
     return problems
 
 
+def is_pinned_step(step: dict, action: str, inputs: dict) -> bool:
+    """Whether `step` runs `action` with exactly `inputs`, unconditionally, and nothing else."""
+    return (str(step.get("uses", "")).startswith(action + "@") and step.get("with") == inputs
+            and set(step) <= {"name", "uses", "with"})
+
+
+def republish_check_problems(where: str, step: dict) -> list[str]:
+    """Rule 10: the first step of the republish's fetch job is the pinned check of the Release run."""
+    if step.get("name") != REPUBLISH_CHECK["name"]:
+        return [f"{where} does not start by checking the Release run (a step named"
+                f" {REPUBLISH_CHECK['name']!r})"]
+    lines = {line.strip() for line in str(step.get("run", "")).splitlines()}
+    problems = [f"{where} does not check that {what}" for what, line in REPUBLISH_CHECKS
+                if line.strip() not in lines]
+    if not problems and dict(step, run=str(step.get("run", "")).rstrip("\n")) != REPUBLISH_CHECK:
+        problems.append(f"{where} checks the Release run with something other than exactly the pinned"
+                        " step (REPUBLISH_CHECK): its name, its environment and its script, to the letter")
+    return problems
+
+
+def republish_problems(name: str, document: dict) -> list[str]:
+    """Rule 10: the site's republish checks the Release run, copies its Swift reference, publishes main."""
+    if name != REPUBLISH:
+        return []
+    problems = []
+    triggers = trigger_mapping(document.get("on")) or {}
+    dispatch = triggers.get("workflow_dispatch")
+    inputs = (dispatch.get("inputs") if isinstance(dispatch, dict) else None) or {}
+    run_id = inputs.get(REPUBLISH_INPUT) if isinstance(inputs.get(REPUBLISH_INPUT), dict) else {}
+    if (set(triggers) != {"workflow_dispatch"} or set(inputs) != {REPUBLISH_INPUT}
+            or run_id.get("type") != "string" or run_id.get("required") is not True):
+        problems.append(f"{name}: is not started by hand alone, with the one required string input"
+                        f" {REPUBLISH_INPUT}")
+    if document.get("permissions") != {}:
+        problems.append(f"{name}: its default permissions are {document.get('permissions')!r}, not {{}}")
+    if document.get("concurrency") != REPUBLISH_CONCURRENCY:
+        problems.append(f"{name}: its concurrency is {document.get('concurrency')!r}, not {REPUBLISH_CONCURRENCY}")
+    jobs = document.get("jobs") if isinstance(document.get("jobs"), dict) else {}
+    if set(jobs) != set(REPUBLISH_PERMISSIONS):
+        problems.append(f"{name}: jobs {sorted(jobs)}, not {sorted(REPUBLISH_PERMISSIONS)}")
+    for job_id, job in jobs.items():
+        job = job if isinstance(job, dict) else {}
+        where = f"{name}: job {job_id}"
+        expected = REPUBLISH_PERMISSIONS.get(job_id)
+        if expected is not None and job.get("permissions") != expected:
+            problems.append(f"{where} holds {job.get('permissions')}, not exactly {expected}")
+        if "continue-on-error" in job or any("continue-on-error" in step for step in steps_of(job)):
+            problems.append(f"{where} may continue on error")
+        for step in steps_of(job):
+            uses = str(step.get("uses", ""))
+            if uses and not PINNED_ACTION.fullmatch(uses):
+                problems.append(f"{where} uses {uses}, which is not pinned to a full commit SHA")
+    if reads_secrets(document) or any("environment" in job for job in jobs.values() if isinstance(job, dict)):
+        problems.append(f"{name}: reads a secret or uses an environment")
+    fetch = jobs.get("fetch") if isinstance(jobs.get("fetch"), dict) else {}
+    steps = steps_of(fetch)
+    problems += republish_check_problems(f"{name}: job fetch", steps[0] if steps else {})
+    if not (len(steps) == 3 and is_pinned_step(steps[1], "actions/download-artifact", REPUBLISH_DOWNLOAD)
+            and is_pinned_step(steps[2], "actions/upload-artifact", REPUBLISH_UPLOAD)):
+        problems.append(f"{name}: job fetch does not, after its check, download with exactly"
+                        f" {REPUBLISH_DOWNLOAD} and upload with exactly {REPUBLISH_UPLOAD}, and nothing else")
+    publish = jobs.get("publish") if isinstance(jobs.get("publish"), dict) else {}
+    where = f"{name}: job publish"
+    needs = publish.get("needs")
+    if ([needs] if isinstance(needs, str) else needs) != ["fetch"]:
+        problems.append(f"{where} needs {needs!r}, not fetch alone")
+    if " ".join(str(publish.get("if", "")).split()) != REPUBLISH_IF:
+        problems.append(f"{where} runs if {publish.get('if')!r}, not {REPUBLISH_IF!r}")
+    if publish.get("uses") != DOCS_WORKFLOW:
+        problems.append(f"{where} calls {publish.get('uses')!r}, not {DOCS_WORKFLOW}")
+    if publish.get("with") != {SWIFT_REFERENCE: SWIFT_REFERENCE}:
+        problems.append(f"{where} passes {publish.get('with')!r}, not exactly"
+                        f" {{{SWIFT_REFERENCE!r}: {SWIFT_REFERENCE!r}}}: no ref, so the site is main's")
+    extra = set(publish) - {"name", "needs", "if", "permissions", "uses", "with"}
+    if extra:
+        problems.append(f"{where} sets {sorted(extra)}, which the call to the site's workflow does not")
+    return problems
+
+
+def finish_name_problems(workflows: Path) -> list[str]:
+    """Rule 10: release.yml's finish job keeps the name the republish's check finds it by."""
+    if not ((workflows / REPUBLISH).is_file() and (workflows / "release.yml").is_file()):
+        return []
+    release = load_yaml(workflows / "release.yml")
+    jobs = release.get("jobs") if isinstance(release, dict) and isinstance(release.get("jobs"), dict) else {}
+    finish = jobs.get("finish") if isinstance(jobs.get("finish"), dict) else {}
+    if finish.get("name") != FINISH_JOB_NAME:
+        return [f"release.yml: job finish is named {finish.get('name')!r}, not {FINISH_JOB_NAME!r}, the"
+                f" name {REPUBLISH}'s check of a Release run finds it by"]
+    return []
+
+
 def release_problems(name: str, document: dict) -> list[str]:
     """Rule 9, for one workflow."""
     problems = []
@@ -991,7 +1165,9 @@ def check_tree(root: Path) -> list[str]:
         problems += release_problems(path.name, document)
         problems += docs_build_problems(path.name, document)
         problems += scheduled_problems(path.name, document)
+        problems += republish_problems(path.name, document)
     workflows = root / ".github" / "workflows"
+    problems += finish_name_problems(workflows)
     if (workflows / "release.yml").is_file() and not (workflows / "release-resume.yml").is_file():
         problems.append("release.yml has no resume path: release-resume.yml is missing")
     for path in sorted((root / ".github" / "actions").glob("*/action.y*ml")):
@@ -1182,6 +1358,7 @@ jobs:
 {SWIFT_STEP}  finish:
     needs: [verify, publish]
     if: ${{{{ !inputs.dry_run }}}}
+    name: {FINISH_JOB_NAME}
     runs-on: ubuntu-24.04
     permissions: {{contents: write}}
     outputs: {{version: '${{{{ steps.version.outputs.version }}}}'}}
@@ -1272,6 +1449,42 @@ jobs:
       - env: {{GH_TOKEN: '${{{{ github.token }}}}'}}
         run: echo
 """
+COMPLIANT_REPUBLISH = f"""\
+on:
+  workflow_dispatch:
+    inputs:
+      {REPUBLISH_INPUT}: {{description: d, type: string, required: true}}
+permissions: {{}}
+concurrency: {{group: docs-republish, cancel-in-progress: false}}
+jobs:
+  fetch:
+    runs-on: ubuntu-24.04
+    permissions: {{actions: read}}
+    steps:
+      - name: {REPUBLISH_CHECK["name"]}
+        env: {{GH_TOKEN: '${{{{ github.token }}}}', RUN_ID: '${{{{ inputs.release_run_id }}}}'}}
+        run: |
+{textwrap.indent(REPUBLISH_CHECK["run"], " " * 10)}
+      - uses: actions/download-artifact@0123456789abcdef0123456789abcdef01234567
+        with:
+          name: swift-reference
+          path: ${{{{ runner.temp }}}}/swift-reference
+          run-id: ${{{{ inputs.release_run_id }}}}
+          github-token: ${{{{ github.token }}}}
+      - uses: actions/upload-artifact@0123456789abcdef0123456789abcdef01234567
+        with:
+          name: swift-reference
+          path: ${{{{ runner.temp }}}}/swift-reference/swift-reference.tar
+          if-no-files-found: error
+          retention-days: 1
+  publish:
+    needs: fetch
+    if: >-
+      {REPUBLISH_IF}
+    permissions: {{contents: read, pages: write, id-token: write}}
+    uses: {DOCS_WORKFLOW}
+    with: {{swift-reference: swift-reference}}
+"""
 COMPLIANT_ACTION = "runs: {using: composite, steps: [{run: echo, shell: bash}]}\n"
 
 # The first line of the compliant coverage-upload condition, which several cases rewrite.
@@ -1298,6 +1511,22 @@ def release_with_publish_steps(steps: str) -> str:
     """COMPLIANT_RELEASE with `steps` added to the publish job, after its staging step."""
     return COMPLIANT_RELEASE.replace(PUBLISH_STAGING + "      - if: inputs.dry_run",
                                      PUBLISH_STAGING + steps + "      - if: inputs.dry_run")
+
+
+def republish_check_line(index: int) -> str:
+    """The line of COMPLIANT_REPUBLISH's check of the Release run that makes check `index`."""
+    return " " * 10 + REPUBLISH_CHECKS[index][1] + "\n"
+
+
+def republish_with_check(index: int, line: str) -> str:
+    """COMPLIANT_REPUBLISH with check `index` of the Release run replaced by `line`."""
+    return COMPLIANT_REPUBLISH.replace(republish_check_line(index), " " * 10 + line + "\n" if line else "")
+
+
+# COMPLIANT_REPUBLISH's check of the Release run: its first line, and the whole step.
+REPUBLISH_CHECK_HEAD = f"      - name: {REPUBLISH_CHECK['name']}\n"
+REPUBLISH_CHECK_STEP = COMPLIANT_REPUBLISH[COMPLIANT_REPUBLISH.index(REPUBLISH_CHECK_HEAD):
+                                           COMPLIANT_REPUBLISH.index("      - uses: actions/download-artifact")]
 
 
 def docs_publish_with_step(step: str) -> str:
@@ -2087,6 +2316,92 @@ CASES: list[tuple[str, str, str | None, str]] = [
                                "      - run: cp \"$RUNNER_TEMP/swift-package-deploy-key\" ~/.ssh/id_ed25519\n"
                                "      - name: Remove the deploy key\n"),
      "touches the deploy key's file outside the step that uses it"),
+    # The site's republish: a Release run's Swift reference, checked first, on main's site.
+    ("the republish taking a run from another repository", REPUBLISH, republish_with_check(2, ""),
+     "job fetch does not check that the run is this repository's"),
+    ("the republish taking a fork's pull request's run", REPUBLISH, republish_with_check(3, ""),
+     "job fetch does not check that the run's commit is this repository's, not a fork's"),
+    ("the republish taking a run of another workflow", REPUBLISH,
+     republish_with_check(4, REPUBLISH_CHECKS[4][1].replace("workflows/release.yml", "workflows/*.yml")),
+     "job fetch does not check that the run is of the Release workflow"),
+    ("the republish taking a run that was not started by hand", REPUBLISH, republish_with_check(5, ""),
+     "job fetch does not check that the run was started by hand"),
+    ("the republish taking a run on a branch other than main", REPUBLISH,
+     republish_with_check(6, REPUBLISH_CHECKS[6][1].replace("== main ]]", "== * ]]")),
+     "job fetch does not check that the run was on main"),
+    ("the republish taking a failed run", REPUBLISH,
+     republish_with_check(7, REPUBLISH_CHECKS[7][1].replace("== success ]]", "!= failure ]]")),
+     "job fetch does not check that the run succeeded"),
+    ("the republish taking a dry run", REPUBLISH, republish_with_check(8, ""),
+     "job fetch does not check that the run was a real release, not a dry run"),
+    ("the republish run from another branch", REPUBLISH, republish_with_check(0, "if false; then"),
+     "job fetch does not check that it runs on main"),
+    ("the republish's check reporting problems and passing", REPUBLISH,
+     republish_with_check(9, "if false; then"),
+     "job fetch does not check that it fails when a check does"),
+    ("the republish's check finding the finish job by another name", REPUBLISH,
+     COMPLIANT_REPUBLISH.replace(f'select(.name == "{FINISH_JOB_NAME}")', 'select(.name == "Finish")'),
+     "job fetch checks the Release run with something other than exactly the pinned step"),
+    ("the republish's check under a condition", REPUBLISH,
+     COMPLIANT_REPUBLISH.replace(REPUBLISH_CHECK_HEAD, REPUBLISH_CHECK_HEAD + "        if: false\n"),
+     "job fetch checks the Release run with something other than exactly the pinned step"),
+    ("the republish's check may continue on error", REPUBLISH,
+     COMPLIANT_REPUBLISH.replace(REPUBLISH_CHECK_HEAD, REPUBLISH_CHECK_HEAD + "        continue-on-error: true\n"),
+     "job fetch may continue on error"),
+    ("the republish without its check of the run", REPUBLISH,
+     COMPLIANT_REPUBLISH.replace(REPUBLISH_CHECK_STEP, ""),
+     "job fetch does not start by checking the Release run"),
+    ("the republish's check after the download", REPUBLISH,
+     COMPLIANT_REPUBLISH.replace(REPUBLISH_CHECK_STEP, "").replace(
+         "  publish:\n", REPUBLISH_CHECK_STEP + "  publish:\n"),
+     "job fetch does not start by checking the Release run"),
+    ("the republish's fetch job holding another permission", REPUBLISH,
+     COMPLIANT_REPUBLISH.replace("permissions: {actions: read}", "permissions: {actions: read, contents: read}"),
+     "docs-republish.yml: job fetch holds"),
+    ("the republish's publish job holding contents: write", REPUBLISH,
+     COMPLIANT_REPUBLISH.replace("permissions: {contents: read, pages: write, id-token: write}",
+                                 "permissions: {contents: write, pages: write, id-token: write}"),
+     "docs-republish.yml: job publish holds"),
+    ("the republish using an action by its tag", REPUBLISH,
+     COMPLIANT_REPUBLISH.replace("actions/download-artifact@0123456789abcdef0123456789abcdef01234567",
+                                 "actions/download-artifact@v8"),
+     "uses actions/download-artifact@v8, which is not pinned to a full commit SHA"),
+    ("the republish downloading another artifact", REPUBLISH,
+     COMPLIANT_REPUBLISH.replace("          name: swift-reference\n          path: ${{ runner.temp }}/swift-reference\n",
+                                 "          name: swift-framework\n          path: ${{ runner.temp }}/swift-reference\n"),
+     "job fetch does not, after its check, download with exactly"),
+    ("the republish uploading the artifact under another name", REPUBLISH,
+     COMPLIANT_REPUBLISH.replace("          name: swift-reference\n          path: ${{ runner.temp }}/swift-reference/",
+                                 "          name: swift-docs\n          path: ${{ runner.temp }}/swift-reference/"),
+     "job fetch does not, after its check, download with exactly"),
+    ("the republish building another ref", REPUBLISH,
+     COMPLIANT_REPUBLISH.replace("with: {swift-reference: swift-reference}",
+                                 "with: {ref: refs/heads/feature, swift-reference: swift-reference}"),
+     "docs-republish.yml: job publish passes"),
+    ("the republish publishing without the Swift reference", REPUBLISH,
+     COMPLIANT_REPUBLISH.replace("    with: {swift-reference: swift-reference}\n", ""),
+     "docs-republish.yml: job publish passes None"),
+    ("the republish passing secrets to the site's workflow", REPUBLISH,
+     COMPLIANT_REPUBLISH.replace(f"    uses: {DOCS_WORKFLOW}\n", f"    uses: {DOCS_WORKFLOW}\n    secrets: inherit\n"),
+     "docs-republish.yml: reads a secret"),
+    ("the republish publishing without waiting for its check", REPUBLISH,
+     COMPLIANT_REPUBLISH.replace("    needs: fetch\n", ""),
+     "docs-republish.yml: job publish needs None, not fetch alone"),
+    ("the republish publishing from any branch", REPUBLISH,
+     COMPLIANT_REPUBLISH.replace(f"      {REPUBLISH_IF}\n", f"      {DEPENDABOT_GUARD}\n"),
+     "docs-republish.yml: job publish runs if"),
+    ("the republish started by a push", REPUBLISH,
+     COMPLIANT_REPUBLISH.replace("on:\n", "on:\n  push:\n    branches: [main]\n", 1),
+     "is not started by hand alone"),
+    ("the republish sharing the called workflow's concurrency group", REPUBLISH,
+     COMPLIANT_REPUBLISH.replace("group: docs-republish,", "group: docs-publish,"),
+     "docs-republish.yml: its concurrency is"),
+    ("the republish gains a job", REPUBLISH,
+     COMPLIANT_REPUBLISH + "  extra: {runs-on: ubuntu-24.04, steps: [{run: echo}]}\n",
+     "docs-republish.yml: jobs"),
+    ("release.yml's finish job renamed", "release.yml",
+     COMPLIANT_RELEASE.replace(f"    name: {FINISH_JOB_NAME}\n", "    name: Finish the release\n"),
+     "the name docs-republish.yml's check of a Release run finds it by"),
     # The scheduled workflows: only their schedule and a maintainer start them.
     ("the canary gains a pull_request trigger", "upstream-canary.yml",
      COMPLIANT_CANARY.replace("  workflow_dispatch:\n", "  pull_request:\n  workflow_dispatch:\n"),
@@ -2225,6 +2540,7 @@ def write_compliant_tree(root: Path) -> None:
     (root / ".github" / "workflows" / "release-resume.yml").write_text(COMPLIANT_RESUME)
     (root / ".github" / "workflows" / "docs-publish.yml").write_text(COMPLIANT_DOCS_PUBLISH)
     (root / ".github" / "workflows" / "upstream-canary.yml").write_text(COMPLIANT_CANARY)
+    (root / ".github" / "workflows" / REPUBLISH).write_text(COMPLIANT_REPUBLISH)
     for action in ("setup",):
         (root / ".github" / "actions" / action).mkdir(parents=True)
         (root / ".github" / "actions" / action / "action.yml").write_text(COMPLIANT_ACTION)

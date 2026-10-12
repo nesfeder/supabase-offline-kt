@@ -48,8 +48,9 @@ settings. The workflows never create or change any of them.
   write access; its private half is the `release` environment's secret `SWIFT_PACKAGE_DEPLOY_KEY`.
   Only the step that pushes the Swift package reads it (see [Release](#3-release)).
 - [x] GitHub Pages: **Settings → Pages → Source** is **GitHub Actions**, and the `github-pages`
-  environment allows deployments from `main` only, where both release workflows run. The release's
-  `docs` job publishes through it. A Pages site is public even while the repository is private.
+  environment allows deployments from `main` only, where both release workflows and Docs republish
+  run. The release's `docs` job publishes through it, and so does
+  [Docs republish](#republish-the-site). A Pages site is public even while the repository is private.
 - [ ] To publish snapshots, see [Snapshots](#snapshots).
 
 ### Going public
@@ -217,13 +218,43 @@ must be signed by the same identity.
    checks its checksum; a checksum or URL error here means the manifest and the asset disagree
    (see below). The package's repository shows the commit "Release X.Y.Z" with the tag `X.Y.Z`.
 4. Check the documentation site shows the release (`https://nesfeder.github.io/supabase-offline-kt/`).
-   To publish it by hand, **Actions → Docs publish → Run workflow** on `main`; it builds `main`.
+   To publish a later change to the documentation before the next release, see
+   [Republish the site](#republish-the-site).
 5. Open the post-release pull request with the link in `finish`'s summary; its title and
    description are filled in, and CI starts by itself because you opened it. It sets
    `VERSION_NAME` to the next minor's `-SNAPSHOT`, adds an empty `## Unreleased` section to the
    changelog and an `Unreleased` row to the compatibility table, and empties
    `compat/overrides.txt`. Review it and merge it.
 6. If the next release is a patch, set that version in the pull request that prepares it.
+
+## Republish the site
+
+A release publishes the site from its tag. To publish a change to the documentation before the next
+release, run **Docs republish** (`.github/workflows/docs-republish.yml`). It builds the site from
+`main`, and places under `/swift/` the Swift API reference a Release run built; **Docs publish**,
+run by hand, has no such reference and leaves `/swift/` out.
+
+1. Find the newest release's run: **Actions → Release**, the newest run whose `finish` job ran (a
+   dry run skips it), and take the number at the end of its URL (`…/actions/runs/<id>`). For 0.1.0
+   it is `38309205241`. Use the newest release's: an older run would put an older version's Swift
+   API reference on the site.
+2. **Actions → Docs republish → Run workflow**, branch `main`, with that number as
+   `release_run_id`.
+
+Before it downloads anything, the `fetch` job reads the run with its own token, which can only read
+Actions data, and stops with an error naming each check that failed. The run must be this
+repository's, of the Release workflow (`release.yml`), started by hand on `main` from this
+repository's own commit (a fork's pull request can upload an artifact of the same name from a run of
+its own), successful, and a real release, not a dry run: its `finish` job ran. The job then copies
+that run's `swift-reference` artifact into its own run, and its summary names the commit the
+reference was built from. The `publish` job calls `docs-publish.yml` as the release's `docs` job
+does, with the Pages and OIDC permissions only and no secret, but with no ref, so the site is built
+from `main` as it was when the run started.
+
+The Swift API reference is the release's, not `main`'s: a change to the Swift package's
+documentation reaches `/swift/` with the next release. A Release run keeps its `swift-reference`
+artifact for 90 days; after that, a republish fails at the download, and `/swift/` comes back with
+the next release.
 
 ## When a release stops halfway
 
@@ -255,8 +286,10 @@ every artifact of it. Then, in the order a release makes things public:
 4. it publishes the documentation site from the tag.
 
 A resume has no macOS job, so the site it publishes has no Swift API reference: `/swift/` is left
-out, and the docs job's summary says so. A publish of the site started by hand
-(`docs-publish.yml`) leaves it out in the same way; the next release puts it back.
+out, and the docs job's summary says so. A publish of the site started by hand with **Docs publish**
+leaves it out in the same way. [Docs republish](#republish-the-site) puts it back from a release's
+run that succeeded; a resumed release's run did not, so after a resume `/swift/` comes back with the
+next release.
 
 It runs `main`'s scripts, never the input commit's, and never runs Gradle, builds the framework or
 publishes to Maven Central: once Central has published a version, nothing may be rebuilt under that
@@ -331,4 +364,5 @@ standard hosted runners, Linux and macOS alike, cost nothing for a public reposi
 | Dry run | about 20: `verify` about 12, `publish` about 7 | about 20 (`framework`) |
 | Release | about 27 plus Central's wait for PUBLISHED, usually 5 to 30; `docs` about 2 | 20 (`framework`, measured in the 0.1.0 release) |
 | Release resume | about 3, with `docs` | none |
+| Docs republish | about 3 | none |
 | Snapshot (a push to `main`) | about 7, beside CI's own run | none |

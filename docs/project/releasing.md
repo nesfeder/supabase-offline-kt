@@ -106,7 +106,11 @@ A release runs as a GitHub Actions workflow that a maintainer starts by hand on 
    GitHub Release, with the changelog's section, the merged pull requests and the framework, is
    published.
 6. **The documentation site** is built from the tag and published, with the Swift API reference
-   under `/swift/`, which the macOS job built against the framework it tested.
+   under `/swift/`, which the macOS job built against the framework it tested. Between releases, a
+   maintainer can publish a change to these pages from `main` with a second workflow, which places
+   the Swift API reference the latest release built under `/swift/` again. It takes the reference
+   only from a run of this repository's own release workflow, started on `main`, that succeeded and
+   was a real release rather than a rehearsal, and checks that before it downloads anything.
 7. **The next version.** A branch moves the version on to the next `-SNAPSHOT` and opens a new
    `Unreleased` section in the changelog, and the maintainer opens its pull request.
 
