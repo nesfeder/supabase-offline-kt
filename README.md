@@ -14,17 +14,6 @@ The same tasks app on both platforms, in one minute each: a task added online, t
 off, a task with a photo added offline and shown at once with its waiting mark, the queue listed on
 the Sync tab, and everything sent when the network returns.
 
-<table>
-  <tr>
-    <th>Android</th>
-    <th>iOS</th>
-  </tr>
-  <tr>
-    <td><img src="docs/assets/samples/readme/android-waiting-to-upload.png" width="300" alt="The Android sample's task screen offline: a photo picked from New task, marked Waiting to upload"></td>
-    <td><img src="docs/assets/samples/readme/ios-waiting-to-upload.png" width="300" alt="The iOS sample's task screen offline: a photo picked from New task, marked Waiting to upload"></td>
-  </tr>
-</table>
-
 ### Android
 
 https://github.com/user-attachments/assets/b14debd5-d5a8-40c2-a3ea-af8383539811
