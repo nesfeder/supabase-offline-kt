@@ -3,51 +3,38 @@
 What a read returns is the cached rows with the user's writes that have not reached them yet laid
 on top, oldest first. So a write shows in every list at once, online or offline, and a list never
 loses it between the moment it is sent and the moment the list is fetched again.
+`hasPendingMutations` on a result or a snapshot says whether a queued write changed the rows, and
+each `PendingMutation`'s `rowKeys` say which rows it touches, as the sample's cloud marks use them:
 
-From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/OfflineTaskRepository.kt) · [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift) · [TasksModel.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Tasks/TasksModel.swift)
+From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/OfflineTaskRepository.kt) · [TasksModel.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Tasks/TasksModel.swift)
 
 === "Android"
 
     ```kotlin
-    --8<-- "data/supabase/OfflineTaskRepository.kt:first-observed-read"
-
     --8<-- "data/supabase/OfflineTaskRepository.kt:pending-marks"
     ```
 
 === "iOS"
 
     ```swift
-    --8<-- "Data/TaskRepository.swift:first-observed-read"
-
-    --8<-- "Tasks/TasksModel.swift:live-read"
-
     --8<-- "Tasks/TasksModel.swift:pending-marks"
     ```
 
-A queued write changes the rows a read returns; `hasPendingMutations` on the result or the snapshot
-says whether one did, and each `PendingMutation`'s `rowKeys` say which rows it touches.
-
 ## What it applies
 
-- **The user's queued writes**, in the order they were made: every write in the mutation queue
-  that belongs to the current user, or to no user yet.
-- **Writes a replay pass sent** that the cached list has not seen yet. Such a write stays in the
+- **The user's queued writes**, in the order they were made: every write in the mutation queue that
+  belongs to the current user, or to no user yet. Another user's writes are never laid over.
+- **Writes a replay pass sent** that a cached list has not seen yet. Such a write stays in the
   overlay until each cached list of its table has been fetched again after it, then retires. A
   table keeps at most its newest 1,000 such writes: past that, the oldest go whether or not every
   list has seen them.
 
-Another user's writes are never laid over your reads.
-
-## Online writes
-
 A write sent at once and accepted is patched into the cached lists instead: the rows the server
-returned, or the rows sent when it returned none, are laid into every cached list of the table
-that admits them, matched by key and merged with the columns the write sent. A live read with
-nothing cached yet gets a list made of the written rows it admits. A write whose effect the cache
-cannot work out (an UPDATE or DELETE filtered by something it cannot evaluate, an upsert without
-keys, a write to another schema) marks the lists it may reach stale, and their live readers fetch
-again.
-
+returned, or the rows sent when it returned none, are laid into every cached list of the table that
+admits them, matched by key and merged with the columns the write sent, and a live read with
+nothing cached gets a list of the written rows it admits. A write whose effect the cache cannot
+work out (an UPDATE or DELETE filtered by something it cannot evaluate, an upsert without keys, a
+write to another schema) marks the lists it may reach stale, and their live readers fetch again.
 An `OnlineOnly` write is not patched in: the list changes when it is fetched again.
 
 ## How rows are matched
@@ -59,38 +46,34 @@ An `OnlineOnly` write is not patched in: the list changes when it is fetched aga
 | UPDATE | Patches the rows its filter provably matches, and moves a row into or out of a list as its membership changes |
 | DELETE | Removes the rows its filter provably matches |
 
-The library evaluates `eq`, `neq`, `in` and `is`, with Postgres's rules for nulls. Any other
-condition, and any comparison whose answer depends on the column's type, is unknown: unknown
-admits a new row into a list, so your own row is never hidden, and never lets a queued UPDATE or
-DELETE touch a row. A row is recognized by the table's primary key, `id` unless you set another
-with `primaryKey` (see [Configuration](../reference/configuration.md#primarykeys)).
+The library evaluates `eq`, `neq`, `in` and `is`, with Postgres's rules for nulls. Anything else is
+unknown, and unknown admits a new row into a list, so your own row is never hidden, but never lets
+a queued UPDATE or DELETE touch a row. A row is recognized by the table's primary key, `id` unless
+you set another with `primaryKey` ([Configuration](../reference/configuration.md#primarykeys)).
 
 ## Limits
 
-Facts about the engine. Each names the test that pins it.
-
 - **Order, limit and pages are not applied.** A queued row is appended after a list's rows, past
-  its limit, and shows on every page whose filters admit it. An edited sort column does not move
-  it. The server's order returns with the next fetch.
+  its limit, and shows on every page whose filters admit it; an edited sort column does not move
+  it. The server's order returns with the next fetch, so sort and page in the app for lists that
+  show your own writes.
   <small>`OverlayLimitsTest.a_queued_row_is_appended_past_the_order_and_limit_of_every_page_it_matches`</small>
 - **A queued row carries only the columns it wrote.** In a list that embeds another table
   (`author:profiles(name)`) or renames a column (`heading:title`), it shows without the embed and
-  under the name it was written with, which can fail a decode of the whole list. A row read with
-  other columns, or with other options for a table it embeds (a limit, an order, a filter), never
-  joins a list, which is fetched again instead; an online write that asked for rows back
-  (`select()`) brings the server's columns.
+  under the name it was written with, which can fail a decode of the whole list: keep queued rows
+  out of such lists, or decode those columns as nullable. A row read with other columns, or with
+  other options for a table it embeds (a limit, an order, a filter), never joins a list, which is
+  fetched again instead.
   <small>`OverlayLimitsTest.a_queued_row_carries_only_the_columns_it_wrote`,
   `BorrowedRowsShapeTest.a_row_does_not_join_a_list_that_renames_its_columns`,
   `BorrowedRowsShapeTest.a_row_read_with_one_embedded_row_does_not_join_a_list_that_reads_them_all`,
   `WritesThatSelectTest.an_insert_that_selects_its_id_keeps_the_columns_it_wrote`</small>
-- **What the engine cannot evaluate touches nothing.** A pending UPDATE or DELETE changes only the
-  rows its filter provably matches, while a new row joins every list whose filter does not provably
-  exclude it, so the user's own row is never hidden. The engine evaluates `eq`, `neq`, `in` and `is`
-  alone; `lt`, `gt` and the other ordered comparisons, `like`, `ilike`, full-text search and the array and range operators are left to the
-  server, and so is any comparison whose answer depends on the column's type: digits equal but for
-  leading zeros, numbers equal only as a float, boolean words, quoted literals, `inf`, MAC
-  addresses. Such a write shows once it has synced and the list is fetched again. An online write
-  the cache cannot patch marks the lists it may reach stale instead.
+- **What the engine cannot evaluate touches nothing.** Besides any condition but `eq`, `neq`, `in`
+  and `is` (`lt`, `gt` and the other ordered comparisons, `like`, `ilike`, full-text search, the
+  array and range operators), that is any comparison whose answer depends on the column's type:
+  digits equal but for leading zeros, numbers equal only as a float, boolean words, quoted
+  literals, `inf`, MAC addresses. Such a pending UPDATE or DELETE shows once it has synced and the
+  list is fetched again; an online write the cache cannot patch marks the lists it may reach stale.
   <small>`OverlayLimitsTest.a_pending_update_whose_filter_the_engine_cannot_evaluate_changes_nothing_shown`,
   `TypeDependentComparisonTest.a_pending_update_or_delete_never_touches_a_row_it_cannot_tell`,
   `AdmissionSemanticsTest.every_family_the_engine_cannot_evaluate_admits_the_row`,
@@ -128,15 +111,11 @@ Facts about the engine. Each names the test that pins it.
 
 ## Tips
 
-- **Make ids, and every column a list decodes, on the device.** A queued row carries only the
-  columns it wrote, until the list is fetched again: a column the server fills in, such as a
-  default `created_at`, is missing from it, and a list that decodes that column into a
-  non-nullable property fails. Write `id` and `created_at` yourself, as the
-  [sample app](../samples/android.md) does.
-- **Ask an online write for its rows back** with `select()`: when it is sent at once, the
-  server's values (defaults, triggers) are patched into the cache with it. A write that waited in
-  the queue does not use them: the list shows the server's values once it is fetched again.
-- **Sort and page in the app** for lists that show your own writes: a queued row is appended past
-  the list's order and limit.
-- **Keep queued rows out of lists that embed or rename columns**, or decode those columns as
-  nullable, since a queued row has neither.
+- **Make ids, and every column a list decodes, on the device.** A queued row lacks the columns the
+  server fills in (a default `created_at`, say) until the list is fetched again, and a list that
+  decodes such a column into a non-nullable property fails. Write `id` and `created_at` yourself,
+  as the [sample app](../samples/android.md) does.
+- **Ask an online write for its rows back** with `select()`: when it is sent at once, the server's
+  values (defaults, triggers) are patched into the cache with it. A write that waited in the queue
+  does not use them, so its replay brings nothing back: the list shows the server's values once it
+  is fetched again.

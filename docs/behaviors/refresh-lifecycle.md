@@ -1,9 +1,9 @@
 # Refresh lifecycle
 
-A reactive read's refresh keeps trying until the server answers, backing off from 300 ms to once a
-minute, for as long as the flow is collected. Each emission says how it stands in
-`QuerySnapshot.refresh`, and waiting for the network or for the session is reported as waiting,
-never as a failure.
+A reactive read's refresh keeps trying until the server answers, for as long as the flow is
+collected, and each emission says how it stands in `QuerySnapshot.refresh`. Waiting for the
+network or for the session reads as waiting, never as a failure. The sample shows it on the Sync
+tab:
 
 From the samples: [LibraryMappings.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/LibraryMappings.kt) · [SyncView.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Sync/SyncView.swift)
 
@@ -40,42 +40,27 @@ stateDiagram-v2
     Idle --> Refreshing: a clear, a new owner, or a write marks the rows stale
 ```
 
-The read starts `Refreshing`, settles at `Idle` once the server answers, and moves to `Paused` or
-`Stalled` while it cannot reach it. A stalled refresh stays `Stalled` through its later attempts
-until one succeeds.
-
 `Stalled.cause` is the failure that stalled the refresh; a later, different failure does not
 replace it. It is supabase-kt's own exception, whose message carries the request's URL and its
-filter values: show your own words, not the message. See
-[Security and privacy](../help/security.md#exceptions).
+filter values: show your own words ([Security and privacy](../help/security.md#exceptions)).
 
 ## The retry schedule
 
 A failed refresh is tried again after 300 ms, 900 ms and 2.4 s, then after 5 s, 15 s and every
-60 s, for as long as the flow is collected. It reads `Stalled` after the fourth failure in a row,
-about 3.6 s in, and `Paused` instead while the network is known to be down. Two things cut a wait
-short and try at once:
+60 s. It reads `Stalled` after the fourth failure in a row, about 3.6 s in, and `Paused` instead
+while the network is known to be down. The wait is cut short, with an attempt at once, when the
+network comes back (the connectivity monitor or your `networkAvailability` turns online, or
+`enableNetwork()` is called) and when the session settles (a stored session finishes restoring,
+or a user signs in).
 
-- **the network comes back**: the connectivity monitor, or your own `networkAvailability`, turns
-  online, or `enableNetwork()` is called;
-- **the session settles**: a stored session finishes restoring, or a user signs in.
-
-## supabase-kt's own retries
-
-supabase-kt retries a failed `GET` itself (four attempts over about 7 s by default). A refresh
-turns those retries off for transport failures, so a dead network is noticed at once and the
-library's own schedule takes over; a `503` or `520` is still retried on supabase-kt's schedule. A
-read the cache cannot answer, sent while the network is known down, goes out once with retries
-off too: the monitor is a hint, so it is still tried, but supabase-kt's waits could only delay the
-failure.
+A refresh turns supabase-kt's own retries of a failed `GET` (four attempts over about 7 s by
+default) off for transport failures, so a dead network is noticed at once; a `503` or `520` is
+still retried on supabase-kt's schedule.
 
 ## Cold start and session restore
 
-When the app starts, supabase-kt's Auth plugin restores the stored session, and until it has,
-requests go out on the anon key. Row-level security can answer those with fewer rows, or none,
-so nothing such a request returns is written to the cache, and the refresh reads `Refreshing`
-until the session settles. The cached rows show meanwhile. If the session settles as another
-identity, the cache is dropped first and the read ends on the new identity's rows alone.
+Until supabase-kt's Auth plugin has restored the stored session, the refresh reads `Refreshing`,
+with the cached rows on screen ([Signing out and switching users](sign-out.md)).
 
 Under `ResponseTrust.AuthenticatedSessionOnly`, a live read of an empty table made signed out
 stays `Refreshing`, retried at most a minute apart, until the table has rows or a user signs in
@@ -86,10 +71,10 @@ user.
 
 Every request reads a tick from a monotonic clock before it goes out, and every write that changes
 the cache moves its table's mark forward. An answer whose request left before the table's last
-change is refused, since it cannot hold that change, and the refresh asks again. An answer whose
-request left before `clearLocalData()` is refused and not asked again, since it may carry the
-cleared session's token; one that left before the cache passed to a new owner is not written, and
-the refresh asks again.
+change is refused, since it cannot hold that change, and the refresh asks again. One that left
+before `clearLocalData()` is refused and not asked again, since it may carry the cleared session's
+token; one that left before the cache passed to a new owner is not written, and the refresh asks
+again.
 
 ## Pinned by
 

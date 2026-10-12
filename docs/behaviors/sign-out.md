@@ -2,32 +2,24 @@
 
 With supabase-kt's Auth plugin installed, the query cache and the file cache belong to one user at
 a time: when the session settles as someone else they are dropped, and nothing cached for one user
-is ever served to the next. Queued writes are different: they stay with the user who made them
-until you call `clearLocalData()`, which deletes everything the library keeps on the device.
+is ever served to the next. Queued writes stay with the user who made them until you call
+`clearLocalData()`, which deletes everything the library keeps on the device:
 
 ```kotlin
 --8<-- "QueueExamples.kt:sign-out"
 ```
 
-## Why it matters
-
-The device holds one user's rows, files and unsent writes. Signing out in supabase-kt alone
-clears the session, not the device: the next person to sign in on it must never see the last
-one's rows, and the last one's unsent writes must never go out under the next one's session. The
-library takes care of the second on its own, and of the first as far as the cache goes; deleting
-what is left is your call, because it deletes writes that were never sent.
+Signing out in supabase-kt alone clears the session, not the device.
 
 ## What `clearLocalData()` deletes
 
-Everything the library keeps on the device: the cached query results, the downloaded Storage
-files, every write still in the mutation queue (never sent), and the rejected list. It does not
-touch the server, and the client stays usable afterward.
+The cached query results, the downloaded Storage files, every write still in the mutation queue
+(never sent) and the rejected list. It does not touch the server, and the client stays usable.
 
 - A replay pass running at that moment is canceled first, and nothing queued is sent once the
   clear has begun.
 - A write already on the wire is neither applied to the cache nor queued when it answers. A
-  Storage download in flight may still hand its bytes to its caller, but they are not written to
-  the cache.
+  Storage download in flight may still hand its bytes to its caller, but they are not cached.
 - A live read open through the clear that refreshes (any strategy but `CacheOnly`) fetches again:
   at once online, and once the network is back offline (`Paused` meanwhile).
 - Keeping the deleted rows out of the database's files is best effort. The database is rewritten
@@ -39,12 +31,12 @@ touch the server, and the client stays usable afterward.
 ## Order of operations
 
 1. **Decide about the unsent writes.** `syncPendingMutations()` sends what can be sent now, as the
-   user who made it; offline it returns at once. Whatever is still queued afterward is deleted
-   by the clear. An app that must not lose writes can show `syncStatus.value.pendingMutationCount`
-   and ask before it signs out.
+   user who made it; offline it returns at once. The clear deletes whatever is still queued, so an
+   app that must not lose writes can show `syncStatus.value.pendingMutationCount` and ask first.
 2. **Sign out, and clear in a `finally`.** Offline, supabase-kt's `signOut()` throws
    `HttpRequestException` and keeps the session, since it clears the session only when the server
-   answers; clearing in a `finally` deletes the device's data either way.
+   answers; clearing in a `finally` deletes the device's data either way. The listing above does
+   the first two.
 3. **Decide about the session.** After an offline sign-out the user is still signed in: the
    exception reaches your code with the session kept. To end it on this device anyway, forget it
    without the server; the server-side session stays valid until it expires:
@@ -52,8 +44,6 @@ touch the server, and the client stays usable afterward.
     ```kotlin
     --8<-- "QueueExamples.kt:forget-session"
     ```
-
-The example at the top does the first two.
 
 ## Switching accounts
 
@@ -90,22 +80,16 @@ untouched, while user B is signed in, and go when A signs back in.
 
 ## While a stored session restores
 
-When the app starts, supabase-kt's Auth plugin restores the stored session, and until it has,
-every request goes out on the anon key. The library keeps its own requests off it as far as it
-can:
-
-- A queued write waits, as the stored user's, and is sent with that user's token once the session
-  settles, online or not.
-- An `OnlineOnly` write is sent at once, as supabase-kt sends any request meanwhile: on the anon
-  key. So are every Storage request and every `rpc`. A download's answer is cached; a private
-  object refused on the anon key reads as "not found", which keeps its cached copy and is answered
-  from it.
-- A read the cache can answer for the stored user sends nothing. One that needs the server is sent
-  on the anon key and its answer is not cached; see [One-shot reads](read-strategies.md#edge-cases).
-
-Under row-level security, the anon key reaches less than the user does, so an `OnlineOnly` write,
-an `rpc` or a Storage call made in those first seconds can be refused, and a private download with
-nothing cached fails. Make them after `supabase.auth.awaitInitialization()`.
+Until supabase-kt's Auth plugin has restored the stored session, every request goes out on the
+anon key, and the library keeps its own requests off it as far as it can. A queued write waits, as
+the stored user's, and is sent with that user's token once the session settles, online or not. A
+read the cache can answer for the stored user sends nothing, and one that needs the server is not
+cached ([One-shot reads](read-strategies.md#edge-cases)). An `OnlineOnly` write, every Storage
+request and every `rpc` are sent at once, on the anon key; a download's answer is cached, and a
+private object refused on the anon key reads as "not found", which keeps its cached copy and is
+answered from it. Under row-level security the anon key reaches less than the user does, so such a
+write, `rpc` or Storage call can be refused, and a private download with nothing cached fails:
+make them after `supabase.auth.awaitInitialization()`.
 <small>`WritesWhileRestoringTest.an_online_write_is_queued_until_the_session_settles_then_sent_as_the_user`,
 `WritesWhileRestoringTest.an_online_only_write_is_sent_at_once_with_the_token_sent_meanwhile`,
 `StorageWhileRestoringTest.a_download_is_sent_at_once_on_the_anon_key_and_cached`,
@@ -118,10 +102,12 @@ sent once the token is refreshed.
 
 ## Deleting an account
 
-To delete a user's data on the server and then on the device, do it online, and clear the device
-first, so no queued write can be replayed after your deletes and leave a row behind. Send the
-deletes `OnlineOnly`: a queued delete could outlive the user it is for. The sample's Start over
-does this for its anonymous user, whom nobody could sign back in as, then signs in as a new one:
+Delete a user's data on the server, then on the device, online, and clear the device first, so no
+queued write can be replayed after your deletes and leave a row behind. Send the deletes
+`OnlineOnly`: a queued delete could outlive the user it is for. Delete the user's Storage objects
+through the bucket before anything that deletes the user: Supabase refuses to delete a user who
+still owns objects, and deleting a row never deletes its file. The sample's Start over does all of
+it for its anonymous user, whom nobody could sign back in as, then signs in as a new one:
 
 From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/OfflineTaskRepository.kt) · [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift)
 
@@ -145,21 +131,9 @@ From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabas
     client's network off in between: the order the Swift guide's
     [When the user changes](../getting-started/swift.md#when-the-user-changes) gives, and why.
 
-Delete the user's Storage objects too, through the bucket, before anything that deletes the user:
-Supabase refuses to delete a user who still owns objects, and deleting a row never deletes its
-file.
-
-## Without Auth
-
-Without the Auth plugin, or with your own token provider, every request is the same anonymous
-identity for the life of the install: the cache is never dropped for a change of user, because
-nothing the library can read tells one user from another. If your token provider serves more than
-one user, call `clearLocalData()` when the user changes.
-
 ## Caveats
 
-- **Backups.** On Android, Auto Backup includes the database and the file cache unless you leave
-  them out; a restore onto a new device brings them back under whoever signs in next. See
-  [Project setup](../getting-started/setup.md#backups).
-- **A second process.** The library cannot see a client in another process of your app; see
-  [Project setup](../getting-started/setup.md#a-data-directory-and-a-second-process).
+On Android, Auto Backup includes the database and the file cache unless you leave them out, and a
+restore brings them back under whoever signs in next ([Backups](../getting-started/setup.md#backups)).
+The library cannot see a client in another process of your app
+([A second process](../getting-started/setup.md#a-data-directory-and-a-second-process)).

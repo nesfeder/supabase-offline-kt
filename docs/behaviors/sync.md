@@ -1,7 +1,7 @@
 # Replaying the queue
 
 With `autoSync` on, the default, the library sends queued writes by itself when the network comes
-back and when a user's session settles, and `syncPendingMutations()` sends them now and says what
+back and when a user's session settles; `syncPendingMutations()` sends them now and says what
 happened. A pass sends one user's writes one at a time, in the order they were made, across
 tables, and stops at the first failure that may pass, so no write overtakes an earlier one.
 
@@ -34,10 +34,9 @@ Passes are coalesced: at most one runs and one waits, however many triggers arri
 | A client without Auth opens with writes an earlier run left queued (its session is settled from the start, so no other trigger fires for them) | Yes |
 | A write is queued behind an earlier one; a write sent, refused or discarded leaves writes behind it; a rejected write is retried | No |
 
-The last row runs whatever `autoSync` says: a write made online that returned `Queued` is sent by
-such a pass, and would otherwise wait for the app with nothing to show for it. With
-`autoSync = false`, call `syncPendingMutations()` yourself when the network comes back and when a
-user signs in.
+The last row runs whatever `autoSync` says: a write made online that returned `Queued` would
+otherwise wait for the app with nothing to show for it. With `autoSync = false`, call
+`syncPendingMutations()` yourself when the network comes back and when a user signs in.
 
 ## The connectivity monitor is a hint, never a gate
 
@@ -45,19 +44,19 @@ The library watches the platform's connectivity (Android's `ConnectivityManager`
 network with internet that Android has validated; Network's path monitor on iOS), or your own
 `networkAvailability` flow in its place. It never stops a request you make because the monitor
 says offline: a monitor can be wrong either way (a captive portal, a VPN, a network that cannot
-reach your project), so every read, write and sync you call is tried. What the monitor decides is
-when the library tries by itself:
+reach your project), so every read, write and sync you call is tried. What the monitor decides:
 
 - while it says offline, the library's own passes stop after one fails for want of a connection,
-  and make no further attempt until the monitor stops saying offline, the session settles anew or
-  you call `syncPendingMutations()`. So a device that is offline makes one attempt per offline
-  period, and a wrong monitor costs one failed attempt;
+  until the monitor stops saying offline, the session settles anew or you call
+  `syncPendingMutations()`: one attempt per offline period, so a wrong monitor costs one failed
+  attempt;
 - when it turns online, waiting refreshes try again at once and, with `autoSync`, queued writes
   are sent;
 - whether a waiting refresh reads `Paused` or `Stalled`, and what `syncStatus.value.network` says.
 
 A monitor that fails or ends is no longer watched, and the network is then `UNKNOWN`, which counts
-as online. To stop every request, use `disableNetwork()`: that switch is a gate.
+as online. To stop every request, use `disableNetwork()` ([below](#the-network-switch)): that
+switch is a gate.
 
 ## Waiting between passes
 
@@ -69,55 +68,41 @@ once and moves no wait.
 
 ## When to call sync
 
-- **A "Sync now" button**: the example above.
-- **When the app comes to the foreground.** Nothing fires then: after a pass that failed in a way
-  that may pass, the library's own next pass waits up to a minute, or as long as a server's
-  `Retry-After` asks. To send at once when the user returns:
+Nothing fires when the app comes to the foreground, and after a failed pass the library's own next
+one may wait a minute, or as long as a `Retry-After`. Call `syncPendingMutations()` then, as the
+samples do (Android from the activity's `onStart`, iOS when the scene's phase becomes `.active`):
 
-    From the samples: [OfflineTasksApplication.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/OfflineTasksApplication.kt) · [AppModel.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/App/AppModel.swift)
+From the samples: [OfflineTasksApplication.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/OfflineTasksApplication.kt) · [AppModel.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/App/AppModel.swift)
 
-    === "Android"
+=== "Android"
 
-        ```kotlin
-        --8<-- "OfflineTasksApplication.kt:foreground"
-        ```
+    ```kotlin
+    --8<-- "OfflineTasksApplication.kt:foreground"
+    ```
 
-    === "iOS"
+=== "iOS"
 
-        ```swift
-        --8<-- "App/AppModel.swift:foreground"
-        ```
+    ```swift
+    --8<-- "App/AppModel.swift:foreground"
+    ```
 
-    The sample's activity calls it from `onStart`. On iOS, the sample's root view calls it when the
-    scene's phase becomes `.active`.
+Call it too for a "Sync now" button (the listing at the top), and before a user signs out for
+good, to send what can still be sent ([Signing out](sign-out.md)). It returns promptly offline,
+throws nothing for a failure that may pass, and sends nothing while network access is off.
 
-- **Before a user signs out for good**, to send what can still be sent; see
-  [Signing out and switching users](sign-out.md).
-- **With `autoSync = false`**: when the network comes back and when a user signs in.
+## Order and the session
 
-`syncPendingMutations()` returns promptly offline, throws nothing for a failure that may pass, and
-sends nothing while network access is off.
-
-## Order
-
-Writes are sent in the order they were made, which is the order of their ids, across every table
-of the user's queue. A child row queued after its parent in another table is sent after it.
-
-`syncPendingMutations(table)` sends one table's writes, but never ahead of an earlier write of the
-user still queued in another table, which may be the parent row it depends on: it stops at the
-first write that has one, sends nothing past it, and counts what it held back in
-`SyncReport.heldBehindOtherTablesCount`. A sync of every table sends them all in order.
-
-`OnlineOnly` writes, writes the queue cannot hold, `rpc` and Storage writes are never queued, so
-they go around the queue.
-
-## Sync and the session
+Writes are sent in the order they were made, the order of their ids, across every table of the
+user's queue, so a child row queued after its parent in another table is sent after it.
+`syncPendingMutations(table)` sends one table's writes but never ahead of an earlier write of the
+user still queued in another table: it stops at the first write that has one and counts what it
+held back in `SyncReport.heldBehindOtherTablesCount`. `OnlineOnly` writes, writes the queue cannot
+hold, `rpc` and Storage writes are never queued, so they go around the queue.
 
 A pass first waits, for at most 10 seconds, for the session to settle (signed in, or signed out),
-except when the network is known to be down. With Auth installed, it sends each write with its
-owner's token or not at all: a user's writes wait, untouched, while another user is signed in, and
-an anonymous write is never sent with a user's token. A PostgREST plugin configured with its own
-`jwtToken` sends that token whoever is signed in, so it is not checked.
+except when the network is known to be down. A PostgREST plugin configured with its own `jwtToken`
+sends that token whoever is signed in, so the owner check of
+[Signing out and switching users](sign-out.md#switching-accounts) does not apply to it.
 
 ## What happens to each write
 
@@ -129,8 +114,6 @@ an anonymous write is never sent with a user's token. A PostgREST plugin configu
 | Any other `4xx` | Moves to the rejected list, and the pass goes on |
 | (The library can no longer replay it exactly as it was made) | Moves to the rejected list with no `serverError`, and the pass goes on |
 
-See [Conflicts and failures](failures.md) for the rejected list.
-
 ## What a sync returns
 
 | `SyncReport` field | Meaning |
@@ -141,15 +124,16 @@ See [Conflicts and failures](failures.md) for the rejected list.
 | `alreadyOnServerCount` | Of `syncedCount`, the inserts whose rows the server already held, because an earlier send whose answer was lost had reached it |
 | `heldBehindOtherTablesCount` | Of `remainingCount`, the writes a call for one table held back behind an earlier write to another table; `0` for a call over every table |
 
-The counts are this call's own. With `autoSync` on, a pass the library ran by itself just before
-may have sent or refused writes; those are counted nowhere here, and a refusal it made is on
-`rejectedMutations()`. When the library is already sending the same writes, the call waits for
-that pass to let go, then sends what is left, so it returns only once nothing more can be sent now.
+The counts are this call's own: a pass the library ran by itself just before is counted nowhere
+here, and a refusal it made is on `rejectedMutations()`. Calling sync more than once at a time is
+safe: a call that meets a pass already sending the same writes waits for it to let go, then sends
+what is left, so it returns only once nothing more can be sent now. A pass in progress when local
+data is cleared is canceled first, and its report counts what it sent before.
 
 A sync throws only `IllegalStateException`, when the client is closed or PostgREST is not
 installed. A failure that stops the pass is not thrown: `syncStatus.value.lastSyncError` holds it
 as a `SyncFailedException`, with the HTTP status and the PostgREST or Postgres code and nothing of
-the original message.
+the original message ([Conflicts and failures](failures.md) has the rejected list).
 
 ## The status
 
@@ -178,8 +162,8 @@ From the samples: [LibraryMappings.kt](https://github.com/nesfeder/supabase-offl
 | `lastSyncError` | Why the last pass stopped with writes queued; cleared when a later pass runs to the end, when sending empties the queue, and when local data is cleared |
 
 It follows the queue from the moment the client opens, so its counts include what an earlier run
-left queued. It is the same flow whether or not the client is open, and it never throws; after
-`close()` it holds its last value.
+left queued. It is the same flow whether or not the client is open, never throws, and after
+`close()` holds its last value.
 
 ## The network switch
 
@@ -201,29 +185,21 @@ From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabas
     --8<-- "Data/TaskRepository.swift:network-switch"
     ```
 
-While access is off nothing is sent: reads are answered from the cache as offline, live reads read
-`Paused`, writes that can be queued are queued, passes send nothing, and a Storage download is
-answered from the file cache. A request that must reach the server (a `NetworkOnly` read, an
-`OnlineOnly` write, an `rpc`, any Storage call but a download) throws `NetworkDisabledException`,
-which counts as a connectivity failure. A request already on the wire still answers, and so does a
-resumable upload created or paused while access was on.
-
-`syncStatus.value.network` reads `DISABLED` as soon as `disableNetwork()` returns. A flow you
-derive from `syncStatus` (with `map` and `stateIn`, say) catches up a moment later, so wait for
-the value you expect on it rather than reading it straight after the switch.
+While access is off nothing is sent: reads are answered from the cache, live reads read `Paused`,
+writes that can be queued are queued, passes send nothing, and a Storage download is answered from
+the file cache. A request that must reach the server (a `NetworkOnly` read, an `OnlineOnly` write,
+an `rpc`, any Storage call but a download) throws `NetworkDisabledException`, a connectivity
+failure. A request already on the wire still answers, and so does a resumable upload created or
+paused while access was on. `syncStatus.value.network` reads `DISABLED` as soon as
+`disableNetwork()` returns; a flow you derive from `syncStatus` catches up a moment later, so wait
+for the value you expect on it.
 
 ## Background work
 
 The library sends only while your app's process runs. To send from the background, call
-`syncPendingMutations()` from work the platform schedules in the app's own process: a WorkManager
-worker on Android, a `BGTaskScheduler` task on iOS. Never from a second process: see
-[Project setup](../getting-started/setup.md#a-data-directory-and-a-second-process).
-
-## Calling sync more than once at a time
-
-It is safe. A call that meets a pass already sending the same writes waits for it to let go, then
-sends what is left; its counts are its own passes'. A pass in progress when local data is cleared
-is canceled first, and its report counts what it sent before.
+`syncPendingMutations()` from work the platform schedules in the app's own process (a WorkManager
+worker on Android, a `BGTaskScheduler` task on iOS), never from a second process
+([Project setup](../getting-started/setup.md#a-data-directory-and-a-second-process)).
 
 ## Pinned by
 

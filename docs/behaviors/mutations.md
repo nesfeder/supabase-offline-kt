@@ -1,9 +1,9 @@
 # Writes and the offline queue
 
-Every `insert`, `upsert`, `update` and `delete` is saved to the mutation queue first, and sent at
-once when nothing of the same user waits ahead of it; otherwise it waits and is sent by a later
-pass, in the order it was made. A write returns a `MutationOutcome`: `Applied` with the server's
-answer, or `Queued`, and every cached read shows it at once either way.
+By default every `insert`, `upsert`, `update` and `delete` is saved to the mutation queue first,
+and sent at once when nothing of the same user waits ahead of it; otherwise it waits and is sent
+by a later pass, in the order it was made. A write returns a `MutationOutcome`, `Applied` with the
+server's answer or `Queued`, and every cached read shows it at once either way.
 
 From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/OfflineTaskRepository.kt) · [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift)
 
@@ -19,11 +19,11 @@ From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabas
     --8<-- "Data/TaskRepository.swift:first-write"
     ```
 
-The verbs are supabase-kt's, with its overloads and request DSL. An update takes a typed value, a
-JSON body or the update DSL; the sample's autosave, done switch and Move to another task use one
-each:
+The verbs are supabase-kt's, with its overloads and request DSL; Move to another task, on
+[Storage caching](storage.md#writes), uses the update DSL. An update with a typed value, and one
+with a JSON body:
 
-From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/OfflineTaskRepository.kt) · [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift) · [TaskRepository+Photos.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository+Photos.swift)
+From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/OfflineTaskRepository.kt) · [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift)
 
 === "Android"
 
@@ -31,8 +31,6 @@ From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabas
     --8<-- "data/supabase/OfflineTaskRepository.kt:typed-update"
 
     --8<-- "data/supabase/OfflineTaskRepository.kt:body-update"
-
-    --8<-- "data/supabase/OfflineTaskRepository.kt:move-photo"
     ```
 
 === "iOS"
@@ -41,13 +39,9 @@ From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabas
     --8<-- "Data/TaskRepository.swift:typed-update"
 
     --8<-- "Data/TaskRepository.swift:body-update"
-
-    --8<-- "Data/TaskRepository+Photos.swift:move-photo"
     ```
 
-An upsert of one typed row, and a delete that names its rows by filter. Duplicate task asks for
-the stored row back with `select()`, and reads it with `resultOrNull()` unless the write
-`isQueued`:
+An upsert that asks for its row back, and a delete by filter:
 
 From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/OfflineTaskRepository.kt) · [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift)
 
@@ -67,9 +61,7 @@ From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabas
     --8<-- "Data/TaskRepository.swift:delete-task"
     ```
 
-Several rows go in one write, typed or as a JSON body, queued as one when offline. The starter
-list's ids are the same on every import, so `ignoreDuplicates` makes a second import change
-nothing:
+Several rows in one write:
 
 From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/OfflineTaskRepository.kt) · [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift)
 
@@ -122,15 +114,10 @@ From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabas
 
 ## What a write returns
 
-`MutationOutcome` is a closed set of two, so a `when` over it stays exhaustive:
-
-| Case | Meaning |
-| --- | --- |
-| `Applied(result)` | The server applied the write; `result` is its answer, as supabase-kt returns it |
-| `Queued(pendingMutation)` | The write waits in the mutation queue; `pendingMutation.id` identifies it from now on, on the rejected list too |
-
-`isQueued` says which, and `resultOrNull()` is the `Applied` result or `null`. What a
-`QueueIfOffline` write returns:
+`MutationOutcome` is a closed set, so a `when` over it stays exhaustive: `Applied(result)` holds
+the server's answer as supabase-kt returns it, and `Queued(pendingMutation)` the queued write,
+whose `id` identifies it from then on, on the rejected list too. `isQueued` says which, and
+`resultOrNull()` is the `Applied` result or `null`. A `QueueIfOffline` write returns:
 
 | When it is made | Outcome |
 | --- | --- |
@@ -138,39 +125,32 @@ From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabas
 | Something of the user waits ahead of it, in any table, or the session is still restoring | `Queued`, and a pass is started to send it |
 | Network access is off (`disableNetwork()`) | `Queued`; nothing is sent until access is back on |
 | Sent at once, and it may not have run: no connection or no answer, a `503` or `520`, an expired token that could not be refreshed, or PostgREST's schema cache not knowing the table or a column yet | `Queued`. A later pass sends it: when the network comes back, the session settles, another write is made or the app syncs |
-| Sent at once, and the server refused it with any other answer | The server's exception is thrown, and the write leaves the queue |
+| Sent at once, and the server refused it with any other answer | The server's exception is thrown, as `supabase.from(…)` would, and the write leaves the queue; it never reaches the rejected list, which holds only refusals found on replay ([Conflicts and failures](failures.md)) |
 | The caller is canceled while the write is on the wire | It stays queued, since the server may have it, and a pass sends it |
-
-A write sent at once that the server refuses throws, as `supabase.from(…)` would, and never reaches
-the rejected list; only a refusal found on replay does. See
-[Conflicts and failures](failures.md).
 
 ## Writes the queue cannot hold
 
-Some writes cannot be queued faithfully. They are sent at once instead, as `OnlineOnly` writes are,
-except that a success still updates the cache. When one cannot be sent for want of a connection,
-it throws `MutationNotQueueableException`, whose cause is the connectivity failure and whose
-message says which kind it was:
+These are sent at once instead, as `OnlineOnly` writes are, except that a success still updates
+the cache. One that cannot be sent for want of a connection throws
+`MutationNotQueueableException`, whose cause is the connectivity failure and whose message names
+the kind:
 
 - an UPDATE or DELETE with no filter, or one the queue cannot record exactly: an `or { }` or
   `and { }` group, a negated filter, a filter on an embedded table's column, or a `limit`, `order`
-  or `offset`;
+  or `offset` (a queued UPDATE or DELETE carries filters on the table's own columns, joined as AND,
+  with any of supabase-kt's operators);
 - a dry run (below);
-- a write to a schema other than the client's default;
+- a write to a schema other than the client's default (below; `OnlineOnly` sends it as any write);
 - a write whose user cannot be read from the stored session;
 - a write that was on its way into the queue while local data was cleared.
-
-A queued UPDATE or DELETE carries filters on the table's own columns, joined as AND, with any of
-supabase-kt's operators.
 
 ## Two filters on one column
 
 An update or a delete with two top-level filters on one column throws `IllegalArgumentException`
-under either strategy, online or offline, before anything is sent or queued: supabase-kt would send
-only the first, and the write would reach more rows than it names, now or when the queue replays
-it. Write the conditions as one `and { }` group, which supabase-kt sends whole. A group is a filter
-the queue cannot record, so such a write is sent at once: the sample's Try it makes one offline to
-show its `MutationNotQueueableException`.
+under either strategy, online or offline, before anything is sent or queued
+([Coming from supabase-kt](../getting-started/migrating.md#two-filters-on-one-column)). One
+`and { }` group is the fix, and a group is a filter the queue cannot record, so such a write is
+sent at once: Try it makes one offline to show its `MutationNotQueueableException`.
 
 From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/OfflineTaskRepository.kt) · [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift)
 
@@ -187,81 +167,54 @@ From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabas
     ```
 
     Swift sends two conditions on one column together, in one `and` group, so nothing is refused.
-    The group is a filter the queue cannot record, so this delete is sent at once, and offline it
-    fails with `mutationNotQueueable`.
 
 ## Dry runs
 
-A dry run is a write carrying `Prefer: tx=rollback`: supabase-kt 3.8's `dryRun()`, or on 3.6 the
-header added by hand. It is never queued, since the queue would replay it as a real write: it is
-sent at once, and offline it throws `MutationNotQueueableException`.
+A dry run (`Prefer: tx=rollback`: supabase-kt 3.8's `dryRun()`, or the header added by hand on
+3.6) is never queued, since a replay would run it for real: it is sent at once, and offline throws
+`MutationNotQueueableException`. PostgREST rolls it back only when the project lets a request
+choose (`db-tx-end` set to `commit-allow-override` or `rollback-allow-override`), which a hosted
+Supabase project does not by default, so there **a dry run commits**: the library reads
+`Preference-Applied`, applies such a write like any other, patches its rows into the cache and
+logs a warning once per client. Check a dry run against a project that allows the override, or do
+not rely on it.
 
 ```kotlin
 --8<-- "QueueExamples.kt:dry-run"
 ```
 
-PostgREST rolls a dry run back only when the project lets a request choose (`db-tx-end` set to
-`commit-allow-override` or `rollback-allow-override`). A hosted Supabase project does not by
-default, so there **a dry run commits**. The library reads the server's `Preference-Applied`
-answer: a write the server did not roll back is applied like any other, its rows are patched into
-the cache, and a warning is logged once per client. Check a dry run against a project that allows
-the override, or do not rely on it.
+## Upserts and ids
 
-## Upsert options
+A queued write keeps `onConflict`, `ignoreDuplicates` and `defaultToNull` for its replay. The cache
+merges an upsert by its `onConflict` columns or the table's key (`id` unless configured)
+([Optimistic overlay](overlay.md#limits)).
 
-`onConflict`, `ignoreDuplicates` and `defaultToNull` are kept with a queued write, so its replay
-sends what the call asked for (the starter list above sets the first two). The cache merges an upsert by its `onConflict` columns, or by the
-table's key (`id` unless configured): on a table without an `id` column, name the conflict
-columns. An upsert that ignores duplicates shows offline as though it landed, since the library
-cannot tell whether the server already holds the row. See [Optimistic overlay](overlay.md#limits).
+**Make ids on the device**: such a row can be shown, opened and edited before it reaches the
+server, and is never inserted twice. A keyed INSERT (its rows carry the table's primary key) whose
+earlier send may have reached the server is replayed as an upsert that ignores duplicates, and `SyncReport.alreadyOnServerCount` counts
+such rows. An INSERT whose key the server makes is inserted twice when the answer to its first send
+was lost; it can show twice in a read of its table answered while it is on the wire and, unless it
+asks for its rows back (`select()`), in that query's cached rows, across restarts, until they are
+fetched again; what a replay overwrites is on [Conflicts and failures](failures.md#conflicts). A
+queued row carries only the columns it wrote until the list is fetched again
+([Optimistic overlay](overlay.md#tips)).
 
-## Make ids on the device
+## Another schema and the request lambda
 
-A row whose id the app makes can be shown, opened and edited before it reaches the server, and is
-never inserted twice:
-
-- A keyed INSERT (one whose rows carry the table's primary key) whose earlier send may have reached
-  the server is replayed as an upsert that ignores duplicates, so a send whose answer was lost does
-  not insert the row again. `SyncReport.alreadyOnServerCount` counts such rows.
-- An INSERT whose key the server makes is inserted twice when the answer to its first send was
-  lost. It can show twice in a read of its table answered while it is on the wire and, unless it
-  asks for its rows back (`select()`), in that query's cached rows, across restarts, until they
-  are fetched again.
-- An UPSERT, an UPDATE and a DELETE replay as they were sent. They are idempotent, but a replay
-  after a lost answer overwrites whatever another writer changed in between.
-
-## Columns the server fills in
-
-A queued row carries only the columns it wrote until the list is fetched again: a default or a
-trigger's value, such as a `created_at` the server sets, is missing from it. Write such columns on
-the device, or decode them as optional. `select()` on a write helps only when the write is sent at
-once: the server's values are then patched into the cache. A queued write does not keep it, so its
-replay brings nothing back, and the list shows the server's values once it is fetched again.
-
-## Values several devices change
-
-A queued write replays exactly what you sent; a value that several devices change concurrently (a
-counter, a running total) is computed on the server, and clients write only the facts that feed it.
-
-## Another schema
-
-The queue replays to the client's default schema only. A `QueueIfOffline` write to a table in
-another schema is therefore sent at once and never queued, and does not wait for writes queued to
-the default schema. Offline it throws a `MutationNotQueueableException` that names the schema. Online, the cached
-queries of that schema's table are marked stale. `OnlineOnly` sends it as it sends any write. Name
-the schema with `from(schema, table)` or the request's `schema`, not a raw `Content-Profile` header,
-which the engine does not read.
+The queue replays to the client's default schema only, so a `QueueIfOffline` write to another
+schema is sent at once and does not wait for writes queued to the default one; offline it throws a
+`MutationNotQueueableException` naming the schema, and online it marks the cached queries of that
+schema's table stale. Name the schema with `from(schema, table)` or the request's `schema`: the
+engine does not read a raw `Content-Profile` header.
 <small>`WritesToAnotherSchemaTest.online_it_is_sent_to_that_schema`,
 `WritesToAnotherSchemaTest.offline_it_fails_naming_the_schema_and_nothing_is_queued`,
 `WritesToAnotherSchemaTest.it_does_not_wait_for_writes_queued_to_the_default_schema`,
 `WritesToAnotherSchemaTest.the_cached_queries_of_that_schema_are_fetched_again`,
 `NonDefaultSchemaTest.an_online_only_write_to_another_schema_is_sent_to_it`</small>
 
-## The request lambda
-
-A write runs its `request` lambda up to three times: once built to read its schema, filter and
-`select()`, once to tell a dry run, and once to send it (an `OnlineOnly` write, once). It must
-configure the same request every time: no side effects, and no clock or counter read inside it.
+A write runs its `request` lambda up to three times (to read its schema, filter and `select()`, to
+tell a dry run, and to send it; an `OnlineOnly` write, once), so it must configure the same request
+every time: no side effects, and no clock or counter read inside it.
 <small>`RequestLambdaRunsTest.an_update_sent_at_once_runs_the_request_three_times`,
 `RequestLambdaRunsTest.a_write_queued_offline_runs_the_request_three_times`,
 `RequestLambdaRunsTest.an_online_only_write_runs_the_request_once`</small>
@@ -295,17 +248,12 @@ From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabas
     ```
 
 `pendingMutations(table)`, `pendingMutationCount(table)` and `pendingMutationCountFlow(table)` show
-the current user's queued writes, of one table or of all, in the order they will be sent. Each is a
-`PendingMutation`: its `id`, `table`, `operation`, `createdAt`, the keys of the rows it touches
-(`rowKeys`) and its `body`. Another user's writes are never listed, and their ids do nothing.
-
-`discardPendingMutation(id)` removes a write without sending it: **destructive**, the write is lost,
-and the rows it changed show again as the server last sent them. It is the way out of a write the
-server keeps failing, which holds every later write of the user behind it. When the write is on
-the wire, it waits for that send to end, then discards it if it is still queued.
-
-The queue is never evicted and has no size bound. Sending it is on
-[Replaying the queue](sync.md); refused writes are on [Conflicts and failures](failures.md#the-rejected-list).
+the current user's queued writes, of one table or of all, in the order they will be sent: each a
+`PendingMutation` with its `id`, `table`, `operation`, `createdAt`, the keys of the rows it touches
+(`rowKeys`) and its `body`. `discardPendingMutation(id)` is **destructive**, and the way out of a
+write the server keeps failing, which holds every later write of the user behind it. The queue is
+never evicted and has no size bound. Sending it is on [Replaying the queue](sync.md); refused
+writes are on [Conflicts and failures](failures.md#the-rejected-list).
 
 ## Behavior matrix
 

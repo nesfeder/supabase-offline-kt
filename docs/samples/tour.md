@@ -23,7 +23,7 @@ The list, open tasks first, with a search field and four chips above it.
 | How many photos each task has | A live read of the photo rows with `in` on `task_id` | `in("task_id", values:)` on the live read | [Reactive reads](../behaviors/reactive-reads.md#filters-search-and-pages) |
 | Pull to refresh, and the caption under the title: "Updated just now", "From this device, 3 minutes ago", and how many changes wait | `select(readStrategy = NetworkFirst(maxAge))` of the list shown, chip and search included, since each query is cached on its own, and the result's `isFromCache`, `fetchedAt` and `hasPendingMutations` | `select(readStrategy: .networkFirst(maxAge:))`, and the `OfflineResponse`'s `isFromCache`, `fetchedAt` and `hasPendingMutations` | [One-shot reads](../behaviors/read-strategies.md#where-the-rows-came-from) |
 | Tick a task done | `update` with a JSON body | `update` with a `[String: OfflineJSON]` body | [Writes and the offline queue](../behaviors/mutations.md) |
-| Swipe a task away, with Undo | Its photos still waiting to upload, on the device; its photo files (online only); then `delete` of its photo rows and of the task | The same, with no Undo | [Writes and the offline queue](../behaviors/mutations.md), [Storage caching](../behaviors/storage.md#writes) |
+| Swipe a task away, with Undo | Its photo files (online only); its photos still waiting to upload, on the device; then `delete` of its photo rows and of the task | The same, with no Undo | [Writes and the offline queue](../behaviors/mutations.md), [Storage caching](../behaviors/storage.md#writes) |
 | **Mark all done**, in the menu | `rpc("complete_all_tasks")`, a database function, network only; then the list shown and the whole list are read again, since a function's changes reach the device only by a read | `rpc("complete_all_tasks")`, from the Tasks tab's menu | [Coming from supabase-kt](../getting-started/migrating.md#what-is-never-cached-or-queued) |
 | An alert when the server refused a waiting change | `rejectedMutations().first()` at launch, then the flow | The same | [Conflicts and failures](../behaviors/failures.md#the-rejected-list) |
 | The badges: open tasks on Tasks, waiting changes on Sync, red when one was refused | `select(readStrategy = CacheFirst(maxAge))` and `pendingMutationCount()` at launch, then the live list and `syncStatus` | `select(readStrategy: .cacheFirst(maxAge:))` and `pendingMutationCount()` at launch, then the live list and `syncStatus` | [One-shot reads](../behaviors/read-strategies.md), [Replaying the queue](../behaviors/sync.md#the-status) |
@@ -43,6 +43,7 @@ The list, open tasks first, with a search field and four chips above it.
 | The task, even one never opened before, offline | The list's own query, with the row picked out on the device | The same | [FAQ](../help/faq.md#the-first-read-offline-is-empty) |
 | Title and notes, saved as you type | `update` with a typed value | `update` with a typed `Encodable` patch that writes a cleared note as `null` | [Writes and the offline queue](../behaviors/mutations.md) |
 | **Duplicate task**, in the menu | `upsert(row) { select() }`, then `isQueued` and `resultOrNull()` | `upsert(copy)`, under an id made from the task's, so a second copy writes over the first; then `isQueued` | [Writes and the offline queue](../behaviors/mutations.md) |
+| **Delete task**, the bin beside the done button, offline too | As swiping a task away | The same, from the last row of the task's form | [Writes and the offline queue](../behaviors/mutations.md) |
 | The photos; with Simulate offline on, "Showing photos saved on this device" | `selectAsFlow` of the photo list, `FlowReadStrategy.CacheOnly` while network access is off | `selectAsSequence` of the photo list, `.cacheOnly` while Simulate offline is on | [Reactive reads](../behaviors/reactive-reads.md#the-three-strategies) |
 | **Add photo**, online or offline: the photo shows at once from the device, marked "Waiting to upload", "Uploading" (with its progress) or "Upload failed" with **Retry** and **Remove** | The app's pending-photo directory merged with the photo rows; the uploader watches `syncStatus.network`, then, one photo at a time, `exists` (on a retry), supabase-kt's `uploadAsFlow` on the offline bucket, `upsert` of the photo's row with `ignoreDuplicates`, and `ensureCachedFile` | In the task's Photos section, with no progress: the uploader follows `syncStatus`, then `exists(path:)` (on a retry), `upload(_:data:options:)` with `UploadOptions` (`contentType`, `upsert`, `userMetadata`), `upsert(_:onConflict:ignoreDuplicates:)` of the row and `ensureCachedFile(path:)` | [Storage caching](../behaviors/storage.md#photos-picked-offline-the-apps-own-queue) |
 | **Share all photos of this task**, in the menu | `createSignedUrls` | `createSignedURLs(paths:expiresIn:)` | [Storage caching](../behaviors/storage.md#writes) |
@@ -197,7 +198,8 @@ The library does not merge or resolve conflicts; see
 
 Under **Local data** on the Sync tab:
 
-- **Clear local cache** deletes what the device holds, the queue included, then reads both lists
-  again from your project.
+- **Clear local cache** deletes what the device holds, the queue and the photos waiting to upload
+  included, then reads both lists again from your project.
 - **Start over** deletes this user's photos, photo rows and tasks from your project, clears the
-  device and signs in as a new anonymous user. It needs the network.
+  device and the photos waiting to upload, and signs in as a new anonymous user. It needs the
+  network.

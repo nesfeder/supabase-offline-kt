@@ -154,8 +154,7 @@ security. The legacy `anon` key also works, until Supabase retires it (planned f
 
 ## Where the URL and the key go
 
-When each sample lands, it reads the two values from a file that git ignores, so they never reach
-a commit:
+Each sample reads the two values from a file that git ignores, so they never reach a commit:
 
 | Sample | File | Entries |
 | --- | --- | --- |

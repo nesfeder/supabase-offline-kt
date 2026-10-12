@@ -49,7 +49,7 @@ signed in, and **New task** and the Sync tab's **Queue an invalid title** are sw
 row needs its user, and only the server can create one. The app signs in as soon as it reaches
 the internet.
 
-![The task list before the first sign-in, offline: "Not signed in yet", and no New task button](../assets/samples/android/not-signed-in.png){ width="270" loading=lazy }
+![The Tasks tab before the first sign-in, offline: the subtitle says offline, the list says "Not signed in yet", and there is no New task button](../assets/samples/android/not-signed-in.png){ width="270" loading=lazy }
 
 ## Things to try
 
@@ -61,10 +61,10 @@ mode would, until you switch it back or the app restarts; the rest of the device
 Now add a task, clear another's notes, tick one done and delete one. Each change shows at once.
 A cloud mark on a row means its change has not reached the server yet; the banner and the Sync
 tab's badge count the changes waiting. Pull to refresh, and the caption under the title says the
-list is from this device, and how old it is. A task you have never opened still opens offline: it is read from the list
-the device already holds.
+list is from this device, and how old it is. A task you have never opened still opens offline: it
+is read from the list the device already holds.
 
-![The task list offline: three tasks marked as not synced yet, and a banner counting five changes saved on the device](../assets/samples/android/offline-changes.png){ width="270" loading=lazy }
+![The Tasks tab offline: a banner saying 4 changes are saved on this device, and four tasks, three of them with a cloud mark for a change not synced yet, one of those done](../assets/samples/android/offline-changes.png){ width="270" loading=lazy }
 
 ### Come back and watch it send
 
@@ -78,7 +78,7 @@ data**: it deletes what the device holds, then reads both lists again from your 
 Closing the app while offline loses nothing either: the queue is kept on the device and sent on
 the next launch that has the network.
 
-![The Sync tab offline: five changes waiting, four to tasks and one to photos, with Sync now switched off](../assets/samples/android/changes-waiting.png){ width="270" loading=lazy }
+![The Sync tab's Waiting changes offline: 4 changes waiting, all to tasks, Sync now switched off because sync needs the network, and each change listed with Discard](../assets/samples/android/changes-waiting.png){ width="270" loading=lazy }
 
 ### Queue an invalid title
 
@@ -90,7 +90,7 @@ kept. Offline, it waits in the queue like any other change. When it is sent the 
 (HTTP 400, Postgres code 23514), and it moves to **Refused changes** with the server's answer.
 **Retry** sends it again; **Dismiss** removes it.
 
-![The Sync tab's Refused changes: "Couldn't save (no title)", the reason, "The server answered HTTP 400 · 23514", and Retry and Dismiss](../assets/samples/android/refused-change.png){ width="270" loading=lazy }
+![The Sync tab's Refused changes: "Couldn't save "(no title)"", the reason, "The server answered HTTP 400 · 23514", when it was made and refused, Retry and Dismiss; below it the Server section's count](../assets/samples/android/refused-change.png){ width="270" loading=lazy }
 
 ### Attach a photo
 
@@ -99,6 +99,9 @@ photo**, several at once. A photo shows at once, from the device, marked while i
 uploads, with the upload's progress. Once it is uploaded the library's file cache keeps it, so it
 still shows offline: the Photos tab marks it available offline.
 
+![New task with a title, notes and two photos picked, each with a button to take it off, before Add](../assets/samples/android/new-task-photos.png){ width="270" loading=lazy }
+![The new task's detail with Simulate offline on: "Saved on this device — will sync when online", and its two photos marked "Waiting to upload"](../assets/samples/android/photo-waiting.png){ width="270" loading=lazy }
+
 The library never queues a Storage write, so the app keeps its own queue: a photo added offline
 (Simulate offline on, say) waits on the device, marked "Waiting to upload", and uploads when the
 network comes back, its row written only once Storage has the file. One that fails says why, with
@@ -106,7 +109,7 @@ network comes back, its row written only once Storage has the file. One that fai
 for it but not Details, Share link, Replace, Move or Duplicate. Those, and Delete for an uploaded
 photo, need the network: offline they are switched off.
 
-![A task's detail with one photo attached](../assets/samples/android/photo-attached.png){ width="270" loading=lazy }
+![A synced task's detail: the title and notes, the Done box, the Photos section with Add photo and one uploaded photo, and the done and delete buttons at the bottom](../assets/samples/android/photo-attached.png){ width="270" loading=lazy }
 
 ### Search, filter and refresh
 
@@ -142,12 +145,17 @@ imports a starter list that a second import leaves as it is, makes a grouped del
 the library refuses, makes a read with two filters on one column that it refuses too, and counts
 the open tasks on the server. Each says which call it made and what happened.
 
+![The Sync tab's Try it, after a few items offline: the invalid title queued, the grouped delete refused in the library's own words, and the two filters on one column refused before anything was sent](../assets/samples/android/try-it.png){ width="270" loading=lazy }
+
 ### Start over
 
-**Start over**, under **Local data**, deletes this user's photos, photo rows and tasks from your
-project, clears the device, and signs in as a new anonymous user with an empty list. It needs the
-network: an anonymous user cannot sign back in to reach what it left behind, so offline it
-refuses and deletes nothing.
+**Start over**, under **Local data**, holds photo uploads (waiting for one in progress), clears the
+device, deletes this user's photos, photo rows and tasks from your project, with any file a waiting
+photo already stored, deletes the photos waiting to upload, and signs in as a new anonymous user
+with an empty list. It needs the network: an anonymous user cannot sign back in to reach what it
+left behind, so offline it refuses and deletes nothing.
+**Clear local cache** deletes what the device holds, the queue and the photos waiting to upload
+included, then reads both lists again from your project.
 
 ## Troubleshooting
 

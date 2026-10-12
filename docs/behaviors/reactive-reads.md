@@ -1,9 +1,9 @@
 # Reactive reads
 
 `selectAsFlow` reads a query as it changes: it emits the rows, with the user's queued writes laid
-over them, and emits again whenever a write, a refresh or a server record changes them. It needs
-no Realtime channel: it follows the device's cache, and refreshes the cache from the server as its
-strategy says.
+over them, and again whenever a write, a refresh or a server record changes them. It needs no
+Realtime channel: it follows the device's cache, and refreshes it from the server as its strategy
+says.
 
 From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/OfflineTaskRepository.kt) · [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift) · [TasksModel.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Tasks/TasksModel.swift)
 
@@ -23,8 +23,8 @@ From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabas
 
 ## The three strategies
 
-The sample's list takes the first two from its "Prefer fresh data" switch, and a task's photos take
-the third while Simulate offline is on:
+The sample's list takes the first two from its **Prefer fresh data** switch, and a task's photos
+take the third while Simulate offline is on:
 
 From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/OfflineTaskRepository.kt) · [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift) · [TaskDetailModel.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Detail/TaskDetailModel.swift)
 
@@ -48,10 +48,10 @@ From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabas
   parallel. A refresh that fails leaves the rows on screen and is tried again for as long as the
   flow is collected. Use it for almost every screen.
 - **`NetworkFirstThenCache`** asks the server first, then emits the cached rows as they change.
-  Offline with the query cached, it emits the cached rows at once and keeps asking until the
-  server answers. With nothing cached, or when the server answers with an error, the flow fails.
-- **`CacheOnly`** emits the cached rows and never sends a request. For a query that is not
-  cached it emits `null` rows, or only the queued writes the query admits, rather than failing.
+  Offline with the query cached, it emits them at once and keeps asking until the server answers;
+  with nothing cached, or when the server answers with an error, the flow fails.
+- **`CacheOnly`** never sends a request. For a query that is not cached it emits `null` rows, or
+  only the queued writes the query admits, rather than failing.
 
 ## What each emission says
 
@@ -65,31 +65,10 @@ Each emission is a `QuerySnapshot`, and its fields are true together:
 | `hasPendingMutations` | Whether a queued write added, changed or removed a row shown |
 | `refresh` | How the refresh behind the read stands; see [Refresh lifecycle](refresh-lifecycle.md) |
 
-## Mapping to a screen
-
-`result == null` is a loading state; an empty body is an empty list. A row a queued insert or
-upsert adds comes after the server's rows, whatever the query's order and limit, and lacks the
-columns the server fills in until the server has the write: sort on the device when the order
-matters, and decode into a type whose server-filled fields are optional. Next to rows the screen
-already shows, `refresh` says whether to show a note. The sample maps each snapshot to its own
-type in one place, and the refresh with it:
-
-From the samples: [LibraryMappings.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/LibraryMappings.kt) · [SyncView.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Sync/SyncView.swift)
-
-=== "Android"
-
-    ```kotlin
-    --8<-- "data/supabase/LibraryMappings.kt:refresh-state"
-    ```
-
-=== "iOS"
-
-    ```swift
-    --8<-- "Sync/SyncView.swift:refresh-state"
-    ```
-
-To mark each row whose change has not reached the server yet, combine the read with
-`pendingMutations(table)` and its rows' keys, as the list's read above does:
+`result == null` is a loading state; an empty body is an empty list. Next to rows already on
+screen, `refresh` says whether to show a note ([Refresh lifecycle](refresh-lifecycle.md) has the
+sample's mapping). To mark each row whose change has not reached the server yet, combine the read
+with `pendingMutations(table)` and its rows' keys:
 
 From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/OfflineTaskRepository.kt) · [TasksModel.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Tasks/TasksModel.swift)
 
@@ -108,8 +87,8 @@ From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabas
 ## Filters, search and pages
 
 A live read takes supabase-kt's whole request DSL, and each request is cached on its own. The
-sample's chips, its search and its Recent chip are filters the server applies; a task row's photo
-count reads the photos of the tasks shown with `in`; the Photos grid reads a page more each time:
+sample's chips, search and Recent chip are filters the server applies; a row's photo count reads
+the photos of the tasks shown with `in`; the Photos grid reads a page more each time:
 
 From the samples: [TaskQueries.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/TaskQueries.kt) · [OfflineTaskRepository.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/OfflineTaskRepository.kt) · [TaskQuery.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskQuery.swift) · [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift)
 
@@ -137,41 +116,27 @@ From the samples: [TaskQueries.kt](https://github.com/nesfeder/supabase-offline-
     --8<-- "Data/TaskRepository.swift:photos-page"
     ```
 
-Offline, a query never asked online has nothing cached, so a search or a chip first tapped offline
-shows nothing; the sample says so. The overlay evaluates `eq`, `neq`, `in` and `is` exactly, so a
-queued change to `done` moves a task between the Open and Done lists at once. A condition it
-cannot evaluate (`ilike`, `gte`, `lt`) admits a queued row, so a task made offline shows in every
-search until the list is fetched again. See [Optimistic overlay](overlay.md).
+A queued change to `done` moves a task between Open and Done at once, but a task made offline shows
+in every search until the list is fetched again ([Optimistic overlay](overlay.md)).
 
 ## When it fetches again
 
-A `CacheFirstThenNetwork` read refreshes when it starts, and tries again until a refresh
-succeeds. After that it fetches again only when:
+A `CacheFirstThenNetwork` read refreshes when it starts and tries again until a refresh succeeds.
+After that it fetches again only when local data is cleared or the cache passes to another user,
+when a write the cache could not follow exactly marks the list stale, and when a new collection
+starts after every earlier collector has gone. It does not poll: to pick up changes made
+elsewhere, read the same query with `readStrategy = ReadStrategy.NetworkOnly` (a pull to refresh),
+whose answer replaces the cached list for every live reader of it, or apply Realtime records
+([Applying Realtime events](realtime.md)).
 
-- local data is cleared, or the cache passes to another user;
-- a write the cache could not follow exactly marks the list stale;
-- a new collection starts, after every earlier collector has gone.
-
-It does not poll. To pick up changes made elsewhere, read the same query with
-`readStrategy = ReadStrategy.NetworkOnly` (a pull to refresh): its answer replaces the cached
-list, and every live reader of the query emits it. Or apply Realtime records as they arrive; see
-[Applying Realtime events](realtime.md).
-
-## Sharing, slow collectors and closing
+## Sharing and closing
 
 Collectors of one `CacheFirstThenNetwork` query share one subscription to the cache and one
-refresh. A slow collector is handed the latest value, never every list in between, and never holds
-back another collector.
-
-A failure the read cannot recover from ends the flow after the values before it. A refresh that
-fails is not such a failure: it is reported in `refresh`. When the client closes, a collection
-still running completes, so a screen torn down with the client sees its flow end, and `first()` on
-one that has not emitted yet throws `NoSuchElementException` (`firstOrNull()` returns `null`); a
-flow collected after `close()` fails with `IllegalStateException`.
-
-A read of a shape the cache does not hold (`single()`, a `count`, `csv()`, …) emits the server's
-answer once, with `Idle`, and completes; offline it fails, and under `CacheOnly` it fails at once
-with `CacheMissException`.
+refresh. A failure the read cannot recover from ends the flow after the values before it; a
+refresh that fails is not one, it is reported in `refresh`. When the client closes, a collection
+still running completes: `first()` on one that has not emitted yet throws
+`NoSuchElementException` (`firstOrNull()` returns `null`), and a flow collected after `close()`
+fails with `IllegalStateException`.
 
 ## Behavior matrix
 
@@ -191,9 +156,10 @@ A server's own error (4xx or 5xx) is a refresh failure for `CacheFirstThenNetwor
 <small>`CacheFirstWithParallelRefreshTest.refresh_failure_does_not_terminate_flow`,
 `NetworkFirstThenCacheFallbackTest.with_a_warm_cache_a_servers_own_error_still_fails_it`</small>
 
-A read of a shape the cache cannot hold (see the [one-shot matrix](read-strategies.md#behavior-matrix))
-emits the network's answer once, `Idle`, and completes; offline it fails. Under `CacheOnly` it
-fails at once with `CacheMissException` and sends nothing.
+A read of a shape the cache cannot hold (`single()`, a `count`, `csv()`, …; see the
+[one-shot matrix](read-strategies.md#behavior-matrix)) emits the network's answer once, `Idle`,
+and completes; offline it fails. Under `CacheOnly` it fails at once with `CacheMissException` and
+sends nothing.
 <small>`ReadShapeTest.a_reactive_read_of_each_shape_emits_the_network_answer_once`,
 `ReadShapeTest.offline_a_reactive_read_of_each_shape_fails`,
 `ReadShapeTest.a_cache_only_read_of_each_shape_sends_nothing_and_says_the_cache_cannot_answer_it`</small>
@@ -207,20 +173,10 @@ A read live while the session settles into another identity drops what it showed
 before and ends on the new identity's rows alone.
 <small>`CacheBelongsToOneIdentityTest.a_reactive_read_live_across_a_change_of_user_ends_on_the_new_users_rows_alone`</small>
 
-What an emission says of its rows is true of that emission. They are from the cache until the
-read's own refresh has fetched them, then not, until the cache marks them stale; a `CacheOnly` read
-is always from the cache. `fetchedAt` is when the rows under them were fetched, never when a local
-change was applied to them. `hasPendingMutations` is `true` when a queued write changed a row the
-read shows, and not for one it does not show. A refresh that keeps failing while the network is
-believed up is `Stalled`, as before.
+Each snapshot field is true of its own emission, as the table above says; a refresh that keeps
+failing while the network is believed up is `Stalled`.
 <small>`QuerySnapshotTest.an_emission_is_from_the_cache_until_the_reads_refresh_fetches_it`,
 `QuerySnapshotTest.a_local_change_applied_to_the_rows_keeps_the_time_they_were_fetched`,
 `QuerySnapshotTest.a_queued_write_marks_the_snapshot_pending_only_when_it_changes_a_row_shown`,
 `QuerySnapshotTest.a_cache_only_read_is_always_from_the_cache`,
 `QuerySnapshotTest.a_refresh_that_keeps_failing_while_the_network_is_believed_up_stalls`</small>
-
-A one-shot `select` says the same through `PostgrestResult.isFromCache`, `fetchedAt` and
-`hasPendingMutations`; a result supabase-kt returned itself has none of them set, and a read the
-cache never holds keeps the server's own headers, such as a count.
-<small>`QuerySnapshotTest.a_one_shot_read_says_where_its_rows_came_from`,
-`QuerySnapshotTest.a_read_the_cache_never_holds_keeps_the_servers_own_headers`</small>

@@ -1,10 +1,8 @@
 # Configuration
 
-The plugin's settings go in the `install(Offline) { … }` block, an `Offline.Config`. Every setting
-has a default that suits most apps; set only what you need. The plugin reads its settings once,
-when the client is created. The sample apps write every setting out, each at the default it would
-take anyway but the connectivity signal they supply and a debug build's log level, so each line
-says what it does:
+The plugin's settings go in the `install(Offline) { … }` block, an `Offline.Config`, read once when
+the client is created. Every setting has a default that suits most apps. The samples write every
+setting out, each at its default but their own connectivity signal and a debug build's log level:
 
 From the samples: [SampleSupabaseClient.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/platform/SampleSupabaseClient.kt) · [ClientSettings.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/App/ClientSettings.swift)
 
@@ -71,13 +69,11 @@ Android, both under `Library/Application Support` on iOS. On iOS, a database fou
 where an earlier build kept it, is first moved to that default place with its files.
 
 When the directory has no database yet and the default location has one that no client of this
-process holds, the first client moves the database there, its unsent writes included, and then the
-downloaded files; a file that cannot move is deleted, to be downloaded again, rather than left
-beyond `clearLocalData()`. When the database cannot move, the client keeps using the default one
-and logs a warning; when both places hold a database, it uses the configured one and logs that the
-other was left behind, with its files
-([Project setup](../getting-started/setup.md#a-data-directory-and-a-second-process)). On Android, a directory under `noBackupFilesDir` keeps the data out of backups; see
-[Project setup](../getting-started/setup.md#backups).
+process holds, the first client moves the database there with its unsent writes, then the
+downloaded files ([Project setup](../getting-started/setup.md#a-data-directory-and-a-second-process));
+when both places hold a database, it uses the configured one and logs that the other was left
+behind, with its files. On Android, a directory under `noBackupFilesDir` keeps the data out of
+backups ([Backups](../getting-started/setup.md#backups)).
 
 From the samples: [SampleSupabaseClient.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/platform/SampleSupabaseClient.kt) · [ClientSettings.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/App/ClientSettings.swift)
 
@@ -100,21 +96,12 @@ monitor. `null` uses the monitor: Android's `ConnectivityManager`, counting a ne
 internet that Android has validated (it needs the `ACCESS_NETWORK_STATE` permission the library's
 manifest declares), or Network's path monitor on iOS.
 
-The signal is a hint, never a gate: the library tries every request you make, whatever the signal
-says, because a monitor can be wrong either way (a captive portal, a VPN, a network that cannot
-reach your project). What it decides:
-
-- when the library tries by itself: when it turns `true`, a waiting refresh tries again at once
-  and, with `autoSync`, queued writes are sent;
-- while it says offline, the library's own passes stop after one fails for want of a connection,
-  until the signal turns `true`, the session settles anew or you call `syncPendingMutations()`, so
-  a wrong signal costs one failed attempt;
-- whether a refresh that cannot reach the network reads `Paused` rather than `Stalled`;
-- what `syncStatus.value.network` says.
-
-A signal that fails or ends is no longer watched (a failure is logged), and the network is then
-`UNKNOWN`, which counts as online. To stop every request, use `disableNetwork()`: that switch is a
-gate. See [Replaying the queue](../behaviors/sync.md).
+The signal is a hint, never a gate: every request you make is tried whatever it says, and it
+decides only when the library tries by itself, whether a waiting refresh reads `Paused` or
+`Stalled`, and what `syncStatus.value.network` says
+([Replaying the queue](../behaviors/sync.md#the-connectivity-monitor-is-a-hint-never-a-gate)). A
+signal that fails or ends is no longer watched (a failure is logged), and the network is then
+`UNKNOWN`, which counts as online.
 
 From the samples: [SampleSupabaseClient.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/platform/SampleSupabaseClient.kt) · [ConnectivitySignal.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/platform/ConnectivitySignal.kt) · [ClientSettings.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/App/ClientSettings.swift)
 
@@ -134,14 +121,11 @@ From the samples: [SampleSupabaseClient.kt](https://github.com/nesfeder/supabase
 
 ### `autoSync`
 
-Whether the plugin sends queued writes by itself. With `true`, the default, it sends them when the
-session settles into a user with writes queued, when the network comes back, and, for a client
-without Auth, once when the client opens with writes an earlier run left queued. `false` stops
-those three: you call `syncPendingMutations()` yourself.
-
-Either way, a write queued behind an earlier one is sent once that one is, as is whatever a sent,
-refused or discarded write leaves queued, and a retried rejection: otherwise a write made online
-would wait for the app with nothing to show for it.
+Whether the plugin sends queued writes by itself: with `true`, the default, when the session
+settles into a user with writes queued, when the network comes back, and, for a client without
+Auth, once when it opens with writes an earlier run left queued. `false` stops those three, and you
+call `syncPendingMutations()` yourself; a write queued behind another is still sent as before
+([When the library sends by itself](../behaviors/sync.md#when-the-library-sends-by-itself)).
 
 ### `primaryKeys`
 
