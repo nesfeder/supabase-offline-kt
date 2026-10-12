@@ -231,7 +231,7 @@ jobs:
     name: Formatting
     needs: changes
     if: needs.changes.outputs.formatting == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Room for both downloads to use every retry: 340 s each at most (download-verified.sh).
     timeout-minutes: 15
     env:
@@ -331,7 +331,7 @@ jobs:
     name: Static checks
     needs: changes
     if: needs.changes.outputs.kotlin == 'true' || needs.changes.outputs.workflows == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -452,7 +452,7 @@ jobs:
     name: Android host tests
     needs: [changes, formatting, static-checks]
     if: ${{ !cancelled() && !failure() && needs.changes.outputs.kotlin == 'true' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -765,7 +765,7 @@ jobs:
     if: >-
       github.actor != 'dependabot[bot]' && github.triggering_actor != 'dependabot[bot]'
       && (github.event_name == 'push' || github.event.repository.visibility == 'public')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: read # the checkout, whose file list the CLI maps the report's paths onto
@@ -818,7 +818,7 @@ jobs:
       needs.changes.outputs.workflows == 'true'
       && !(github.actor != 'dependabot[bot]' && github.triggering_actor != 'dependabot[bot]'
       && (github.event_name == 'push' || github.event.repository.visibility == 'public'))
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: read # the checkout, whose file list the CLI maps the report's paths onto
@@ -864,7 +864,7 @@ jobs:
       github.actor != 'dependabot[bot]' && github.triggering_actor != 'dependabot[bot]'
       && (github.event_name == 'push' && github.ref == 'refs/heads/main'
       && vars.PUBLISH_SNAPSHOTS == 'on')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     environment: release
     permissions:

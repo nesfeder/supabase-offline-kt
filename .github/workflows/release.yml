@@ -70,7 +70,7 @@ jobs:
     if: >-
       github.actor != 'dependabot[bot]' && github.triggering_actor != 'dependabot[bot]'
       && (github.repository == 'nesfeder/supabase-offline-kt' && github.ref == 'refs/heads/main')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:
       contents: read
@@ -271,7 +271,7 @@ jobs:
     name: Stage the framework on a draft release
     needs: framework
     if: ${{ !inputs.dry_run }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       contents: write # the draft GitHub Release and its asset; no tag, nothing public
@@ -311,7 +311,7 @@ jobs:
       && (github.repository == 'nesfeder/supabase-offline-kt' && github.ref == 'refs/heads/main'
       && !cancelled() && needs.verify.result == 'success' && needs.framework.result == 'success'
       && (needs.draft.result == 'success') == !inputs.dry_run)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # A real run waits up to 45 minutes for Central to publish (SONATYPE_CLOSE_TIMEOUT_SECONDS).
     timeout-minutes: 75
     environment: release
@@ -445,7 +445,7 @@ jobs:
     name: Tag and announce the release
     needs: [verify, publish]
     if: ${{ !inputs.dry_run }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       contents: write # the tag, the GitHub Release and the post-release branch

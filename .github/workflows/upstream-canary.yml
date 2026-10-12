@@ -67,7 +67,7 @@ jobs:
   canary:
     name: Build against the newest supabase-kt
     if: github.repository == 'nesfeder/supabase-offline-kt'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # The host tests take 5 to 7 minutes in ci.yml with a warm Gradle cache; this job has none.
     timeout-minutes: 30
     permissions:
@@ -262,7 +262,7 @@ jobs:
     name: Open or update the tracking issue
     needs: canary
     if: github.repository == 'nesfeder/supabase-offline-kt' && (needs.canary.outputs.newer == 'true')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
       issues: write # the tracking issue and its label

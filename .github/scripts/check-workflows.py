@@ -11,8 +11,9 @@ It fails when:
   2. a workflow triggers on push without a literal branch or tag filter, so Dependabot's own
      branches would start it, or filters on a Dependabot branch or on every tag;
   3. any job names a self-hosted runner, anywhere in the job, or runs on anything but a literal
-     GitHub-hosted label; or a job calls a reusable workflow other than one of this repository's at
-     the same commit (`$/`);
+     GitHub-hosted label, or on a `-latest` label, which GitHub moves to a newer image on its own
+     schedule; or a job calls a reusable workflow other than one of this repository's at the same
+     commit (`$/`);
   4. ci.yml's final-status does not need every other job but the coverage jobs, needs one of them
      (a Codecov outage must never block a merge), or its condition differs from the one below;
   5. a `uses: $/...` reference names an action or workflow that does not exist;
@@ -114,6 +115,8 @@ HOSTED_LABEL = re.compile(
     r"|macos-latest|macos-\d+(-intel|-large|-xlarge)?"
     r"|windows-latest|windows-\d+(-arm)?"
 )
+# A label GitHub points at a newer image on its own schedule: a job pins a version instead.
+MOVING_LABEL = re.compile(r"(ubuntu|macos|windows)-latest")
 IOS_JOB = ("ci.yml", "ios-tests")
 # The Swift steps of the iOS job, in their order, each in a step that always runs; then the iOS
 # sample's tests, only when the changes job says the sample changed.
@@ -322,6 +325,9 @@ def runner_problems(name: str, job_id: str, job: dict) -> list[str]:
     runs_on = job.get("runs-on")
     if not (isinstance(runs_on, str) and HOSTED_LABEL.fullmatch(runs_on)):
         problems.append(f"{name}: job {job_id} runs on {runs_on!r}, not a literal hosted label")
+    elif MOVING_LABEL.fullmatch(runs_on):
+        problems.append(f"{name}: job {job_id} runs on {runs_on!r}, which GitHub moves to a newer"
+                        " image; pin a version")
     return problems
 
 
@@ -1033,12 +1039,12 @@ jobs:
     if: >-
       github.actor != 'dependabot[bot]' && github.triggering_actor != 'dependabot[bot]'
       && (github.event_name == 'push' || github.event.repository.visibility == 'public')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions: {{contents: read, id-token: write}}
     steps: [{{run: echo}}]
   coverage-rehearsal:
     needs: changes
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions: {{contents: read}}
     steps: [{{run: echo}}]
   snapshot:
@@ -1047,7 +1053,7 @@ jobs:
       github.actor != 'dependabot[bot]' && github.triggering_actor != 'dependabot[bot]'
       && (github.event_name == 'push' && github.ref == 'refs/heads/main'
       && vars.PUBLISH_SNAPSHOTS == 'on')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     environment: release
     permissions: {{contents: read}}
     steps:
@@ -1089,7 +1095,7 @@ on: {workflow_call: {inputs: {ref: {type: string}, swift-reference: {type: strin
 permissions: {}
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions: {contents: read}
     steps:
       - run: mkdocs build --strict
@@ -1116,7 +1122,7 @@ concurrency: {{group: release, cancel-in-progress: false}}
 jobs:
   verify:
     if: {RELEASE_GUARD_IF}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions: {{contents: read}}
     steps:
       - uses: actions/checkout@0123456789abcdef0123456789abcdef01234567
@@ -1147,7 +1153,7 @@ jobs:
   draft:
     needs: framework
     if: ${{{{ !inputs.dry_run }}}}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions: {{contents: write}}
     steps:
       - uses: actions/checkout@0123456789abcdef0123456789abcdef01234567
@@ -1158,7 +1164,7 @@ jobs:
     needs: [verify, framework, draft]
     if: >-
       {PUBLISH_IF}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     environment: release
     permissions: {{contents: read}}
     steps:
@@ -1176,7 +1182,7 @@ jobs:
 {SWIFT_STEP}  finish:
     needs: [verify, publish]
     if: ${{{{ !inputs.dry_run }}}}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions: {{contents: write}}
     outputs: {{version: '${{{{ steps.version.outputs.version }}}}'}}
     steps:
@@ -1204,7 +1210,7 @@ concurrency: {{group: release, cancel-in-progress: false}}
 jobs:
   finish:
     if: {RELEASE_GUARD_IF}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     environment: release
     permissions: {{contents: write}}
     outputs: {{version: '${{{{ steps.version.outputs.version }}}}'}}
@@ -1229,7 +1235,7 @@ on:
   push:
     tags: ['v*']
 jobs:
-  check: {runs-on: ubuntu-latest, steps: [{run: echo supabase-offline-kt}]}
+  check: {runs-on: ubuntu-24.04, steps: [{run: echo supabase-offline-kt}]}
 """
 COMPLIANT_CANARY = f"""\
 on:
@@ -1242,7 +1248,7 @@ permissions: {{}}
 jobs:
   canary:
     if: {REPOSITORY_GUARD}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions: {{contents: read}}
     steps:
       - uses: $/.github/actions/setup
@@ -1260,7 +1266,7 @@ jobs:
   report:
     needs: canary
     if: {REPOSITORY_GUARD} && (needs.canary.outputs.newer == 'true')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions: {{issues: write}}
     steps:
       - env: {{GH_TOKEN: '${{{{ github.token }}}}'}}
@@ -1301,17 +1307,17 @@ def docs_publish_with_step(step: str) -> str:
 
 CASES: list[tuple[str, str, str | None, str]] = [
     ("pull_request_target", "extra.yml",
-     "on: pull_request_target\njobs: {a: {runs-on: ubuntu-latest}}\n", "pull_request_target"),
+     "on: pull_request_target\njobs: {a: {runs-on: ubuntu-24.04}}\n", "pull_request_target"),
     ("workflow_run", "extra.yml",
-     "on: {workflow_run: {workflows: [CI]}}\njobs: {a: {runs-on: ubuntu-latest}}\n",
+     "on: {workflow_run: {workflows: [CI]}}\njobs: {a: {runs-on: ubuntu-24.04}}\n",
      "workflow_run"),
-    ("unfiltered push", "extra.yml", "on: push\njobs: {a: {runs-on: ubuntu-latest}}\n",
+    ("unfiltered push", "extra.yml", "on: push\njobs: {a: {runs-on: ubuntu-24.04}}\n",
      "push is not filtered"),
     ("push with a branch glob", "extra.yml",
-     "on: {push: {branches: ['**']}}\njobs: {a: {runs-on: ubuntu-latest}}\n",
+     "on: {push: {branches: ['**']}}\njobs: {a: {runs-on: ubuntu-24.04}}\n",
      "push is not filtered"),
     ("push with branches-ignore", "extra.yml",
-     "on: {push: {branches-ignore: [main]}}\njobs: {a: {runs-on: ubuntu-latest}}\n",
+     "on: {push: {branches-ignore: [main]}}\njobs: {a: {runs-on: ubuntu-24.04}}\n",
      "branches-ignore"),
     ("another workflow on the self-hosted runner", "extra.yml",
      "on: workflow_dispatch\njobs: {a: {runs-on: [self-hosted, macOS, offline-kt]}}\n",
@@ -1348,7 +1354,7 @@ CASES: list[tuple[str, str, str | None, str]] = [
      "names the self-hosted runner"),
     ("this repository's reusable workflow at another ref", "extra.yml",
      "on: {pull_request: {}}\njobs:\n  a:\n    uses: nesfeder/supabase-offline-kt/.github/"
-     "workflows/evil.yml@some-branch\n    with: {runner: ubuntu-latest}\n",
+     "workflows/evil.yml@some-branch\n    with: {runner: ubuntu-24.04}\n",
      "not a workflow of this commit"),
     ("label in a matrix, upper case", "extra.yml",
      "on: workflow_dispatch\njobs:\n  a:\n    strategy: {matrix: {os: [OFFLINE-KT]}}\n"
@@ -1357,6 +1363,16 @@ CASES: list[tuple[str, str, str | None, str]] = [
     ("ios-tests on a variable that falls back to a hosted label", "ci.yml",
      COMPLIANT_CI.replace("runs-on: macos-26", "runs-on: ${{ vars.IOS_RUNNER || 'macos-26' }}"),
      "job ios-tests runs on"),
+    ("a job on ubuntu-latest", "extra.yml",
+     "on: workflow_dispatch\njobs: {a: {runs-on: ubuntu-latest, steps: [{run: echo}]}}\n",
+     "job a runs on 'ubuntu-latest', which GitHub moves to a newer image"),
+    ("a ci.yml job back on ubuntu-latest", "ci.yml",
+     COMPLIANT_CI.replace("  coverage-rehearsal:\n    needs: changes\n    runs-on: ubuntu-24.04\n",
+                          "  coverage-rehearsal:\n    needs: changes\n    runs-on: ubuntu-latest\n"),
+     "job coverage-rehearsal runs on 'ubuntu-latest', which GitHub moves to a newer image"),
+    ("a job on macos-latest", "extra.yml",
+     "on: workflow_dispatch\njobs: {a: {runs-on: macos-latest, steps: [{run: echo}]}}\n",
+     "job a runs on 'macos-latest', which GitHub moves to a newer image"),
     ("a hosted-looking label the runner could be given", "extra.yml",
      "on: workflow_dispatch\njobs:\n  a:\n    runs-on: macos-offline-kt\n"
      "    steps: [{run: echo}]\n", "not a literal hosted label"),
@@ -1379,10 +1395,10 @@ CASES: list[tuple[str, str, str | None, str]] = [
      COMPLIANT_CI.replace("synchronize, reopened]", "synchronize, reopened, labeled]"),
      "pull_request types"),
     ("push filtered to a literal dependabot branch", "extra.yml",
-     "on: {push: {branches: ['dependabot/gradle/x']}}\njobs: {a: {runs-on: ubuntu-latest}}\n",
+     "on: {push: {branches: ['dependabot/gradle/x']}}\njobs: {a: {runs-on: ubuntu-24.04}}\n",
      "push is not filtered"),
     ("push with a tags glob only", "extra.yml",
-     "on: {push: {tags: ['**']}}\njobs: {a: {runs-on: ubuntu-latest}}\n", "push is not filtered"),
+     "on: {push: {tags: ['**']}}\njobs: {a: {runs-on: ubuntu-24.04}}\n", "push is not filtered"),
     ("fan-in renamed", "ci.yml", COMPLIANT_CI.replace("  final-status:\n", "  fan-in:\n"),
      "no final-status job"),
     (".yaml file carrying ios-tests", "ci.yaml",
@@ -1398,10 +1414,10 @@ CASES: list[tuple[str, str, str | None, str]] = [
                           "changes: {runs-on: ubuntu-slim, permissions: {id-token: write},"),
      "job changes can mint an OIDC token"),
     ("a job with write-all", "extra.yml",
-     "on: workflow_dispatch\njobs:\n  a:\n    runs-on: ubuntu-latest\n    permissions: write-all\n"
+     "on: workflow_dispatch\njobs:\n  a:\n    runs-on: ubuntu-24.04\n    permissions: write-all\n"
      "    steps: [{run: echo}]\n", "job a can mint an OIDC token"),
     ("a coverage-upload job in another workflow", "extra.yml",
-     "on: workflow_dispatch\njobs:\n  coverage-upload:\n    runs-on: ubuntu-latest\n"
+     "on: workflow_dispatch\njobs:\n  coverage-upload:\n    runs-on: ubuntu-24.04\n"
      "    permissions: {id-token: write}\n    steps: [{run: echo}]\n",
      "job coverage-upload can mint an OIDC token"),
     ("OIDC in a workflow's default permissions", "ci.yml",
@@ -1569,7 +1585,7 @@ CASES: list[tuple[str, str, str | None, str]] = [
     ("the publish job without the release environment", "release.yml",
      COMPLIANT_RELEASE.replace("    environment: release\n", ""), "job publish uses the environment None"),
     ("the release environment named in a mapping elsewhere", "docs-check.yml",
-     "on: workflow_call\njobs:\n  check:\n    runs-on: ubuntu-latest\n"
+     "on: workflow_call\njobs:\n  check:\n    runs-on: ubuntu-24.04\n"
      "    environment: {name: release}\n    steps: [{run: echo}]\n",
      "job check uses the environment 'release'"),
     ("the release environment without the Dependabot guard", "release-resume.yml",
@@ -1803,7 +1819,7 @@ CASES: list[tuple[str, str, str | None, str]] = [
      COMPLIANT_RELEASE.replace("runs-on: macos-26", "runs-on: [self-hosted, macOS, offline-kt]"),
      "job framework names the self-hosted runner"),
     ("the framework job on Linux", "release.yml",
-     COMPLIANT_RELEASE.replace("runs-on: macos-26", "runs-on: ubuntu-latest"),
+     COMPLIANT_RELEASE.replace("runs-on: macos-26", "runs-on: ubuntu-24.04"),
      "not a GitHub-hosted macOS label"),
     ("the framework job without its hosted-runner check", "release.yml",
      COMPLIANT_RELEASE.replace(f"      - if: {HOSTED_GUARD_IF}\n        run: exit 1\n", ""),
@@ -2192,10 +2208,10 @@ CASES: list[tuple[str, str, str | None, str]] = [
                               f"      - run: {BUILD_USER_SCRIPT} prepare\n"),
      "runs Gradle outside the unprivileged build user"),
     ("the canary gains a third job", "upstream-canary.yml",
-     COMPLIANT_CANARY + "  other: {runs-on: ubuntu-latest, steps: [{run: echo}]}\n",
+     COMPLIANT_CANARY + "  other: {runs-on: ubuntu-24.04, steps: [{run: echo}]}\n",
      "upstream-canary.yml: jobs"),
     ("another workflow on a schedule", "extra.yml",
-     "on: {schedule: [{cron: '0 0 * * 0'}]}\njobs: {a: {runs-on: ubuntu-latest}}\n",
+     "on: {schedule: [{cron: '0 0 * * 0'}]}\njobs: {a: {runs-on: ubuntu-24.04}}\n",
      "not one of the listed scheduled workflows"),
 ]
 
