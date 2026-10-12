@@ -20,9 +20,9 @@ SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor
 SWIFT_APPROACHABLE_CONCURRENCY = YES
 TARGETED_DEVICE_FAMILY = 1,2
 
-// CI builds with OFFLINE_TASKS_WARNINGS_AS_ERRORS=YES on the command line, which reaches only these
-// targets: the same setting given directly would reach the packages too, which Xcode builds with
-// their warnings suppressed, and the two clash.
+// scripts/test-ios-sample.sh builds with OFFLINE_TASKS_WARNINGS_AS_ERRORS=YES on the command line,
+// which reaches only these targets: the same setting given directly would reach the packages too,
+// which Xcode builds with their warnings suppressed, and the two clash.
 OFFLINE_TASKS_WARNINGS_AS_ERRORS = NO
 SWIFT_TREAT_WARNINGS_AS_ERRORS = $(OFFLINE_TASKS_WARNINGS_AS_ERRORS)
 GCC_TREAT_WARNINGS_AS_ERRORS = $(OFFLINE_TASKS_WARNINGS_AS_ERRORS)

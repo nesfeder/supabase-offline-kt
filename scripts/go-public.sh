@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #
 # Sets the repository settings that GitHub offers only on a public repository, on the day the
-# repository goes public. The release runbook's "Make the repos public" step runs it last: first
-# the self-hosted runner is removed, then the repository is made public, then this script runs.
+# repository goes public. It is the third step of RELEASING.md's "Going public" list: first the
+# self-hosted runner is removed, then the repository is made public, then this script runs.
 #
 # It sets, through the GitHub REST API:
 #   - workflow runs from a fork's pull request wait for approval, for every external contributor;
@@ -13,8 +13,8 @@
 #   - Discussions are on and the wiki is off;
 #   - the description, homepage and topics are the ones below.
 # It never touches branch protection, rulesets, environments (the release environment's required
-# reviewer included), the Pages source, secrets or variables. Those stay manual steps in the
-# runbook.
+# reviewer included), the Pages source, secrets or variables. Those stay manual; the required
+# reviewer is the last step of that list.
 #
 # It refuses to run, and changes nothing, while the repository is private or while any
 # self-hosted runner is registered: on a public repository, a fork's pull request can edit a
@@ -146,9 +146,9 @@ refuse_unless_public_without_runners() {
         {
             echo "go-public: refusing to run against $REPOSITORY. Nothing was changed, because:"
             printf '%s' "$reasons"
-            echo "This script is the last part of the release runbook's \"Make the repos public\" step."
-            echo "First remove the self-hosted runner (the registered count must read 0), then make"
-            echo "the repository public, then run this script again."
+            echo "This script is the third step of RELEASING.md's \"Going public\" list. First remove"
+            echo "the self-hosted runner (the registered count must read 0), then make the repository"
+            echo "public, then run this script again."
         } >&2
         exit 1
     fi
@@ -457,9 +457,9 @@ apply_changes() {
 
 print_manual_steps() {
     echo
-    echo "Left to the runbook, by hand: branch protection, the release environment's required"
-    echo "reviewer, secrets and variables, the Pages source, and making the Swift package's"
-    echo "repository public."
+    echo "Left to do by hand: branch protection, the release environment's required reviewer,"
+    echo "secrets and variables, the Pages source, and making the Swift package's repository public"
+    echo "(RELEASING.md, \"Going public\")."
 }
 
 main() {
@@ -711,11 +711,11 @@ GET $repository/actions/runners" ]
 
     refused_for_both_reasons() {
         [ "$STATUS" -eq 1 ] && has "the repository is private;" \
-            && has "1 self-hosted runner is registered;" && has '"Make the repos public" step' \
+            && has "1 self-hosted runner is registered;" && has "RELEASING.md's \"Going public\" list" \
             && has "Nothing was changed" && only_the_two_checks
     }
     run_case today
-    check "private with a runner: the dry run refuses, naming both reasons and the runbook step" \
+    check "private with a runner: the dry run refuses, naming both reasons and the going-public list" \
         refused_for_both_reasons
     run_case today --apply
     check "private with a runner: --apply refuses the same way and sends no write" \
@@ -757,7 +757,7 @@ GET $repository/actions/runners" ]
             && has "now     Offline-first Supabase" && has "target  $DESCRIPTION" \
             && has "now     $HOMEPAGE" \
             && has "now     (empty)" && has "target  $(target_topics | sed 's/,/, /g')" \
-            && has "Left to the runbook"
+            && has "Left to do by hand"
     }
     run_case fresh
     expected_dry_run="$OUTPUT"
