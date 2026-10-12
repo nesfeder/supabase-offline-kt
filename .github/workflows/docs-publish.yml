@@ -76,7 +76,15 @@ jobs:
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: ${{ inputs.swift-reference }}
-          path: site/swift
+          path: ${{ runner.temp }}/swift-reference-artifact
+
+      # The artifact is one tar (DocC's file names hold colons, which the artifact store refuses);
+      # its top-level folder is dropped so the site lands at site/swift/ as before.
+      - name: Unpack the Swift API reference
+        if: inputs.swift-reference != ''
+        run: |
+          mkdir -p site/swift
+          tar -xf "$RUNNER_TEMP/swift-reference-artifact/swift-reference.tar" -C site/swift --strip-components=1
 
       - name: Check the Swift API reference
         env:
