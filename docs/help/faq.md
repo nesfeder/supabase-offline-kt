@@ -22,9 +22,8 @@ that provider, the plugin cannot open its database; keep the provider, or at lea
 initializer under it.
 
 **A read, an update or a delete throws `IllegalArgumentException`: "two top-level filters on" a
-column.** The request has two top-level filters on that column, and supabase-kt would send only the
-first. Put them in one
-`and { }` group; see [One-shot reads](../behaviors/read-strategies.md#edge-cases).
+column.** supabase-kt would send only the first: put them in one `and { }` group; see
+[Coming from supabase-kt](../getting-started/migrating.md#two-filters-on-one-column).
 
 ## The first read offline is empty
 
@@ -33,24 +32,9 @@ and range make its key. A request never answered online has nothing cached, so o
 read fails, and a live read shows nothing but the queued writes it admits (`null` rows when there
 are none), even when another cached request of the same table holds the rows it asks for. Read a
 detail screen's row from the list a list screen already reads, with the same request, and pick it
-out on the device:
-
-From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/OfflineTaskRepository.kt) · [TaskDetailModel.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Detail/TaskDetailModel.swift)
-
-=== "Android"
-
-    ```kotlin
-    --8<-- "data/supabase/OfflineTaskRepository.kt:row-from-list"
-    ```
-
-=== "iOS"
-
-    ```swift
-    --8<-- "Detail/TaskDetailModel.swift:row-from-list"
-    ```
-
-And read each list online once: on the very first launch, before any read has reached the server,
-there is nothing to show offline.
+out on the device, as the samples do
+([One-shot reads](../behaviors/read-strategies.md#edge-cases)). And read each list online once: on
+the very first launch, before any read has reached the server, there is nothing to show offline.
 
 ## The fallback takes seconds
 
@@ -64,11 +48,10 @@ supabase-kt's schedule and then thrown, cached or not. See
 ## A list that never finishes loading
 
 `QuerySnapshot.result == null` means nothing is known yet; an empty body means the server said the
-list is empty. A list that stays `null` with `refresh` at `Refreshing` is waiting: for the network,
-or for a stored session that is still restoring. A refresh that waits for a session never reads
-`Stalled`. Under `ResponseTrust.AuthenticatedSessionOnly`, a live read of an empty table made signed
-out stays `Refreshing` until the table has rows or a user signs in (without Auth, only rows end
-it). See [Refresh lifecycle](../behaviors/refresh-lifecycle.md).
+list is empty. A list that stays `null` with `refresh` at `Refreshing` is waiting, for the network
+or for a stored session still restoring (which never reads `Stalled`), or, under
+`ResponseTrust.AuthenticatedSessionOnly`, it is an empty table read signed out
+([Refresh lifecycle](../behaviors/refresh-lifecycle.md#cold-start-and-session-restore)).
 
 ## Reading back a queued row
 
