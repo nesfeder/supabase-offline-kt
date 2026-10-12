@@ -9,10 +9,9 @@ All notable changes to this project are recorded in this file. The format follow
      the heading it needs (before the first release, under any of them). A release renames
      "Unreleased" to its version and date, and starts a new one. -->
 
-## Unreleased
+## [0.1.0] - 2026-10-12
 
-Nothing has been released yet. This section describes the library as it stands for its first
-release.
+The first release.
 
 ### Breaking
 
@@ -99,8 +98,8 @@ release.
   its unsent writes and its cached files, when it opens; while another client holds it, it stays
   there and that client's claim fails the open, and when both places hold a database the one in
   `Documents` is left and a warning logged.
-- The iOS framework carries no Swift-only helpers and no SKIE-generated Swift (see Removed). Nothing
-  uses the framework yet: the Swift package is being rebuilt on a bridge of its own.
+- The iOS framework carries no Swift-only helpers and no SKIE-generated Swift (see Removed). The
+  Swift package reaches it through a bridge of its own.
 - On Android, an interface member with a body compiles to a JVM default method only, so the
   `$DefaultImpls` classes are gone (`-jvm-default=no-compatibility`).
 - `SyncStatus.lastSyncError` is a `SyncFailedException?`, which is all it ever held: read its
@@ -335,8 +334,6 @@ release.
   asked for a rollback (`Prefer: tx=rollback`, what a dry run sends) and was committed, as hosted
   projects do, is logged once per client at WARNING.
 - `close()` never throws: a failure closing the database is logged, and the database is released.
-
-### Deprecated
 
 ### Removed
 
