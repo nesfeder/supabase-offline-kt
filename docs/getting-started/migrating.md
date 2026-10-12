@@ -47,13 +47,10 @@ other than the default.
 
 ## What a write returns
 
-A write returns `MutationOutcome`: `Applied(result)` when the server applied it, `Queued(pendingMutation)`
-when it waits in the mutation queue. A queued write has no answer from the server yet. Three ways
-to handle it:
-
-- **Ignore it.** A screen built on a live read shows the write either way, at once.
-- **Take the result if there is one**, with `resultOrNull()`, and decide what to show without it.
-- **Match both cases**, with `when`; the set is closed, so the `when` stays exhaustive.
+A write returns `MutationOutcome`: `Applied(result)` when the server applied it,
+`Queued(pendingMutation)` when it waits in the mutation queue, with no answer from the server yet.
+Ignore it (a screen built on a live read shows the write either way, at once), take the result if
+there is one with `resultOrNull()`, or match both cases with an exhaustive `when`.
 
 ## Call shapes that need an edit
 
@@ -143,38 +140,26 @@ those into one group too.
 The library is built against supabase-kt 3.6 ([why](../project/compatibility.md#supabase-kt)),
 which lacks a few things 3.8 has:
 
-- **`dryRun()`.** Write a dry run by adding the header yourself:
-  `headers.append("Prefer", "tx=rollback")` in the request block, which supabase-kt marks
-  experimental. The library never queues such a write. PostgREST rolls it back only when the
-  project lets a request choose (`db-tx-end`), which a hosted Supabase project does not by
-  default: there a dry run commits, and the library applies it as any write and logs one warning
-  for the client's life. See [Writes and the offline queue](../behaviors/mutations.md#dry-runs).
+- **`dryRun()`.** Add the header yourself, `headers.append("Prefer", "tx=rollback")` in the
+  request block (supabase-kt marks it experimental). The library never queues such a write, and on
+  a hosted Supabase project a dry run commits
+  ([Writes and the offline queue](../behaviors/mutations.md#dry-runs)).
 - **`maybeSingle()`**, the `isdistinct` filter operator and `purgeCache`.
-- **Storage object names with `%`, `?` or `#`.** supabase-kt 3.6 puts the name in the URL as
-  written: a `%` fails the request, and a `?` or `#` can fetch or overwrite a different object
-  (`x?y.png` fetches `x`, and an upload of it writes `x`). The library downloads such a name as
-  supabase-kt does but never caches it, and `ensureCachedFile` refuses it. Keep these characters
-  out of object names.
+- **Storage object names with `%`, `?` or `#`**, which supabase-kt 3.6 puts in the URL as written,
+  so a `?` or `#` can reach a different object. The library never caches such a name, and
+  `ensureCachedFile` refuses it ([Storage caching](../behaviors/storage.md#paths-that-are-never-cached)).
 
 ## What is never cached or queued
 
-The library caches PostgREST lists and Storage downloads, and queues PostgREST writes. Everything
-else goes to the server as supabase-kt sends it:
-
-- **RPC.** `supabase.offline.rpc` is network only: a function may change data, so it is neither
-  cached nor queued.
-- **Realtime, Auth and Functions** are supabase-kt's alone. Feed Realtime's records into the cache
-  with `applyServerRecord`; see [Applying Realtime events](../behaviors/realtime.md).
-- **Storage writes.** Uploads, updates, deletes, moves and copies are online only, and offline
-  they fail as in supabase-kt.
-- **Reads of another shape.** `single()`, a `count`, `head`, `csv()`, `geojson()`, `stripNulls()`
-  and `explain()` go to the server; offline they fail. To read one row offline, read the list with
-  its key and take the first row.
-
-The samples call two database functions, each network only, and say so offline: Mark all done
-with no parameters, and the Sync tab's Server section with parameters, typed and as JSON. A
-function's changes reach the device's lists as another device's do, through Realtime or the next
-read:
+The library caches PostgREST lists and Storage downloads, and queues PostgREST writes; everything
+else goes to the server as supabase-kt sends it, and offline fails as there. That is `rpc` (a
+function may change data, so it is neither cached nor queued), Realtime, Auth and Functions
+(feed Realtime's records into the cache with [`applyServerRecord`](../behaviors/realtime.md)),
+Storage writes, and reads of another shape (`single()`, a `count`, `head`, `csv()`, `geojson()`,
+`stripNulls()`, `explain()`; read one row offline from the list, by its key). The samples' two
+database functions say so offline: Mark all done takes no parameters, the Sync tab's Server
+section takes them typed and as JSON, and a function's changes reach the device's lists as another
+device's do, through Realtime or the next read:
 
 From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/OfflineTaskRepository.kt) · [TaskRepository+Server.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository+Server.swift)
 
@@ -198,13 +183,12 @@ The full table is [Supported features](../reference/supported-features.md).
 
 ## Behavior to expect
 
-- **`select` falls back by default.** Its strategy is `NetworkFirst`: online it reads as
-  supabase-kt does; offline it serves the cached rows instead of throwing.
-- **Writes keep their order.** A write made while an earlier one of the same user waits is queued
-  behind it, online too, and returns `Queued`. It is sent by the library a moment later.
-- **A write refused on replay is not thrown.** A queued write the server refuses later goes to
-  the rejected list for your app to show; see [Conflicts and failures](../behaviors/failures.md).
-- **The client holds a database.** One client per process, and `clearLocalData()` on sign-out.
+`select` falls back by default: `NetworkFirst` reads as supabase-kt does online and serves the
+cached rows offline instead of throwing. A write made while an earlier one of the same user waits
+is queued behind it, online too, returns `Queued`, and is sent a moment later. A queued write the
+server refuses on replay is not thrown but goes to the rejected list for your app to show
+([Conflicts and failures](../behaviors/failures.md)). The client holds a database: one client per
+process, and `clearLocalData()` on sign-out.
 
 ## Checklist
 
