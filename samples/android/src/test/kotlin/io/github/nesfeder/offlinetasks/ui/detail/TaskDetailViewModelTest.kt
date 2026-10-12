@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.offlinetasks.ui.detail
 
+import io.github.nesfeder.offlinetasks.data.PendingPhotoState
 import io.github.nesfeder.offlinetasks.data.PhotoEncoder
-import io.github.nesfeder.offlinetasks.data.PhotoStorageException
 import io.github.nesfeder.offlinetasks.data.PhotoUnreadableException
 import io.github.nesfeder.offlinetasks.data.TaskRepository
 import io.github.nesfeder.offlinetasks.testing.FailingReadsTaskRepository
@@ -112,7 +112,7 @@ class TaskDetailViewModelTest {
     }
 
     @Test
-    fun an_attached_photo_shows_its_progress_and_then_the_photo() = runTest {
+    fun an_added_photo_shows_at_once_and_then_as_uploaded() = runTest {
         // Given
         val repository = repositoryFixture(seedSampleTasks = true).repository
         val task = repository.awaitServerTasks().first()
@@ -120,12 +120,35 @@ class TaskDetailViewModelTest {
         viewModel.editing()
 
         // When
-        viewModel.attachPhoto("content://picked/1")
+        viewModel.addPhoto("content://picked/1")
 
-        // Then — an upload in progress, then the photo and no upload
-        assertTrue(viewModel.editing { it.uploads.isNotEmpty() }.uploads.single().fraction < 1f)
-        val done = viewModel.editing { it.photos.isNotEmpty() && it.uploads.isEmpty() }
+        // Then — shown from the device while it uploads, then as the server's photo
+        viewModel.editing { it.photos.singleOrNull()?.pendingUpload != null }
+        val done = viewModel.editing { it.photos.singleOrNull()?.pendingUpload == null }
         assertEquals(task.id, done.photos.single().taskId)
+    }
+
+    @Test
+    fun a_photo_added_offline_waits_and_uploads_when_the_network_is_back() = runTest {
+        // Given — the screen open, then the network switched off
+        val repository = repositoryFixture(seedSampleTasks = true).repository
+        val task = repository.awaitServerTasks().first()
+        val viewModel = detailViewModel(repository, task.id, backgroundScope)
+        viewModel.editing()
+        repository.setNetworkEnabled(false)
+
+        // When
+        viewModel.addPhoto("content://picked/1")
+
+        // Then — waiting on the device
+        val waiting = viewModel.editing { it.photos.isNotEmpty() }.photos.single()
+        assertEquals(PendingPhotoState.Waiting, waiting.pendingUpload?.state)
+
+        // When — the network back on
+        repository.setNetworkEnabled(true)
+
+        // Then
+        viewModel.editing { it.photos.singleOrNull()?.pendingUpload == null }
     }
 
     @Test
@@ -160,16 +183,16 @@ class TaskDetailViewModelTest {
         viewModel.editing()
 
         // When
-        viewModel.attachPhoto("content://broken")
+        viewModel.addPhoto("content://broken")
 
         // Then
         assertIs<PhotoUnreadableException>(failures.reported.first())
-        assertTrue(viewModel.editing { it.uploads.isEmpty() }.photos.isEmpty())
+        assertTrue(viewModel.editing().photos.isEmpty())
     }
 
     @Test
-    fun an_upload_storage_refuses_is_a_message_and_its_progress_goes() = runTest {
-        // Given — Storage refusing
+    fun an_upload_storage_fails_stays_marked_until_retry_uploads_it() = runTest {
+        // Given — Storage failing
         val repository = repositoryFixture(seedSampleTasks = true).repository
         val task = repository.awaitServerTasks().first()
         val viewModel = detailViewModel(repository, task.id, backgroundScope)
@@ -177,11 +200,48 @@ class TaskDetailViewModelTest {
         repository.setStorageFailing(true)
 
         // When
-        viewModel.attachPhoto("content://picked/1")
+        viewModel.addPhoto("content://picked/1")
 
-        // Then — reported, not thrown; no upload left on screen and no photo attached
-        assertIs<PhotoStorageException>(failures.reported.first())
-        assertTrue(viewModel.editing { it.uploads.isEmpty() }.photos.isEmpty())
+        // Then — the photo stays, marked failed with why
+        val failed =
+            viewModel
+                .editing {
+                    it.photos.singleOrNull()?.pendingUpload?.state == PendingPhotoState.Failed
+                }
+                .photos
+                .single()
+        assertEquals("PhotoStorageException", failed.pendingUpload?.failure)
+
+        // When — Storage back, and Retry
+        repository.setStorageFailing(false)
+        viewModel.retryPhoto(failed)
+
+        // Then
+        viewModel.editing { it.photos.singleOrNull()?.pendingUpload == null }
+    }
+
+    @Test
+    fun remove_deletes_a_failed_photo_from_the_device() = runTest {
+        // Given — a photo whose upload failed
+        val repository = repositoryFixture(seedSampleTasks = true).repository
+        val task = repository.awaitServerTasks().first()
+        val viewModel = detailViewModel(repository, task.id, backgroundScope)
+        viewModel.editing()
+        repository.setStorageFailing(true)
+        viewModel.addPhoto("content://picked/1")
+        val failed =
+            viewModel
+                .editing {
+                    it.photos.singleOrNull()?.pendingUpload?.state == PendingPhotoState.Failed
+                }
+                .photos
+                .single()
+
+        // When
+        viewModel.removePhoto(failed)
+
+        // Then
+        assertTrue(viewModel.editing { it.photos.isEmpty() }.photos.isEmpty())
     }
 
     @Test

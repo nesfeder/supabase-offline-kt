@@ -8,6 +8,7 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import io.github.nesfeder.offlinetasks.data.AppNetworkStatus
+import io.github.nesfeder.offlinetasks.data.PendingPhotoState
 import io.github.nesfeder.offlinetasks.data.PhotoDetails
 import io.github.nesfeder.offlinetasks.data.PhotoEncoder
 import io.github.nesfeder.offlinetasks.data.Task
@@ -42,8 +43,9 @@ sealed interface PhotoViewerUiState {
 
     /**
      * The photo. Everything that changes its file needs the server: [canChange] says whether it can
-     * be reached. [otherTasks] are where Move and Duplicate can take it; [version] changes when the
-     * file is replaced, so the image is read again.
+     * be reached, and is false for a photo still waiting to upload, which has no file there yet.
+     * [otherTasks] are where Move and Duplicate can take it; [version] changes when the file is
+     * replaced, so the image is read again.
      */
     data class Showing(
         val photo: TaskPhoto,
@@ -51,9 +53,18 @@ sealed interface PhotoViewerUiState {
         val otherTasks: List<Task> = emptyList(),
         val version: Int = 0,
     ) : PhotoViewerUiState {
-        /** Deleting the photo needs the server, for its file. */
+        /** True while the photo waits in the app's pending-photo queue, not yet in the bucket. */
+        val isPending: Boolean
+            get() = photo.pendingUpload != null
+
+        /**
+         * Deleting needs the server, for the file; a pending photo is only on this device, and is
+         * removed whenever it is not on its way up.
+         */
         val canDelete: Boolean
-            get() = canChange
+            get() =
+                if (isPending) photo.pendingUpload?.state != PendingPhotoState.Uploading
+                else canChange
     }
 }
 
@@ -109,7 +120,8 @@ class PhotoViewerViewModel(
                         ?: return@combine PhotoViewerUiState.Gone
                 PhotoViewerUiState.Showing(
                     photo = photo,
-                    canChange = status.network == AppNetworkStatus.Online,
+                    canChange =
+                        status.network == AppNetworkStatus.Online && photo.pendingUpload == null,
                     otherTasks = tasks.value.orEmpty().filter { it.id != photo.taskId },
                     version = replaced,
                 )
@@ -136,12 +148,24 @@ class PhotoViewerViewModel(
         shownDetails.value = null
     }
 
-    /** Hands the photo itself to the share sheet, downloading it first if needed. */
+    /**
+     * Hands the photo itself to the share sheet: a pending photo's own file, or the cached copy,
+     * downloaded first if needed.
+     */
     fun share() {
         val showing = uiState.value as? PhotoViewerUiState.Showing ?: return
         viewModelScope.launchReporting(failures) {
-            val path = repository.photoFileToShare(showing.photo)
+            val path =
+                showing.photo.pendingUpload?.localPath ?: repository.photoFileToShare(showing.photo)
             messageChannel.send(PhotoViewerMessage.SharePhoto(path))
+        }
+    }
+
+    /** Uploads the photo again after its upload failed, as soon as the network allows. */
+    fun retryUpload() {
+        val showing = uiState.value as? PhotoViewerUiState.Showing ?: return
+        viewModelScope.launchReporting(failures) {
+            repository.retryPendingPhoto(showing.photo.id)
         }
     }
 
@@ -186,12 +210,18 @@ class PhotoViewerViewModel(
 
     /**
      * Deletes the photo's file, then its row, and closes the viewer; a failure is reported and the
-     * viewer stays. The repository finishes a delete it has started even if the viewer closes.
+     * viewer stays. The repository finishes a delete it has started even if the viewer closes. A
+     * photo waiting to upload is removed from the device; if its upload finished meanwhile, it
+     * stays, as an uploaded photo.
      */
     fun delete() {
         val showing = uiState.value as? PhotoViewerUiState.Showing ?: return
         viewModelScope.launchReporting(failures) {
-            repository.deletePhoto(showing.photo)
+            if (!showing.isPending) {
+                repository.deletePhoto(showing.photo)
+            } else if (!repository.removePendingPhoto(showing.photo.id)) {
+                return@launchReporting // it finished uploading first: it stays, uploaded
+            }
             messageChannel.send(PhotoViewerMessage.Deleted)
         }
     }

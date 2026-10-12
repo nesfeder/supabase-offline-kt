@@ -2,12 +2,14 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.offlinetasks.ui.newtask
 
+import io.github.nesfeder.offlinetasks.data.PendingPhotoState
 import io.github.nesfeder.offlinetasks.data.TASK_TITLE_MAX_LENGTH
 import io.github.nesfeder.offlinetasks.data.Tables
 import io.github.nesfeder.offlinetasks.data.TaskMutationOperation
 import io.github.nesfeder.offlinetasks.data.TaskServerError
 import io.github.nesfeder.offlinetasks.data.TaskWriteRefusedException
 import io.github.nesfeder.offlinetasks.testing.FailingTaskRepository
+import io.github.nesfeder.offlinetasks.testing.FakePhotoEncoder
 import io.github.nesfeder.offlinetasks.testing.MainDispatcherRule
 import io.github.nesfeder.offlinetasks.testing.awaitPendingCount
 import io.github.nesfeder.offlinetasks.testing.repositoryFixture
@@ -32,7 +34,7 @@ class NewTaskViewModelTest {
     fun a_blank_title_cannot_be_added() = runTest {
         // Given
         val repository = repositoryFixture().repository
-        val viewModel = NewTaskViewModel(repository, backgroundScope, failures)
+        val viewModel = NewTaskViewModel(repository, FakePhotoEncoder(), backgroundScope, failures)
 
         // When
         viewModel.onTitleChange("  \t ")
@@ -62,7 +64,7 @@ class NewTaskViewModelTest {
                     ),
             )
         val repository = FailingTaskRepository(repositoryFixture().repository, refusal)
-        val viewModel = NewTaskViewModel(repository, backgroundScope, failures)
+        val viewModel = NewTaskViewModel(repository, FakePhotoEncoder(), backgroundScope, failures)
         viewModel.onTitleChange("Buy stamps")
 
         // When — added; the screen closes at once
@@ -77,7 +79,7 @@ class NewTaskViewModelTest {
     fun add_writes_the_trimmed_task_and_closes() = runTest {
         // Given
         val repository = repositoryFixture(online = false).repository
-        val viewModel = NewTaskViewModel(repository, backgroundScope, failures)
+        val viewModel = NewTaskViewModel(repository, FakePhotoEncoder(), backgroundScope, failures)
         viewModel.onTitleChange("  Buy stamps ")
         viewModel.onNotesChange("   ")
         assertTrue((viewModel.uiState.value as NewTaskUiState.Editing).canAdd)
@@ -94,9 +96,37 @@ class NewTaskViewModelTest {
     }
 
     @Test
+    fun photos_picked_for_a_new_task_are_listed_for_it_waiting_to_upload() = runTest {
+        // Given — offline, a title, and two photos picked, one of them taken off again
+        val repository = repositoryFixture(online = false).repository
+        val encoder = FakePhotoEncoder()
+        val viewModel = NewTaskViewModel(repository, encoder, backgroundScope, failures)
+        viewModel.onTitleChange("Fix the fence")
+        viewModel.onPhotosPicked(listOf("content://picked/1", "content://picked/2"))
+        viewModel.onPhotosPicked(listOf("content://picked/3"))
+        viewModel.onRemovePhoto("content://picked/2")
+
+        // When
+        viewModel.add()
+
+        // Then — the task, and its two photos on the device, waiting to upload, in order
+        val task =
+            repository.tasks().first { it.value?.isNotEmpty() == true }.value.orEmpty().single()
+        val photos = repository.photos(task.id).first { it.value?.size == 2 }.value.orEmpty()
+        assertTrue(photos.all { it.pendingUpload?.state == PendingPhotoState.Waiting })
+        assertEquals(listOf("content://picked/1", "content://picked/3"), encoder.encodedUris)
+    }
+
+    @Test
     fun the_title_stops_at_the_schema_limit() = runTest {
         // Given
-        val viewModel = NewTaskViewModel(repositoryFixture().repository, backgroundScope, failures)
+        val viewModel =
+            NewTaskViewModel(
+                repositoryFixture().repository,
+                FakePhotoEncoder(),
+                backgroundScope,
+                failures,
+            )
 
         // When
         viewModel.onTitleChange("x".repeat(TASK_TITLE_MAX_LENGTH + 20))

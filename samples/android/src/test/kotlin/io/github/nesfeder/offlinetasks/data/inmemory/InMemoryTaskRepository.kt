@@ -10,16 +10,21 @@ import io.github.nesfeder.offlinetasks.data.BucketListing
 import io.github.nesfeder.offlinetasks.data.EncodedPhoto
 import io.github.nesfeder.offlinetasks.data.InvalidRequestException
 import io.github.nesfeder.offlinetasks.data.LiveUpdatesStatus
+import io.github.nesfeder.offlinetasks.data.NEWEST_FIRST
 import io.github.nesfeder.offlinetasks.data.NetworkSwitchedOffException
 import io.github.nesfeder.offlinetasks.data.NetworkUnavailableException
 import io.github.nesfeder.offlinetasks.data.NewTaskOutcome
 import io.github.nesfeder.offlinetasks.data.NotSavedOnDeviceException
+import io.github.nesfeder.offlinetasks.data.OLDEST_FIRST
+import io.github.nesfeder.offlinetasks.data.PendingPhoto
+import io.github.nesfeder.offlinetasks.data.PendingPhotoDirectory
+import io.github.nesfeder.offlinetasks.data.PendingPhotoUpload
+import io.github.nesfeder.offlinetasks.data.PendingPhotoUploader
 import io.github.nesfeder.offlinetasks.data.PhotoDetails
 import io.github.nesfeder.offlinetasks.data.PhotoFile
 import io.github.nesfeder.offlinetasks.data.PhotoListSnapshot
 import io.github.nesfeder.offlinetasks.data.PhotoNotFoundException
 import io.github.nesfeder.offlinetasks.data.PhotoStorageException
-import io.github.nesfeder.offlinetasks.data.PhotoUpload
 import io.github.nesfeder.offlinetasks.data.ReadProvenance
 import io.github.nesfeder.offlinetasks.data.RejectedTaskMutation
 import io.github.nesfeder.offlinetasks.data.RowsSnapshot
@@ -40,7 +45,10 @@ import io.github.nesfeder.offlinetasks.data.TaskWriteRefusedException
 import io.github.nesfeder.offlinetasks.data.WaitingChange
 import io.github.nesfeder.offlinetasks.data.WriteNeedsConnectionException
 import io.github.nesfeder.offlinetasks.data.photoObjectPath
+import io.github.nesfeder.offlinetasks.data.plusPendingPhotos
+import io.github.nesfeder.offlinetasks.data.toTaskPhoto
 import kotlin.coroutines.cancellation.CancellationException
+import kotlin.io.path.createTempDirectory
 import kotlin.time.Clock
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.days
@@ -49,6 +57,7 @@ import kotlin.time.Instant
 import kotlin.uuid.Uuid
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
@@ -58,11 +67,12 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -99,8 +109,12 @@ private val STARTER_TITLES = listOf("Water the plants", "Call the dentist", "Buy
  * once that the server refuses is thrown back to its caller; one refused on replay is kept as a
  * rejection. Either way the device's copy goes back to the server's. Nothing survives the process.
  *
- * @param scope where the network watcher, replays and refreshes run; it outlives every screen.
- * @param photoFiles where photo files are kept on the device.
+ * @param scope where the network watcher, replays, refreshes and photo uploads run; it outlives
+ *   every screen.
+ * @param photoFiles where the downloaded photo files are kept on the device.
+ * @param pendingPhotos the app's pending-photo queue: by default a new temporary directory, its
+ *   files read and written on the calling thread so virtual time stays in step, deleted when
+ *   [scope] ends.
  * @param networkAvailability whether the device has a network, as a connectivity monitor reports.
  * @param seedSampleTasks whether the first user starts with [sampleTasks] on the server.
  */
@@ -112,6 +126,7 @@ class InMemoryTaskRepository(
     private val latency: Duration = DEFAULT_SERVER_LATENCY,
     private val newId: () -> String = { Uuid.random().toString() },
     seedSampleTasks: Boolean = true,
+    private val pendingPhotos: PendingPhotoDirectory = temporaryPendingPhotoDirectory(scope),
 ) : TaskRepository, ServerFaults {
 
     private val state: MutableStateFlow<DeviceState>
@@ -170,6 +185,24 @@ class InMemoryTaskRepository(
             }
             .stateIn(scope, SharingStarted.Eagerly, LiveUpdatesStatus.Connected)
 
+    /** Uploads the pending photos whenever the app's network is up, as the real one does. */
+    private val uploader =
+        PendingPhotoUploader(
+            directory = pendingPhotos,
+            canUpload =
+                publishedSyncStatus
+                    .map { it.network }
+                    .distinctUntilChanged()
+                    .map {
+                        it == AppNetworkStatus.Online || it == AppNetworkStatus.Unknown
+                    },
+            upload =
+                PendingPhotoUpload { photo, jpeg, onProgress ->
+                    sendPendingPhoto(photo, jpeg, onProgress)
+                },
+            describeFailure = { it::class.simpleName.orEmpty() },
+        )
+
     init {
         // Last: the watcher may run at once, on another thread, and needs every field above.
         scope.launch {
@@ -177,6 +210,7 @@ class InMemoryTaskRepository(
                 changeNetwork { it.copy(deviceOnline = online) }
             }
         }
+        uploader.start(scope)
     }
 
     override fun tasks(query: TaskQuery): Flow<TaskListSnapshot> {
@@ -204,27 +238,48 @@ class InMemoryTaskRepository(
             writes = { it.concernsPhotosOf(taskId) },
         )
     }
+        .withPendingPhotos(taskId, OLDEST_FIRST)
 
-    override fun allPhotos(): Flow<PhotoListSnapshot> = observe {
+    override fun allPhotos(): Flow<PhotoListSnapshot> =
+        storedPhotos().withPendingPhotos(taskId = null, NEWEST_FIRST)
+
+    override fun photoPage(count: Int): Flow<PhotoListSnapshot> =
+        storedPhotos()
+            .map { snapshot -> snapshot.copy(value = snapshot.value?.take(count)) }
+            .withPendingPhotos(taskId = null, NEWEST_FIRST)
+
+    override fun photoCounts(taskIds: List<String>): Flow<Map<String, Int>> =
+        combine(state, pendingPhotos.photos) { current, pending ->
+                val stored =
+                    current.visibleRows()?.photos?.values.orEmpty().filter { it.taskId in taskIds }
+                val taskOfPhoto =
+                    stored.associate { it.id to it.taskId } +
+                        pending
+                            .filter { it.taskId in taskIds }
+                            .associate { it.photoId to it.taskId }
+                taskOfPhoto.values.groupingBy { it }.eachCount()
+            }
+            .distinctUntilChanged()
+
+    /** Every photo row the device shows, newest first. */
+    private fun storedPhotos(): Flow<PhotoListSnapshot> = observe {
         it.photoSnapshot(newestFirst = true, rows = { true }, writes = { true })
     }
 
-    override fun photoPage(count: Int): Flow<PhotoListSnapshot> =
-        allPhotos().map { snapshot -> snapshot.copy(value = snapshot.value?.take(count)) }
-
-    override fun photoCounts(taskIds: List<String>): Flow<Map<String, Int>> =
-        state
-            .map { current ->
-                current
-                    .visibleRows()
-                    ?.photos
-                    ?.values
-                    ?.filter { it.taskId in taskIds }
-                    ?.groupingBy { it.taskId }
-                    ?.eachCount()
-                    .orEmpty()
-            }
-            .distinctUntilChanged()
+    /** These rows with the pending photos of [taskId] (of every task when null), in [order]. */
+    private fun Flow<PhotoListSnapshot>.withPendingPhotos(
+        taskId: String?,
+        order: Comparator<TaskPhoto>,
+    ): Flow<PhotoListSnapshot> =
+        combine(this, pendingPhotos.photos, uploader.progress) { snapshot, pending, progress ->
+            val shown =
+                pending
+                    .filter { taskId == null || it.taskId == taskId }
+                    .map {
+                        it.toTaskPhoto(pendingPhotos.fileOf(it.photoId).path, progress[it.photoId])
+                    }
+            snapshot.plusPendingPhotos(shown, order)
+        }
 
     override suspend fun addTask(
         title: String,
@@ -236,7 +291,7 @@ class InMemoryTaskRepository(
         val task = newTask(title, notes)
         return when (write { QueuedMutation.InsertTask(it, task) }) {
             TaskMutationOutcome.Applied -> NewTaskOutcome.Saved(task)
-            is TaskMutationOutcome.Queued -> NewTaskOutcome.SavedOnDevice
+            is TaskMutationOutcome.Queued -> NewTaskOutcome.SavedOnDevice(task.id)
         }
     }
 
@@ -247,7 +302,7 @@ class InMemoryTaskRepository(
             newTask("${original.title} (copy)", original.notes).copy(isDone = original.isDone)
         return when (write { QueuedMutation.InsertTask(it, copy) }) {
             TaskMutationOutcome.Applied -> NewTaskOutcome.Saved(copy)
-            is TaskMutationOutcome.Queued -> NewTaskOutcome.SavedOnDevice
+            is TaskMutationOutcome.Queued -> NewTaskOutcome.SavedOnDevice(copy.id)
         }
     }
 
@@ -330,41 +385,78 @@ class InMemoryTaskRepository(
             photosOfTask.forEach { photoFiles.delete(it.fileName) }
             enqueue { QueuedMutation.DeleteTaskPhotos(it, id) }
         }
+        pendingPhotos.removeTask(id) // only once the files step has not failed
         write { QueuedMutation.DeleteTask(it, id) }
     }
 
-    override fun attachPhoto(taskId: String, photo: EncodedPhoto): Flow<PhotoUpload> = flow {
+    override suspend fun addPhoto(taskId: String, photo: EncodedPhoto) {
         val userId = state.value.userId
         val photoId = newId()
-        val objectPath = photoObjectPath(userId, taskId, photoId)
-        for (step in 0 until UPLOAD_STEPS) {
-            unreachableServerError()?.let { throw it }
-            emit(PhotoUpload.Uploading(step.toFloat() / UPLOAD_STEPS))
-            delay(latency * 2 / UPLOAD_STEPS)
-        }
-        storageRefusal()?.let { throw it }
-        if (!server.upload(objectPath, photo.jpeg)) {
-            throw PhotoStorageException(status = 409, message = "The resource already exists")
-        }
-        emit(PhotoUpload.Uploading(1f))
-        val row =
-            TaskPhoto(
-                id = photoId,
-                userId = userId,
+        val record =
+            PendingPhoto(
+                photoId = photoId,
                 taskId = taskId,
-                objectPath = objectPath,
+                userId = userId,
+                objectPath = photoObjectPath(userId, taskId, photoId),
+                pickedAt = clock.now(),
                 width = photo.width,
                 height = photo.height,
-                createdAt = clock.now(),
             )
-        try {
-            write { QueuedMutation.InsertPhoto(it, row) }
-        } catch (refused: TaskWriteRefusedException) {
-            // As the library-backed repository does: no row will ever name the file.
-            server.deleteFiles(listOf(objectPath))
-            throw refused
+        pendingPhotos.add(record, photo.jpeg)
+        uploader.uploadSoon()
+    }
+
+    override suspend fun retryPendingPhoto(photoId: String) {
+        uploader.retry(photoId)
+    }
+
+    override suspend fun removePendingPhoto(photoId: String): Boolean =
+        pendingPhotos.remove(photoId)
+
+    /**
+     * Uploads a pending [photo] as the library-backed repository does: the file (unless an earlier
+     * try stored it), then the row (unless there is one), then the file into the device's cache.
+     */
+    private suspend fun sendPendingPhoto(
+        photo: PendingPhoto,
+        jpeg: ByteArray,
+        onProgress: (Float) -> Unit,
+    ) {
+        val storedBefore = photo.attempts > 1 && server.download(photo.objectPath) != null
+        if (!storedBefore) {
+            for (step in 0 until UPLOAD_STEPS) {
+                unreachableServerError()?.let { throw it }
+                onProgress(step.toFloat() / UPLOAD_STEPS)
+                delay(latency * 2 / UPLOAD_STEPS)
+            }
+            storageRefusal()?.let { throw it }
+            // A file already there is this photo's own, from a try whose answer was lost.
+            server.upload(photo.objectPath, jpeg)
         }
-        emit(PhotoUpload.Attached(row))
+        if (!pendingPhotos.contains(photo.photoId)) {
+            server.deleteFiles(listOf(photo.objectPath)) // removed while it uploaded
+            return
+        }
+        val row =
+            TaskPhoto(
+                id = photo.photoId,
+                userId = photo.userId,
+                taskId = photo.taskId,
+                objectPath = photo.objectPath,
+                width = photo.width,
+                height = photo.height,
+                createdAt = photo.pickedAt,
+            )
+        if (state.value.visibleRows()?.photos?.containsKey(row.id) != true) {
+            try {
+                write { QueuedMutation.InsertPhoto(it, row) }
+            } catch (refused: TaskWriteRefusedException) {
+                // As the library-backed repository does: no row will ever name the file.
+                server.deleteFiles(listOf(photo.objectPath))
+                throw refused
+            }
+        }
+        photoFiles.write(row.fileName, jpeg)
     }
 
     override suspend fun deletePhoto(photo: TaskPhoto): TaskMutationOutcome = detached {
@@ -642,6 +734,7 @@ class InMemoryTaskRepository(
                 updateState { it.cleared(userId = it.userId) }
                 photoFiles.deleteAll()
             }
+            pendingPhotos.removeAll()
             refreshFromServer(force = true)
         }
     }
@@ -653,16 +746,20 @@ class InMemoryTaskRepository(
             throw NetworkUnavailableException()
         }
         detached {
-            val userId = state.value.userId
-            // Clear first, as the real repository does, then delete what this user owns.
-            writeLock.withLock {
-                updateState { it.cleared(userId = userId) }
-                photoFiles.deleteAll()
+            uploader.pausedWhile {
+                val userId = state.value.userId
+                // Clear first, as the real repository does, then delete what this user owns.
+                writeLock.withLock {
+                    updateState { it.cleared(userId = userId) }
+                    photoFiles.deleteAll()
+                }
+                delay(latency)
+                storageRefusal()?.let { throw it }
+                server.deleteEverythingOf(userId)
+                server.deleteFiles(pendingPhotos.photos.first().map { it.objectPath })
+                pendingPhotos.removeAll()
+                writeLock.withLock { updateState { it.copy(userId = newId()) } }
             }
-            delay(latency)
-            storageRefusal()?.let { throw it }
-            server.deleteEverythingOf(userId)
-            writeLock.withLock { updateState { it.copy(userId = newId()) } }
             refreshFromServer(force = true)
         }
     }
@@ -941,6 +1038,16 @@ private fun Task.matches(filter: TaskFilter, since: Instant): Boolean =
         TaskFilter.Done -> isDone
         TaskFilter.Recent -> createdAt >= since
     }
+
+/**
+ * A pending-photo directory in a new temporary directory, deleted when [scope] ends. Its files are
+ * read and written on the calling thread, so a test's virtual time stays in step with them.
+ */
+private fun temporaryPendingPhotoDirectory(scope: CoroutineScope): PendingPhotoDirectory {
+    val root = createTempDirectory("pending-photos").toFile()
+    scope.coroutineContext.job.invokeOnCompletion { root.deleteRecursively() }
+    return PendingPhotoDirectory(root, Dispatchers.Unconfined)
+}
 
 /** The name of a photo's file in the device's [PhotoFileStore]. */
 private val TaskPhoto.fileName: String

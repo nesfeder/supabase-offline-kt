@@ -11,8 +11,9 @@ import kotlinx.coroutines.flow.StateFlow
  *
  * Reads are live: each returns a flow of [RowsSnapshot]s served from the device first and refreshed
  * from the server when it can be reached. Writes change the device's copy at once and wait in the
- * mutation queue until the server has them, so they work offline; photo uploads are the exception
- * and need the network.
+ * mutation queue until the server has them, so they work offline. The library never queues a
+ * Storage write, so a photo added offline waits in the app's own queue instead ([addPhoto]); every
+ * other Storage call needs the network.
  *
  * **What throws.** Every implementation throws in the same places, so the screens handle one
  * contract:
@@ -23,8 +24,9 @@ import kotlinx.coroutines.flow.StateFlow
  * - A call that needs the server now ([refreshTasks]) throws [NetworkUnavailableException] while
  *   the network is off, including while the app switched it off itself, and
  *   [ServerUnreachableException] when the server does not answer.
- * - Photo uploads, downloads and deletes throw Storage's refusals as [PhotoStorageException], and
- *   fail at once with [NetworkUnavailableException] while the network is off.
+ * - Photo downloads, deletes and the other Storage calls throw Storage's refusals as
+ *   [PhotoStorageException], and fail at once with [NetworkUnavailableException] while the network
+ *   is off. An upload never throws: a pending photo's failure is kept on its record.
  * - A read whose rows cannot be read (a row the app cannot decode, a server that answers wrong)
  *   fails its flow; it never turns into an empty list.
  *
@@ -38,9 +40,9 @@ import kotlinx.coroutines.flow.StateFlow
  * planned for; the screens report every failure as a message, so none of them crashes the app.
  *
  * **Cancellation.** A call that has started a write finishes it even if its caller is canceled: a
- * screen that closes mid-delete cannot leave a photo's file deleted and its row in place, and one
- * that closes mid-upload cannot leave a file with no row. The caller only stops waiting for the
- * result. A photo whose row the server refuses at once has its file deleted too.
+ * screen that closes mid-delete cannot leave a photo's file deleted and its row in place. The
+ * caller only stops waiting for the result. Pending photos upload in the repository's own scope,
+ * whatever screen is open; one whose row the server refuses at once has its file deleted too.
  */
 interface TaskRepository {
     /**
@@ -55,16 +57,25 @@ interface TaskRepository {
      */
     fun task(id: String): Flow<TaskListSnapshot>
 
-    /** The photos of the task with [taskId], oldest first. */
+    /**
+     * The photos of the task with [taskId], oldest first, its pending photos among them (each with
+     * a [TaskPhoto.pendingUpload]).
+     */
     fun photos(taskId: String): Flow<PhotoListSnapshot>
 
-    /** Every photo the user has, newest first. */
+    /** Every photo the user has, newest first, pending photos among them. */
     fun allPhotos(): Flow<PhotoListSnapshot>
 
-    /** The newest [count] photos, a page of the Photos grid; asking for more reads a new page. */
+    /**
+     * The newest [count] photos the server has, a page of the Photos grid, with every pending
+     * photo; asking for more reads a new page.
+     */
     fun photoPage(count: Int): Flow<PhotoListSnapshot>
 
-    /** How many photos each of [taskIds] has, for the list's rows; a task with none is absent. */
+    /**
+     * How many photos each of [taskIds] has, pending photos counted, for the list's rows; a task
+     * with none is absent.
+     */
     fun photoCounts(taskIds: List<String>): Flow<Map<String, Int>>
 
     /**
@@ -126,8 +137,8 @@ interface TaskRepository {
     suspend fun setTaskDone(id: String, isDone: Boolean): TaskMutationOutcome
 
     /**
-     * Deletes a task: its photo files first (only when online; offline they stay in the bucket),
-     * then its photo rows, then the task.
+     * Deletes a task: its photo files (only when online; offline they stay in the bucket), then its
+     * pending photos on this device, its photo rows, and the task.
      *
      * @throws PhotoStorageException when Storage refuses to delete the files; nothing is deleted.
      * @throws TaskWriteRefusedException when it was sent at once and the server refused it.
@@ -135,12 +146,21 @@ interface TaskRepository {
     suspend fun deleteTask(id: String): TaskMutationOutcome
 
     /**
-     * Uploads [photo] for the task and then writes its row, reporting progress. The flow fails with
-     * [NetworkUnavailableException] at once while the network is off, with
-     * [ServerUnreachableException] or [PhotoStorageException] when the upload fails, and with
-     * [TaskWriteRefusedException] when the server refuses the row at once, after deleting the file.
+     * Files [photo] for the task [taskId] in the app's pending-photo queue on this device, and
+     * returns: the photo is in [photos] at once, and uploads when the network allows, its row
+     * written only once Storage has its file. Online or offline alike; it throws only when the
+     * device cannot save the file.
      */
-    fun attachPhoto(taskId: String, photo: EncodedPhoto): Flow<PhotoUpload>
+    suspend fun addPhoto(taskId: String, photo: EncodedPhoto)
+
+    /** Uploads the failed pending photo [photoId] again, as soon as the network allows. */
+    suspend fun retryPendingPhoto(photoId: String)
+
+    /**
+     * Deletes the pending photo [photoId] from this device; false when there is none, because it
+     * finished uploading while this waited for it.
+     */
+    suspend fun removePendingPhoto(photoId: String): Boolean
 
     /**
      * Deletes [photo]'s file and then its row. The file needs the network.
@@ -342,16 +362,18 @@ interface TaskRepository {
     suspend fun setNetworkEnabled(enabled: Boolean)
 
     /**
-     * Deletes everything this device holds: cached rows and files, queued and refused writes. An
-     * open list then reads its rows again from the server, once the network allows.
+     * Deletes everything this device holds: cached rows and files, queued and refused writes, and
+     * the pending photos. An open list then reads its rows again from the server, once the network
+     * allows.
      */
     suspend fun clearLocalData()
 
     /**
      * Starts again as a new anonymous user with no tasks: clears local data, which stops a replay
      * already running, then deletes the current user's own photo files and rows from the server, so
-     * nothing is left behind there, then signs out and signs in again. If a delete fails, its
-     * failure is thrown: the device is cleared, the server keeps what was not deleted yet, and the
+     * nothing is left behind there, then deletes the pending photos, signs out and signs in again.
+     * No pending photo uploads meanwhile. If a delete fails, its failure is thrown: the library's
+     * data is cleared, the pending photos and what was not deleted on the server are kept, and the
      * same user stays signed in, so Start over can be tried again.
      *
      * @throws NetworkUnavailableException while the network is off; nothing is deleted or cleared.

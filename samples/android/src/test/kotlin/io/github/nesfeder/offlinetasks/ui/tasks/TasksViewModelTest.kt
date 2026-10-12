@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.offlinetasks.ui.tasks
 
-import io.github.nesfeder.offlinetasks.data.EncodedPhoto
 import io.github.nesfeder.offlinetasks.data.PhotoStorageException
 import io.github.nesfeder.offlinetasks.data.ServerUnreachableException
 import io.github.nesfeder.offlinetasks.data.TaskFilter
@@ -11,6 +10,7 @@ import io.github.nesfeder.offlinetasks.data.TaskRepository
 import io.github.nesfeder.offlinetasks.platform.SessionState
 import io.github.nesfeder.offlinetasks.testing.FailingReadsTaskRepository
 import io.github.nesfeder.offlinetasks.testing.MainDispatcherRule
+import io.github.nesfeder.offlinetasks.testing.addUploadedPhoto
 import io.github.nesfeder.offlinetasks.testing.awaitRejectedCount
 import io.github.nesfeder.offlinetasks.testing.awaitServerTasks
 import io.github.nesfeder.offlinetasks.testing.repositoryFixture
@@ -25,7 +25,6 @@ import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runTest
@@ -337,9 +336,7 @@ class TasksViewModelTest {
         val repository = repositoryFixture(seedSampleTasks = true).repository
         val viewModel = tasksViewModel(repository)
         val task = viewModel.loaded().openTasks.first()
-        repository
-            .attachPhoto(task.id, EncodedPhoto(byteArrayOf(1), width = 1, height = 1))
-            .toList()
+        repository.addUploadedPhoto(task.id)
         repository.setStorageFailing(true)
         viewModel.delete(task)
         viewModel.loaded { it.openTasks.none { open -> open.id == task.id } }

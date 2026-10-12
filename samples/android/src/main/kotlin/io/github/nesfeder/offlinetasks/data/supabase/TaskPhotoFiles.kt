@@ -76,6 +76,9 @@ internal class TaskPhotoFiles(offline: Offline) {
 
     // --8<-- [end:upload]
 
+    /** Whether the bucket has a file at [path]; always asks the server. */
+    suspend fun exists(path: String): Boolean = bucket.exists(path)
+
     /** Deletes the files at [paths], in batches; a missing file is no error. */
     suspend fun delete(paths: List<String>) {
         for (batch in paths.chunked(STORAGE_DELETE_BATCH)) bucket.delete(batch)

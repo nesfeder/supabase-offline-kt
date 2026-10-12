@@ -106,11 +106,17 @@ data class WaitingChange(
 
 /** What became of a new task: on the server, or on this device until the queue sends it. */
 sealed interface NewTaskOutcome {
+    /** The new task's id, which the app made. */
+    val taskId: String
+
     /** The server stored it; [task] is the row it answered with, its own times included. */
-    data class Saved(val task: Task) : NewTaskOutcome
+    data class Saved(val task: Task) : NewTaskOutcome {
+        override val taskId: String
+            get() = task.id
+    }
 
     /** It waits in the mutation queue, and is sent when the server can be reached. */
-    data object SavedOnDevice : NewTaskOutcome
+    data class SavedOnDevice(override val taskId: String) : NewTaskOutcome
 }
 
 /**

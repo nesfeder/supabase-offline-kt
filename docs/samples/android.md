@@ -94,12 +94,17 @@ kept. Offline, it waits in the queue like any other change. When it is sent the 
 
 ### Attach a photo
 
-Online, open a task and tap **Add photo**. The upload shows its progress, and the photo joins the
-task once its row is saved. Once a photo has been shown it stays on the device: the Photos tab
-marks it available offline.
+Open a task and tap **Add photo**, or add photos as you create a task with **New task**'s **Add
+photo**, several at once. A photo shows at once, from the device, marked while it waits or
+uploads, with the upload's progress. Once it is uploaded the library's file cache keeps it, so it
+still shows offline: the Photos tab marks it available offline.
 
-Storage changes are never queued. Offline, **Add photo** and **Delete photo** are switched off,
-and the photos already on the device still show.
+The library never queues a Storage write, so the app keeps its own queue: a photo added offline
+(Simulate offline on, say) waits on the device, marked "Waiting to upload", and uploads when the
+network comes back, its row written only once Storage has the file. One that fails says why, with
+**Retry**, and **Remove** to give it up. Until it is uploaded, the viewer offers Share and Remove
+for it but not Details, Share link, Replace, Move or Duplicate. Those, and Delete for an uploaded
+photo, need the network: offline they are switched off.
 
 ![A task's detail with one photo attached](../assets/samples/android/photo-attached.png){ width="270" loading=lazy }
 
@@ -153,7 +158,11 @@ refuses and deletes nothing.
   activity ([If the project pauses](supabase-setup.md#if-the-project-pauses)). The app tries
   again each time the network comes back; until then the list says it is not signed in yet.
 - **A photo will not upload.** Check that the `task-photos` bucket exists, private, as
-  [Set up Supabase](supabase-setup.md) creates it. The app shows Storage's own answer.
+  [Set up Supabase](supabase-setup.md) creates it. The photo is marked "Upload failed" with the
+  app's sentence for Storage's answer. A missing bucket reads as "This photo's file is missing" and
+  is tried again once the bucket exists, on **Retry** or when the network next comes back. A photo
+  Storage's policies refused stays failed with Retry switched off: remove it, fix the policy, and
+  add it again.
 - **Mark all done or the Server section fails, or Replace and Move photo are refused.** The second
   migration file is not applied: run it as [Set up Supabase](supabase-setup.md#apply-the-schema)
   says.

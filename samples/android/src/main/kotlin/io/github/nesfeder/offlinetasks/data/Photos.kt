@@ -70,18 +70,6 @@ data class BucketListing(
     val nextOffset: Int,
 )
 
-/**
- * The progress of attaching one photo: the upload, then the row. A failure is not a value: the flow
- * fails with it, as an upload does.
- */
-sealed interface PhotoUpload {
-    /** [fraction] of the file has reached the server, from 0 to 1. */
-    data class Uploading(val fraction: Float) : PhotoUpload
-
-    /** The file is on the server and its row is written (or queued). */
-    data class Attached(val photo: TaskPhoto) : PhotoUpload
-}
-
 /** The request needs the server, and the network is off or unavailable. */
 open class NetworkUnavailableException(cause: Throwable? = null) :
     Exception("The network is unavailable", cause)
