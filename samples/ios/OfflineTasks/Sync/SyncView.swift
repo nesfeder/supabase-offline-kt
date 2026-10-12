@@ -259,7 +259,7 @@ struct SyncView: View {
                     Button("Clear local cache", role: .destructive) { app.sync.clearLocalData() }
                 } message: {
                     Text(
-                        "Saved tasks, photos and changes not yet synced are deleted from this device. Anything already on the server comes back when you’re online."
+                        "Saved tasks, photos, changes not yet synced and photos waiting to upload are deleted from this device. Anything already on the server comes back when you’re online."
                     )
                 }
             Button("Start over", role: .destructive) { isConfirmingStartOver = true }
@@ -267,7 +267,7 @@ struct SyncView: View {
                     Button("Start over", role: .destructive) { app.sync.startOver() }
                 } message: {
                     Text(
-                        "You get an empty list. Changes not synced yet are discarded, and this user’s tasks and photos are deleted from the server first, since an anonymous user can’t sign back in to reach them, so it needs the network."
+                        "You get an empty list. Changes not synced yet and photos waiting to upload are discarded, and this user’s tasks and photos are deleted from the server first, since an anonymous user can’t sign back in to reach them, so it needs the network."
                     )
                 }
         } header: {

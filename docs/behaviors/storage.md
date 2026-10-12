@@ -242,7 +242,7 @@ none lands after its deletes.
 **What stays true.** Storage writes still need a connection, as [Writes](#writes) says: the
 uploader makes them only while the network is on.
 
-From the samples: [PendingPhoto.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/PendingPhoto.kt) · [OfflineTasksApplication.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/OfflineTasksApplication.kt) · [TaskRepository+Photos.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository+Photos.swift)
+From the samples: [PendingPhoto.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/PendingPhoto.kt) · [OfflineTasksApplication.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/OfflineTasksApplication.kt) · [PendingPhotoQueue.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/PendingPhotoQueue.swift)
 
 === "Android"
 
@@ -254,11 +254,15 @@ From the samples: [PendingPhoto.kt](https://github.com/nesfeder/supabase-offline
 
 === "iOS"
 
-    The iOS sample's section lands with its pull request.
+    ```swift
+    --8<-- "Data/PendingPhotoQueue.swift:pending-photo-record"
+    ```
+
+    The iOS sample keeps the directory in Application Support, beside the library's data directory.
 
 Picking a photo files it, and the uploader is told; nothing waits for the network:
 
-From the samples: [TaskDetailViewModel.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/ui/detail/TaskDetailViewModel.kt) · [OfflineTaskRepository.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/OfflineTaskRepository.kt) · [PendingPhotoDirectory.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/PendingPhotoDirectory.kt) · [TaskRepository+Photos.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository+Photos.swift)
+From the samples: [TaskDetailViewModel.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/ui/detail/TaskDetailViewModel.kt) · [OfflineTaskRepository.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/OfflineTaskRepository.kt) · [PendingPhotoDirectory.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/PendingPhotoDirectory.kt) · [TaskDetailModel.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Detail/TaskDetailModel.swift) · [TaskRepository+PendingPhotos.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository+PendingPhotos.swift)
 
 === "Android"
 
@@ -272,11 +276,15 @@ From the samples: [TaskDetailViewModel.kt](https://github.com/nesfeder/supabase-
 
 === "iOS"
 
-    The iOS sample's section lands with its pull request.
+    ```swift
+    --8<-- "Detail/TaskDetailModel.swift:pending-photo-add"
+
+    --8<-- "Data/TaskRepository+PendingPhotos.swift:pending-photo-add"
+    ```
 
 The uploader's one photo: the file, then the row, then the hand-over to the cache:
 
-From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/OfflineTaskRepository.kt) · [TaskRepository+Photos.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository+Photos.swift)
+From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/OfflineTaskRepository.kt) · [TaskRepository+PendingPhotos.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository+PendingPhotos.swift) · [TaskRepository+Photos.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository+Photos.swift)
 
 === "Android"
 
@@ -286,14 +294,23 @@ From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabas
 
 === "iOS"
 
-    The iOS sample's section lands with its pull request.
+    ```swift
+    --8<-- "Data/TaskRepository+PendingPhotos.swift:pending-photo-upload"
+
+    --8<-- "Data/TaskRepository+Photos.swift:upload"
+
+    --8<-- "Data/TaskRepository+Photos.swift:pending-photo-upload"
+    ```
+
+    Through the Swift package Storage's refusal keeps its own `Duplicate` code whatever the HTTP
+    status, so the upload's "already exists" counts as stored there too.
 
 An upload does not put its bytes in the file cache, so `ensureCachedFile` downloads the photo the
 device has just sent; a 0.2 release of the library could seed the cache from the upload instead.
 
 The rows and the records, merged for a task, or for every task on the Photos tab:
 
-From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/OfflineTaskRepository.kt) · [PendingPhoto.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/PendingPhoto.kt) · [TaskRepository+Photos.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository+Photos.swift)
+From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/OfflineTaskRepository.kt) · [PendingPhoto.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/PendingPhoto.kt) · [TaskRepository+PendingPhotos.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository+PendingPhotos.swift)
 
 === "Android"
 
@@ -305,7 +322,9 @@ From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabas
 
 === "iOS"
 
-    The iOS sample's section lands with its pull request.
+    ```swift
+    --8<-- "Data/TaskRepository+PendingPhotos.swift:pending-photo-merge"
+    ```
 
 What Clear local cache and Start over remove, the library's data and then the app's directory:
 
@@ -319,7 +338,12 @@ From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabas
 
 === "iOS"
 
-    The iOS sample's section lands with its pull request.
+    ```swift
+    --8<-- "Data/TaskRepository.swift:pending-photo-clear"
+    ```
+
+    Start over clears the directory at its own clear step, right after the library's
+    `clearLocalData()`.
 
 ## Paths that are never cached
 

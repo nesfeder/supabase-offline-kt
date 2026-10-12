@@ -62,7 +62,7 @@ xcodebuild build -project OfflineTasks.xcodeproj -scheme OfflineTasks \
     -destination 'platform=iOS Simulator,name=iPhone 17'
 ```
 
-The tests, model tests on the testing product's in-memory client and one UI test, run in demo mode
+The tests, model tests on the testing product's in-memory client and two UI tests, run in demo mode
 and reach no project:
 
 ```bash
@@ -91,7 +91,7 @@ the schema's rules (each user reaches only their own rows and files, a blank tit
 photo is one JPEG at its owner's path), answers the two database functions, and reports each row
 change as Realtime would, so everything below works, but nothing is kept between launches. A
 signed link it makes points at the stand-in and opens nowhere. The Tasks list and the Sync tab say
-when the app is in demo mode. The tests, the UI test and Xcode's previews use the same stand-in; the
+when the app is in demo mode. The tests, the UI tests and Xcode's previews use the same stand-in; the
 launch argument `-demo-mode` opens it whatever the keys say.
 
 ## Things to try
@@ -151,28 +151,49 @@ made; **Dismiss** removes it.
 
 ### Attach a photo
 
-Online, open a task and tap **Add photo** in the bottom toolbar. The app turns the picked image into
-one JPEG under 5 MB and uploads it, and the photo joins the task once its row is saved. Once a photo
-has been shown it stays on the device.
+Open a task and tap **Add photo** in its Photos section, or add photos as you create a task: **New
+task** has an **Add photo** of its own, for several at once, with their thumbnails in the sheet. The
+app turns each picked image into one JPEG under 5 MB and keeps it on the device before anything
+else.
 
-Storage changes are never queued. Offline, **Add photo** is switched off and the Photos section
-says why; **Delete photo**, on a long press, is switched off too. The photos already on the device
-still show; while Simulate offline is on, the task's photo list is read from the device alone, and
-says so.
+The library never queues a Storage write, so the app keeps a queue of its own for photos: a folder
+in its Application Support, one JPEG and one small record per photo (`Data/PendingPhotoQueue.swift`).
+A photo you add shows at once from that folder, offline too, marked **Waiting to upload**. While the
+network is up the app uploads the waiting photos one at a time, oldest first (**Uploading**), and
+only once a file is stored writes its row, through the mutation queue like any other change, so the
+row of a photo added with a task offline is sent behind the task's. The library's file cache then
+downloads the photo, and the app's own copy is deleted. Online that takes a moment; Simulate offline
+pauses it, as it pauses the mutation queue.
+
+An upload that fails is marked **Upload failed**, with the reason, and is tried again when the
+network comes back. **Retry** and **Remove**, on a long press or in the photo's viewer, try it now or
+delete it from the device; when the server refused it for good (Storage's policies, say, or a task
+that is gone), Retry is switched off and only Remove helps. A waiting photo can be removed too, but
+not while it uploads. Deleting a task removes its photos waiting to upload, and **Clear local
+cache** and **Start over** remove all of them: they are the app's own files, which the library's
+`clearLocalData()` does not touch.
+
+**Delete photo**, on a long press, needs the network, as every change to a stored photo does. The
+photos already on the device still show offline; while Simulate offline is on, the task's photo
+list is read from the device alone, and says so. **Delete task**, the last row of a task's screen,
+works offline as every task change does.
 
 The **Photos** tab shows every photo, newest first, a page at a time, each marked once it is on the
-device. Tap one to open it:
+device; the ones waiting to upload are among them, with their mark. Tap one to open it:
 
 - **Share** hands the device's copy of the file to the share sheet; **Share link** makes a link to
   a 512-pixel-wide copy that works for an hour, and the task's **⋯** menu makes one for each of its
-  photos at once.
+  photos on the server at once.
 - **Details** shows what Storage says about the file (its size, type and times, and whether it is
   there), its two addresses (the public one answers with an error, as the bucket is private), and
   when the device fetched its copy.
 - **Replace photo** writes a new image over the file, at the same path; **Move to another task** and
   **Duplicate to another task** move or copy the file and write its row to match.
+- A photo waiting to upload opens from the app's own copy, with **Share**, **Remove**, and **Retry**
+  once it failed: Details, Share link, Replace, Move and Duplicate wait until it is on the server,
+  and the viewer says so.
 
-All of these need the network, as every Storage write does.
+Every change to a stored photo needs the network, as every Storage write does.
 
 ![A task's detail with one photo attached](../assets/samples/ios/photo-attached.png){ width="270" loading=lazy }
 
@@ -229,9 +250,10 @@ Each item says which call it makes, then what happened:
 ### Start over
 
 **Start over**, under **Local data**, starts again as a new anonymous user with an empty list. In
-this order, it discards the changes not synced yet, deletes this user's photos, photo rows and
-tasks from your project, turns the client's network off, signs out, clears the device, signs in as
-the new user, and turns the network back on. It needs the network: an anonymous user cannot sign
+this order, it waits for a photo upload in progress and holds new ones, discards the changes not
+synced yet, deletes this user's photos, photo rows and tasks from your project, turns the client's
+network off, signs out, clears the device and then the photos waiting to upload, signs in as the
+new user, and turns the network back on. It needs the network: an anonymous user cannot sign
 back in to reach what it left behind, so offline, Simulate offline included, it refuses and changes
 nothing.
 
@@ -245,10 +267,15 @@ network is off in between; the Sync tab shows **Offline (simulated)** for that m
   setting written out in `App/ClientSettings.swift`, each with the default it keeps: the cache sizes,
   the data directory, the app's own connectivity signal from Network's path monitor, `autoSync`, the
   tables' keys and the log level.
-- **Every call the app makes to it** is in `Data/TaskRepository.swift` and its two extensions:
-  `TaskRepository+Photos.swift` for the offline bucket, and `TaskRepository+Server.swift` for the
-  database functions, the exact count and the server's row changes. Realtime's subscription, through
+- **Every call the app makes to it** is in `Data/TaskRepository.swift` and its three extensions:
+  `TaskRepository+Photos.swift` for the offline bucket, `TaskRepository+PendingPhotos.swift` for the
+  photos waiting to upload, and `TaskRepository+Server.swift` for the database functions, the exact
+  count and the server's row changes. Realtime's subscription, through
   supabase-swift, is in `Data/ServerChanges.swift`.
+- **Photos wait in the app's own queue.** `Data/PendingPhotoQueue.swift` keeps each picked photo,
+  `Data/PendingPhotoUploader.swift` uploads the waiting ones as the sync status allows, and
+  `Data/TaskRepository+PendingPhotos.swift` files a photo, uploads it (the file, then the row, then
+  the library's cached copy) and merges the waiting photos with the photo rows for the screens.
 - **Every failure has its own words.** `Data/SampleFailure.swift` gives each `OfflineError` code a
   sentence of its own, and logs a failure by its code, status and kind only, never its message.
 - **The user comes from the token alone.** supabase-swift's Auth signs in anonymously
@@ -283,8 +310,10 @@ app's own sections.
   Providers) and that the project is not paused ([If the project pauses](supabase-setup.md#if-the-project-pauses)).
   The app tries again each time the network comes back; until then the list says it is not signed
   in yet.
-- **A photo will not upload.** Check that the `task-photos` bucket exists, private, as
-  [Set up Supabase](supabase-setup.md) creates it. The app shows Storage's own answer.
+- **A photo stays "Upload failed".** Its reason is Storage's own answer: check that the
+  `task-photos` bucket exists, private, with its policies, as [Set up Supabase](supabase-setup.md)
+  creates it; the first migration is all an upload needs. A refusal like that is final for the
+  photo, so Retry stays switched off: remove the photo, fix the cause, and add it again.
 - **Mark all done or Ask the server fails online, or Replace and Move are refused.** The project
   lacks the second migration: run it from [Set up Supabase](supabase-setup.md).
 - **Live updates stopped.** The app could not subscribe: check that `tasks` and `task_photos` are in

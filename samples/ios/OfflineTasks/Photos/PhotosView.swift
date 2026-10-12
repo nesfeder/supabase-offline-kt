@@ -23,7 +23,7 @@ struct PhotosView: View {
     private var content: some View {
         if app.session.userID == nil {
             ContentUnavailableView("Not signed in yet", systemImage: "person.crop.circle.badge.questionmark")
-        } else if app.photos.rows == nil {
+        } else if app.photos.rows == nil, app.photos.photos.isEmpty {
             ContentUnavailableView {
                 Label("No photos saved on this device yet", systemImage: "photo.on.rectangle")
             } description: {
@@ -33,7 +33,7 @@ struct PhotosView: View {
             ContentUnavailableView {
                 Label("No photos yet", systemImage: "photo.on.rectangle")
             } description: {
-                Text("Add one from a task’s screen.")
+                Text("Add one from a task’s screen, or with New task.")
             }
         } else {
             grid
@@ -46,7 +46,11 @@ struct PhotosView: View {
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 104), spacing: 4)], spacing: 4) {
                 ForEach(app.photos.photos) { photo in
                     NavigationLink(value: PhotoRoute(photo: photo)) {
-                        GridPhoto(image: app.photos.images.image(of: photo), isPending: photo.hasPendingMutations)
+                        GridPhoto(
+                            image: app.photos.images.image(of: photo),
+                            isPending: photo.hasPendingMutations,
+                            pendingUpload: photo.pendingUpload
+                        )
                     }
                     .buttonStyle(.plain)
                     .task(id: PhotoLoadKey(photoID: photo.id, canReachNetwork: app.repository.canReachNetwork)) {
@@ -74,7 +78,7 @@ struct PhotoLoadKey: Hashable {
     let canReachNetwork: Bool
 }
 
-/// One photo of the grid, marked once it is on this device.
+/// One photo of the grid, marked once it is on this device, or while it waits to upload.
 struct GridPhoto: View {
 
     /// The photo's image as it stands.
@@ -83,12 +87,18 @@ struct GridPhoto: View {
     /// Whether its row waits in the queue.
     let isPending: Bool
 
+    /// Where its upload stands while it waits on this device; `nil` once it is stored.
+    var pendingUpload: PendingPhoto.State?
+
     var body: some View {
         Color(.secondarySystemFill)
             .aspectRatio(1, contentMode: .fit)
             .overlay { PhotoPicture(image: image) }
+            .overlay(alignment: .bottom) {
+                if let pendingUpload { PendingUploadMark(state: pendingUpload) }
+            }
             .overlay(alignment: .bottomTrailing) {
-                if case .loaded = image {
+                if case .loaded = image, pendingUpload == nil {
                     Image(systemName: isPending ? "icloud.and.arrow.up" : "checkmark.icloud")
                         .font(.caption)
                         .padding(4)
@@ -98,6 +108,35 @@ struct GridPhoto: View {
                 }
             }
             .clipShape(.rect(cornerRadius: 6))
+    }
+}
+
+/// Where a photo picked on this device stands, on its thumbnail: a mark and a word, as a queued
+/// task carries its cloud mark.
+struct PendingUploadMark: View {
+
+    /// Where its upload stands.
+    let state: PendingPhoto.State
+
+    var body: some View {
+        VStack(spacing: 2) {
+            if state == .uploading {
+                ProgressView().controlSize(.mini)
+            } else {
+                Image(systemName: state == .waiting ? "icloud.and.arrow.up" : "exclamationmark.icloud")
+            }
+            Text(Wording.uploadState(state))
+                .multilineTextAlignment(.center)
+                .lineLimit(2)
+        }
+        .font(.caption2)
+        .foregroundStyle(state == .waiting || state == .uploading ? AnyShapeStyle(.primary) : AnyShapeStyle(.red))
+        .padding(4)
+        .frame(maxWidth: .infinity)
+        .background(.thinMaterial, in: .rect(cornerRadius: 8))
+        .padding(4)
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("pending-upload-mark")
     }
 }
 

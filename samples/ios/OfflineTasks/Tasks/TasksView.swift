@@ -43,8 +43,8 @@ struct TasksView: View {
                 }
             }
             .sheet(isPresented: $isAddingTask) {
-                NewTaskSheet { title, notes, needsConnection in
-                    await app.tasks.addTask(title: title, notes: notes, needsConnection: needsConnection)
+                NewTaskSheet { title, notes, needsConnection, photos in
+                    await app.tasks.addTask(title: title, notes: notes, needsConnection: needsConnection, photos: photos)
                 }
             }
             .navigationDestination(for: TaskRoute.self) { route in
@@ -102,12 +102,12 @@ struct TasksView: View {
             }
             if !open.isEmpty {
                 Section("Open · \(open.count)") {
-                    ForEach(open) { TaskRowView(task: $0, photoCount: app.tasks.photoCounts[$0.id]) }
+                    ForEach(open) { TaskRowView(task: $0, photoCount: app.tasks.photoCount(ofTask: $0.id)) }
                 }
             }
             if !done.isEmpty {
                 Section("Done · \(done.count)") {
-                    ForEach(done) { TaskRowView(task: $0, photoCount: app.tasks.photoCounts[$0.id]) }
+                    ForEach(done) { TaskRowView(task: $0, photoCount: app.tasks.photoCount(ofTask: $0.id)) }
                 }
             }
         }

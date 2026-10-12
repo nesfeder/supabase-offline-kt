@@ -4,7 +4,8 @@ import PhotosUI
 import SupabaseOffline
 import SwiftUI
 
-/// One photo, full screen, with Share, Share link, Details, Replace, Move, Duplicate and Delete.
+/// One photo, full screen, with Share, Share link, Details, Replace, Move, Duplicate and Delete;
+/// while it waits to upload, with Share, Retry and Remove only.
 struct PhotoViewer: View {
 
     @State private var model: PhotoViewerModel
@@ -29,6 +30,9 @@ struct PhotoViewer: View {
             .navigationBarTitleDisplayMode(.inline)
             .task(id: app.repository.canReachNetwork) { await model.load() }
             .toolbar { toolbar }
+            .safeAreaInset(edge: .bottom) {
+                if let pendingUpload = model.pendingUpload { PendingUploadNote(state: pendingUpload) }
+            }
             .overlay {
                 if model.isWorking { ProgressView().controlSize(.large) }
             }
@@ -58,7 +62,8 @@ struct PhotoViewer: View {
             }
     }
 
-    /// Share, and the menu of everything else.
+    /// Share, and the menu of everything else; while the photo waits to upload, Share, Retry and
+    /// Remove.
     @ToolbarContentBuilder
     private var toolbar: some ToolbarContent {
         ToolbarItem(placement: .primaryAction) {
@@ -66,6 +71,31 @@ struct PhotoViewer: View {
                 Task { shared = await model.shareableFile().map { SharedItems(items: [$0]) } }
             }
         }
+        if let pendingUpload = model.pendingUpload {
+            pendingToolbar(pendingUpload)
+        } else {
+            storedToolbar
+        }
+    }
+
+    /// Retry and Remove, for a photo that waits to upload.
+    @ToolbarContentBuilder
+    private func pendingToolbar(_ state: PendingPhoto.State) -> some ToolbarContent {
+        if case .failed(_, let isRetryable) = state {
+            ToolbarItem(placement: .secondaryAction) {
+                Button("Retry", systemImage: "arrow.clockwise") { model.retryUpload() }
+                    .disabled(!isRetryable)
+            }
+        }
+        ToolbarItem(placement: .secondaryAction) {
+            Button("Remove", systemImage: "trash", role: .destructive) { Task { await model.removePendingPhoto() } }
+                .disabled(state == .uploading)
+        }
+    }
+
+    /// Everything but Share, for a photo whose file is in the bucket.
+    @ToolbarContentBuilder
+    private var storedToolbar: some ToolbarContent {
         ToolbarItem(placement: .secondaryAction) {
             Button("Share link", systemImage: "link") {
                 Task { shared = await model.shareLink().map { SharedItems(items: [$0]) } }
@@ -229,5 +259,32 @@ struct PhotoDetailsSheet: View {
                 ProgressView()
             }
         }
+    }
+}
+
+/// What the viewer says under a photo that waits to upload: where it stands, why a failed one
+/// failed, and why most actions are missing.
+struct PendingUploadNote: View {
+
+    /// Where its upload stands.
+    let state: PendingPhoto.State
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(Wording.uploadState(state))
+                .font(.headline)
+            if case .failed(let reason, let isRetryable) = state {
+                Text(isRetryable ? reason : "\(reason) Trying again won’t change that: remove it.")
+                    .font(.footnote)
+            }
+            Text("It isn’t on the server yet, so Details, Share link, Replace, Move and Duplicate wait until it is.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding()
+        .background(.bar)
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("pending-upload-note")
     }
 }

@@ -56,8 +56,8 @@ final class TasksModel {
     /// The ids of the tasks a queued write touches.
     private(set) var pendingIDs: Set<String> = []
 
-    /// How many photos each task on screen has, by task id, once read.
-    private(set) var photoCounts: [String: Int] = [:]
+    /// The ids of the photo rows of each task on screen, by task id, once read.
+    private(set) var photoIDs: [String: Set<String>] = [:]
 
     /// How many tasks were open at launch, read once for the tab's badge until the list is known.
     private(set) var openCountAtLaunch: Int?
@@ -214,12 +214,12 @@ final class TasksModel {
     /// Follows how many photos each task on screen has, in one query for all of them.
     func observePhotoCounts(of taskIDs: [String]) async {
         guard !taskIDs.isEmpty, repository.session.userID != nil else {
-            photoCounts = [:]
+            photoIDs = [:]
             return
         }
         do {
             for try await snapshot in repository.photoSnapshots(ofTasks: taskIDs) {
-                photoCounts = Dictionary(grouping: snapshot.result ?? [], by: \.taskID).mapValues(\.count)
+                photoIDs = Dictionary(grouping: snapshot.result ?? [], by: \.taskID).mapValues { Set($0.map(\.id)) }
             }
         } catch is CancellationError {
             return
@@ -251,21 +251,42 @@ final class TasksModel {
 
     // MARK: - Writing
 
-    /// Adds a task, sent only straight to the server when `needsConnection`. Returns what to tell
-    /// the user when it failed, so the sheet can say it; `nil` once it is saved.
-    func addTask(title: String, notes: String, needsConnection: Bool) async -> String? {
+    /// Adds a task, sent only straight to the server when `needsConnection`, then files `photos`
+    /// for it, to wait on the device and upload behind it. Returns what to tell the user when the
+    /// task failed, so the sheet can say it; `nil` once it is saved.
+    func addTask(title: String, notes: String, needsConnection: Bool, photos: [EncodedPhoto] = []) async -> String? {
         let notes = notes.trimmingCharacters(in: .whitespacesAndNewlines)
+        let taskID = DeviceID.make()
+        let result: NewTaskResult
         do {
-            let result = try await repository.addTask(
+            result = try await repository.addTask(
+                id: taskID,
                 title: title.trimmingCharacters(in: .whitespacesAndNewlines),
                 notes: notes.isEmpty ? nil : notes,
                 needsConnection: needsConnection
             )
-            failures.announce(Wording.newTaskResult(result))
-            return nil
         } catch {
             return SampleFailure.message(for: error)
         }
+        // Filed only once the task is saved: a photo's row is written after its task's insert.
+        var filed = 0
+        await failures.perform {
+            for photo in photos {
+                try await repository.filePhoto(photo, forTask: taskID)
+                filed += 1
+            }
+        }
+        failures.announce(Wording.newTaskResult(result, photoCount: filed))
+        return nil
+    }
+
+    /// How many photos task `taskID` has: its rows read so far, and the photos picked on this
+    /// device that wait to upload, each once (a just-uploaded photo is both for a moment); `nil`
+    /// while neither is known.
+    func photoCount(ofTask taskID: String) -> Int? {
+        let waiting = Set(repository.pendingPhotos.photos(ofTask: taskID).map(\.id))
+        guard let stored = photoIDs[taskID] else { return waiting.isEmpty ? nil : waiting.count }
+        return stored.union(waiting).count
     }
 
     /// Marks `task` done or open again.
