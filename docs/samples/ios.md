@@ -81,7 +81,7 @@ signed in, the **+** button is hidden, and the Sync tab's **Queue an invalid tit
 off: every row needs its user, and only the server can create one. The app signs in as soon as it reaches the
 internet.
 
-![The task list before the first sign-in, offline: "Not signed in yet", and no New task button](../assets/samples/ios/not-signed-in.png){ width="270" loading=lazy }
+![The Tasks tab before the first sign-in, offline: the subtitle says offline, the list says "Not signed in yet", there is no + button, and the status above the tab bar says changes are saved on this device](../assets/samples/ios/not-signed-in.png){ width="270" loading=lazy }
 
 ## Demo mode
 
@@ -114,7 +114,7 @@ server or not at all, so offline the sheet says why and keeps your text. Online,
 app says the time the server stored it at: the row's `updated_at`, which the server sets, from the
 row it sends back (`created_at` is the device's time).
 
-![The task list offline: two tasks marked as not synced yet, and the status above the tab bar counting two changes saved on the device](../assets/samples/ios/offline-changes.png){ width="270" loading=lazy }
+![The Tasks tab offline, in demo mode: "4 changes waiting", two tasks with a cloud mark for a change not synced yet, one of them with two photos, and the status above the tab bar saying 4 changes are saved on this device](../assets/samples/ios/offline-changes.png){ width="270" loading=lazy }
 
 ### Come back and watch it send
 
@@ -133,7 +133,7 @@ the next launch that has the network. Simulate offline does not outlive the app,
 has no airplane mode, so to launch with no network at all, turn off the Mac's Wi-Fi (the simulator
 shares it), or use airplane mode on a device.
 
-![The Sync tab offline: three changes waiting, all to tasks, with Sync now switched off](../assets/samples/ios/changes-waiting.png){ width="270" loading=lazy }
+![The Sync tab's Waiting changes offline: 4 changes waiting, all to tasks, each with Discard, and Sync now switched off because sync needs the network](../assets/samples/ios/changes-waiting.png){ width="270" loading=lazy }
 
 ### Queue an invalid title
 
@@ -147,7 +147,7 @@ it was made and refused, and the row it was for; an alert says so, and its **Vie
 **Retry** sends it again, and is switched off for a change that can no longer be sent as it was
 made; **Dismiss** removes it.
 
-![The Sync tab's Refused changes: "Couldn't save (no title)", the reason, "The server answered HTTP 400 · 23514", and Retry and Dismiss](../assets/samples/ios/refused-change.png){ width="270" loading=lazy }
+![The Sync tab's Refused changes: "Couldn't save "(no title)"", the reason, when it was made and refused, "The server answered HTTP 400 · 23514", Retry and Dismiss; below it the Server and Storage sections](../assets/samples/ios/refused-change.png){ width="270" loading=lazy }
 
 ### Attach a photo
 
@@ -225,6 +225,8 @@ Each item says which call it makes, then what happened:
   waits.
 - **Upload through a signed URL**: a generated photo on your newest task, through a one-time upload
   URL, the way an upload is handed to code that holds no session.
+
+![The Sync tab's Try it, offline: the invalid title queued, and the delete of last week's done tasks refused in the library's own words, nothing changed](../assets/samples/ios/try-it.png){ width="270" loading=lazy }
 
 ### Start over
 
