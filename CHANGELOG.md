@@ -9,6 +9,20 @@ All notable changes to this project are recorded in this file. The format follow
      the heading it needs (before the first release, under any of them). A release renames
      "Unreleased" to its version and date, and starts a new one. -->
 
+## Unreleased
+
+### Breaking
+
+### Added
+
+### Changed
+
+### Deprecated
+
+### Removed
+
+### Fixed
+
 ## [0.1.0] - 2026-10-12
 
 The first release.
