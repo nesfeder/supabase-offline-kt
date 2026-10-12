@@ -54,7 +54,7 @@ nonisolated struct PendingPhoto: Codable, Hashable, Identifiable, Sendable {
     /// Where its upload stands.
     var state: State = .waiting
 
-    /// How many attempts to upload it have failed.
+    /// How many attempts to upload it have failed or been cut short.
     var attempts = 0
 
     /// The record's keys in its JSON file.

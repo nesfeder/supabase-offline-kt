@@ -97,7 +97,6 @@ extension TaskRepository {
             .map { $0.photo(pendingIDs: queuedRowIDs) }
         return (stored + waiting.map(\.photo)).sorted { $0.createdAt < $1.createdAt }
     }
-    // --8<-- [end:pending-photo-merge]
 
     /// Every photo the Photos screen shows, newest first: the rows read so far, and every photo
     /// that waits to upload, merged as ``photos(ofTask:rows:queuedRowIDs:pending:)`` merges one
@@ -107,6 +106,7 @@ extension TaskRepository {
         let stored = rows.filter { !waitingIDs.contains($0.id) }.map { $0.photo(pendingIDs: queuedRowIDs) }
         return (stored + pending.map(\.photo)).sorted { $0.createdAt > $1.createdAt }
     }
+    // --8<-- [end:pending-photo-merge]
 }
 
 nonisolated extension PendingPhoto {

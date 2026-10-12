@@ -4,8 +4,9 @@ import Foundation
 import SupabaseOffline
 
 /// Everything the screens read and write, for the signed-in user: every call the app makes to the
-/// offline client is in this file and its two extensions, `TaskRepository+Photos.swift` (Storage)
-/// and `TaskRepository+Server.swift` (database functions and server-pushed rows).
+/// offline client is in this file and its three extensions, `TaskRepository+Photos.swift`
+/// (Storage), `TaskRepository+PendingPhotos.swift` (photos waiting to upload) and
+/// `TaskRepository+Server.swift` (database functions and server-pushed rows).
 ///
 /// Reads are live: each is a sequence of snapshots served from the device first and refreshed from
 /// the server when it can be reached. Writes change the device's copy at once and wait in the
