@@ -1,12 +1,11 @@
 #!/usr/bin/env bash
 #
 # Creates an iPhone simulator for this CI job on the newest available iOS runtime and exports its
-# UDID as CI_SIMULATOR_UDID. clean-up-local-runner.sh deletes it.
+# UDID as CI_SIMULATOR_UDID. Nothing deletes it: it goes with the hosted runner's machine.
 #
 # First it deletes any simulator a killed job left behind: one whose name has this job's prefix and
 # a creation time older than the job's timeout, so no job still running can own it. The creation
-# time is part of the name. Its logs and CoreSimulator's folders for it go too, as the clean-up
-# removes them for the job's own simulator.
+# time is part of the name. Its logs and CoreSimulator's folders for it go too.
 #
 # Portable: bash 3.2 (macOS's /bin/bash) or later.
 
