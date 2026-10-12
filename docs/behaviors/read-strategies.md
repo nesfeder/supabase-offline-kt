@@ -87,8 +87,7 @@ returned itself reads `false`, `null` and `false`, and a read the cache never ho
 ## Edge cases
 
 **One row offline.** `single()` is never cached. Read the list and pick the row out on the device,
-as the [sample app](../samples/android.md)'s task detail does, so a task never opened before still
-opens offline:
+as the [sample app](../samples/android.md)'s task detail does:
 
 From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/OfflineTaskRepository.kt) · [TaskDetailModel.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Detail/TaskDetailModel.swift)
 

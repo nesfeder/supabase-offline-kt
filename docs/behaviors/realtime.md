@@ -20,8 +20,8 @@ From the samples: [LiveUpdates.kt](https://github.com/nesfeder/supabase-offline-
     ```
 
 - **`applyServerRecord(table, record)`** replaces the cached row with the same key in every cached
-  list of the table, and adds the row, after the list's own rows, to each list that admits it and
-  does not hold it.
+  list of the table, and adds the row, after the list's own rows and past its order and limit, to
+  each list that admits it and does not hold it.
 - **`applyServerDelete(table, oldRecord)`** removes the row with that key from every cached list of
   the table.
 
@@ -92,9 +92,7 @@ From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabas
     --8<-- "Data/TaskRepository.swift:read-again"
     ```
 
-A new row joins every cached list whose filters may admit it, appended past its order and limit,
-as a queued row is, until the list's next fetch ([Optimistic overlay](overlay.md#limits)). Nothing
-happens for a table nothing caches.
+Nothing happens for a table nothing caches.
 
 ## Pinned by
 

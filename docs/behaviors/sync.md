@@ -100,10 +100,9 @@ held back in `SyncReport.heldBehindOtherTablesCount`. `OnlineOnly` writes, write
 hold, `rpc` and Storage writes are never queued, so they go around the queue.
 
 A pass first waits, for at most 10 seconds, for the session to settle (signed in, or signed out),
-except when the network is known to be down. With Auth installed, each write goes with its owner's
-token or not at all: a user's writes wait, untouched, while another user is signed in, and an
-anonymous write is never sent with a user's token. A PostgREST plugin configured with its own
-`jwtToken` sends that token whoever is signed in, so it is not checked.
+except when the network is known to be down. A PostgREST plugin configured with its own `jwtToken`
+sends that token whoever is signed in, so the owner check of
+[Signing out and switching users](sign-out.md#switching-accounts) does not apply to it.
 
 ## What happens to each write
 

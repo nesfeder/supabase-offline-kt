@@ -64,7 +64,7 @@ tab's badge count the changes waiting. Pull to refresh, and the caption under th
 list is from this device, and how old it is. A task you have never opened still opens offline: it
 is read from the list the device already holds.
 
-![The Tasks tab offline: a banner saying 4 changes are saved on this device, and three tasks, one of them done, with a cloud mark for a change not synced yet](../assets/samples/android/offline-changes.png){ width="270" loading=lazy }
+![The Tasks tab offline: a banner saying 4 changes are saved on this device, and four tasks, three of them with a cloud mark for a change not synced yet, one of those done](../assets/samples/android/offline-changes.png){ width="270" loading=lazy }
 
 ### Come back and watch it send
 

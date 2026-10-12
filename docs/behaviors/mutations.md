@@ -19,12 +19,9 @@ From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabas
     --8<-- "Data/TaskRepository.swift:first-write"
     ```
 
-The verbs are supabase-kt's, with its overloads and request DSL. The sample's autosave and done
-switch update with a typed value and a JSON body (Move to another task, on
-[Storage caching](storage.md#writes), uses the update DSL); Duplicate task upserts one row and asks for it back with `select()`, read with `resultOrNull()`
-unless the write `isQueued`; a delete names its rows by filter; and several rows go in one write,
-typed or as a JSON body, queued as one when offline. The starter list's ids are the same on every
-import, so `ignoreDuplicates` makes a second import change nothing:
+The verbs are supabase-kt's, with its overloads and request DSL; Move to another task, on
+[Storage caching](storage.md#writes), uses the update DSL. An update with a typed value, and one
+with a JSON body:
 
 From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/OfflineTaskRepository.kt) · [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift)
 
@@ -34,11 +31,43 @@ From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabas
     --8<-- "data/supabase/OfflineTaskRepository.kt:typed-update"
 
     --8<-- "data/supabase/OfflineTaskRepository.kt:body-update"
+    ```
 
+=== "iOS"
+
+    ```swift
+    --8<-- "Data/TaskRepository.swift:typed-update"
+
+    --8<-- "Data/TaskRepository.swift:body-update"
+    ```
+
+An upsert that asks for its row back, and a delete by filter:
+
+From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/OfflineTaskRepository.kt) · [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift)
+
+=== "Android"
+
+    ```kotlin
     --8<-- "data/supabase/OfflineTaskRepository.kt:duplicate-task"
 
     --8<-- "data/supabase/OfflineTaskRepository.kt:delete-task"
+    ```
 
+=== "iOS"
+
+    ```swift
+    --8<-- "Data/TaskRepository.swift:duplicate-task"
+
+    --8<-- "Data/TaskRepository.swift:delete-task"
+    ```
+
+Several rows in one write:
+
+From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/OfflineTaskRepository.kt) · [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift)
+
+=== "Android"
+
+    ```kotlin
     --8<-- "data/supabase/OfflineTaskRepository.kt:insert-list"
 
     --8<-- "data/supabase/OfflineTaskRepository.kt:starter-list"
@@ -49,14 +78,6 @@ From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabas
 === "iOS"
 
     ```swift
-    --8<-- "Data/TaskRepository.swift:typed-update"
-
-    --8<-- "Data/TaskRepository.swift:body-update"
-
-    --8<-- "Data/TaskRepository.swift:duplicate-task"
-
-    --8<-- "Data/TaskRepository.swift:delete-task"
-
     --8<-- "Data/TaskRepository.swift:insert-list"
 
     --8<-- "Data/TaskRepository.swift:starter-list"
@@ -100,7 +121,7 @@ whose `id` identifies it from then on, on the rejected list too. `isQueued` says
 
 | When it is made | Outcome |
 | --- | --- |
-| Nothing of the user waits ahead of it, the session is settled, and the server accepts it | `Applied`, and the cached lists are patched with the rows the server returned, or, when it asked for none, with the rows sent |
+| Nothing of the user waits ahead of it, the session is settled, and the server accepts it | `Applied`, and the cached lists are patched with the rows the server returned, or with the rows sent when it returned none |
 | Something of the user waits ahead of it, in any table, or the session is still restoring | `Queued`, and a pass is started to send it |
 | Network access is off (`disableNetwork()`) | `Queued`; nothing is sent until access is back on |
 | Sent at once, and it may not have run: no connection or no answer, a `503` or `520`, an expired token that could not be refreshed, or PostgREST's schema cache not knowing the table or a column yet | `Queued`. A later pass sends it: when the network comes back, the session settles, another write is made or the app syncs |
@@ -126,8 +147,7 @@ the kind:
 ## Two filters on one column
 
 An update or a delete with two top-level filters on one column throws `IllegalArgumentException`
-under either strategy, online or offline, before anything is sent or queued: supabase-kt would send
-only the first, and the write would reach more rows than it names, now or on replay
+under either strategy, online or offline, before anything is sent or queued
 ([Coming from supabase-kt](../getting-started/migrating.md#two-filters-on-one-column)). One
 `and { }` group is the fix, and a group is a filter the queue cannot record, so such a write is
 sent at once: Try it makes one offline to show its `MutationNotQueueableException`.
@@ -147,8 +167,6 @@ From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabas
     ```
 
     Swift sends two conditions on one column together, in one `and` group, so nothing is refused.
-    The group is a filter the queue cannot record, so this delete is sent at once, and offline it
-    fails with `mutationNotQueueable`.
 
 ## Dry runs
 
@@ -158,7 +176,8 @@ A dry run (`Prefer: tx=rollback`: supabase-kt 3.8's `dryRun()`, or the header ad
 choose (`db-tx-end` set to `commit-allow-override` or `rollback-allow-override`), which a hosted
 Supabase project does not by default, so there **a dry run commits**: the library reads
 `Preference-Applied`, applies such a write like any other, patches its rows into the cache and
-logs a warning once per client.
+logs a warning once per client. Check a dry run against a project that allows the override, or do
+not rely on it.
 
 ```kotlin
 --8<-- "QueueExamples.kt:dry-run"
@@ -167,20 +186,18 @@ logs a warning once per client.
 ## Upserts and ids
 
 A queued write keeps `onConflict`, `ignoreDuplicates` and `defaultToNull` for its replay. The cache
-merges an upsert by its `onConflict` columns or the table's key (`id` unless configured), so on a
-table without an `id` column name the conflict columns; one that ignores duplicates shows offline
-as though it landed ([Optimistic overlay](overlay.md#limits)).
+merges an upsert by its `onConflict` columns or the table's key (`id` unless configured)
+([Optimistic overlay](overlay.md#limits)).
 
 **Make ids on the device**: such a row can be shown, opened and edited before it reaches the
-server, and is never inserted twice. A keyed INSERT whose earlier send may have reached the server
-is replayed as an upsert that ignores duplicates, and `SyncReport.alreadyOnServerCount` counts
+server, and is never inserted twice. A keyed INSERT (its rows carry the table's primary key) whose
+earlier send may have reached the server is replayed as an upsert that ignores duplicates, and `SyncReport.alreadyOnServerCount` counts
 such rows. An INSERT whose key the server makes is inserted twice when the answer to its first send
 was lost; it can show twice in a read of its table answered while it is on the wire and, unless it
 asks for its rows back (`select()`), in that query's cached rows, across restarts, until they are
-fetched again. An UPSERT, an UPDATE and a DELETE replay as sent: idempotent, but a replay after a
-lost answer overwrites what another writer changed in between
-([Conflicts and failures](failures.md#conflicts)). A queued row carries only the columns it wrote
-until the list is fetched again ([Optimistic overlay](overlay.md#tips)).
+fetched again; what a replay overwrites is on [Conflicts and failures](failures.md#conflicts). A
+queued row carries only the columns it wrote until the list is fetched again
+([Optimistic overlay](overlay.md#tips)).
 
 ## Another schema and the request lambda
 
@@ -233,12 +250,10 @@ From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabas
 `pendingMutations(table)`, `pendingMutationCount(table)` and `pendingMutationCountFlow(table)` show
 the current user's queued writes, of one table or of all, in the order they will be sent: each a
 `PendingMutation` with its `id`, `table`, `operation`, `createdAt`, the keys of the rows it touches
-(`rowKeys`) and its `body`. `discardPendingMutation(id)` removes a write without sending it:
-**destructive**, the write is lost and its rows show again as the server last sent them. It is the
-way out of a write the server keeps failing, which holds every later write of the user behind it;
-a write on the wire is discarded once that send ends, if it is still queued. The queue is never
-evicted and has no size bound. Sending it is on [Replaying the queue](sync.md); refused writes are
-on [Conflicts and failures](failures.md#the-rejected-list).
+(`rowKeys`) and its `body`. `discardPendingMutation(id)` is **destructive**, and the way out of a
+write the server keeps failing, which holds every later write of the user behind it. The queue is
+never evicted and has no size bound. Sending it is on [Replaying the queue](sync.md); refused
+writes are on [Conflicts and failures](failures.md#the-rejected-list).
 
 ## Behavior matrix
 

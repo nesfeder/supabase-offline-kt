@@ -65,11 +65,9 @@ Each emission is a `QuerySnapshot`, and its fields are true together:
 | `hasPendingMutations` | Whether a queued write added, changed or removed a row shown |
 | `refresh` | How the refresh behind the read stands; see [Refresh lifecycle](refresh-lifecycle.md) |
 
-`result == null` is a loading state; an empty body is an empty list. A row a queued write adds
-comes after the server's rows and lacks the columns the server fills in
-([Optimistic overlay](overlay.md#limits)). Next to rows already on screen, `refresh` says whether
-to show a note ([Refresh lifecycle](refresh-lifecycle.md) has the sample's mapping). To mark each
-row whose change has not reached the server yet, combine the read
+`result == null` is a loading state; an empty body is an empty list. Next to rows already on
+screen, `refresh` says whether to show a note ([Refresh lifecycle](refresh-lifecycle.md) has the
+sample's mapping). To mark each row whose change has not reached the server yet, combine the read
 with `pendingMutations(table)` and its rows' keys:
 
 From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/OfflineTaskRepository.kt) · [TasksModel.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Tasks/TasksModel.swift)
@@ -118,10 +116,8 @@ From the samples: [TaskQueries.kt](https://github.com/nesfeder/supabase-offline-
     --8<-- "Data/TaskRepository.swift:photos-page"
     ```
 
-Offline, a chip or a search never asked online has nothing cached, and the sample says so. A
-queued change to `done` moves a task between Open and Done at once, but a task made offline shows
-in every search until the list is fetched again: the overlay evaluates `eq`, `neq`, `in` and `is`,
-and admits a queued row on any other condition ([Optimistic overlay](overlay.md)).
+A queued change to `done` moves a task between Open and Done at once, but a task made offline shows
+in every search until the list is fetched again ([Optimistic overlay](overlay.md)).
 
 ## When it fetches again
 

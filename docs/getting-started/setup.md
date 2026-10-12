@@ -188,8 +188,9 @@ exception, as `supabase.from(…)` does ([Writes and the offline queue](../behav
 ## Connectivity and sync
 
 Nothing to wire up: the plugin watches the platform's connectivity and sends queued writes by
-itself when the network comes back and when a user's session settles. `syncStatus` draws a
-banner, and `syncPendingMutations()` is a "Sync now" button ([Replaying the queue](../behaviors/sync.md)).
+itself when the network comes back and when a user's session settles. `syncStatus` is what a sync
+banner reads, and `syncPendingMutations()` is what a "Sync now" button calls
+([Replaying the queue](../behaviors/sync.md)).
 
 ## Sign-out
 

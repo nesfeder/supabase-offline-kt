@@ -59,10 +59,8 @@ still retried on supabase-kt's schedule.
 
 ## Cold start and session restore
 
-Until supabase-kt's Auth plugin has restored the stored session, requests go out on the anon key,
-which row-level security can answer with fewer rows, or none: nothing such a request returns is
-written to the cache, and the refresh reads `Refreshing` until the session settles, with the
-cached rows on screen ([Signing out and switching users](sign-out.md)).
+Until supabase-kt's Auth plugin has restored the stored session, the refresh reads `Refreshing`,
+with the cached rows on screen ([Signing out and switching users](sign-out.md)).
 
 Under `ResponseTrust.AuthenticatedSessionOnly`, a live read of an empty table made signed out
 stays `Refreshing`, retried at most a minute apart, until the table has rows or a user signs in

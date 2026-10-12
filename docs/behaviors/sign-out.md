@@ -9,9 +9,7 @@ is ever served to the next. Queued writes stay with the user who made them until
 --8<-- "QueueExamples.kt:sign-out"
 ```
 
-Signing out in supabase-kt alone clears the session, not the device. The library keeps the last
-user's unsent writes from going out under the next one's session, and the cache from being served
-to them; deleting the rest is your call, because it deletes writes that were never sent.
+Signing out in supabase-kt alone clears the session, not the device.
 
 ## What `clearLocalData()` deletes
 

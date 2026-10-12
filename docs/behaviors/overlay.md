@@ -63,8 +63,7 @@ you set another with `primaryKey` ([Configuration](../reference/configuration.md
   under the name it was written with, which can fail a decode of the whole list: keep queued rows
   out of such lists, or decode those columns as nullable. A row read with other columns, or with
   other options for a table it embeds (a limit, an order, a filter), never joins a list, which is
-  fetched again instead; an online write that asked for rows back (`select()`) brings the server's
-  columns.
+  fetched again instead.
   <small>`OverlayLimitsTest.a_queued_row_carries_only_the_columns_it_wrote`,
   `BorrowedRowsShapeTest.a_row_does_not_join_a_list_that_renames_its_columns`,
   `BorrowedRowsShapeTest.a_row_read_with_one_embedded_row_does_not_join_a_list_that_reads_them_all`,

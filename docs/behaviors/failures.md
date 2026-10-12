@@ -62,16 +62,10 @@ reports ([Security and privacy](../help/security.md)).
 
 ## Replay failures
 
-A failure that may pass (no connection, a `401`, `408`, `429` or any `5xx`, PostgREST's schema cache
-not knowing the table or a column yet, a failure on the device) stops the pass with every
-remaining write queued; `syncStatus.value.lastSyncError` says why, and a later pass tries again. A
-refusal for good, any other `4xx`, moves the write to the rejected list, and the pass goes on. So
-does the tenth schema-cache refusal of one write, each counted at least 30 seconds after the last
-(at least four and a half minutes of a missing table or column), and a write the library can no
-longer replay exactly as it was made, such as a stored filter it cannot read back, which has no
-`serverError` ([What happens to each write](sync.md#what-happens-to-each-write)). A write the
-server keeps failing with a `5xx` holds every later write of its user behind it: when it will
-never go through, `discardPendingMutation(id)` removes it, unsent, and the writes behind it go.
+Which replay failures stop the pass and which move a write to the rejected list is on
+[What happens to each write](sync.md#what-happens-to-each-write). A write the server keeps failing
+with a `5xx` holds every later write of its user behind it: when it will never go through,
+`discardPendingMutation(id)` removes it, unsent, and the writes behind it go.
 
 ## The rejected list
 
@@ -108,9 +102,7 @@ one), so show your own words rather than the raw fields.
 **Its bounds.** The newest 100 entries of every user together, within 512 K characters. A body
 longer than 16 K characters is not kept, so that entry cannot be retried (`isRetryable` is
 `false`); the server's message, details and hint are kept to 4 K characters each. When the list is
-full the oldest entries go, and their writes are lost: nothing reports the loss yet. Only a write
-that waited in the queue can end up here; one sent at once that the server refuses throws to its
-caller instead, as supabase-kt's verbs do.
+full the oldest entries go, and their writes are lost: nothing reports the loss yet.
 
 ## Conflicts
 
@@ -124,10 +116,8 @@ The last write wins: the library does not merge or resolve conflicting writes.
 - **A parent row deleted elsewhere** makes a queued child's insert fail on its foreign key
   (`23503`), and it lands on the rejected list. Your own child queued after its parent is sent
   after it.
-- **The same id twice.** A keyed INSERT whose earlier send may have reached the server replays as
-  an upsert that ignores duplicates; a genuine duplicate id is refused (`23505`) and lands on the
-  rejected list. A row whose key the server makes is inserted twice when the answer to its first
-  send was lost: make ids on the device.
+- **The same id twice.** A genuine duplicate id is refused (`23505`) and lands on the rejected list
+  ([Upserts and ids](mutations.md#upserts-and-ids)).
 - **On iOS**, a request that fails as the network path drops can read as never sent, and its
   replay may be refused as a duplicate of itself: a false rejection, never a lost write.
 
