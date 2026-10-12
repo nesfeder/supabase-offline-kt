@@ -151,32 +151,36 @@ made; **Dismiss** removes it.
 
 ### Attach a photo
 
-Open a task and tap **Add photo** in its Photos section, or add photos as you create a task: **New
-task** has an **Add photo** of its own, for several at once, with their thumbnails in the sheet. The
-app turns each picked image into one JPEG under 5 MB and keeps it on the device before anything
-else.
+Open a task and tap **Add photo** in its Photos section, or add photos as you create a task with
+**New task**'s own **Add photo**, several at once, with their thumbnails in the sheet. Each becomes
+one JPEG under 5 MB, kept on the device first: it shows at once, offline too, marked **Waiting to
+upload**, then **Uploading** (with no progress bar).
 
-The library never queues a Storage write, so the app keeps a queue of its own for photos: a folder
-in its Application Support, one JPEG and one small record per photo (`Data/PendingPhotoQueue.swift`).
-A photo you add shows at once from that folder, offline too, marked **Waiting to upload**. While the
-network is up the app uploads the waiting photos one at a time, oldest first (**Uploading**), and
-only once a file is stored writes its row, through the mutation queue like any other change, so the
-row of a photo added with a task offline is sent behind the task's. The library's file cache then
-downloads the photo, and the app's own copy is deleted. Online that takes a moment; Simulate offline
-pauses it, as it pauses the mutation queue.
+The library never queues a Storage write, so the app keeps a queue of its own: a folder in its
+Application Support, one JPEG and one small record per photo (`Data/PendingPhotoQueue.swift`; the
+[recipe](../behaviors/storage.md#photos-picked-offline-the-apps-own-queue) says how it works). While
+the network is up the app uploads the waiting photos one at a time, oldest first, and writes a
+photo's row, through the mutation queue like any other change, only once its file is stored, so a
+photo added with a task offline is sent behind the task. The library's file cache then downloads the
+photo, and the app's own copy is deleted. Simulate offline pauses it, as it pauses the mutation
+queue.
+
+![New task with a title, notes and two photos picked, the Add photo button under them, and the Needs a connection switch](../assets/samples/ios/new-task-photos.png){ width="270" loading=lazy }
+![The new task's screen with Simulate offline on: "Saved on this device — will sync when online", its two photos marked "Waiting to upload", and Delete task below](../assets/samples/ios/photo-waiting.png){ width="270" loading=lazy }
 
 An upload that fails is marked **Upload failed**, with the reason, and is tried again when the
 network comes back. **Retry** and **Remove**, on a long press or in the photo's viewer, try it now or
 delete it from the device; when the server refused it for good (Storage's policies, say, or a task
-that is gone), Retry is switched off and only Remove helps. A waiting photo can be removed too, but
-not while it uploads. Deleting a task removes its photos waiting to upload, and **Clear local
-cache** and **Start over** remove all of them: they are the app's own files, which the library's
-`clearLocalData()` does not touch.
+that is gone), Retry is switched off and only Remove helps. A waiting photo can be removed, but not
+while it uploads. Deleting a task, **Clear local cache** and **Start over** remove the photos waiting
+to upload too: they are the app's own files, which the library's `clearLocalData()` does not touch.
 
 **Delete photo**, on a long press, needs the network, as every change to a stored photo does. The
 photos already on the device still show offline; while Simulate offline is on, the task's photo
 list is read from the device alone, and says so. **Delete task**, the last row of a task's screen,
 works offline as every task change does.
+
+![A synced task's screen: the title and notes, the Done switch, the Photos section with one uploaded photo and Add photo, and Delete task](../assets/samples/ios/photo-attached.png){ width="270" loading=lazy }
 
 The **Photos** tab shows every photo, newest first, a page at a time, each marked once it is on the
 device; the ones waiting to upload are among them, with their mark. Tap one to open it:
@@ -194,8 +198,6 @@ device; the ones waiting to upload are among them, with their mark. Tap one to o
   and the viewer says so.
 
 Every change to a stored photo needs the network, as every Storage write does.
-
-![A task's detail with one photo attached](../assets/samples/ios/photo-attached.png){ width="270" loading=lazy }
 
 ### Filter, search and the badges
 
