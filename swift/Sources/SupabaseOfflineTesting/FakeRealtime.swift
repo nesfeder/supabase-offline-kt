@@ -39,7 +39,7 @@ public final class FakeRealtime: @unchecked Sendable {
     ///   - table: The table's name.
     ///   - record: The whole row.
     ///   - schema: The table's schema; `nil` for the default schema.
-    /// - Throws: ``SupabaseOffline/OfflineError``: `invalidRequest` when the record is not a JSON
+    /// - Throws: `OfflineError`: `invalidRequest` when the record is not a JSON
     ///   object.
     public func reportInsert(table: String, record: [String: OfflineJSON], schema: String? = nil) throws {
         try reported(relay.reportInsert(table: table, record: try Self.text(of: record), schema: schema))
@@ -51,7 +51,7 @@ public final class FakeRealtime: @unchecked Sendable {
     ///   - table: The table's name.
     ///   - record: The whole row after the update.
     ///   - schema: The table's schema; `nil` for the default schema.
-    /// - Throws: ``SupabaseOffline/OfflineError``: `invalidRequest` when the record is not a JSON
+    /// - Throws: `OfflineError`: `invalidRequest` when the record is not a JSON
     ///   object.
     public func reportUpdate(table: String, record: [String: OfflineJSON], schema: String? = nil) throws {
         try reported(relay.reportUpdate(table: table, record: try Self.text(of: record), schema: schema))
@@ -63,7 +63,7 @@ public final class FakeRealtime: @unchecked Sendable {
     ///   - table: The table's name.
     ///   - oldRecord: The deleted row's values, at least its primary key.
     ///   - schema: The table's schema; `nil` for the default schema.
-    /// - Throws: ``SupabaseOffline/OfflineError``: `invalidRequest` when the record is not a JSON
+    /// - Throws: `OfflineError`: `invalidRequest` when the record is not a JSON
     ///   object.
     public func reportDelete(table: String, oldRecord: [String: OfflineJSON], schema: String? = nil) throws {
         try reported(relay.reportDelete(table: table, oldRecord: try Self.text(of: oldRecord), schema: schema))
