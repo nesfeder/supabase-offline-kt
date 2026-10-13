@@ -27,11 +27,9 @@ github.properties
 /swift/MainActorConsumer/.build/
 /swift/MainActorConsumer/.swiftpm/
 
-# Documentation site: local virtualenv and build output. The Kotlin API reference is built by Dokka
-# and placed in the built site, never in docs/.
+# Documentation site: local virtualenv and build output
 /.venv-docs/
 /site/
-/docs/api/
 
 # JVM crash reports a test worker writes into the module directory
 hs_err_pid*.log

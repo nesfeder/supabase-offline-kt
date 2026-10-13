@@ -11,7 +11,8 @@ The build applies them as dependency constraints to these configurations, which 
   * every module's ``androidLintTool``, ``swiftExportClasspathResolvable``,
     ``kotlinBouncyCastleConfiguration`` and ``dokkaHtmlGeneratorRuntimeResolver~internal``: the
     lint and Swift export tools, the Kotlin Gradle plugin's publishing validation and Dokka's
-    generator;
+    generator; the root project counts as a module here, for the Dokka generator of the site's
+    API reference (``supabase-offline.api-reference``);
   * every configuration of a module whose name starts with ``unified-test-platform-``: the Android
     Gradle plugin's unified test platform, which an application module creates to run instrumented
     tests (both ``supabase-offline.build-tool-floors``, which every role plugin applies).
@@ -20,8 +21,8 @@ It takes the modules from Gradle's own ``projects`` report, asks Gradle for the 
 ``buildEnvironment`` and ``dependencies`` reports) and fails when:
 
   * a floored package resolves below its floor, or fails to resolve, in one of them;
-  * one of them is missing, or a module Gradle lists has no ``dependencies`` report, so the floors
-    are not known to reach it;
+  * one of them is missing, or the root project or a module Gradle lists has no ``dependencies``
+    report, so the floors are not known to reach it;
   * a floor resolves in none of them: a mistyped coordinate, or a package no plugin brings any more;
   * a floor raises nothing, because everything that asks for the package already asks for the floor
     or later: the plugin release that made the floor unnecessary has arrived, so remove it.
@@ -61,8 +62,8 @@ PROJECTS_COMMAND = GRADLE + [":projects"]
 
 def reports_command(modules: list[str]) -> list[str]:
     """The Gradle command for the reports. A `dependencies` task named without a path runs in the
-    root project only, so each module's is named."""
-    return (GRADLE + [":buildEnvironment", ":build-logic:dependencies"]
+    root project only, so each module's is named, and the root project's as `:dependencies`."""
+    return (GRADLE + [":buildEnvironment", ":build-logic:dependencies", f"{ROOT}:dependencies"]
             + [f"{module}:dependencies" for module in modules])
 
 
@@ -71,6 +72,8 @@ REQUIRED = [
     (":buildEnvironment", "classpath"),
     (":build-logic:dependencies", "precompiledScriptPluginAccessorsGenerationClasspath"),
 ]
+# The root project, as the prefix of its tasks' paths (`:dependencies`). It is checked as a module.
+ROOT = ""
 # Configurations checked in every module whose `dependencies` report has them. At least one module
 # must have each.
 PER_MODULE = ["androidLintTool", "swiftExportClasspathResolvable", "kotlinBouncyCastleConfiguration",
@@ -234,8 +237,9 @@ def checked_configurations(reports: dict[str, dict[str, Resolution]],
         (checked if key in reports else missing).append(key)
     if not modules:
         missing.append("the modules: Gradle's projects report lists none")
-    missing.extend(f"{module}:dependencies (a module Gradle lists)" for module in modules
-                   if f"{module}:dependencies" not in tasks)
+    modules = [ROOT] + modules
+    missing.extend(f"{module}:dependencies ({'a module Gradle lists' if module else 'the root project'})"
+                   for module in modules if f"{module}:dependencies" not in tasks)
     for name in PER_MODULE:
         found = [f"{module}:dependencies {name}" for module in modules
                  if f"{module}:dependencies {name}" in reports]
@@ -352,13 +356,14 @@ def self_test_report(lib: str = LIB_OK, other: str = OTHER_OK, lint: bool = True
                      second_lint: str | None = None, projects: list[str] | None = None,
                      dokka: str | None = None, test_platform: bool = True,
                      result_listener: str | None = None, test_platform_core: str | None = None,
-                     dotted: str | None = None) -> str:
+                     dotted: str | None = None, root_dokka: str | None = None,
+                     root_report: bool = True) -> str:
     """A log of the two checked commands: every module listed, then every report.
 
     `lib` and `other` are the graphs of the two floored packages everywhere; the other arguments
     replace one configuration's graph, drop a report, or change the module list. The second module
     is an application's: it alone has configurations of the unified test platform, one of them with
-    dots in its name.
+    dots in its name. The root project's report holds Dokka's generator alone.
     """
     listed = MODULES if projects is None else projects
     hierarchy = "".join(f"+--- Project '{module}'\n" for module in listed)
@@ -371,6 +376,11 @@ def self_test_report(lib: str = LIB_OK, other: str = OTHER_OK, lint: bool = True
         "> Task :buildEnvironment\nDaemon JVM: a JDK\n\nRoot project 'root'\n\nclasspath\n"
         + (f"{lib}{other}" if root is None else root),
     ]
+    if root_report:
+        sections.append(
+            "> Task :dependencies\n\nRoot project 'root'\n\n"
+            "dokkaHtmlGeneratorRuntimeResolver~internal - [Internal Dokka Configuration] Dokka.\n"
+            f"{other if root_dokka is None else root_dokka}\n")
     for index, module in enumerate(MODULES):
         lint_graph = lib if index == 0 or second_lint is None else second_lint
         sections.append(
@@ -425,6 +435,12 @@ SELF_TEST_CASES: list[tuple[str, str, str | None]] = [
     ("a package below its floor in the root build script's classpath only",
      self_test_report(root="+--- org.example:lib:1.79\n" + OTHER_OK),
      ":buildEnvironment classpath: org.example:lib resolves to 1.79"),
+    ("a package below its floor in the root project's Dokka generator only",
+     self_test_report(root_dokka="\\--- org.example:other:4.5.6\n"),
+     ":dependencies dokkaHtmlGeneratorRuntimeResolver~internal: org.example:other resolves to 4.5.6"),
+    ("the root project without a report",
+     self_test_report(root_report=False),
+     ":dependencies (the root project): not in the Gradle report"),
     ("a package below its floor in the second module only",
      self_test_report(second_lint="+--- org.example:lib:1.79\n"),
      ":module-b:dependencies androidLintTool: org.example:lib resolves to 1.79"),
