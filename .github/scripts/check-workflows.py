@@ -118,7 +118,9 @@ It fails when:
      once, runs Gradle once, with the one pinned step (the wrapper script, `:dokkaGenerate`, source
      links at the commit checked out), builds the site with MkDocs, copies the reference to
      site/api/kotlin with the one pinned step, and directly after that checks its landing page with
-     the one pinned step.
+     the one pinned step. docs-publish.yml's build job, whose output is published as built,
+     restores no cache at all (a cache action, setup-gradle, the setup-project action, or a setup
+     action's `cache:` input).
 
 The check stops accidents, not intent: a pull request runs its own copy of this script.
 """
@@ -993,6 +995,10 @@ def kotlin_reference_problems(name: str, document: dict) -> list[str]:
             uses = str(step.get("uses", ""))
             if uses and not PINNED_ACTION.fullmatch(uses):
                 problems.append(f"{where} uses {uses}, which is not pinned to a full commit SHA")
+            # Its Gradle and MkDocs output goes into the Pages artifact as built.
+            if (name, job_id) == DOCS_BUILD_JOB and restores_cache(step):
+                problems.append(f"{where} restores a cache ({uses}): the site it publishes is built from"
+                                " nothing another run wrote")
         java = steps_using(steps, "actions/setup-java")
         validation = steps_using(steps, "gradle/actions/wrapper-validation")
         if len(java) != 1 or not is_pinned_step(steps[java[0]], "actions/setup-java", JDK_SETUP):
@@ -2434,6 +2440,17 @@ CASES: list[tuple[str, str, str | None, str]] = [
     ("the site's workflow granting a default permission", "docs-publish.yml",
      COMPLIANT_DOCS_PUBLISH.replace("permissions: {}\njobs:", "permissions: {contents: read}\njobs:"),
      "docs-publish.yml: its default permissions are"),
+    ("the site's build restoring Gradle's cache with setup-gradle", "docs-publish.yml",
+     docs_publish_with_step("      - uses: gradle/actions/setup-gradle@0123456789abcdef0123456789abcdef01234567\n"),
+     "job build restores a cache (gradle/actions/setup-gradle@"),
+    ("the site's build restoring a cache with actions/cache", "docs-publish.yml",
+     docs_publish_with_step("      - uses: actions/cache@0123456789abcdef0123456789abcdef01234567\n"
+                            "        with: {path: ~/.gradle/caches, key: gradle}\n"),
+     "job build restores a cache (actions/cache@"),
+    ("the site's build restoring pip's cache", "docs-publish.yml",
+     docs_publish_with_step("      - uses: actions/setup-python@0123456789abcdef0123456789abcdef01234567\n"
+                            "        with: {python-version: '3.14', cache: pip}\n"),
+     "job build restores a cache (actions/setup-python@"),
     # The Kotlin reference in the docs check (rule 11).
     ("the docs check setting up an unpinned JDK", "docs-check.yml",
      COMPLIANT_DOCS.replace("actions/setup-java@0123456789abcdef0123456789abcdef01234567", "actions/setup-java@v6"),
