@@ -18,9 +18,10 @@ import kotlin.time.Instant
  *   [FlowReadStrategy.CacheOnly] read always, and again once the cache marks them stale (to be
  *   fetched again). `false` once the read has fetched them, and while it shows them with later
  *   writes applied.
- * @property fetchedAt when the rows under [result] were fetched from the server, by the device's
- *   clock: the time of the fetch, never of a later local change applied to them. For rows the
- *   library made from queued writes alone, when it made them. `null` while nothing is cached.
+ * @property fetchedAt when the rows under [QuerySnapshot.result] were fetched from the server, by
+ *   the device's clock: the time of the fetch, never of a later local change applied to them. For
+ *   rows the library made from queued writes alone, when it made them. `null` while nothing is
+ *   cached.
  * @property hasPendingMutations whether a write that waits in the mutation queue changed one of the
  *   rows shown: a row it added, changed or removed.
  * @property refresh how the refresh behind the read stands; see [RefreshState].

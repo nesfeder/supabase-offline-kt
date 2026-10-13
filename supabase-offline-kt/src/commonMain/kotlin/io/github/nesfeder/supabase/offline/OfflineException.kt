@@ -36,9 +36,9 @@ public class CacheMissException internal constructor(message: String) :
  * - a write to a schema other than the client's default;
  * - a write that was on its way into the queue while local data was cleared.
  *
- * The message says which; [cause] is the connectivity failure, so [isNetworkOrConnectivityFailure]
- * is `true` for it. While the client is closing, such a write fails with the client's closed error
- * instead.
+ * The message says which; [MutationNotQueueableException.cause] is the connectivity failure, so
+ * [isNetworkOrConnectivityFailure] is `true` for it. While the client is closing, such a write
+ * fails with the client's closed error instead.
  */
 public class MutationNotQueueableException internal constructor(message: String, cause: Throwable) :
     OfflineException(message, cause)

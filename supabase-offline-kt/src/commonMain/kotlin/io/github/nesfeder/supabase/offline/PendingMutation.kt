@@ -14,7 +14,7 @@ import kotlinx.serialization.json.JsonObject
  * @property table the table the write targets.
  * @property operation what the write does.
  * @property createdAt when the write was queued, by the device's clock. Writes are sent in the
- *   order they were made, which is the order of [id], not of this.
+ *   order they were made, which is the order of [PendingMutation.id], not of this.
  * @property rowKeys the primary-key values of the rows the write touches, as far as the library can
  *   tell: one object per row of the body that carries the whole key, or the key's equality
  *   conditions in the filter. Empty when it cannot tell. The keys come from the table's primary key

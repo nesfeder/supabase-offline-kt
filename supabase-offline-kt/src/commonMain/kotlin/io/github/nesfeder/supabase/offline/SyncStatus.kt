@@ -8,11 +8,11 @@ import kotlin.time.Instant
  * Where the library stands with the current user's queued writes and the network, in one value:
  * what an app needs to draw one sync banner ([Offline.syncStatus]).
  *
- * [network] is current as soon as [Offline.disableNetwork] or [Offline.enableNetwork] returns. The
- * counts are eventually current: they follow each change to the mutation queue shortly after it is
- * made, so a test that reads them straight after a write waits for the value it expects. The two
- * are read together: a write moving between the queue and the rejected list, refused on replay or
- * retried, is counted in exactly one of them.
+ * [SyncStatus.network] is current as soon as [Offline.disableNetwork] or [Offline.enableNetwork]
+ * returns. The counts are eventually current: they follow each change to the mutation queue shortly
+ * after it is made, so a test that reads them straight after a write waits for the value it
+ * expects. The two are read together: a write moving between the queue and the rejected list,
+ * refused on replay or retried, is counted in exactly one of them.
  *
  * @property network whether the library believes it can reach the network; see [NetworkStatus].
  * @property pendingMutationCount the current user's writes waiting in the mutation queue, in every
