@@ -14,8 +14,8 @@ import io.github.nesfeder.supabase.offline.internal.realtime.REALTIME_FILTER_OPE
  * @property operator the comparison: `eq`, `neq`, `gt`, `gte`, `lt`, `lte` or `in`, the operators
  *   Realtime supports.
  * @property value what the column is compared with; for `in`, a list of values.
- * @throws IllegalArgumentException when [column] is blank, or [operator] is one Realtime does not
- *   support.
+ * @throws IllegalArgumentException when the column is blank, or the operator is one Realtime does
+ *   not support.
  */
 public class RealtimeFilter(
     public val column: String,
