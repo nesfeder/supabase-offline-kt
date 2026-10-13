@@ -19,6 +19,7 @@ import io.github.nesfeder.supabase.offline.OfflineInternal
 import io.github.nesfeder.supabase.offline.OfflinePostgrestQueryBuilder
 import io.github.nesfeder.supabase.offline.OfflineStorage
 import io.github.nesfeder.supabase.offline.PendingMutation
+import io.github.nesfeder.supabase.offline.RealtimeStatus
 import io.github.nesfeder.supabase.offline.RejectedMutation
 import io.github.nesfeder.supabase.offline.ServerError
 import io.github.nesfeder.supabase.offline.SyncReport
@@ -72,7 +73,6 @@ import io.github.nesfeder.supabase.offline.internal.postgrest.refreshWakeUps
 import io.github.nesfeder.supabase.offline.internal.postgrest.requestSessionFor
 import io.github.nesfeder.supabase.offline.internal.realtime.ServerChangeEvent
 import io.github.nesfeder.supabase.offline.internal.realtime.ServerChangeFeed
-import io.github.nesfeder.supabase.offline.internal.realtime.ServerChangeFollowState
 import io.github.nesfeder.supabase.offline.internal.realtime.ServerChangeFollower
 import io.github.nesfeder.supabase.offline.internal.realtime.WatchedTable
 import io.github.nesfeder.supabase.offline.internal.storage.CachingBucketApi
@@ -441,11 +441,8 @@ internal class OfflineClient(
                 engineLogger = engineLogger,
             )
 
-    /**
-     * Where the subscription to the watched tables stands; [ServerChangeFollowState.Off] with none.
-     */
-    internal val realtimeFollowState: StateFlow<ServerChangeFollowState> =
-        serverChangeFollower?.state ?: MutableStateFlow(ServerChangeFollowState.Off)
+    override val realtimeStatus: StateFlow<RealtimeStatus> =
+        serverChangeFollower?.state ?: MutableStateFlow(RealtimeStatus.Off)
 
     init {
         if (prepareFileCacheDirectories) fileCache.prepareDirectories()
@@ -464,9 +461,12 @@ internal class OfflineClient(
 
     private fun authPluginOrNull(): Auth? = supabaseClient.pluginManager.getPluginOrNull(Auth)
 
-    /** Switches the subscription to the watched tables on or off; nothing happens without them. */
-    internal fun setRealtimeEnabled(enabled: Boolean) {
-        serverChangeFollower?.setEnabled(enabled)
+    override suspend fun disableRealtime(): Unit = operationGate.call {
+        serverChangeFollower?.setEnabled(false)
+    }
+
+    override suspend fun enableRealtime(): Unit = operationGate.call {
+        serverChangeFollower?.setEnabled(true)
     }
 
     /** The PostgREST plugin's default schema, `public` without the plugin. */

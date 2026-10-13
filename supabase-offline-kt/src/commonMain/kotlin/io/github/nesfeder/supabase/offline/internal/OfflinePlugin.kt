@@ -10,6 +10,7 @@ import io.github.nesfeder.supabase.offline.OfflineInternal
 import io.github.nesfeder.supabase.offline.OfflinePostgrestQueryBuilder
 import io.github.nesfeder.supabase.offline.OfflineStorage
 import io.github.nesfeder.supabase.offline.PendingMutation
+import io.github.nesfeder.supabase.offline.RealtimeStatus
 import io.github.nesfeder.supabase.offline.RejectedMutation
 import io.github.nesfeder.supabase.offline.SyncReport
 import io.github.nesfeder.supabase.offline.SyncStatus
@@ -98,6 +99,13 @@ internal class OfflinePlugin(
     override suspend fun disableNetwork(): Unit = client.disableNetwork()
 
     override suspend fun enableNetwork(): Unit = client.enableNetwork()
+
+    override val realtimeStatus: StateFlow<RealtimeStatus>
+        get() = client.realtimeStatus
+
+    override suspend fun disableRealtime(): Unit = client.disableRealtime()
+
+    override suspend fun enableRealtime(): Unit = client.enableRealtime()
 
     override suspend fun applyServerRecord(
         table: String,

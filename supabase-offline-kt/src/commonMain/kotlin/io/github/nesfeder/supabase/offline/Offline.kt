@@ -18,6 +18,7 @@ import io.github.nesfeder.supabase.offline.internal.OfflinePlugin
 import io.github.nesfeder.supabase.offline.internal.openPlatformClient
 import io.github.nesfeder.supabase.offline.internal.realtime.ServerChangeFeed
 import io.github.nesfeder.supabase.offline.internal.realtime.WatchedTable
+import io.github.nesfeder.supabase.offline.internal.realtime.toWatchedTable
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.serialization.json.JsonObject
@@ -336,6 +337,31 @@ public interface Offline : SupabasePlugin<Offline.Config> {
     @Throws(Throwable::class) public suspend fun enableNetwork()
 
     /**
+     * Where the plugin stands with the channel that keeps the tables [Config.realtime] named
+     * current, as it changes: [RealtimeStatus.Off] when none is named. It never throws. At [close]
+     * it takes [RealtimeStatus.Off], the channel having been left, and changes no more.
+     */
+    public val realtimeStatus: StateFlow<RealtimeStatus>
+
+    /**
+     * Leaves the Realtime channel and joins none until [enableRealtime]: an app's own switch for
+     * the tables [Config.realtime] named. [realtimeStatus] reads [RealtimeStatus.Off] once this
+     * returns, and the channel is left right after. Like [disableNetwork], the switch is not kept:
+     * a new client starts with it on. Nothing happens without named tables, or while already off.
+     *
+     * @throws IllegalStateException when the client is closed.
+     */
+    @Throws(Throwable::class) public suspend fun disableRealtime()
+
+    /**
+     * Joins the channel again after [disableRealtime], as soon as a user is signed in (or [Auth] is
+     * not installed) and the network is not known down. Nothing happens while already on.
+     *
+     * @throws IllegalStateException when the client is closed.
+     */
+    @Throws(Throwable::class) public suspend fun enableRealtime()
+
+    /**
      * Applies a row the server reports, such as a Realtime `postgres_changes` INSERT or UPDATE
      * record, to every cached query of [table]: the cached row with the same key is replaced, and a
      * query that admits the row and does not hold it gains it.
@@ -581,10 +607,36 @@ public interface Offline : SupabasePlugin<Offline.Config> {
         internal var openLocalData: (SupabaseClient, Config) -> OfflineClient = ::openPlatformClient
 
         /**
-         * The tables whose changes on the server the plugin follows and applies to the cache; none
-         * until the configuration can name them.
+         * The tables `realtime { }` named: their changes on the server are applied to the cache as
+         * they happen. None by default, and then no channel is opened.
          */
-        internal var watchedTables: List<WatchedTable> = emptyList()
+        public val realtimeTables: List<RealtimeTable>
+            get() = realtimeTableList.toList()
+
+        private val realtimeTableList: MutableList<RealtimeTable> = mutableListOf()
+
+        /**
+         * Names the tables whose changes on the server the plugin applies to the cache as they
+         * happen, through supabase-kt's Realtime plugin, which must be installed; see
+         * [RealtimeTables.table]. Each call adds to [realtimeTables].
+         *
+         * The channel is joined while a user is signed in (or [Auth] is not installed), the network
+         * is not known down and [disableRealtime] has not switched it off, and left otherwise and
+         * at [close]. Every join reads the named tables again, since Realtime replays nothing:
+         * their live readers fetch again, and the next read of each cached query of theirs asks the
+         * server. [realtimeStatus] says where the channel stands. An app without the Realtime
+         * plugin that names a table here fails `createSupabaseClient` with [IllegalStateException].
+         *
+         * @param init the block naming the tables.
+         * @throws IllegalArgumentException for a blank table, or one named twice for a schema.
+         */
+        public fun realtime(init: RealtimeTables.() -> Unit) {
+            RealtimeTables(realtimeTableList).init()
+        }
+
+        /** [realtimeTables] as the engine follows them. */
+        internal val watchedTables: List<WatchedTable>
+            get() = realtimeTableList.map { named -> named.toWatchedTable() }
 
         /**
          * Makes the feed those changes arrive through, in place of Realtime's: a test's script.

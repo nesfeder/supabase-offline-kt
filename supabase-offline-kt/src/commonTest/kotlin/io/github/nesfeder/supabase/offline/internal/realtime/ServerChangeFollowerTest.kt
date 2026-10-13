@@ -5,6 +5,7 @@
 package io.github.nesfeder.supabase.offline.internal.realtime
 
 import io.github.nesfeder.supabase.offline.NetworkStatus
+import io.github.nesfeder.supabase.offline.RealtimeStatus
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogLevel
 import io.github.nesfeder.supabase.offline.testdoubles.FakeServerChangeFeed
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingLogSink
@@ -92,7 +93,7 @@ class ServerChangeFollowerTest {
         runCurrent()
 
         // Then — subscribed and applying, the failure logged by its type and not its text
-        assertEquals(ServerChangeFollowState.Subscribed, follower.state.value)
+        assertEquals(RealtimeStatus.Subscribed, follower.state.value)
         assertTrue(applied.any { event -> event is ServerChangeEvent.Saved }, "$applied")
         val warning = logs.entriesAt(EngineLogLevel.WARNING).single().message
         assertTrue("IllegalStateException" in warning, warning)
@@ -110,27 +111,27 @@ class ServerChangeFollowerTest {
         runCurrent()
 
         // Then — joined at once, and the join reads the table again
-        assertEquals(ServerChangeFollowState.Subscribing, follower.state.value)
+        assertEquals(RealtimeStatus.Subscribing, follower.state.value)
         val first = feed.follows.value.single()
         first.join()
         runCurrent()
-        assertEquals(ServerChangeFollowState.Subscribed, follower.state.value)
+        assertEquals(RealtimeStatus.Subscribed, follower.state.value)
         assertEquals(listOf(TABLE to SCHEMA), staled)
 
         // When / Then — the network known down pauses it; back, it joins anew
         network.value = NetworkStatus.OFFLINE
         runCurrent()
-        assertEquals(ServerChangeFollowState.Paused, follower.state.value)
+        assertEquals(RealtimeStatus.Paused, follower.state.value)
         assertTrue(first.isLeft)
         network.value = NetworkStatus.ONLINE
         runCurrent()
         assertEquals(2, feed.follows.value.size)
-        assertEquals(ServerChangeFollowState.Subscribing, follower.state.value)
+        assertEquals(RealtimeStatus.Subscribing, follower.state.value)
 
         // When / Then — no user pauses it; a user joins anew
         sessionReady.emit(false)
         runCurrent()
-        assertEquals(ServerChangeFollowState.Paused, follower.state.value)
+        assertEquals(RealtimeStatus.Paused, follower.state.value)
         assertTrue(feed.follows.value[1].isLeft)
         sessionReady.emit(true)
         runCurrent()
@@ -139,7 +140,7 @@ class ServerChangeFollowerTest {
         // When / Then — the switch off leaves; on joins anew
         follower.setEnabled(false)
         runCurrent()
-        assertEquals(ServerChangeFollowState.Off, follower.state.value)
+        assertEquals(RealtimeStatus.Off, follower.state.value)
         assertTrue(feed.follows.value[2].isLeft)
         follower.setEnabled(true)
         runCurrent()
@@ -148,7 +149,7 @@ class ServerChangeFollowerTest {
         // When / Then — network access switched off pauses it too
         network.value = NetworkStatus.DISABLED
         runCurrent()
-        assertEquals(ServerChangeFollowState.Paused, follower.state.value)
+        assertEquals(RealtimeStatus.Paused, follower.state.value)
         assertTrue(feed.follows.value[3].isLeft)
         scope.cancel()
     }
@@ -210,7 +211,7 @@ class ServerChangeFollowerTest {
             applied,
         )
         assertEquals(listOf(TABLE to SCHEMA), staled)
-        assertEquals(ServerChangeFollowState.Subscribed, follower.state.value)
+        assertEquals(RealtimeStatus.Subscribed, follower.state.value)
         assertEquals(1, logs.entriesAt(EngineLogLevel.WARNING).size)
         scope.cancel()
     }
@@ -230,7 +231,7 @@ class ServerChangeFollowerTest {
         runCurrent()
 
         // Then — stalled with the cause, joined again after 1 s, then 2 s, then 4 s, then 4 s
-        val stalled = assertIs<ServerChangeFollowState.Stalled>(follower.state.value)
+        val stalled = assertIs<RealtimeStatus.Stalled>(follower.state.value)
         assertIs<IllegalStateException>(stalled.cause)
         assertEquals(cause.message, stalled.cause.message)
         assertEquals(1, feed.follows.value.size)
@@ -269,7 +270,7 @@ class ServerChangeFollowerTest {
 
         // Then — joined at once
         assertEquals(3, feed.follows.value.size)
-        assertEquals(ServerChangeFollowState.Subscribing, follower.state.value)
+        assertEquals(RealtimeStatus.Subscribing, follower.state.value)
         scope.cancel()
     }
 
@@ -320,7 +321,7 @@ class ServerChangeFollowerTest {
         runCurrent()
 
         // Then
-        val stalled = assertIs<ServerChangeFollowState.Stalled>(follower.state.value)
+        val stalled = assertIs<RealtimeStatus.Stalled>(follower.state.value)
         assertIs<ServerChangeFeedEndedException>(stalled.cause)
         scope.cancel()
     }
@@ -335,7 +336,7 @@ class ServerChangeFollowerTest {
         runCurrent()
 
         // Then
-        assertEquals(ServerChangeFollowState.Off, follower.state.value)
+        assertEquals(RealtimeStatus.Off, follower.state.value)
         assertTrue(feed.follows.value.isEmpty())
         scope.cancel()
     }
@@ -381,7 +382,7 @@ class ServerChangeFollowerTest {
         follower.stop()
 
         // Then
-        assertEquals(ServerChangeFollowState.Off, follower.state.value)
+        assertEquals(RealtimeStatus.Off, follower.state.value)
         assertTrue(feed.follows.value[0].isLeft)
     }
 

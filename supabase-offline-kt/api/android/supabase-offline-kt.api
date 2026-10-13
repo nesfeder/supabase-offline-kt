@@ -116,13 +116,16 @@ public abstract interface class io/github/nesfeder/supabase/offline/Offline : io
 	public abstract fun clearLocalData (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun close (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun disableNetwork (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public abstract fun disableRealtime (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun discardPendingMutation (JLkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun dismissRejectedMutation (JLkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun enableNetwork (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public abstract fun enableRealtime (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun from (Ljava/lang/String;)Lio/github/nesfeder/supabase/offline/OfflinePostgrestQueryBuilder;
 	public abstract fun from (Ljava/lang/String;Ljava/lang/String;)Lio/github/nesfeder/supabase/offline/OfflinePostgrestQueryBuilder;
 	public fun get (Ljava/lang/String;)Lio/github/nesfeder/supabase/offline/OfflinePostgrestQueryBuilder;
 	public fun get (Ljava/lang/String;Ljava/lang/String;)Lio/github/nesfeder/supabase/offline/OfflinePostgrestQueryBuilder;
+	public abstract fun getRealtimeStatus ()Lkotlinx/coroutines/flow/StateFlow;
 	public abstract fun getStorage ()Lio/github/nesfeder/supabase/offline/OfflineStorage;
 	public abstract fun getSyncStatus ()Lkotlinx/coroutines/flow/StateFlow;
 	public abstract fun pendingMutationCount (Ljava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
@@ -158,8 +161,10 @@ public final class io/github/nesfeder/supabase/offline/Offline$Config {
 	public final fun getLogLevel ()Lio/github/jan/supabase/logging/LogLevel;
 	public final fun getNetworkAvailability ()Lkotlinx/coroutines/flow/Flow;
 	public final fun getPrimaryKeys ()Ljava/util/Map;
+	public final fun getRealtimeTables ()Ljava/util/List;
 	public final fun getResponseTrust ()Lio/github/nesfeder/supabase/offline/ResponseTrust;
 	public final fun primaryKey (Ljava/lang/String;[Ljava/lang/String;)V
+	public final fun realtime (Lkotlin/jvm/functions/Function1;)V
 	public final fun setAutoSync (Z)V
 	public final fun setCacheSizeBytes (J)V
 	public final fun setDataDirectory (Ljava/lang/String;)V
@@ -301,6 +306,69 @@ public final class io/github/nesfeder/supabase/offline/ReadStrategy$NetworkOnly 
 	public fun equals (Ljava/lang/Object;)Z
 	public fun hashCode ()I
 	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/github/nesfeder/supabase/offline/RealtimeFilter {
+	public fun <init> (Ljava/lang/String;Lio/github/jan/supabase/postgrest/query/filter/FilterOperator;Ljava/lang/Object;)V
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getColumn ()Ljava/lang/String;
+	public final fun getOperator ()Lio/github/jan/supabase/postgrest/query/filter/FilterOperator;
+	public final fun getValue ()Ljava/lang/Object;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public abstract interface class io/github/nesfeder/supabase/offline/RealtimeStatus {
+}
+
+public final class io/github/nesfeder/supabase/offline/RealtimeStatus$Off : io/github/nesfeder/supabase/offline/RealtimeStatus {
+	public static final field INSTANCE Lio/github/nesfeder/supabase/offline/RealtimeStatus$Off;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/github/nesfeder/supabase/offline/RealtimeStatus$Paused : io/github/nesfeder/supabase/offline/RealtimeStatus {
+	public static final field INSTANCE Lio/github/nesfeder/supabase/offline/RealtimeStatus$Paused;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/github/nesfeder/supabase/offline/RealtimeStatus$Stalled : io/github/nesfeder/supabase/offline/RealtimeStatus {
+	public final fun component1 ()Ljava/lang/Throwable;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getCause ()Ljava/lang/Throwable;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/github/nesfeder/supabase/offline/RealtimeStatus$Subscribed : io/github/nesfeder/supabase/offline/RealtimeStatus {
+	public static final field INSTANCE Lio/github/nesfeder/supabase/offline/RealtimeStatus$Subscribed;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/github/nesfeder/supabase/offline/RealtimeStatus$Subscribing : io/github/nesfeder/supabase/offline/RealtimeStatus {
+	public static final field INSTANCE Lio/github/nesfeder/supabase/offline/RealtimeStatus$Subscribing;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/github/nesfeder/supabase/offline/RealtimeTable {
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getFilter ()Lio/github/nesfeder/supabase/offline/RealtimeFilter;
+	public final fun getSchema ()Ljava/lang/String;
+	public final fun getTable ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/github/nesfeder/supabase/offline/RealtimeTables {
+	public final fun table (Ljava/lang/String;Ljava/lang/String;Lio/github/nesfeder/supabase/offline/RealtimeFilter;)V
+	public static synthetic fun table$default (Lio/github/nesfeder/supabase/offline/RealtimeTables;Ljava/lang/String;Ljava/lang/String;Lio/github/nesfeder/supabase/offline/RealtimeFilter;ILjava/lang/Object;)V
 }
 
 public abstract interface class io/github/nesfeder/supabase/offline/RefreshState {

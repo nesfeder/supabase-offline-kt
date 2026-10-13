@@ -38,7 +38,7 @@ class WatchedTableWiringTest {
     @Test
     fun tables_watched_without_the_realtime_plugin_fail_the_open() = runTest {
         // Given
-        val config = Offline.Config().apply { watchedTables = listOf(WatchedTable("tasks")) }
+        val config = Offline.Config().apply { realtime { table("tasks") } }
 
         // When
         val failure =
@@ -57,7 +57,7 @@ class WatchedTableWiringTest {
             val feed = FakeServerChangeFeed()
             val config =
                 Offline.Config().apply {
-                    watchedTables = listOf(WatchedTable("tasks"))
+                    realtime { table("tasks") }
                     serverChangeFeed = { feed }
                 }
 
@@ -75,7 +75,7 @@ class WatchedTableWiringTest {
     fun with_the_plugin_installed_the_client_opens_and_closes() =
         runTest(timeout = 2.minutes) {
             // Given — the Realtime plugin installed, and a feed the client never reaches
-            val config = Offline.Config().apply { watchedTables = listOf(WatchedTable("tasks")) }
+            val config = Offline.Config().apply { realtime { table("tasks") } }
             val supabase = newTestSupabaseClient {
                 install(Postgrest)
                 install(Realtime) { connectOnSubscribe = false }
@@ -97,7 +97,7 @@ class WatchedTableWiringTest {
             val feed = FakeServerChangeFeed()
             val config =
                 Offline.Config().apply {
-                    watchedTables = listOf(WatchedTable("tasks"))
+                    realtime { table("tasks") }
                     serverChangeFeed = { feed }
                 }
             val supabase = newTestSupabaseClient {
@@ -128,7 +128,7 @@ class WatchedTableWiringTest {
             val feed = FakeServerChangeFeed()
             val config =
                 Offline.Config().apply {
-                    watchedTables = listOf(WatchedTable("tasks"))
+                    realtime { table("tasks") }
                     serverChangeFeed = { feed }
                 }
 
