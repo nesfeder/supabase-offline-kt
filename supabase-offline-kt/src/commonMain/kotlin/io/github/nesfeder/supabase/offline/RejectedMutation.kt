@@ -20,7 +20,7 @@ import kotlinx.serialization.json.JsonObject
  * @property rowKeys the primary-key values of the rows the write touches, as for
  *   [PendingMutation.rowKeys].
  * @property body the body the write sent, or `null` for a DELETE, a stored body that can no longer
- *   be read, or one too large to keep on the list (then [isRetryable] is `false`).
+ *   be read, or one too large to keep on the list (then [RejectedMutation.isRetryable] is `false`).
  * @property serverError what the server answered, or `null` when the library refused the write
  *   itself because it could no longer be replayed exactly as it was made.
  * @property message why it was refused, in words: the server's message, or the library's reason.
