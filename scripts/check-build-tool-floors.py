@@ -9,10 +9,11 @@ The build applies them as dependency constraints to these configurations, which 
   * build-logic's ``precompiledScriptPluginAccessorsGenerationClasspath``, the plugins' full
     runtime that kotlin-dsl resolves (``build-logic/build.gradle.kts``);
   * every module's ``androidLintTool``, ``swiftExportClasspathResolvable``,
-    ``kotlinBouncyCastleConfiguration`` and ``dokkaHtmlGeneratorRuntimeResolver~internal``: the
-    lint and Swift export tools, the Kotlin Gradle plugin's publishing validation and Dokka's
-    generator; the root project counts as a module here, for the Dokka generator of the site's
-    API reference (``supabase-offline.api-reference``);
+    ``kotlinBouncyCastleConfiguration``, ``dokkaHtmlGeneratorRuntimeResolver~internal`` and
+    ``dokkaHtmlPublicationPluginResolver~internal``: the lint and Swift export tools, the Kotlin
+    Gradle plugin's publishing validation, and Dokka's generator and publication plugins; the root
+    project counts as a module here, for the Dokka generator and plugins of the site's API
+    reference (``supabase-offline.api-reference``);
   * every configuration of a module whose name starts with ``unified-test-platform-``: the Android
     Gradle plugin's unified test platform, which an application module creates to run instrumented
     tests (both ``supabase-offline.build-tool-floors``, which every role plugin applies).
@@ -77,7 +78,8 @@ ROOT = ""
 # Configurations checked in every module whose `dependencies` report has them. At least one module
 # must have each.
 PER_MODULE = ["androidLintTool", "swiftExportClasspathResolvable", "kotlinBouncyCastleConfiguration",
-              "dokkaHtmlGeneratorRuntimeResolver~internal"]
+              "dokkaHtmlGeneratorRuntimeResolver~internal",
+              "dokkaHtmlPublicationPluginResolver~internal"]
 # Configurations checked by the start of their name, in every module that has them; at least one
 # module must have one for each prefix. A later release's new configuration of the same tool is
 # checked without a change here, as the convention plugin floors it without one.
@@ -357,13 +359,15 @@ def self_test_report(lib: str = LIB_OK, other: str = OTHER_OK, lint: bool = True
                      dokka: str | None = None, test_platform: bool = True,
                      result_listener: str | None = None, test_platform_core: str | None = None,
                      dotted: str | None = None, root_dokka: str | None = None,
+                     publication: str | None = None, root_publication: str | None = None,
                      root_report: bool = True) -> str:
     """A log of the two checked commands: every module listed, then every report.
 
     `lib` and `other` are the graphs of the two floored packages everywhere; the other arguments
     replace one configuration's graph, drop a report, or change the module list. The second module
     is an application's: it alone has configurations of the unified test platform, one of them with
-    dots in its name. The root project's report holds Dokka's generator alone.
+    dots in its name. The root project's report holds Dokka's generator and publication plugins
+    alone.
     """
     listed = MODULES if projects is None else projects
     hierarchy = "".join(f"+--- Project '{module}'\n" for module in listed)
@@ -380,7 +384,9 @@ def self_test_report(lib: str = LIB_OK, other: str = OTHER_OK, lint: bool = True
         sections.append(
             "> Task :dependencies\n\nRoot project 'root'\n\n"
             "dokkaHtmlGeneratorRuntimeResolver~internal - [Internal Dokka Configuration] Dokka.\n"
-            f"{other if root_dokka is None else root_dokka}\n")
+            f"{other if root_dokka is None else root_dokka}\n"
+            "dokkaHtmlPublicationPluginResolver~internal - [Internal Dokka Configuration] Dokka.\n"
+            f"{lib if root_publication is None else root_publication}\n")
     for index, module in enumerate(MODULES):
         lint_graph = lib if index == 0 or second_lint is None else second_lint
         sections.append(
@@ -391,6 +397,8 @@ def self_test_report(lib: str = LIB_OK, other: str = OTHER_OK, lint: bool = True
             + f"kotlinBouncyCastleConfiguration - Bouncy Castle.\n{lib}\n"
             + "dokkaHtmlGeneratorRuntimeResolver~internal - [Internal Dokka Configuration] Dokka.\n"
             + f"{other if dokka is None else dokka}\n"
+            + "dokkaHtmlPublicationPluginResolver~internal - [Internal Dokka Configuration] Dokka.\n"
+            + f"{lib if publication is None else publication}\n"
             + ("" if index == 0 or not test_platform else
                "unified-test-platform-core - A configuration to resolve the Unified Test Platform.\n"
                "\\--- com.example:core:1.0\n     "
@@ -438,6 +446,13 @@ SELF_TEST_CASES: list[tuple[str, str, str | None]] = [
     ("a package below its floor in the root project's Dokka generator only",
      self_test_report(root_dokka="\\--- org.example:other:4.5.6\n"),
      ":dependencies dokkaHtmlGeneratorRuntimeResolver~internal: org.example:other resolves to 4.5.6"),
+    ("a package below its floor in Dokka's publication plugins only",
+     self_test_report(publication="+--- org.example:lib:1.79\n"),
+     ":module-a:dependencies dokkaHtmlPublicationPluginResolver~internal: org.example:lib resolves"
+     " to 1.79"),
+    ("a package below its floor in the root project's Dokka publication plugins only",
+     self_test_report(root_publication="+--- org.example:lib:1.79\n"),
+     ":dependencies dokkaHtmlPublicationPluginResolver~internal: org.example:lib resolves to 1.79"),
     ("the root project without a report",
      self_test_report(root_report=False),
      ":dependencies (the root project): not in the Gradle report"),
