@@ -36,6 +36,14 @@ All notable changes to this project are recorded in this file. The format follow
   `install(Realtime)`; `subscribedTables` says what the client follows, and `failChannel` and
   `dropChannel` end the channel as a server or a lost socket would. `stalledRealtime(cause)` builds
   the stalled status for a test double.
+- Swift: `Config.realtimeTables`, an array of `RealtimeTable(_:schema:filter:)` with a
+  `RealtimeFilter(column:operator:value:)` or `RealtimeFilter(column:in:)`, and a `Config`
+  initializer that takes it beside the existing one; `realtimeStatus`, a
+  `RealtimeStatusSequence` of `RealtimeStatus` (`off`, `paused`, `subscribing`, `subscribed`,
+  `stalled(cause:)`); and `disableRealtime()` / `enableRealtime()`. The core owns the channel and
+  refreshes its token before it expires through `Config.accessToken`; an app brackets a sign-in or
+  sign-out with the switch, since the core sees no Auth session. `FakeRealtime` in
+  `SupabaseOfflineTesting`, with `inMemory(…, realtime:)`, reports changes to an in-memory client.
 
 ### Changed
 

@@ -4,10 +4,11 @@ Add the package, create a client, and make your first offline read and queued wr
 
 ## Overview
 
-SupabaseOffline works beside supabase-swift. Auth, Realtime and Functions stay with
-supabase-swift's client; the tables and files your app reads and writes go through a
-``SupabaseOfflineClient``, which answers reads from a copy on the device when the server cannot be
-reached and keeps writes made offline in a queue until the network comes back.
+SupabaseOffline works beside supabase-swift. Auth and Functions stay with supabase-swift's
+client, and so do Realtime's broadcast and presence; the tables and files your app reads and writes
+go through a ``SupabaseOfflineClient``, which answers reads from a copy on the device when the
+server cannot be reached, keeps writes made offline in a queue until the network comes back, and
+keeps the tables ``SupabaseOfflineClient/Config/realtimeTables`` names current through Realtime.
 
 ### Add the package
 

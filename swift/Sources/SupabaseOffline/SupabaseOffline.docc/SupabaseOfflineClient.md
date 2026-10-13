@@ -41,6 +41,12 @@
 - ``disableNetwork()``
 - ``enableNetwork()``
 
+### Realtime
+
+- ``realtimeStatus``
+- ``disableRealtime()``
+- ``enableRealtime()``
+
 ### Local data
 
 - ``clearLocalData()``

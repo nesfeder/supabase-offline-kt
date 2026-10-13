@@ -313,6 +313,42 @@ internal constructor(
         runner.runToCompletion("enableNetwork", completion) { offline.enableNetwork() }
 
     /**
+     * Where the channel for [BridgeClientOptions.realtimeTables] stands now; off without named
+     * tables and after [close]. A failure to read it is reported as a stalled status carrying the
+     * failure.
+     */
+    public fun currentRealtimeStatus(): BridgeRealtimeStatus =
+        runner.answerNow(
+            "currentRealtimeStatus",
+            onFailure = { error -> BridgeRealtimeStatus(BridgeRealtimeStatusKind.STALLED, error) },
+        ) {
+            offline.realtimeStatus.value.toBridge()
+        }
+
+    /**
+     * The channel's status as it changes, starting with the current one; [onCompletion] fires once,
+     * with `null`, when the client closes.
+     */
+    public fun observeRealtimeStatus(
+        onStatus: (BridgeRealtimeStatus) -> Unit,
+        onCompletion: (BridgeError?) -> Unit,
+    ): BridgeCancellable =
+        runner.subscribe("observeRealtimeStatus", onStatus, onCompletion) {
+            offline.realtimeStatus.map { it.toBridge() }
+        }
+
+    /**
+     * Leaves the Realtime channel and joins none until [enableRealtime]; the status reads off once
+     * this completes. Not kept across clients.
+     */
+    public fun disableRealtime(completion: (BridgeError?) -> Unit): BridgeCancellable =
+        runner.runToCompletion("disableRealtime", completion) { offline.disableRealtime() }
+
+    /** Joins the channel again after [disableRealtime], as soon as the network allows. */
+    public fun enableRealtime(completion: (BridgeError?) -> Unit): BridgeCancellable =
+        runner.runToCompletion("enableRealtime", completion) { offline.enableRealtime() }
+
+    /**
      * Reports whether the device is online, from the app's own monitor; only read when the client
      * was opened with [BridgeClientOptions.reportsNetworkAvailability]. A hint, never a gate.
      */

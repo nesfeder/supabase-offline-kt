@@ -21,7 +21,7 @@ Kotlin names are the library's (`io.github.nesfeder.supabase.offline`) unless ma
 | `init(supabaseURL:supabaseKey:config:)` | `createSupabaseClient(supabaseUrl, supabaseKey) { install(Offline) { … } }` | An initializer for the plugin install; `URL` for the URL string |
 | `close()` | `close()` | Same |
 | `SupabaseOfflineClient.Config` | `Offline.Config` | Same |
-| `Config.init(defaultSchema:accessToken:dataDirectory:cacheSize:fileCacheSize:networkAvailability:autoSync:primaryKeys:logLevel:)` | the `install(Offline) { … }` block | A memberwise initializer with defaults for a configuration block |
+| `Config.init(defaultSchema:accessToken:dataDirectory:cacheSize:fileCacheSize:networkAvailability:autoSync:primaryKeys:logLevel:)`, and the same with `realtimeTables:` before `logLevel:` | the `install(Offline) { … }` block | A memberwise initializer with defaults for a configuration block; the form with `realtimeTables:` is an overload, since a new defaulted parameter would change the first form |
 | `Config.defaultSchema` | supabase-kt `Postgrest.Config.defaultSchema` | Same. Swift has no PostgREST plugin, so the setting lives here |
 | `Config.accessToken` | supabase-kt `SupabaseClientBuilder.accessToken` | Same; an `async` closure for a `suspend` lambda |
 | `Config.dataDirectory` | `Offline.Config.dataDirectory` | Same; `URL?` for a path string. The default differs by platform convention: Application Support/SupabaseOffline here |
@@ -33,6 +33,9 @@ Kotlin names are the library's (`io.github.nesfeder.supabase.offline`) unless ma
 | `Config.networkAvailability` | `Offline.Config.networkAvailability` | Same name; a closure that makes an `AsyncStream<Bool>`, called once when each client opens, for a `Flow<Boolean>?`: a Swift stream has one consumer and is finished with its client, where a cold `Flow` is collected afresh by each client. A Swift stream that ends counts as reachable and the status reads `.online`, where a Kotlin flow that ends stops being watched and the status reads `UNKNOWN` (which also counts as reachable): the framework cannot yet be told a signal has ended. `nil` is the system's path monitor in both |
 | `Config.autoSync` | `Offline.Config.autoSync` | Same |
 | `Config.primaryKeys` | `Offline.Config.primaryKeys`, `primaryKey(table, vararg columns)` | Same; a dictionary literal for the DSL helper |
+| `Config.realtimeTables` | `Offline.Config.realtimeTables`, `realtime { table(table, schema, filter) }` | Same name; an array of `RealtimeTable` for the DSL block. Swift names no Realtime plugin: the core installs supabase-kt's when the array is not empty |
+| `RealtimeTable(_:schema:filter:)` (`table`, `schema`, `filter`) | `RealtimeTable` (`table`, `schema`, `filter`), built by `table(...)` | Same fields; a public initializer for the block's call, the table name unlabeled as `from(_:)`'s is |
+| `RealtimeFilter(column:operator:value:)`, `RealtimeFilter(column:in:)` (`column`, `operator`) | `RealtimeFilter(column, operator, value)` | `operator` is Swift's `FilterOperator`; the value is an `OfflineFilterValue`, or an array for `in`, and is not read back. An operator Realtime does not evaluate fails the open with `configuration`, where Kotlin's initializer throws `IllegalArgumentException` |
 | `Config.logLevel` | supabase-kt `logLevel` (each plugin's `MainConfig.logLevel`) | Same. Kotlin's `null` means the client's own level; Swift has no such client, so it defaults to `.warning` |
 | `SupabaseOfflineClient.LogLevel` | supabase-kt `LogLevel` | Same |
 | `LogLevel.debug`, `.info`, `.warning`, `.error` | `DEBUG`, `INFO`, `WARNING`, `ERROR` | Same, lower camel |
@@ -153,7 +156,8 @@ supabase-swift never matches, because Storage's refusals arrive as `OfflineError
 
 | Swift | Kotlin | Same / reason |
 | --- | --- | --- |
-| `SupabaseOfflineClient.inMemory(supabaseURL:supabaseKey:config:server:clock:)` | `Offline.Config.inMemory(clock)` with Ktor's `MockEngine` | Same name and `clock`; a factory for a configuration extension |
+| `SupabaseOfflineClient.inMemory(supabaseURL:supabaseKey:config:server:clock:)` and `inMemory(supabaseURL:supabaseKey:config:server:clock:realtime:)` | `Offline.Config.inMemory(clock)` and `inMemory(clock, realtime)` with Ktor's `MockEngine` | Same name, `clock` and `realtime`, an overload each; a factory for a configuration extension |
+| `FakeRealtime` (`subscribedTables`, `droppedReportCount`, `reportInsert(table:record:schema:)`, `reportUpdate(table:record:schema:)`, `reportDelete(table:oldRecord:schema:)`, `failChannel(message:)`, `dropChannel()`) | `FakeRealtime` (the same, `subscribedTables` a `StateFlow`, `failChannel(cause)`) | Same; a `Set<String>` read now for the `StateFlow`, `[String: OfflineJSON]` for `JsonObject`, and a message for the cause's `Throwable`. A record that is not a JSON object throws `invalidRequest` |
 | `FakeServer`, `FakeServer.Request`, `FakeServer.Response` (`json`, `status`, `noConnection`) | Ktor's `MockEngine` | Swift has no Ktor; the library's Kotlin API has no name of its own here |
 | `ManualClock` (`now`, `advance(by:)`, `set(to:)`) | any `kotlin.time.Clock` | Swift's `Clock` protocol measures durations, not wall-clock `Date`s, so a concrete type is needed |
 
@@ -242,6 +246,11 @@ chain written for either upstream compiles against its own platform unchanged. T
 | `SyncStatus ==` | the data class's `equals` | Two sync errors are equal when their code, message, server error and network flag are, as `OfflineError` is not `Equatable` |
 | `NetworkStatus` (`unknown`, `online`, `offline`, `disabled`) | `NetworkStatus` (`UNKNOWN`, `ONLINE`, `OFFLINE`, `DISABLED`) | Lower-camel cases |
 | `disableNetwork()`, `enableNetwork()` | `Offline.disableNetwork()`, `Offline.enableNetwork()` | Same; `async throws` for `suspend` |
+| `realtimeStatus` | `Offline.realtimeStatus` | Same name; a `RealtimeStatusSequence` for the `StateFlow<RealtimeStatus>` |
+| `RealtimeStatusSequence`, `RealtimeStatusSequence.Iterator` | `StateFlow<RealtimeStatus>` | An `AsyncSequence` of `RealtimeStatus` for the `StateFlow`, as `SyncStatusSequence` is |
+| `RealtimeStatusSequence.value` | `StateFlow.value` | Same: the status now, without waiting; `off` before the client has opened and after `close()` |
+| `RealtimeStatus` (`off`, `paused`, `subscribing`, `subscribed`, `stalled(cause:)`) | `RealtimeStatus` (`Off`, `Paused`, `Subscribing`, `Subscribed`, `Stalled(cause)`) | Lower-camel cases; `cause` is an `OfflineError`, as `RefreshState.stalled`'s is |
+| `disableRealtime()`, `enableRealtime()` | `Offline.disableRealtime()`, `Offline.enableRealtime()` | Same; `async throws` for `suspend`. Without an Auth plugin the core cannot see a sign-in, so a Swift app brackets one with the switch, which Kotlin's follower does by itself |
 | `clearLocalData()` | `Offline.clearLocalData()` | Same |
 | `applyServerRecord(table:record:primaryKeys:schema:)` (an `Encodable`, or `[String: OfflineJSON]`) | `Offline.applyServerRecord(table, record, primaryKeys, schema)` (a `JsonObject`, or the reified `T`) | Same parameters in the same order; `Encodable` for the reified form, a dictionary of `OfflineJSON` for `JsonObject`. A record that is not a JSON object throws `invalidRequest` where Kotlin throws `IllegalArgumentException` |
 | `applyServerDelete(table:oldRecord:primaryKeys:schema:)` (an `Encodable`, or `[String: OfflineJSON]`) | `Offline.applyServerDelete(table, oldRecord, primaryKeys, schema)` | As `applyServerRecord`; Kotlin takes a `JsonObject` only |

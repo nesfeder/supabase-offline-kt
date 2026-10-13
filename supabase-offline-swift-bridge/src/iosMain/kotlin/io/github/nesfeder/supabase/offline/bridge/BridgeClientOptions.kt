@@ -44,6 +44,14 @@ public class BridgeClientOptions(
     /** Each table's primary-key columns, by table name; a table not named here has the key `id`. */
     public var primaryKeys: Map<String, List<String>> = emptyMap()
 
+    /**
+     * The tables the client keeps current through Realtime: it joins one channel for them while the
+     * network is not known down and the subscription is on, applies each change, reads them again
+     * on every join, and refreshes the channel's token before it expires through
+     * [accessTokenProvider]. None by default, and then no channel is opened.
+     */
+    public var realtimeTables: List<BridgeRealtimeTable> = emptyList()
+
     /** Receives every log message of the library and of supabase-kt, or `null` to drop them. */
     public var logSink: BridgeLogSink? = null
 

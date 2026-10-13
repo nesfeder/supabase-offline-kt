@@ -265,6 +265,7 @@ class BridgeErrorsTest {
                     ),
                     server,
                     null,
+                    null,
                 )
             val keyClient = checkNotNull(keyOpened.client) { "the in-memory client did not open" }
 

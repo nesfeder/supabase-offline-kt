@@ -72,6 +72,49 @@ The in-memory client retries no failed read, so a failure the server scripts arr
 `ManualClock`, passed as `clock`, is the time the client sees: move it to test a read's `maxAge` or
 when a write was queued.
 
+## Report Realtime changes
+
+A test of an app that names tables in ``SupabaseOfflineClient/Config/realtimeTables`` gives the
+in-memory client a `FakeRealtime` in place of a Realtime channel. The client joins the fake's
+channel as it would Realtime's (the network not known down, the subscription on), and
+`subscribedTables` says which tables it follows now; wait for ``SupabaseOfflineClient/realtimeStatus``
+to read ``RealtimeStatus/subscribed`` before reporting a change, since nothing is replayed. Each
+report reaches the cached queries as ``SupabaseOfflineClient/applyServerRecord(table:record:primaryKeys:schema:)-(_,[String:OfflineJSON],_,_)``
+applies a record; a report to a table nothing follows is dropped and counted in
+`droppedReportCount`. `failChannel(message:)` ends the channel as a server that refuses it would, and
+`dropChannel()` as a lost socket: the status reads ``RealtimeStatus/stalled(cause:)``, and the
+client joins again after a short wait.
+
+<!-- swift-listing: TestingYourAppListings.swift:realtime-test -->
+```swift
+@Test func aChangeTheServerReportsReachesTheRowsOnTheDevice() async throws {
+    // Given a client that follows `todos` through a fake Realtime, and one row read into the cache
+    let realtime = FakeRealtime()
+    let offline = SupabaseOfflineClient.inMemory(
+        config: .init(realtimeTables: [RealtimeTable("todos")]),
+        server: FakeServer { _ in .json(#"[{"id":"3f1e9c2a-6b4d-4e8f-9a0b-1c2d3e4f5a6b","title":"Buy milk","done":false}]"#) },
+        realtime: realtime
+    )
+    _ = try await offline.from("todos").select().execute([Todo].self)
+    for try await status in offline.realtimeStatus where status == .subscribed { break }
+
+    // When the server reports a row inserted
+    try realtime.reportInsert(
+        table: "todos",
+        record: ["id": .string("8c2b7d1e-0f3a-4b5c-8d6e-7f8a9b0c1d2e"), "title": .string("Call mom"), "done": .bool(false)]
+    )
+
+    // Then a live read of the device's copy yields both rows, with no request
+    var titles: [String] = []
+    for try await snapshot in offline.from("todos").selectAsSequence(as: [Todo].self, readStrategy: .cacheOnly) {
+        titles = snapshot.result?.map(\.title) ?? []
+        if titles.count == 2 { break }
+    }
+    #expect(titles.sorted() == ["Buy milk", "Call mom"])
+    try await offline.close()
+}
+```
+
 ## Previews
 
 The same client gives a SwiftUI preview rows without a network:

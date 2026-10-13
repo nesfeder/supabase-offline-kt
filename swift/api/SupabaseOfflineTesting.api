@@ -1,6 +1,15 @@
 // The public interface of SupabaseOfflineTesting, from its symbol graph; scripts/api-compat.py rates a
 // change to it. Do not edit: scripts/check-swift-public-api.py --products DIR --update writes it.
 platform iOS 16.0
+class FakeRealtime | final class FakeRealtime
+method FakeRealtime.dropChannel() | func dropChannel()
+property FakeRealtime.droppedReportCount | var droppedReportCount: Int { get }
+method FakeRealtime.failChannel(message:) | func failChannel(message: String = "The channel was refused")
+init FakeRealtime.init() | init()
+method FakeRealtime.reportDelete(table:oldRecord:schema:) | func reportDelete(table: String, oldRecord: [String : OfflineJSON], schema: String? = nil) throws
+method FakeRealtime.reportInsert(table:record:schema:) | func reportInsert(table: String, record: [String : OfflineJSON], schema: String? = nil) throws
+method FakeRealtime.reportUpdate(table:record:schema:) | func reportUpdate(table: String, record: [String : OfflineJSON], schema: String? = nil) throws
+property FakeRealtime.subscribedTables | var subscribedTables: Set<String> { get }
 struct FakeServer | struct FakeServer
 struct FakeServer.Request | struct Request
 property FakeServer.Request.body | let body: Data
@@ -19,6 +28,7 @@ init ManualClock.init(now:) | init(now: Date = Date())
 property ManualClock.now | var now: Date { get }
 method ManualClock.set(to:) | func set(to date: Date)
 type.method SupabaseOfflineClient.inMemory(supabaseURL:supabaseKey:config:server:clock:) | static func inMemory(supabaseURL: URL = URL(string: "https://in-memory.supabase.co")!, supabaseKey: String = "in-memory-publishable-key", config: SupabaseOfflineClient.Config = Config(), server: FakeServer = FakeServer(), clock: ManualClock? = nil) -> SupabaseOfflineClient
+type.method SupabaseOfflineClient.inMemory(supabaseURL:supabaseKey:config:server:clock:realtime:) | static func inMemory(supabaseURL: URL = URL(string: "https://in-memory.supabase.co")!, supabaseKey: String = "in-memory-publishable-key", config: SupabaseOfflineClient.Config = Config(), server: FakeServer = FakeServer(), clock: ManualClock? = nil, realtime: FakeRealtime) -> SupabaseOfflineClient
 func cacheMissError(message:) | func cacheMissError(message: String = "No valid cached data found for this query") -> OfflineError
 func cachedFile(path:fetchedAt:sizeBytes:) | func cachedFile(path: String, fetchedAt: Date, sizeBytes: Int) -> CachedFile
 func mutationNotQueueableError(message:) | func mutationNotQueueableError(message: String = "The write could not be queued, and could not be sent") -> OfflineError
@@ -32,6 +42,7 @@ func serverError(status:code:message:details:hint:) | func serverError(status: I
 func syncFailedError(message:httpStatus:code:isConnectivityFailure:) | func syncFailedError(message: String = "The sync pass stopped with writes still queued", httpStatus: Int? = nil, code: String? = nil, isConnectivityFailure: Bool = false) -> OfflineError
 func syncReport(syncedCount:rejected:remainingCount:alreadyOnServerCount:heldBehindOtherTablesCount:) | func syncReport(syncedCount: Int, rejected: [RejectedMutation] = [], remainingCount: Int = 0, alreadyOnServerCount: Int = 0, heldBehindOtherTablesCount: Int = 0) -> SyncReport
 func syncStatus(network:pendingMutationCount:rejectedMutationCount:isSyncing:lastSyncedAt:lastSyncError:) | func syncStatus(network: NetworkStatus = .unknown, pendingMutationCount: Int = 0, rejectedMutationCount: Int = 0, isSyncing: Bool = false, lastSyncedAt: Date? = nil, lastSyncError: OfflineError? = nil) -> SyncStatus
+conformance FakeRealtime | Swift.Sendable
 conformance FakeServer | Swift.Sendable
 conformance FakeServer.Request | Swift.Equatable
 conformance FakeServer.Request | Swift.Hashable

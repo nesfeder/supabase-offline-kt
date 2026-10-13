@@ -8,6 +8,7 @@ import io.github.jan.supabase.AccessTokenProvider
 import io.github.jan.supabase.SupabaseClient
 import io.github.jan.supabase.createSupabaseClient
 import io.github.jan.supabase.postgrest.Postgrest
+import io.github.jan.supabase.realtime.Realtime
 import io.github.jan.supabase.storage.Storage
 import io.github.jan.supabase.storage.resumable.MemoryResumableCache
 import io.github.nesfeder.supabase.offline.Offline
@@ -24,9 +25,9 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.suspendCancellableCoroutine
 
 /**
- * The supabase-kt client a bridge client wraps: PostgREST, Storage and the offline plugin, in that
- * order, the plugin last. No Auth plugin: the app's session reaches requests through
- * [BridgeClientOptions.accessTokenProvider].
+ * The supabase-kt client a bridge client wraps: PostgREST, Storage, Realtime when tables are named,
+ * and the offline plugin, in that order, the plugin last. No Auth plugin: the app's session reaches
+ * requests through [BridgeClientOptions.accessTokenProvider].
  *
  * @param engine the HTTP engine: Darwin in production, the fake server's in tests.
  * @param networkAvailability the app's connectivity reports, or `null` for the library's monitor.
@@ -55,6 +56,8 @@ internal fun assembleSupabaseClient(
         // Resumable uploads are not bridged; supabase-kt's default cache would keep their state
         // in the app's user defaults.
         install(Storage) { resumable { cache = MemoryResumableCache() } }
+        // The channel for the named tables; an app that names none gets no Realtime plugin
+        if (options.realtimeTables.isNotEmpty()) install(Realtime)
         install(Offline) {
             dataDirectory = options.dataDirectory
             cacheSizeBytes = options.cacheSizeBytes
@@ -62,6 +65,7 @@ internal fun assembleSupabaseClient(
             autoSync = options.autoSync
             this.networkAvailability = networkAvailability
             primaryKeys.putAll(options.primaryKeys)
+            realtime { name(options.realtimeTables) }
             configureOffline()
         }
     }

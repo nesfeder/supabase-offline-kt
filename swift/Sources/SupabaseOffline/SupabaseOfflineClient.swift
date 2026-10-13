@@ -73,6 +73,21 @@ public final class SupabaseOfflineClient: Sendable {
         guard dataDirectory.isFileURL else {
             throw OfflineError(code: .configuration, message: "The data directory must be a file URL")
         }
+        for named in config.realtimeTables {
+            guard !named.table.isEmpty else {
+                throw OfflineError(code: .configuration, message: "A Realtime table needs a name")
+            }
+            guard let filter = named.filter else { continue }
+            guard !filter.column.isEmpty else {
+                throw OfflineError(code: .configuration, message: "A Realtime filter needs a column")
+            }
+            guard RealtimeFilter.evaluatedOperators.contains(filter.operator) else {
+                throw OfflineError(
+                    code: .configuration,
+                    message: "A Realtime filter's operator must be eq, neq, gt, gte, lt, lte or in, not \(filter.operator.rawValue)"
+                )
+            }
+        }
         let coreOptions = BridgeClientOptions(
             supabaseUrl: supabaseURL.absoluteString,
             supabaseKey: supabaseKey,
@@ -85,6 +100,7 @@ public final class SupabaseOfflineClient: Sendable {
         coreOptions.autoSync = config.autoSync
         coreOptions.reportsNetworkAvailability = config.networkAvailability != nil
         coreOptions.primaryKeys = config.primaryKeys
+        coreOptions.realtimeTables = config.realtimeTables.map(\.core)
         coreOptions.logSink = SystemLogRelay()
         coreOptions.logLevel = config.logLevel.coreLevel
         return coreOptions
