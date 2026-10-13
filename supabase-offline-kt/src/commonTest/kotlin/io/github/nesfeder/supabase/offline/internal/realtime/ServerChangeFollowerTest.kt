@@ -51,6 +51,9 @@ class ServerChangeFollowerTest {
     private fun TestScope.newFollower(
         scope: CoroutineScope,
         tables: List<WatchedTable> = listOf(WatchedTable(TABLE)),
+        markStale: suspend (String, String) -> Unit = { table, schema ->
+            staled += table to schema
+        },
         apply: suspend (ServerChangeEvent) -> Unit = { event -> applied += event },
     ): ServerChangeFollower =
         ServerChangeFollower(
@@ -62,7 +65,7 @@ class ServerChangeFollowerTest {
             networkStatuses = network,
             wakeUps = wakeUps,
             apply = apply,
-            markStale = { table, schema -> staled += table to schema },
+            markStale = markStale,
             engineLogger = logs.asEngineLogger(),
             initialBackoff = 1.seconds,
             maxBackoff = 4.seconds,
@@ -72,6 +75,31 @@ class ServerChangeFollowerTest {
 
     private fun TestScope.newScope(): CoroutineScope =
         CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
+
+    @Test
+    fun a_failure_to_mark_stale_is_logged_by_type_and_the_follow_goes_on() = runTest {
+        // Given — marking stale fails
+        val scope = newScope()
+        val follower =
+            newFollower(scope, markStale = { _, _ -> throw IllegalStateException("db locked") })
+        sessionReady.emit(true)
+        follower.start()
+        runCurrent()
+
+        // When — joined, then a change
+        val first = feed.follows.value.single()
+        first.join()
+        first.saved(TABLE, buildJsonObject { put("id", "t1") })
+        runCurrent()
+
+        // Then — subscribed and applying, the failure logged by its type and not its text
+        assertEquals(RealtimeStatus.Subscribed, follower.state.value)
+        assertTrue(applied.any { event -> event is ServerChangeEvent.Saved }, "$applied")
+        val warning = logs.entriesAt(EngineLogLevel.WARNING).single().message
+        assertTrue("IllegalStateException" in warning, warning)
+        assertTrue("locked" !in warning, warning)
+        scope.cancel()
+    }
 
     @Test
     fun follows_while_on_signed_in_and_the_network_is_not_known_down() = runTest {
