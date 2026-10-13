@@ -20,6 +20,18 @@ All notable changes to this project are recorded in this file. The format follow
 
 ### Added
 
+- `realtime { table("tasks") }` in `install(Offline)`: the plugin keeps the named tables current
+  through supabase-kt's Realtime plugin, which the app installs. It joins one channel while a user
+  is signed in (or Auth is not installed) and the network is not known down, applies each insert,
+  update and delete as `applyServerRecord` and `applyServerDelete` do, reads the named tables again
+  on every join (Realtime replays nothing), and leaves the channel on sign-out, offline,
+  `disableNetwork()` and `close()`. `table(name, schema, filter)` takes a schema and one
+  `RealtimeFilter` the server evaluates; `Offline.Config.realtimeTables` lists what was named.
+  Tables named without `install(Realtime)` fail `createSupabaseClient`.
+- `Offline.realtimeStatus`, a `StateFlow<RealtimeStatus>` (`Off`, `Paused`, `Subscribing`,
+  `Subscribed`, `Stalled(cause)`), and the switch `disableRealtime()` / `enableRealtime()`, not
+  kept across clients, like the network switch.
+
 ### Changed
 
 ### Deprecated

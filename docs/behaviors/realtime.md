@@ -1,6 +1,9 @@
 # Applying Realtime events
 
-Realtime stays on supabase-kt: the library never opens a channel. Hand each record a channel
+Name a table in `realtime { }` ([Configuration](../reference/configuration.md#realtime)) and the
+plugin opens the channel itself: it applies each insert, update and delete as below, reads the
+table again on every join, and `realtimeStatus` says where the channel stands. The rest of this
+page is the manual way, for a channel the app wires itself. Hand each record such a channel
 delivers to `applyServerRecord` or `applyServerDelete`, and every cached list of the table shows the
 change at once, without fetching again, so a change made elsewhere (another device, the dashboard)
 does not wait for the next fetch:

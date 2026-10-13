@@ -5,6 +5,7 @@
 package io.github.nesfeder.supabase.offline.internal.realtime
 
 import io.github.nesfeder.supabase.offline.NetworkStatus
+import io.github.nesfeder.supabase.offline.RealtimeStatus
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.minutes
@@ -67,12 +68,12 @@ internal class ServerChangeFollower(
     private val enabled = MutableStateFlow(true)
 
     private val followState =
-        MutableStateFlow<ServerChangeFollowState>(
-            if (tables.isEmpty()) ServerChangeFollowState.Off else ServerChangeFollowState.Paused
+        MutableStateFlow<RealtimeStatus>(
+            if (tables.isEmpty()) RealtimeStatus.Off else RealtimeStatus.Paused
         )
 
     /** Where the subscription stands, as it changes. */
-    val state: StateFlow<ServerChangeFollowState> = followState.asStateFlow()
+    val state: StateFlow<RealtimeStatus> = followState.asStateFlow()
 
     /** The following, once started. */
     private var following: Job? = null
@@ -83,14 +84,18 @@ internal class ServerChangeFollower(
         following = scope.launch { keepFollowing() }
     }
 
-    /** Switches the subscription on or off; off leaves the channel until on. */
+    /**
+     * Switches the subscription on or off; off leaves the channel until on. Off is reported at
+     * once, so a caller sees it before the channel is left.
+     */
     fun setEnabled(enabled: Boolean) {
+        if (!enabled && tables.isNotEmpty()) followState.value = RealtimeStatus.Off
         this.enabled.value = enabled
     }
 
     /** Records that the client closed: the channel is left with [scope], and the state is final. */
     fun stop() {
-        followState.value = ServerChangeFollowState.Off
+        followState.value = RealtimeStatus.Off
     }
 
     /** What the inputs ask for. */
@@ -117,8 +122,8 @@ internal class ServerChangeFollower(
             .distinctUntilChanged()
             .collectLatest { wanted ->
                 when (wanted) {
-                    Wanted.OFF -> followState.value = ServerChangeFollowState.Off
-                    Wanted.PAUSED -> followState.value = ServerChangeFollowState.Paused
+                    Wanted.OFF -> followState.value = RealtimeStatus.Off
+                    Wanted.PAUSED -> followState.value = RealtimeStatus.Paused
                     Wanted.FOLLOW -> followUntilCanceled()
                 }
             }
@@ -128,10 +133,10 @@ internal class ServerChangeFollower(
     private suspend fun followUntilCanceled() {
         var backoff = Duration.ZERO
         while (true) {
-            followState.value = ServerChangeFollowState.Subscribing
+            followState.value = RealtimeStatus.Subscribing
             val started = timeSource.markNow()
             val failure = followOnce()
-            followState.value = ServerChangeFollowState.Stalled(failure)
+            followState.value = RealtimeStatus.Stalled(failure)
             engineLogger.warning {
                 "Realtime: the channel ended (${failure::class.simpleName}); joining again"
             }
@@ -157,7 +162,7 @@ internal class ServerChangeFollower(
     private suspend fun handle(event: ServerChangeEvent) {
         when (event) {
             ServerChangeEvent.Joined -> {
-                followState.value = ServerChangeFollowState.Subscribed
+                followState.value = RealtimeStatus.Subscribed
                 engineLogger.info {
                     "Realtime: subscribed to ${tables.size} table(s); their cached queries are " +
                         "read again"

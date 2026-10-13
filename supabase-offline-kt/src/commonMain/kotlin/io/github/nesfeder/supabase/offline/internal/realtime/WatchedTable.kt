@@ -3,6 +3,7 @@
 package io.github.nesfeder.supabase.offline.internal.realtime
 
 import io.github.jan.supabase.postgrest.query.filter.FilterOperator
+import io.github.nesfeder.supabase.offline.RealtimeTable
 
 /**
  * A table whose changes on the server the client follows and applies to its cache.
@@ -42,4 +43,13 @@ internal val REALTIME_FILTER_OPERATORS: Set<FilterOperator> =
         FilterOperator.LT,
         FilterOperator.LTE,
         FilterOperator.IN,
+    )
+
+/** This named table as the engine follows it. */
+internal fun RealtimeTable.toWatchedTable(): WatchedTable =
+    WatchedTable(
+        table = table,
+        schema = schema,
+        filter =
+            filter?.let { named -> WatchedTableFilter(named.column, named.operator, named.value) },
     )

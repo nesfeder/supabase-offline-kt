@@ -41,6 +41,8 @@ final enum class io.github.nesfeder.supabase.offline/NetworkStatus : kotlin/Enum
 }
 
 abstract interface io.github.nesfeder.supabase.offline/Offline : io.github.jan.supabase.plugins/SupabasePlugin<io.github.nesfeder.supabase.offline/Offline.Config> { // io.github.nesfeder.supabase.offline/Offline|null[0]
+    abstract val realtimeStatus // io.github.nesfeder.supabase.offline/Offline.realtimeStatus|{}realtimeStatus[0]
+        abstract fun <get-realtimeStatus>(): kotlinx.coroutines.flow/StateFlow<io.github.nesfeder.supabase.offline/RealtimeStatus> // io.github.nesfeder.supabase.offline/Offline.realtimeStatus.<get-realtimeStatus>|<get-realtimeStatus>(){}[0]
     abstract val storage // io.github.nesfeder.supabase.offline/Offline.storage|{}storage[0]
         abstract fun <get-storage>(): io.github.nesfeder.supabase.offline/OfflineStorage // io.github.nesfeder.supabase.offline/Offline.storage.<get-storage>|<get-storage>(){}[0]
     abstract val syncStatus // io.github.nesfeder.supabase.offline/Offline.syncStatus|{}syncStatus[0]
@@ -56,9 +58,11 @@ abstract interface io.github.nesfeder.supabase.offline/Offline : io.github.jan.s
     abstract suspend fun clearLocalData() // io.github.nesfeder.supabase.offline/Offline.clearLocalData|clearLocalData(){}[0]
     abstract suspend fun close() // io.github.nesfeder.supabase.offline/Offline.close|close(){}[0]
     abstract suspend fun disableNetwork() // io.github.nesfeder.supabase.offline/Offline.disableNetwork|disableNetwork(){}[0]
+    abstract suspend fun disableRealtime() // io.github.nesfeder.supabase.offline/Offline.disableRealtime|disableRealtime(){}[0]
     abstract suspend fun discardPendingMutation(kotlin/Long) // io.github.nesfeder.supabase.offline/Offline.discardPendingMutation|discardPendingMutation(kotlin.Long){}[0]
     abstract suspend fun dismissRejectedMutation(kotlin/Long) // io.github.nesfeder.supabase.offline/Offline.dismissRejectedMutation|dismissRejectedMutation(kotlin.Long){}[0]
     abstract suspend fun enableNetwork() // io.github.nesfeder.supabase.offline/Offline.enableNetwork|enableNetwork(){}[0]
+    abstract suspend fun enableRealtime() // io.github.nesfeder.supabase.offline/Offline.enableRealtime|enableRealtime(){}[0]
     abstract suspend fun pendingMutationCount(kotlin/String? = ...): kotlin/Int // io.github.nesfeder.supabase.offline/Offline.pendingMutationCount|pendingMutationCount(kotlin.String?){}[0]
     abstract suspend fun retryRejectedMutation(kotlin/Long) // io.github.nesfeder.supabase.offline/Offline.retryRejectedMutation|retryRejectedMutation(kotlin.Long){}[0]
     abstract suspend fun rpc(kotlin/String, kotlin/Function1<io.github.jan.supabase.postgrest.query.request/RpcRequestBuilder, kotlin/Unit> = ...): io.github.jan.supabase.postgrest.result/PostgrestResult // io.github.nesfeder.supabase.offline/Offline.rpc|rpc(kotlin.String;kotlin.Function1<io.github.jan.supabase.postgrest.query.request.RpcRequestBuilder,kotlin.Unit>){}[0]
@@ -70,6 +74,8 @@ abstract interface io.github.nesfeder.supabase.offline/Offline : io.github.jan.s
     final class Config { // io.github.nesfeder.supabase.offline/Offline.Config|null[0]
         final val primaryKeys // io.github.nesfeder.supabase.offline/Offline.Config.primaryKeys|{}primaryKeys[0]
             final fun <get-primaryKeys>(): kotlin.collections/MutableMap<kotlin/String, kotlin.collections/List<kotlin/String>> // io.github.nesfeder.supabase.offline/Offline.Config.primaryKeys.<get-primaryKeys>|<get-primaryKeys>(){}[0]
+        final val realtimeTables // io.github.nesfeder.supabase.offline/Offline.Config.realtimeTables|{}realtimeTables[0]
+            final fun <get-realtimeTables>(): kotlin.collections/List<io.github.nesfeder.supabase.offline/RealtimeTable> // io.github.nesfeder.supabase.offline/Offline.Config.realtimeTables.<get-realtimeTables>|<get-realtimeTables>(){}[0]
 
         final var autoSync // io.github.nesfeder.supabase.offline/Offline.Config.autoSync|{}autoSync[0]
             final fun <get-autoSync>(): kotlin/Boolean // io.github.nesfeder.supabase.offline/Offline.Config.autoSync.<get-autoSync>|<get-autoSync>(){}[0]
@@ -94,6 +100,7 @@ abstract interface io.github.nesfeder.supabase.offline/Offline : io.github.jan.s
             final fun <set-responseTrust>(io.github.nesfeder.supabase.offline/ResponseTrust) // io.github.nesfeder.supabase.offline/Offline.Config.responseTrust.<set-responseTrust>|<set-responseTrust>(io.github.nesfeder.supabase.offline.ResponseTrust){}[0]
 
         final fun primaryKey(kotlin/String, kotlin/Array<out kotlin/String>...) // io.github.nesfeder.supabase.offline/Offline.Config.primaryKey|primaryKey(kotlin.String;kotlin.Array<out|kotlin.String>...){}[0]
+        final fun realtime(kotlin/Function1<io.github.nesfeder.supabase.offline/RealtimeTables, kotlin/Unit>) // io.github.nesfeder.supabase.offline/Offline.Config.realtime|realtime(kotlin.Function1<io.github.nesfeder.supabase.offline.RealtimeTables,kotlin.Unit>){}[0]
     }
 
     final object Companion : io.github.jan.supabase.plugins/SupabasePluginProvider<io.github.nesfeder.supabase.offline/Offline.Config, io.github.nesfeder.supabase.offline/Offline> { // io.github.nesfeder.supabase.offline/Offline.Companion|null[0]
@@ -213,6 +220,42 @@ sealed interface io.github.nesfeder.supabase.offline/ReadStrategy { // io.github
         final fun equals(kotlin/Any?): kotlin/Boolean // io.github.nesfeder.supabase.offline/ReadStrategy.NetworkOnly.equals|equals(kotlin.Any?){}[0]
         final fun hashCode(): kotlin/Int // io.github.nesfeder.supabase.offline/ReadStrategy.NetworkOnly.hashCode|hashCode(){}[0]
         final fun toString(): kotlin/String // io.github.nesfeder.supabase.offline/ReadStrategy.NetworkOnly.toString|toString(){}[0]
+    }
+}
+
+sealed interface io.github.nesfeder.supabase.offline/RealtimeStatus { // io.github.nesfeder.supabase.offline/RealtimeStatus|null[0]
+    final class Stalled : io.github.nesfeder.supabase.offline/RealtimeStatus { // io.github.nesfeder.supabase.offline/RealtimeStatus.Stalled|null[0]
+        final val cause // io.github.nesfeder.supabase.offline/RealtimeStatus.Stalled.cause|{}cause[0]
+            final fun <get-cause>(): kotlin/Throwable // io.github.nesfeder.supabase.offline/RealtimeStatus.Stalled.cause.<get-cause>|<get-cause>(){}[0]
+
+        final fun component1(): kotlin/Throwable // io.github.nesfeder.supabase.offline/RealtimeStatus.Stalled.component1|component1(){}[0]
+        final fun equals(kotlin/Any?): kotlin/Boolean // io.github.nesfeder.supabase.offline/RealtimeStatus.Stalled.equals|equals(kotlin.Any?){}[0]
+        final fun hashCode(): kotlin/Int // io.github.nesfeder.supabase.offline/RealtimeStatus.Stalled.hashCode|hashCode(){}[0]
+        final fun toString(): kotlin/String // io.github.nesfeder.supabase.offline/RealtimeStatus.Stalled.toString|toString(){}[0]
+    }
+
+    final object Off : io.github.nesfeder.supabase.offline/RealtimeStatus { // io.github.nesfeder.supabase.offline/RealtimeStatus.Off|null[0]
+        final fun equals(kotlin/Any?): kotlin/Boolean // io.github.nesfeder.supabase.offline/RealtimeStatus.Off.equals|equals(kotlin.Any?){}[0]
+        final fun hashCode(): kotlin/Int // io.github.nesfeder.supabase.offline/RealtimeStatus.Off.hashCode|hashCode(){}[0]
+        final fun toString(): kotlin/String // io.github.nesfeder.supabase.offline/RealtimeStatus.Off.toString|toString(){}[0]
+    }
+
+    final object Paused : io.github.nesfeder.supabase.offline/RealtimeStatus { // io.github.nesfeder.supabase.offline/RealtimeStatus.Paused|null[0]
+        final fun equals(kotlin/Any?): kotlin/Boolean // io.github.nesfeder.supabase.offline/RealtimeStatus.Paused.equals|equals(kotlin.Any?){}[0]
+        final fun hashCode(): kotlin/Int // io.github.nesfeder.supabase.offline/RealtimeStatus.Paused.hashCode|hashCode(){}[0]
+        final fun toString(): kotlin/String // io.github.nesfeder.supabase.offline/RealtimeStatus.Paused.toString|toString(){}[0]
+    }
+
+    final object Subscribed : io.github.nesfeder.supabase.offline/RealtimeStatus { // io.github.nesfeder.supabase.offline/RealtimeStatus.Subscribed|null[0]
+        final fun equals(kotlin/Any?): kotlin/Boolean // io.github.nesfeder.supabase.offline/RealtimeStatus.Subscribed.equals|equals(kotlin.Any?){}[0]
+        final fun hashCode(): kotlin/Int // io.github.nesfeder.supabase.offline/RealtimeStatus.Subscribed.hashCode|hashCode(){}[0]
+        final fun toString(): kotlin/String // io.github.nesfeder.supabase.offline/RealtimeStatus.Subscribed.toString|toString(){}[0]
+    }
+
+    final object Subscribing : io.github.nesfeder.supabase.offline/RealtimeStatus { // io.github.nesfeder.supabase.offline/RealtimeStatus.Subscribing|null[0]
+        final fun equals(kotlin/Any?): kotlin/Boolean // io.github.nesfeder.supabase.offline/RealtimeStatus.Subscribing.equals|equals(kotlin.Any?){}[0]
+        final fun hashCode(): kotlin/Int // io.github.nesfeder.supabase.offline/RealtimeStatus.Subscribing.hashCode|hashCode(){}[0]
+        final fun toString(): kotlin/String // io.github.nesfeder.supabase.offline/RealtimeStatus.Subscribing.toString|toString(){}[0]
     }
 }
 
@@ -356,6 +399,38 @@ final class io.github.nesfeder.supabase.offline/QuerySnapshot { // io.github.nes
     final fun equals(kotlin/Any?): kotlin/Boolean // io.github.nesfeder.supabase.offline/QuerySnapshot.equals|equals(kotlin.Any?){}[0]
     final fun hashCode(): kotlin/Int // io.github.nesfeder.supabase.offline/QuerySnapshot.hashCode|hashCode(){}[0]
     final fun toString(): kotlin/String // io.github.nesfeder.supabase.offline/QuerySnapshot.toString|toString(){}[0]
+}
+
+final class io.github.nesfeder.supabase.offline/RealtimeFilter { // io.github.nesfeder.supabase.offline/RealtimeFilter|null[0]
+    constructor <init>(kotlin/String, io.github.jan.supabase.postgrest.query.filter/FilterOperator, kotlin/Any) // io.github.nesfeder.supabase.offline/RealtimeFilter.<init>|<init>(kotlin.String;io.github.jan.supabase.postgrest.query.filter.FilterOperator;kotlin.Any){}[0]
+
+    final val column // io.github.nesfeder.supabase.offline/RealtimeFilter.column|{}column[0]
+        final fun <get-column>(): kotlin/String // io.github.nesfeder.supabase.offline/RealtimeFilter.column.<get-column>|<get-column>(){}[0]
+    final val operator // io.github.nesfeder.supabase.offline/RealtimeFilter.operator|{}operator[0]
+        final fun <get-operator>(): io.github.jan.supabase.postgrest.query.filter/FilterOperator // io.github.nesfeder.supabase.offline/RealtimeFilter.operator.<get-operator>|<get-operator>(){}[0]
+    final val value // io.github.nesfeder.supabase.offline/RealtimeFilter.value|{}value[0]
+        final fun <get-value>(): kotlin/Any // io.github.nesfeder.supabase.offline/RealtimeFilter.value.<get-value>|<get-value>(){}[0]
+
+    final fun equals(kotlin/Any?): kotlin/Boolean // io.github.nesfeder.supabase.offline/RealtimeFilter.equals|equals(kotlin.Any?){}[0]
+    final fun hashCode(): kotlin/Int // io.github.nesfeder.supabase.offline/RealtimeFilter.hashCode|hashCode(){}[0]
+    final fun toString(): kotlin/String // io.github.nesfeder.supabase.offline/RealtimeFilter.toString|toString(){}[0]
+}
+
+final class io.github.nesfeder.supabase.offline/RealtimeTable { // io.github.nesfeder.supabase.offline/RealtimeTable|null[0]
+    final val filter // io.github.nesfeder.supabase.offline/RealtimeTable.filter|{}filter[0]
+        final fun <get-filter>(): io.github.nesfeder.supabase.offline/RealtimeFilter? // io.github.nesfeder.supabase.offline/RealtimeTable.filter.<get-filter>|<get-filter>(){}[0]
+    final val schema // io.github.nesfeder.supabase.offline/RealtimeTable.schema|{}schema[0]
+        final fun <get-schema>(): kotlin/String? // io.github.nesfeder.supabase.offline/RealtimeTable.schema.<get-schema>|<get-schema>(){}[0]
+    final val table // io.github.nesfeder.supabase.offline/RealtimeTable.table|{}table[0]
+        final fun <get-table>(): kotlin/String // io.github.nesfeder.supabase.offline/RealtimeTable.table.<get-table>|<get-table>(){}[0]
+
+    final fun equals(kotlin/Any?): kotlin/Boolean // io.github.nesfeder.supabase.offline/RealtimeTable.equals|equals(kotlin.Any?){}[0]
+    final fun hashCode(): kotlin/Int // io.github.nesfeder.supabase.offline/RealtimeTable.hashCode|hashCode(){}[0]
+    final fun toString(): kotlin/String // io.github.nesfeder.supabase.offline/RealtimeTable.toString|toString(){}[0]
+}
+
+final class io.github.nesfeder.supabase.offline/RealtimeTables { // io.github.nesfeder.supabase.offline/RealtimeTables|null[0]
+    final fun table(kotlin/String, kotlin/String? = ..., io.github.nesfeder.supabase.offline/RealtimeFilter? = ...) // io.github.nesfeder.supabase.offline/RealtimeTables.table|table(kotlin.String;kotlin.String?;io.github.nesfeder.supabase.offline.RealtimeFilter?){}[0]
 }
 
 final class io.github.nesfeder.supabase.offline/RejectedMutation { // io.github.nesfeder.supabase.offline/RejectedMutation|null[0]

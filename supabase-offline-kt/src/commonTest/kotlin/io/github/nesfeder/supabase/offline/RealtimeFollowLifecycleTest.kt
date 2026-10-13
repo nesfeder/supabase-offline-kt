@@ -5,7 +5,6 @@ package io.github.nesfeder.supabase.offline
 import io.github.jan.supabase.SupabaseClient
 import io.github.jan.supabase.auth.auth
 import io.github.nesfeder.supabase.offline.internal.OfflineClient
-import io.github.nesfeder.supabase.offline.internal.realtime.ServerChangeFollowState
 import io.github.nesfeder.supabase.offline.internal.realtime.WatchedTable
 import io.github.nesfeder.supabase.offline.testdoubles.FakeServerChangeFeed
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
@@ -46,7 +45,7 @@ class RealtimeFollowLifecycleTest {
             // Given — nobody signed in
             val supabase = newTestSupabaseClientWithAuth(server.engine)
             val client = newWatchingClient(supabase)
-            assertEquals(ServerChangeFollowState.Paused, client.realtimeFollowState.value)
+            assertEquals(RealtimeStatus.Paused, client.realtimeStatus.value)
             assertTrue(feed.follows.value.isEmpty())
 
             // When — a user signs in
@@ -54,16 +53,16 @@ class RealtimeFollowLifecycleTest {
 
             // Then — joined for the user
             val first = feed.awaitFollow(0)
-            client.awaitState(ServerChangeFollowState.Subscribing)
+            client.awaitState(RealtimeStatus.Subscribing)
             first.join()
-            client.awaitState(ServerChangeFollowState.Subscribed)
+            client.awaitState(RealtimeStatus.Subscribed)
 
             // When — the session is forgotten
             supabase.auth.clearSession()
 
             // Then — left, and paused until the next user
             first.awaitLeft()
-            client.awaitState(ServerChangeFollowState.Paused)
+            client.awaitState(RealtimeStatus.Paused)
 
             // When — another user signs in
             supabase.signInForTest("user-b")
@@ -83,7 +82,7 @@ class RealtimeFollowLifecycleTest {
             supabase.signInForTest("user-a")
             val first = feed.awaitFollow(0)
             first.join()
-            client.awaitState(ServerChangeFollowState.Subscribed)
+            client.awaitState(RealtimeStatus.Subscribed)
 
             // When — the session is refreshed: a new session of the same user
             supabase.signInForTest("user-a")
@@ -92,7 +91,7 @@ class RealtimeFollowLifecycleTest {
             // Then — the same channel
             assertEquals(1, feed.follows.value.size)
             assertTrue(!first.isLeft)
-            assertEquals(ServerChangeFollowState.Subscribed, client.realtimeFollowState.value)
+            assertEquals(RealtimeStatus.Subscribed, client.realtimeStatus.value)
             client.close()
         }
 
@@ -103,21 +102,21 @@ class RealtimeFollowLifecycleTest {
             val client = newWatchingClient(newTestSupabaseClient(engine = server.engine))
             val first = feed.awaitFollow(0)
             first.join()
-            client.awaitState(ServerChangeFollowState.Subscribed)
+            client.awaitState(RealtimeStatus.Subscribed)
 
             // When — the monitor says the network is down
             monitor.value = false
 
             // Then — left
             first.awaitLeft()
-            client.awaitState(ServerChangeFollowState.Paused)
+            client.awaitState(RealtimeStatus.Paused)
 
             // When — it is back
             monitor.value = true
 
             // Then — joined anew
             feed.awaitFollow(1)
-            client.awaitState(ServerChangeFollowState.Subscribing)
+            client.awaitState(RealtimeStatus.Subscribing)
             client.close()
         }
 
@@ -131,7 +130,7 @@ class RealtimeFollowLifecycleTest {
             // When / Then
             client.disableNetwork()
             first.awaitLeft()
-            client.awaitState(ServerChangeFollowState.Paused)
+            client.awaitState(RealtimeStatus.Paused)
             client.enableNetwork()
             feed.awaitFollow(1)
             client.close()
@@ -145,12 +144,12 @@ class RealtimeFollowLifecycleTest {
             val first = feed.awaitFollow(0)
 
             // When / Then
-            client.setRealtimeEnabled(false)
+            client.disableRealtime()
             first.awaitLeft()
-            client.awaitState(ServerChangeFollowState.Off)
-            client.setRealtimeEnabled(true)
+            client.awaitState(RealtimeStatus.Off)
+            client.enableRealtime()
             feed.awaitFollow(1)
-            client.awaitState(ServerChangeFollowState.Subscribing)
+            client.awaitState(RealtimeStatus.Subscribing)
             client.close()
         }
 
@@ -161,14 +160,14 @@ class RealtimeFollowLifecycleTest {
             val client = newWatchingClient(newTestSupabaseClient(engine = server.engine))
             val first = feed.awaitFollow(0)
             first.join()
-            client.awaitState(ServerChangeFollowState.Subscribed)
+            client.awaitState(RealtimeStatus.Subscribed)
 
             // When
             client.close()
 
             // Then
             first.awaitLeft()
-            assertEquals(ServerChangeFollowState.Off, client.realtimeFollowState.value)
+            assertEquals(RealtimeStatus.Off, client.realtimeStatus.value)
             assertEquals(1, feed.follows.value.size)
         }
 
@@ -185,7 +184,7 @@ class RealtimeFollowLifecycleTest {
             withContext(Dispatchers.Default) { delay(200.milliseconds) }
 
             // Then
-            assertEquals(ServerChangeFollowState.Off, client.realtimeFollowState.value)
+            assertEquals(RealtimeStatus.Off, client.realtimeStatus.value)
             assertTrue(feed.follows.value.isEmpty())
             client.close()
         }
@@ -199,9 +198,9 @@ class RealtimeFollowLifecycleTest {
         )
 
     /** Waits, on real threads, until the follow state reads [expected]. */
-    private suspend fun OfflineClient.awaitState(expected: ServerChangeFollowState) {
+    private suspend fun OfflineClient.awaitState(expected: RealtimeStatus) {
         withContext(Dispatchers.Default) {
-            withTimeout(10.seconds) { realtimeFollowState.first { state -> state == expected } }
+            withTimeout(10.seconds) { realtimeStatus.first { state -> state == expected } }
         }
     }
 

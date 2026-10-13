@@ -28,6 +28,7 @@ From the samples: [SampleSupabaseClient.kt](https://github.com/nesfeder/supabase
 | [`networkAvailability`](#networkavailability) | `Flow<Boolean>?` | `null`: the platform's monitor | The connectivity signal |
 | [`autoSync`](#autosync) | `Boolean` | `true` | Whether queued writes are sent without the app asking |
 | [`primaryKeys`](#primarykeys), `primaryKey(table, vararg columns)` | `MutableMap<String, List<String>>` | `id` for every table | Each table's key columns |
+| [`realtime { table(…) }`](#realtime), `realtimeTables` | `List<RealtimeTable>` | none: no channel is opened | The tables kept current through Realtime |
 | [`responseTrust`](#responsetrust) | `ResponseTrust` | `SettledSession` | Which server answers may replace what the cache holds |
 | [`logLevel`](#loglevel) | `LogLevel?` | `null`: the client's `defaultLogLevel` | The least severe level the plugin logs at |
 
@@ -149,6 +150,34 @@ From the samples: [SampleSupabaseClient.kt](https://github.com/nesfeder/supabase
     ```swift
     --8<-- "App/ClientSettings.swift:primary-keys"
     ```
+
+### `realtime`
+
+The tables whose changes on the server the plugin applies to the cache as they happen, through
+supabase-kt's Realtime plugin, which must be installed; `realtimeTables` lists what the blocks
+named. `table(name, schema, filter)` names one table, in the client's default schema unless
+`schema` says otherwise, with an optional `RealtimeFilter(column, operator, value)` the server
+evaluates before sending a change (`eq`, `neq`, `gt`, `gte`, `lt`, `lte` or `in`); row-level
+security narrows a table to the user's rows without one. A table's rows are matched by the key
+[`primaryKeys`](#primarykeys) gives, `schema.table` for a table of another schema. With no table
+named, no channel is opened. A table named without `install(Realtime)` fails
+`createSupabaseClient` with `IllegalStateException`.
+
+```kotlin
+install(Realtime)
+install(Offline) {
+    realtime {
+        table("tasks")
+        table("audit", schema = "app", filter = RealtimeFilter("status", FilterOperator.EQ, "open"))
+    }
+}
+```
+
+The channel is joined while a user is signed in (or Auth is not installed) and the network is not
+known down, left otherwise and at `close()`, and every join reads the named tables again, since
+Realtime replays nothing. `realtimeStatus` says where it stands, and `disableRealtime()` and
+`enableRealtime()` are the app's own switch, not kept across clients; see
+[Applying Realtime events](../behaviors/realtime.md).
 
 ### `responseTrust`
 
