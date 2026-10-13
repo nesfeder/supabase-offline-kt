@@ -10,6 +10,13 @@ import io.github.jan.supabase.storage.BucketApi
  *
  * Get one with `offline.storage.from(bucketId)` ([OfflineStorage.from]).
  *
+ * Everything it inherits from [BucketApi] keeps supabase-kt's declaration, is documented in
+ * [supabase-kt's reference](https://supabase-community.github.io/supabase-kt/), and, except
+ * `purgeCache` (supabase-kt 3.8), works on this bucket with the behavior below: uploads, updates
+ * and uploads to a signed URL, resumable uploads through [resumable], downloads, deletes, moves,
+ * copies, signed, public, authenticated and render URLs, `list`, `info`, `exists`,
+ * `changePublicStatusTo`, and supabase-kt's `…AsFlow` extensions, which call them.
+ *
  * **Downloads** go to the network first. A successful download is written to the cache (a failure
  * to write the copy is logged and never fails the download); when the network fails, the cached
  * copy is served instead, and when the server says the object no longer exists, the cached copy is
