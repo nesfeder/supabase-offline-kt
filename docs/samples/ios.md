@@ -13,7 +13,8 @@ own idiom.
 - A Mac with Apple silicon, and Xcode 26 or later.
 - An iOS 26 simulator, or a device on iOS 26. Simulators run arm64 only: the project builds for
   Apple silicon simulators and leaves out Intel ones.
-- JDK 17, to build the package's prebuilt library from this checkout (see below).
+- JDK 17, only to build the sample on this checkout ([Build on this
+  checkout](#build-on-this-checkout)).
 - A Supabase project with the samples' schema: [Set up Supabase](supabase-setup.md). Run both of
   its migrations: the second adds the two database functions **Mark all done** and the Sync tab's
   **Server** section call (`complete_all_tasks()` and `tasks_done_count(created_since)`), the
@@ -35,24 +36,15 @@ The URL has no `https://`, because `//` starts a comment in an xcconfig file; th
 ignores `Secrets.xcconfig`, so the keys never reach a commit. The build puts them in the app's
 `Info.plist`. Without them the app still builds, and opens in demo mode.
 
-## Build the package from this checkout
-
-The app depends on the Swift package in `swift/` by its path, so it always builds against the code
-beside it. The package wraps a prebuilt library that the release ships; from a checkout you build it
-yourself, once, and again after a change outside `swift/`. From the repository root:
-
-```bash
-scripts/prepare-local-swift-package.sh
-```
-
-It builds the library with Gradle (JDK 17; the first build downloads its toolchain, which takes a
-few minutes) and copies it into `swift/LocalCore`, which git ignores. In a checkout the package
-always takes the library from there, so run the script before you build.
-
 ## Build and run
 
 Open `samples/ios/OfflineTasks.xcodeproj` in Xcode, choose the **OfflineTasks** scheme and an iOS 26
-simulator, and run.
+simulator, and run. The project depends on the published Swift package,
+`https://github.com/nesfeder/supabase-offline-swift` at an exact version, as your app would: Xcode
+resolves it and downloads its prebuilt library the first time. Each release moves that version to
+the one just published. On `main`, and at a release's tag until the pull request that follows the
+release moves the pin, the sample's code can use API newer than the release it pins: if the project
+does not build, [build on this checkout](#build-on-this-checkout) instead.
 
 From the command line:
 
@@ -63,10 +55,10 @@ xcodebuild build -project OfflineTasks.xcodeproj -scheme OfflineTasks \
 ```
 
 The tests, model tests on the testing product's in-memory client and two UI tests, run in demo mode
-and reach no project:
+and reach no project. On the published package:
 
 ```bash
-scripts/test-ios-sample.sh --simulator <simulator UDID> --derived-data <a scratch folder>
+scripts/test-ios-sample.sh --simulator <simulator UDID> --derived-data <a scratch folder> --published
 ```
 
 To run on a device, add your team and a bundle identifier of your own to `Secrets.xcconfig`
@@ -82,6 +74,32 @@ off: every row needs its user, and only the server can create one. The app signs
 internet.
 
 ![The Tasks tab before the first sign-in, offline: the subtitle says offline, the list says "Not signed in yet", there is no + button, and the status above the tab bar says changes are saved on this device](../assets/samples/ios/not-signed-in.png){ width="270" loading=lazy }
+
+## Build on this checkout
+
+To build the sample against the Swift package in `swift/` and the library beside it, as CI does,
+open the workspace instead of the project. The package wraps a prebuilt library that a release
+ships; from a checkout you build it yourself, once, and again after a change outside `swift/`. From
+the repository root:
+
+```bash
+scripts/prepare-local-swift-package.sh
+open samples/ios/OfflineTasks.xcworkspace
+```
+
+The script builds the library with Gradle (JDK 17; the first build downloads its toolchain, which
+takes a few minutes) and copies it into `swift/LocalCore`, which git ignores; in a checkout the
+package always takes the library from there. The workspace holds the project and the package in
+`swift/`, which overrides the published package, so the sample builds on the code beside it.
+Xcode overrides a package only with a folder named for the package's identity,
+`supabase-offline-swift`, so the workspace names `swift/` through the link
+`samples/ios/supabase-offline-swift`.
+
+The test script builds the workspace when it is not given `--published`:
+
+```bash
+scripts/test-ios-sample.sh --simulator <simulator UDID> --derived-data <a scratch folder>
+```
 
 ## Demo mode
 
@@ -305,10 +323,10 @@ app's own sections.
 
 - **The app says it is in demo mode.** `Secrets.xcconfig` is missing, is not beside the example
   file, or lacks one of the two keys. Add them and build again.
-- **Xcode cannot resolve the SupabaseOffline package**: a local binary target under
+- **The workspace cannot resolve the SupabaseOffline package**: a local binary target under
   `swift/LocalCore` "does not contain a binary artifact". The library is not built yet: run
-  `scripts/prepare-local-swift-package.sh`. If Xcode already has the project open, choose **File >
-  Packages > Resolve Package Versions**, or close the project and open it again.
+  `scripts/prepare-local-swift-package.sh`. If Xcode already has the workspace open, choose **File >
+  Packages > Resolve Package Versions**, or close the workspace and open it again.
 - **A build for an Intel simulator fails.** The package's library has arm64 simulator code only:
   build on Apple silicon, for a simulator or with `ARCHS=arm64`.
 - **It cannot sign in.** Check that anonymous sign-ins are on (Authentication, Sign In /

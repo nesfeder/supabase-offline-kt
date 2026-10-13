@@ -223,7 +223,7 @@
 			mainGroup = A10000000000000000000002;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
-				A10000000000000000000070 /* XCLocalSwiftPackageReference "../../swift" */,
+				A10000000000000000000070 /* XCRemoteSwiftPackageReference "supabase-offline-swift" */,
 				A10000000000000000000071 /* XCRemoteSwiftPackageReference "supabase-swift" */,
 			);
 			preferredProjectObjectVersion = 77;
@@ -530,14 +530,15 @@
 		};
 /* End XCConfigurationList section */
 
-/* Begin XCLocalSwiftPackageReference section */
-		A10000000000000000000070 /* XCLocalSwiftPackageReference "../../swift" */ = {
-			isa = XCLocalSwiftPackageReference;
-			relativePath = ../../swift;
-		};
-/* End XCLocalSwiftPackageReference section */
-
 /* Begin XCRemoteSwiftPackageReference section */
+		A10000000000000000000070 /* XCRemoteSwiftPackageReference "supabase-offline-swift" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/nesfeder/supabase-offline-swift";
+			requirement = {
+				kind = exactVersion;
+				version = 0.1.0;
+			};
+		};
 		A10000000000000000000071 /* XCRemoteSwiftPackageReference "supabase-swift" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/supabase/supabase-swift";
@@ -551,10 +552,12 @@
 /* Begin XCSwiftPackageProductDependency section */
 		A10000000000000000000072 /* SupabaseOffline */ = {
 			isa = XCSwiftPackageProductDependency;
+			package = A10000000000000000000070 /* XCRemoteSwiftPackageReference "supabase-offline-swift" */;
 			productName = SupabaseOffline;
 		};
 		A10000000000000000000073 /* SupabaseOfflineTesting */ = {
 			isa = XCSwiftPackageProductDependency;
+			package = A10000000000000000000070 /* XCRemoteSwiftPackageReference "supabase-offline-swift" */;
 			productName = SupabaseOfflineTesting;
 		};
 		A10000000000000000000074 /* Auth */ = {

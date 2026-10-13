@@ -474,7 +474,8 @@ jobs:
       # Android sample (samples/android): its host tests, Robolectric's Compose tests among them,
       # lint against its own baseline, and its debug APK. The APK is also the build-tool floors'
       # signing proof: the build creates a debug keystore and signs the APK with the Bouncy Castle
-      # the floors raise.
+      # the floors raise. -PsupabaseOffline.local=true builds the sample on this checkout's library,
+      # not the published one it takes by default (settings.gradle.kts).
       - name: Run the Android host tests, and the Android sample's
         env:
           SAMPLE: ${{ needs.changes.outputs.sample }}
@@ -493,7 +494,7 @@ jobs:
               :samples:android:assembleDebug
             )
           fi
-          ./gradlew "${tasks[@]}" --continue --stacktrace
+          ./gradlew "${tasks[@]}" -PsupabaseOffline.local=true --continue --stacktrace
 
       - name: Count the tests that ran
         if: ${{ !cancelled() }}
@@ -719,10 +720,11 @@ jobs:
           bash scripts/build-swift-consumer.sh --simulator "$CI_SIMULATOR_UDID"
           --derived-data "$RUNNER_TEMP/swift-consumer-derived-data"
 
-      # The iOS sample on the Swift package and the framework the package's test step copied into
-      # swift/LocalCore: its build with every warning of its own an error, its model tests and its
-      # UI smoke test, in demo mode (no project, no keys). Its remote packages are fetched into the
-      # job's folder at the versions its Package.resolved pins.
+      # The iOS sample on the Swift package in swift/ and the framework the package's test step
+      # copied into swift/LocalCore: the script builds the sample's workspace, where swift/
+      # overrides the published package the project takes, with every warning of its own an error,
+      # and runs its model tests and its UI smoke test, in demo mode (no project, no keys). Its
+      # remote packages are fetched into the job's folder at the versions the workspace pins.
       - name: Test the iOS sample
         if: needs.changes.outputs.ios-sample == 'true'
         run: >-

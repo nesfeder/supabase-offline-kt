@@ -48,3 +48,22 @@ include(":supabase-offline-swift-bridge")
 // The Android sample app, Offline Tasks. Built on every run that touches a build input, so a change
 // to the library that breaks it fails CI; it is never published.
 include(":samples:android")
+
+// The sample takes the library from Maven Central, as an app does. -PsupabaseOffline.local=true
+// substitutes this checkout's two modules for both published artifacts, the testing artifact's own
+// dependency on the library included; CI passes it, so a change to the library reaches the sample.
+if (providers.gradleProperty("supabaseOffline.local").orNull == "true") {
+    gradle.lifecycle.beforeProject {
+        if (path == ":samples:android") {
+            configurations.configureEach {
+                resolutionStrategy.dependencySubstitution {
+                    // Each published artifact has the name of the module that builds it.
+                    for (artifact in listOf("supabase-offline-kt", "supabase-offline-kt-testing")) {
+                        substitute(module("io.github.nesfeder.supabase-offline:$artifact"))
+                            .using(project(":$artifact"))
+                    }
+                }
+            }
+        }
+    }
+}

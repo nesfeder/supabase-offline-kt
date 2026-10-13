@@ -32,6 +32,11 @@ updates:
     ignore:
       - dependency-name: "io.github.jan-tennert.supabase:*"
         update-types: ["version-update:semver-minor", "version-update:semver-major"]
+      # This library's own artifacts, which the Android sample takes at the newest release. The
+      # post-release step moves that pin together with the iOS sample's (RELEASING.md), so no
+      # update moves the Android one alone. Every level is listed, never a bare rule.
+      - dependency-name: "io.github.nesfeder.supabase-offline:*"
+        update-types: ["version-update:semver-patch", "version-update:semver-minor", "version-update:semver-major"]
       # The pass-through set takes no version update at all, patches included: it moves by hand
       # with the supabase-kt pin (CONTRIBUTING.md, "Held dependencies"). Every level is listed:
       # a rule with no `update-types` or `versions` ignores all versions, and `ignore` applies to
