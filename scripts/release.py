@@ -32,16 +32,19 @@ Commands (from the repository root):
       (scripts/swift-release.py draft-release), for the existing tag; or does nothing when the
       release is published. It refuses a draft without the framework, and a version with no
       release: the Swift package's manifest names that asset.
-  push-post-release-branch --version X.Y.Z
+  push-post-release-branch --version X.Y.Z [--swift-package URL]
       Pushes the branch that starts the next development version (see next-snapshot), committed
       on origin/main's latest commit as github-actions[bot], and prints, and writes to the job
       summary, the link that opens its pull request. GitHub Actions may not open pull requests in
       this repository, so the owner opens it with that link, and CI then starts by itself. It does
       nothing but print the link when the branch exists, and nothing when main has moved on.
-  next-snapshot VERSION
+  next-snapshot VERSION [--swift-package URL]
       Rewrites the working tree for the version after VERSION: VERSION_NAME becomes the next
       minor's -SNAPSHOT, CHANGELOG.md gets an empty `## Unreleased` section again, the
-      compatibility page an `Unreleased` row, and compat/overrides.txt is emptied of findings.
+      compatibility page an `Unreleased` row, and compat/overrides.txt is emptied of findings. The
+      samples move to VERSION: the catalog's supabaseOffline, and the iOS project's exact version
+      of the Swift package with its Package.resolved pin, at the commit of the package's tag
+      VERSION in its repository (default https://github.com/nesfeder/supabase-offline-swift).
   self-test
       Runs every command against throwaway repositories, with a stand-in for `gh`.
 
@@ -95,6 +98,14 @@ CHANGELOG_HEADINGS = api_compat_headings()
 # The Swift package's framework, an asset of each GitHub Release, which the package's manifest
 # names by URL (scripts/swift-release.py).
 SWIFT_FRAMEWORK_ASSET = "SupabaseOfflineCore.xcframework.zip"
+# The samples take the newest release, and the post-release pull request moves them to it: the
+# catalog's version of the Android sample's library, and the iOS project's package requirement and
+# its pin. The workspace's Package.resolved never pins the package: swift/ overrides it there.
+SAMPLE_CATALOG_KEY = "supabaseOffline"
+IOS_SAMPLE_PROJECT = "samples/ios/OfflineTasks.xcodeproj/project.pbxproj"
+IOS_SAMPLE_RESOLVED = "samples/ios/OfflineTasks.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved"
+SWIFT_PACKAGE_URL = "https://github.com/nesfeder/supabase-offline-swift"
+SWIFT_PACKAGE_IDENTITY = "supabase-offline-swift"
 BOT_NAME = "github-actions[bot]"
 # GitHub's own address for its Actions bot, which shows the commits under that bot's name.
 BOT_EMAIL = "41898282+github-actions[bot]@users.noreply.github.com"
@@ -299,13 +310,15 @@ def next_version(version: str) -> str:
     return f"{major}.{minor + 1}.0-SNAPSHOT"
 
 
-def next_snapshot(root: Path, version: str) -> str:
-    """Rewrites the working tree for the version after version; returns the new VERSION_NAME."""
+def next_snapshot(root: Path, version: str, swift_commit: str) -> str:
+    """Rewrites the working tree for the version after version, with the samples on version and
+    the iOS sample's pin at swift_commit; returns the new VERSION_NAME."""
     properties = (root / GRADLE_PROPERTIES).read_text(encoding="utf-8")
     current = version_name(properties)
     if current != version:
         raise ReleaseError(f"VERSION_NAME on main is {current}, not {version}: the next version has"
                            " been started already, or the release is not the one on main")
+    pin_samples(root, version, swift_commit)
     following = next_version(version)
     (root / GRADLE_PROPERTIES).write_text(
         re.sub(r"^VERSION_NAME=\S+\s*$", f"VERSION_NAME={following}", properties, count=1,
@@ -340,14 +353,50 @@ def next_snapshot(root: Path, version: str) -> str:
     return following
 
 
+def pin_samples(root: Path, version: str, swift_commit: str) -> None:
+    """Moves both samples to the published version: the Android sample's catalog version, and the
+    iOS project's exact version of the Swift package with its Package.resolved pin. Checks all three
+    before it writes any."""
+    catalog, catalogs = re.subn(rf'^({re.escape(SAMPLE_CATALOG_KEY)}\s*=\s*)"[^"]*"', rf'\g<1>"{version}"',
+                                (root / CATALOG).read_text(encoding="utf-8"), flags=re.MULTILINE)
+    if catalogs != 1:
+        raise ReleaseError(f"{CATALOG} has no single `{SAMPLE_CATALOG_KEY}` version for the Android sample")
+    requirement = re.compile(rf'(repositoryURL = "{re.escape(SWIFT_PACKAGE_URL)}";\s*requirement = \{{\s*'
+                             r'kind = exactVersion;\s*version = )[^;\s]+;')
+    project, requirements = requirement.subn(rf"\g<1>{version};",
+                                             (root / IOS_SAMPLE_PROJECT).read_text(encoding="utf-8"))
+    if requirements != 1:
+        raise ReleaseError(f"{IOS_SAMPLE_PROJECT} does not require {SWIFT_PACKAGE_URL} at one exact version")
+    resolved = json.loads((root / IOS_SAMPLE_RESOLVED).read_text(encoding="utf-8"))
+    pins = [pin for pin in resolved.get("pins", []) if pin.get("identity") == SWIFT_PACKAGE_IDENTITY]
+    if len(pins) != 1:
+        raise ReleaseError(f"{IOS_SAMPLE_RESOLVED} has no single pin for {SWIFT_PACKAGE_IDENTITY}")
+    # The originHash covers the packages' URLs alone, so a new version leaves it as it is.
+    pins[0]["state"] = {"revision": swift_commit, "version": version}
+    (root / CATALOG).write_text(catalog, encoding="utf-8")
+    (root / IOS_SAMPLE_PROJECT).write_text(project, encoding="utf-8")
+    # Xcode's own layout: a two-space indent, " : " after a key, and a final newline.
+    (root / IOS_SAMPLE_RESOLVED).write_text(json.dumps(resolved, indent=2, separators=(",", " : ")) + "\n",
+                                            encoding="utf-8")
+
+
+def swift_package_commit(root: Path, version: str, swift_package: str) -> str:
+    """The commit of the Swift package's tag version in its repository, which the iOS sample pins."""
+    commit = remote_tag(root, version, swift_package)
+    if not commit:
+        raise ReleaseError(f"the Swift package's repository {swift_package} has no tag {version}: the"
+                           " samples can only move to a version that is published")
+    return commit
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # After Maven Central: the tag, the GitHub Release and the post-release pull request
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def remote_tag(root: Path, version: str) -> str:
-    """The commit origin's tag version points at, or an empty string when it has none."""
-    listing = git(root, "ls-remote", "--tags", "origin", f"refs/tags/{version}", f"refs/tags/{version}^{{}}")
+def remote_tag(root: Path, version: str, remote: str = "origin") -> str:
+    """The commit the remote's tag version points at, or an empty string when it has none."""
+    listing = git(root, "ls-remote", "--tags", remote, f"refs/tags/{version}", f"refs/tags/{version}^{{}}")
     commits = {}
     for line in listing.splitlines():
         sha, ref = line.split("\t")
@@ -406,6 +455,8 @@ def post_release_body(version: str, following: str, group: str) -> str:
         - `CHANGELOG.md` has an empty `## Unreleased` section again, above `{version}`'s.
         - The supabase-kt table of `docs/project/compatibility.md` has an `Unreleased` row again.
         - `compat/overrides.txt` holds no finding: the overrides {version} shipped with are spent.
+        - The samples take {version}: `supabaseOffline` in `gradle/libs.versions.toml`, and the iOS
+          project's exact version of the Swift package, with its pin in the project's `Package.resolved`.
 
         Before merging, check:
 
@@ -417,7 +468,10 @@ def post_release_body(version: str, following: str, group: str) -> str:
               {SWIFT_FRAMEWORK_ASSET}.
         - [ ] The Swift package resolves at {version} in a new Xcode project, by the URL
               https://github.com/nesfeder/supabase-offline-swift (RELEASING.md, "After the release").
-        - [ ] The diff touches only the four files above.
+        - [ ] The samples build on {version} as a reader gets them: `./gradlew :samples:android:assembleDebug`
+              with no `-PsupabaseOffline.local`, and `samples/ios/OfflineTasks.xcodeproj` (the project,
+              not the workspace) resolves the package at {version}. CI builds both on this checkout.
+        - [ ] The diff touches only the files above.
         """)
 
 
@@ -447,7 +501,7 @@ def post_release_link(root: Path, branch: str, version: str, following: str, gro
     return f"{repository_url(root)}/compare/main...{branch}?{query}"
 
 
-def push_post_release_branch(root: Path, version: str) -> str:
+def push_post_release_branch(root: Path, version: str, swift_package: str = SWIFT_PACKAGE_URL) -> str:
     """Pushes the branch for the next development version, unless it exists or main has moved on,
     and reports the link that opens its pull request."""
     branch = f"release/{version}-next-snapshot"
@@ -461,9 +515,11 @@ def push_post_release_branch(root: Path, version: str) -> str:
         if on_main != version:
             return (f"main's VERSION_NAME is {on_main}, not {version}: the next development version"
                     " has been started already, so there is no branch to push.")
+        swift_commit = swift_package_commit(root, version, swift_package)
         git(root, "switch", "--quiet", "--create", branch, "FETCH_HEAD")
-        next_snapshot(root, version)
-        git(root, "add", GRADLE_PROPERTIES, CHANGELOG, COMPATIBILITY, OVERRIDES)
+        next_snapshot(root, version, swift_commit)
+        git(root, "add", GRADLE_PROPERTIES, CHANGELOG, COMPATIBILITY, OVERRIDES, CATALOG, IOS_SAMPLE_PROJECT,
+            IOS_SAMPLE_RESOLVED)
         git(root, "-c", f"user.name={BOT_NAME}", "-c", f"user.email={BOT_EMAIL}", "commit", "--quiet",
             "-m", f"chore(release): start {following} after {version}")
         git(root, "push", "origin", f"HEAD:refs/heads/{branch}")
@@ -523,9 +579,60 @@ FIXTURE_COMPATIBILITY = """\
 
 Each release adds its row.
 """
+# The iOS sample's two package references, and their pins in Xcode's layout, as the samples
+# stood before the release.
+FIXTURE_PROJECT = """\
+/* Begin XCRemoteSwiftPackageReference section */
+\t\tA1 /* XCRemoteSwiftPackageReference "supabase-offline-swift" */ = {
+\t\t\tisa = XCRemoteSwiftPackageReference;
+\t\t\trepositoryURL = "https://github.com/nesfeder/supabase-offline-swift";
+\t\t\trequirement = {
+\t\t\t\tkind = exactVersion;
+\t\t\t\tversion = 0.0.9;
+\t\t\t};
+\t\t};
+\t\tA2 /* XCRemoteSwiftPackageReference "supabase-swift" */ = {
+\t\t\tisa = XCRemoteSwiftPackageReference;
+\t\t\trepositoryURL = "https://github.com/supabase/supabase-swift";
+\t\t\trequirement = {
+\t\t\t\tkind = upToNextMajorVersion;
+\t\t\t\tminimumVersion = 0.0.9;
+\t\t\t};
+\t\t};
+/* End XCRemoteSwiftPackageReference section */
+"""
+FIXTURE_RESOLVED = """\
+{
+  "originHash" : "656ed216a89bcf61f1d8e0a43cff4446e3f835c264b0d8cc4d2911d100fb6143",
+  "pins" : [
+    {
+      "identity" : "supabase-offline-swift",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/nesfeder/supabase-offline-swift",
+      "state" : {
+        "revision" : "1111111111111111111111111111111111111111",
+        "version" : "0.0.9"
+      }
+    },
+    {
+      "identity" : "supabase-swift",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/supabase/supabase-swift",
+      "state" : {
+        "revision" : "2222222222222222222222222222222222222222",
+        "version" : "0.0.9"
+      }
+    }
+  ],
+  "version" : 3
+}
+"""
 FIXTURE_FILES = {
     GRADLE_PROPERTIES: "GROUP=io.example.group\nVERSION_NAME=0.1.0\n",
-    CATALOG: '[versions]\nsupabase-bom = "3.8.0"\n',
+    CATALOG: '[versions]\nsupabase-bom = "3.8.0"\nsupabaseOffline = "0.0.9"\n\n[libraries]\n'
+             'supabaseOffline = { module = "io.example.group:lib", version.ref = "supabaseOffline" }\n',
+    IOS_SAMPLE_PROJECT: FIXTURE_PROJECT,
+    IOS_SAMPLE_RESOLVED: FIXTURE_RESOLVED,
     COMPATIBILITY: FIXTURE_COMPATIBILITY,
     OVERRIDES: "# Findings a reviewer judged compatible.\n\nkotlin-removed: lib :: fun a()  # made open\n",
     PUBLISHED_RECORD: "# The record.\nlib file .pom\nlib-android file .aar\n",
@@ -740,7 +847,8 @@ def self_test() -> int:
         expect(next_version("0.1.0") == "0.2.0-SNAPSHOT" and next_version("1.4.2") == "1.5.0-SNAPSHOT",
                "the next version is the next minor's snapshot")
         bumped = make_repository(work, "bumped", dict(base, **{CHANGELOG: FIXTURE_CHANGELOG.split("## Unreleased")[0] + "## [0.1.0]" + FIXTURE_CHANGELOG.split("## [0.1.0]")[1]}))
-        following = next_snapshot(bumped, "0.1.0")
+        swift_commit = "c" * 40
+        following = next_snapshot(bumped, "0.1.0", swift_commit)
         changelog = (bumped / CHANGELOG).read_text()
         page = (bumped / COMPATIBILITY).read_text()
         expect(following == "0.2.0-SNAPSHOT" and "VERSION_NAME=0.2.0-SNAPSHOT" in (bumped / GRADLE_PROPERTIES).read_text(),
@@ -752,8 +860,24 @@ def self_test() -> int:
                "next-snapshot adds the Unreleased row above the release's")
         expect("kotlin-removed" not in (bumped / OVERRIDES).read_text() and "# Findings" in (bumped / OVERRIDES).read_text(),
                "next-snapshot empties the overrides and keeps their explanation")
-        expect(refused(lambda: next_snapshot(bumped, "0.1.0"), "has been started already"),
+        expect(refused(lambda: next_snapshot(bumped, "0.1.0", swift_commit), "has been started already"),
                "next-snapshot refuses to run twice")
+        expect((bumped / CATALOG).read_text() == FIXTURE_FILES[CATALOG].replace('supabaseOffline = "0.0.9"', 'supabaseOffline = "0.1.0"'),
+               "next-snapshot moves the Android sample's catalog version to the release, and nothing else")
+        expect((bumped / IOS_SAMPLE_PROJECT).read_text() == FIXTURE_PROJECT.replace("version = 0.0.9;", "version = 0.1.0;"),
+               "next-snapshot moves the iOS project's exact version of the Swift package, and no other package")
+        expect((bumped / IOS_SAMPLE_RESOLVED).read_text() == FIXTURE_RESOLVED.replace(
+                   '"1111111111111111111111111111111111111111",\n        "version" : "0.0.9"',
+                   f'"{swift_commit}",\n        "version" : "0.1.0"'),
+               "next-snapshot pins the Swift package's tag commit in Xcode's layout, its originHash and other pins kept")
+        for name, path, before, after, phrase in [
+                ("a catalog without the samples' version", CATALOG, 'supabaseOffline = "0.0.9"', 'supabase-offline = "0.0.9"', "no single `supabaseOffline`"),
+                ("a project that takes the package at a range", IOS_SAMPLE_PROJECT, "kind = exactVersion;", "kind = upToNextMajorVersion;", "at one exact version"),
+                ("a Package.resolved without the package's pin", IOS_SAMPLE_RESOLVED, '"identity" : "supabase-offline-swift"', '"identity" : "elsewhere"', "no single pin")]:
+            unpinnable = make_repository(work, f"unpinnable-{path.count('/')}-{len(before)}", dict(base, **{path: FIXTURE_FILES[path].replace(before, after)}))
+            expect(refused(lambda: next_snapshot(unpinnable, "0.1.0", swift_commit), phrase)
+                   and not git(unpinnable, "status", "--porcelain").strip(),
+                   f"next-snapshot refuses {name} and changes nothing")
 
         central = work / "central"
         for artifact in ("lib", "lib-android"):
@@ -811,7 +935,13 @@ def self_test() -> int:
         summary = work / "summary.md"
         os.environ["GITHUB_STEP_SUMMARY"] = str(summary)
         os.environ["GITHUB_SERVER_URL"], os.environ["GITHUB_REPOSITORY"] = "https://github.com", "owner/repo"
-        message = push_post_release_branch(finish, "0.1.0")
+        swift_package = make_repository(work, "swift-package", {"Package.swift": "// The package.\n"})
+        expect(refused(lambda: push_post_release_branch(finish, "0.1.0", str(swift_package)), "has no tag 0.1.0")
+               and not git(finish, "ls-remote", "--heads", "origin", "refs/heads/release/0.1.0-next-snapshot").strip(),
+               "push-post-release-branch refuses a version the Swift package has no tag for, and pushes nothing")
+        git(swift_package, "tag", "0.1.0")
+        tagged_commit = git(swift_package, "rev-parse", "HEAD").strip()
+        message = push_post_release_branch(finish, "0.1.0", str(swift_package))
         expect(message.startswith("Pushed the branch release/0.1.0-next-snapshot"),
                "push-post-release-branch pushes the branch")
         branch_head = git(finish, "rev-parse", "origin/main").strip()
@@ -819,6 +949,11 @@ def self_test() -> int:
         log = git(finish, "log", "-1", "--format=%an <%ae>|%s|%P", pushed[0] if pushed else "HEAD")
         expect(bool(pushed) and log.startswith(f"{BOT_NAME} <{BOT_EMAIL}>") and log.strip().endswith(branch_head),
                "the branch's commit is the bot's, on top of main's latest commit")
+        changed = set(git(finish, "diff", "--name-only", branch_head, pushed[0] if pushed else "HEAD").split())
+        expect({CATALOG, IOS_SAMPLE_PROJECT, IOS_SAMPLE_RESOLVED} <= changed
+               and changed <= {GRADLE_PROPERTIES, CHANGELOG, COMPATIBILITY, OVERRIDES, CATALOG, IOS_SAMPLE_PROJECT, IOS_SAMPLE_RESOLVED}
+               and f'"{tagged_commit}"' in committed_file(finish, pushed[0] if pushed else "HEAD", IOS_SAMPLE_RESOLVED),
+               "the branch moves the samples too, the iOS pin to the Swift package's tag commit")
         link = message.split("Open its pull request: ", 1)[-1]
         query = urllib.parse.parse_qs(urllib.parse.urlsplit(link).query)
         expect(link.startswith("https://github.com/owner/repo/compare/main...release/0.1.0-next-snapshot?")
@@ -828,12 +963,12 @@ def self_test() -> int:
                and "0.2.0-SNAPSHOT" in query.get("body", [""])[0],
                "the link opens the pull request with its title and a description that says what to check")
         expect(link in summary.read_text(), "the link is in the job summary")
-        again = push_post_release_branch(finish, "0.1.0")
+        again = push_post_release_branch(finish, "0.1.0", str(swift_package))
         expect(again.startswith("The branch release/0.1.0-next-snapshot exists already") and link in again,
                "push-post-release-branch again pushes nothing and gives the link again")
         git(finish, "push", "-q", "origin", "--delete", "release/0.1.0-next-snapshot")
         git(finish, "push", "-q", "origin", "refs/heads/release/0.1.0-next-snapshot:refs/heads/main")
-        expect("has been started already" in push_post_release_branch(finish, "0.1.0"),
+        expect("has been started already" in push_post_release_branch(finish, "0.1.0", str(swift_package)),
                "push-post-release-branch pushes nothing once main has moved on to the next version")
         state = json.loads(gh_state.read_text())
         expect(all(call[0] == "release" for call in state["calls"]),
@@ -877,10 +1012,14 @@ def main(argv: list[str]) -> int:
     tag.add_argument("--version", required=True)
     tag.add_argument("--sha", required=True)
     commands.add_parser("publish-github-release").add_argument("--version", required=True)
-    commands.add_parser("push-post-release-branch").add_argument("--version", required=True)
+    post_release = commands.add_parser("push-post-release-branch")
+    post_release.add_argument("--version", required=True)
+    post_release.add_argument("--swift-package", default=SWIFT_PACKAGE_URL)
     released = commands.add_parser("release-version")
     released.add_argument("--github-output")
-    commands.add_parser("next-snapshot").add_argument("version")
+    following = commands.add_parser("next-snapshot")
+    following.add_argument("version")
+    following.add_argument("--swift-package", default=SWIFT_PACKAGE_URL)
     commands.add_parser("self-test")
     arguments = parser.parse_args(argv)
     root = Path.cwd()
@@ -908,13 +1047,14 @@ def main(argv: list[str]) -> int:
         elif arguments.command == "publish-github-release":
             print(publish_github_release(root, arguments.version))
         elif arguments.command == "push-post-release-branch":
-            print(push_post_release_branch(root, arguments.version))
+            print(push_post_release_branch(root, arguments.version, arguments.swift_package))
         elif arguments.command == "release-version":
             version = release_version(root)
             write_outputs(arguments.github_output, {"version": version})
             print(f"VERSION_NAME is {version}.")
         elif arguments.command == "next-snapshot":
-            print(f"VERSION_NAME is now {next_snapshot(root, arguments.version)}.")
+            swift_commit = swift_package_commit(root, arguments.version, arguments.swift_package)
+            print(f"VERSION_NAME is now {next_snapshot(root, arguments.version, swift_commit)}.")
     except ReleaseError as error:
         print(f"::error::{error}")
         return 1
