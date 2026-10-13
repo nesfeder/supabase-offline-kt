@@ -25,7 +25,10 @@ It fails when:
      own, or the job or that step may continue on error; or it does not run, in this order and
      each in a step that always runs, the simulator's creation, the core framework's build, the
      Swift package's tests, its documentation and the main-actor consumer, followed by the iOS
-     sample's tests under exactly the ios-sample condition below.
+     sample's tests under exactly the ios-sample condition below. The samples take the published
+     library, so CI tests this checkout's through a switch: in any workflow, a step that names a
+     task of the Android sample passes -PsupabaseOffline.local=true, and no other value of it, on
+     every line that runs Gradle, and the iOS sample's tests never run with --published.
   8. a workflow other than ci.yml runs on a schedule and is not listed below; or a listed one
      triggers on anything but its schedule and a manual run, grants default permissions, has
      other jobs than its own, or reads a secret (a stored token would bypass the permissions
@@ -450,6 +453,37 @@ def ios_swift_step_problems(where: str, steps: list[dict]) -> list[str]:
         positions += running[:1]
     if positions != sorted(positions):
         problems.append(f"{where} runs its Swift steps out of order")
+    return problems
+
+
+# Rule 7's samples clause. Without the property the Android sample builds on the published library
+# (settings.gradle.kts); with --published, the iOS sample's tests build the project, not the
+# workspace in which swift/ overrides the published package.
+SAMPLE_TASK = ":samples:android:"
+SAMPLE_LOCAL_PROPERTY = "-PsupabaseOffline.local=true"
+GRADLE_LINE = re.compile(r"\./gradlew\b|run-gradle\.sh|build-as-unprivileged-user\.sh\s+build\b")
+IOS_SAMPLE_PUBLISHED = "--published"
+
+
+def sets_local_property(line: str) -> bool:
+    """Whether a Gradle command line sets the samples' switch on, and to nothing else."""
+    values = [token for token in line.split() if token.startswith("-PsupabaseOffline.local=")]
+    return values == [SAMPLE_LOCAL_PROPERTY]
+
+
+def sample_checkout_problems(name: str, jobs: dict) -> list[str]:
+    """Rule 7's samples clause: every CI build of a sample is a build on this checkout's library."""
+    problems = []
+    for job_id, job in jobs.items():
+        for step in steps_of(job if isinstance(job, dict) else {}):
+            run = str(step.get("run", ""))
+            gradle_lines = [line for line in run.splitlines() if GRADLE_LINE.search(line)]
+            if SAMPLE_TASK in run and not (gradle_lines and all(map(sets_local_property, gradle_lines))):
+                problems.append(f"{name}: {job_id} builds the Android sample without"
+                                f" {SAMPLE_LOCAL_PROPERTY}, so on the published library")
+            if runs_command(step, IOS_SAMPLE_STEP) and IOS_SAMPLE_PUBLISHED in run.split():
+                problems.append(f"{name}: {job_id} tests the iOS sample with {IOS_SAMPLE_PUBLISHED},"
+                                " so on the published package")
     return problems
 
 
@@ -1160,6 +1194,7 @@ def check_tree(root: Path) -> list[str]:
             problems += runner_problems(path.name, job_id, job)
             problems += hosted_guard_problems(path.name, job_id, job)
         problems += fan_in_problems(path.name, jobs)
+        problems += sample_checkout_problems(path.name, jobs)
         problems += self_reference_problems(root, path.name, document)
         problems += oidc_problems(path.name, document)
         problems += release_problems(path.name, document)
@@ -1209,6 +1244,13 @@ jobs:
       - run: bash scripts/build-swift-consumer.sh --simulator u --derived-data d
       - if: {IOS_SAMPLE_IF}
         run: bash scripts/test-ios-sample.sh --simulator u --derived-data d
+  jvm-tests:
+    needs: changes
+    runs-on: ubuntu-24.04
+    steps:
+      - run: |
+          tasks=(:a:testAndroidHostTest :samples:android:testDebugUnitTest)
+          ./gradlew "${{tasks[@]}}" {SAMPLE_LOCAL_PROPERTY} --continue
   docs: {{needs: changes, uses: $/.github/workflows/docs-check.yml}}
   coverage-upload:
     needs: changes
@@ -1243,7 +1285,7 @@ jobs:
         run: ./gradlew publishToMavenCentral
   final-status:
     if: {FAN_IN_IF}
-    needs: [changes, ios-tests, docs]
+    needs: [changes, ios-tests, jvm-tests, docs]
     runs-on: ubuntu-slim
     steps: [{{run: echo}}]
 """
@@ -1568,7 +1610,7 @@ CASES: list[tuple[str, str, str | None, str]] = [
                           " || 'macos-26' }}"),
      "job ios-tests names the self-hosted runner"),
     ("fan-in missing a job", "ci.yml",
-     COMPLIANT_CI.replace("needs: [changes, ios-tests, docs]", "needs: [changes, docs]"),
+     COMPLIANT_CI.replace("needs: [changes, ios-tests, jvm-tests, docs]", "needs: [changes, jvm-tests, docs]"),
      "not every other job"),
     ("fan-in without always()", "ci.yml",
      COMPLIANT_CI.replace("    if: always()\n", "    if: success()\n"), "final-status runs if"),
@@ -1635,8 +1677,8 @@ CASES: list[tuple[str, str, str | None, str]] = [
      " == 'local' && fromJSON('[\"offline-kt\"]') || 'macos-26' }}\n    steps: [{run: echo}]\n",
      "names the self-hosted runner"),
     ("fan-in needs the coverage upload", "ci.yml",
-     COMPLIANT_CI.replace("needs: [changes, ios-tests, docs]",
-                          "needs: [changes, ios-tests, docs, coverage-upload]"),
+     COMPLIANT_CI.replace("needs: [changes, ios-tests, jvm-tests, docs]",
+                          "needs: [changes, ios-tests, jvm-tests, docs, coverage-upload]"),
      "which must never block a merge"),
     ("another ci.yml job can mint an OIDC token", "ci.yml",
      COMPLIANT_CI.replace("changes: {runs-on: ubuntu-slim,",
@@ -1653,8 +1695,8 @@ CASES: list[tuple[str, str, str | None, str]] = [
      COMPLIANT_CI.replace("jobs:\n", "permissions: {contents: read, id-token: write}\njobs:\n", 1),
      "default permissions can mint an OIDC token"),
     ("fan-in needs the coverage rehearsal", "ci.yml",
-     COMPLIANT_CI.replace("needs: [changes, ios-tests, docs]",
-                          "needs: [changes, ios-tests, docs, coverage-rehearsal]"),
+     COMPLIANT_CI.replace("needs: [changes, ios-tests, jvm-tests, docs]",
+                          "needs: [changes, ios-tests, jvm-tests, docs, coverage-rehearsal]"),
      "needs coverage-rehearsal, which must never block a merge"),
     ("the OIDC job without the Dependabot guard", "ci.yml",
      COMPLIANT_CI.replace(GUARD_LINE + "      && (", "      (", 1),
@@ -1748,6 +1790,28 @@ CASES: list[tuple[str, str, str | None, str]] = [
      COMPLIANT_CI.replace(f"      - if: {IOS_SAMPLE_IF}\n        run: bash scripts/test-ios-sample.sh",
                           "      - run: bash scripts/test-ios-sample.sh"),
      "does not run `bash scripts/test-ios-sample.sh` once, under exactly"),
+    # Rule 7's samples clause: CI builds the samples on this checkout's library.
+    ("the Android sample built without the switch", "ci.yml",
+     COMPLIANT_CI.replace(f" {SAMPLE_LOCAL_PROPERTY} --continue", " --continue"),
+     "jvm-tests builds the Android sample without -PsupabaseOffline.local=true"),
+    ("the Android sample built with the switch off", "ci.yml",
+     COMPLIANT_CI.replace(f" {SAMPLE_LOCAL_PROPERTY} --continue",
+                          " -PsupabaseOffline.local=false --continue"),
+     "jvm-tests builds the Android sample without -PsupabaseOffline.local=true"),
+    ("the Android sample built with the switch turned off after it", "ci.yml",
+     COMPLIANT_CI.replace(f" {SAMPLE_LOCAL_PROPERTY} --continue",
+                          f" {SAMPLE_LOCAL_PROPERTY} -PsupabaseOffline.local=false --continue"),
+     "jvm-tests builds the Android sample without -PsupabaseOffline.local=true"),
+    ("the Android sample built by a second Gradle line without the switch", "ci.yml",
+     COMPLIANT_CI.replace(f" {SAMPLE_LOCAL_PROPERTY} --continue\n",
+                          f" {SAMPLE_LOCAL_PROPERTY} --continue\n"
+                          "          ./gradlew :samples:android:lint\n"),
+     "jvm-tests builds the Android sample without -PsupabaseOffline.local=true"),
+    ("the iOS sample's tests on the published package", "ci.yml",
+     COMPLIANT_CI.replace("run: bash scripts/test-ios-sample.sh --simulator u --derived-data d",
+                          "run: bash scripts/test-ios-sample.sh --simulator u --derived-data d"
+                          " --published"),
+     "ios-tests tests the iOS sample with --published"),
     ("the Swift package's tests run twice", "ci.yml",
      COMPLIANT_CI.replace("      - run: bash scripts/build-swift-consumer.sh",
                           "      - run: bash scripts/test-swift-package.sh --simulator u\n"
@@ -1827,7 +1891,8 @@ CASES: list[tuple[str, str, str | None, str]] = [
      COMPLIANT_CI.replace("\n      && vars.PUBLISH_SNAPSHOTS == 'on')", ")"),
      "without PUBLISH_SNAPSHOTS"),
     ("the snapshot job needed by the fan-in", "ci.yml",
-     COMPLIANT_CI.replace("needs: [changes, ios-tests, docs]", "needs: [changes, ios-tests, docs, snapshot]"),
+     COMPLIANT_CI.replace("needs: [changes, ios-tests, jvm-tests, docs]",
+                          "needs: [changes, ios-tests, jvm-tests, docs, snapshot]"),
      "needs snapshot, which must never block a merge"),
     ("the resume path running Gradle", "release-resume.yml",
      COMPLIANT_RESUME.replace("python3 scripts/release.py check-resume", "./gradlew publishToMavenCentral"),
