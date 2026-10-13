@@ -97,7 +97,7 @@ class WatchedTableWiringTest {
             val feed = FakeServerChangeFeed()
             val config =
                 Offline.Config().apply {
-                    watchedTables = listOf(WatchedTable("tasks"))
+                    realtime { table("tasks") }
                     serverChangeFeed = { feed }
                 }
             val supabase = newTestSupabaseClient {
@@ -128,7 +128,7 @@ class WatchedTableWiringTest {
             val feed = FakeServerChangeFeed()
             val config =
                 Offline.Config().apply {
-                    watchedTables = listOf(WatchedTable("tasks"))
+                    realtime { table("tasks") }
                     serverChangeFeed = { feed }
                 }
 

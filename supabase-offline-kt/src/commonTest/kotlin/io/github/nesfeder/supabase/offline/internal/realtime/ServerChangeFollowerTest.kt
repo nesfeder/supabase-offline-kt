@@ -93,7 +93,7 @@ class ServerChangeFollowerTest {
         runCurrent()
 
         // Then — subscribed and applying, the failure logged by its type and not its text
-        assertEquals(ServerChangeFollowState.Subscribed, follower.state.value)
+        assertEquals(RealtimeStatus.Subscribed, follower.state.value)
         assertTrue(applied.any { event -> event is ServerChangeEvent.Saved }, "$applied")
         val warning = logs.entriesAt(EngineLogLevel.WARNING).single().message
         assertTrue("IllegalStateException" in warning, warning)
