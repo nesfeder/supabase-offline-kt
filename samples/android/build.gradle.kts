@@ -80,8 +80,9 @@ android {
 }
 
 dependencies {
-    // The library, from this build.
-    implementation(projects.supabaseOfflineKt)
+    // The library from Maven Central, as an app takes it. With -PsupabaseOffline.local=true,
+    // settings.gradle.kts swaps it and the testing artifact for this checkout's modules.
+    implementation(libs.supabaseOffline)
     implementation(platform(libs.supabase.bom))
     implementation(libs.supabase.auth.kt)
     implementation(libs.supabase.postgrest.kt)
@@ -121,5 +122,5 @@ dependencies {
     testImplementation(libs.ktor.client.mock)
     testImplementation(libs.robolectric)
     // The library's in-memory client, so the repository's tests run it over a mock server.
-    testImplementation(projects.supabaseOfflineKtTesting)
+    testImplementation(libs.supabaseOffline.testing)
 }
