@@ -186,6 +186,7 @@ nav:
       - Contributing: project/contributing.md
       - Releasing: project/releasing.md
       - Compatibility: project/compatibility.md
-  # A placeholder page until the Dokka reference is generated into docs/api/. That change replaces
-  # this entry with `api/index.html`, deletes docs/api/index.md and gitignores docs/api/.
-  - API: api/index.md
+  # The Kotlin API reference, which the docs workflows build with Dokka and place at site/api/ after
+  # this build, so it is no page of MkDocs'. An absolute path (under site_url's), which MkDocs
+  # treats as a link to something outside the site's pages: a relative one fails --strict.
+  - API: /supabase-offline-kt/api/index.html

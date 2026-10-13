@@ -26,4 +26,6 @@ plugins {
     alias(libs.plugins.kover) apply false
     alias(libs.plugins.ksp) apply false
     alias(libs.plugins.mavenPublish) apply false
+    // The site's Kotlin API reference: `:dokkaGenerate` writes it to build/dokka/html.
+    id("supabase-offline.api-reference")
 }
