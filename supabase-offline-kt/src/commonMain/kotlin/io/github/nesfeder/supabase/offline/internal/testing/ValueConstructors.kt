@@ -15,6 +15,7 @@ import io.github.nesfeder.supabase.offline.NetworkStatus
 import io.github.nesfeder.supabase.offline.OfflineInternal
 import io.github.nesfeder.supabase.offline.PendingMutation
 import io.github.nesfeder.supabase.offline.QuerySnapshot
+import io.github.nesfeder.supabase.offline.RealtimeStatus
 import io.github.nesfeder.supabase.offline.RefreshState
 import io.github.nesfeder.supabase.offline.RejectedMutation
 import io.github.nesfeder.supabase.offline.ServerError
@@ -75,6 +76,10 @@ public object ValueConstructors {
 
     /** A [RefreshState.Stalled] that [cause] stalled. */
     public fun stalled(cause: Throwable): RefreshState.Stalled = RefreshState.Stalled(cause)
+
+    /** A [RealtimeStatus.Stalled] that [cause] stalled. */
+    public fun stalledRealtime(cause: Throwable): RealtimeStatus.Stalled =
+        RealtimeStatus.Stalled(cause)
 
     /** A [QuerySnapshot] with the given fields. */
     public fun querySnapshot(

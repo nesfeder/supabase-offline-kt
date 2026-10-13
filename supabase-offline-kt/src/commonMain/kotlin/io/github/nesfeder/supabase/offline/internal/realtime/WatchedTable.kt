@@ -3,6 +3,7 @@
 package io.github.nesfeder.supabase.offline.internal.realtime
 
 import io.github.jan.supabase.postgrest.query.filter.FilterOperator
+import io.github.nesfeder.supabase.offline.RealtimeFilter
 import io.github.nesfeder.supabase.offline.RealtimeTable
 
 /**
@@ -52,4 +53,12 @@ internal fun RealtimeTable.toWatchedTable(): WatchedTable =
         schema = schema,
         filter =
             filter?.let { named -> WatchedTableFilter(named.column, named.operator, named.value) },
+    )
+
+/** This followed table as the configuration names one. */
+internal fun WatchedTable.toRealtimeTable(): RealtimeTable =
+    RealtimeTable(
+        table = table,
+        schema = schema,
+        filter = filter?.let { own -> RealtimeFilter(own.column, own.operator, own.value) },
     )

@@ -14,6 +14,7 @@ import io.github.nesfeder.supabase.offline.Offline
 import io.github.nesfeder.supabase.offline.OfflineInternal
 import io.github.nesfeder.supabase.offline.PendingMutation
 import io.github.nesfeder.supabase.offline.QuerySnapshot
+import io.github.nesfeder.supabase.offline.RealtimeStatus
 import io.github.nesfeder.supabase.offline.RefreshState
 import io.github.nesfeder.supabase.offline.RejectedMutation
 import io.github.nesfeder.supabase.offline.ServerError
@@ -122,6 +123,16 @@ public fun pendingMutation(
  */
 @OptIn(OfflineInternal::class)
 public fun stalledRefresh(cause: Throwable): RefreshState.Stalled = ValueConstructors.stalled(cause)
+
+/**
+ * The state of a Realtime channel whose join was refused or that ended, which the client joins
+ * again.
+ *
+ * @param cause what ended the channel.
+ */
+@OptIn(OfflineInternal::class)
+public fun stalledRealtime(cause: Throwable): RealtimeStatus.Stalled =
+    ValueConstructors.stalledRealtime(cause)
 
 /**
  * One emission of a reactive read, as `selectAsFlow` hands one out.

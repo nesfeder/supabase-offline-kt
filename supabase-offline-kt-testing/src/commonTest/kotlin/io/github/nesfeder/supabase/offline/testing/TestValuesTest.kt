@@ -4,6 +4,7 @@ package io.github.nesfeder.supabase.offline.testing
 
 import io.github.nesfeder.supabase.offline.MutationOperation
 import io.github.nesfeder.supabase.offline.NetworkStatus
+import io.github.nesfeder.supabase.offline.RealtimeStatus
 import io.github.nesfeder.supabase.offline.isNetworkOrConnectivityFailure
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -100,5 +101,16 @@ class TestValuesTest {
         assertTrue(failure.isNetworkOrConnectivityFailure())
         assertEquals(stalled, snapshot.refresh)
         assertFalse(snapshot.hasPendingMutations)
+    }
+
+    @Test
+    fun the_stalled_realtime_status_carries_its_cause() {
+        // Given / When
+        val cause = IOException("socket lost")
+        val stalled = stalledRealtime(cause)
+
+        // Then
+        assertSame(cause, stalled.cause)
+        assertTrue(stalled is RealtimeStatus.Stalled)
     }
 }

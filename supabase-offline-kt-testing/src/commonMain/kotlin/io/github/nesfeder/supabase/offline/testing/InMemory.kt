@@ -7,6 +7,7 @@ import io.github.nesfeder.supabase.offline.NetworkStatus
 import io.github.nesfeder.supabase.offline.Offline
 import io.github.nesfeder.supabase.offline.OfflineInternal
 import io.github.nesfeder.supabase.offline.SyncStatus
+import io.github.nesfeder.supabase.offline.internal.testing.followServerChangesThrough
 import io.github.nesfeder.supabase.offline.internal.testing.keepLocalDataInMemory
 import kotlin.time.Clock
 
@@ -52,4 +53,23 @@ import kotlin.time.Clock
 @OptIn(OfflineInternal::class)
 public fun Offline.Config.inMemory(clock: Clock = Clock.System) {
     keepLocalDataInMemory(clock)
+}
+
+/**
+ * [inMemory], with the server's row changes reported by [realtime] in place of a Realtime channel,
+ * so a test of an app that names tables in `realtime { }` needs no `install(Realtime)`:
+ * ```kotlin
+ * install(Offline) {
+ *     inMemory(realtime = fakeRealtime)
+ *     realtime { table("tasks") }
+ * }
+ * ```
+ *
+ * @param clock the time the client sees, as for [inMemory].
+ * @param realtime where the client's channel is joined and the test reports changes.
+ */
+@OptIn(OfflineInternal::class)
+public fun Offline.Config.inMemory(clock: Clock = Clock.System, realtime: FakeRealtime) {
+    keepLocalDataInMemory(clock)
+    followServerChangesThrough(realtime.channelHook)
 }

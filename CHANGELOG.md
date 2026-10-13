@@ -31,6 +31,11 @@ All notable changes to this project are recorded in this file. The format follow
 - `Offline.realtimeStatus`, a `StateFlow<RealtimeStatus>` (`Off`, `Paused`, `Subscribing`,
   `Subscribed`, `Stalled(cause)`), and the switch `disableRealtime()` / `enableRealtime()`, not
   kept across clients, like the network switch.
+- `FakeRealtime` in `supabase-offline-kt-testing`, with `inMemory(clock, realtime)`: a test reports
+  inserts, updates and deletes to an in-memory client that names tables in `realtime { }`, with no
+  `install(Realtime)`; `subscribedTables` says what the client follows, and `failChannel` and
+  `dropChannel` end the channel as a server or a lost socket would. `stalledRealtime(cause)` builds
+  the stalled status for a test double.
 
 ### Changed
 
