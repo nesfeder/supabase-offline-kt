@@ -12,11 +12,13 @@ import io.github.jan.supabase.realtime.RealtimeMessage
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingLogSink
 import io.github.nesfeder.supabase.offline.testdoubles.ScriptedRealtimeWebsocketFactory
 import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
+import kotlin.io.encoding.Base64
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
+import kotlin.time.Clock
 import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.minutes
@@ -24,6 +26,7 @@ import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
@@ -241,6 +244,112 @@ class SupabaseRealtimeFeedTest {
             supabase.close()
         }
 
+    @Test
+    fun an_update_is_reported_as_saved_and_a_select_is_dropped() =
+        runTest(timeout = 2.minutes) {
+            withContext(Dispatchers.Default) {
+                // Given — joined
+                val events = Channel<ServerChangeEvent>(Channel.UNLIMITED)
+                val collecting = launch {
+                    feed.follow(tables, "public").collect { event -> events.send(event) }
+                }
+                val socket = sockets.awaitSocket(0)
+                val join = socket.awaitSent("phx_join")
+                val bindings =
+                    assertNotNull(
+                        join.payload["config"]?.jsonObject?.get("postgres_changes")?.jsonArray
+                    )
+                socket.answer(joinTaken(join, bindings))
+                assertEquals(ServerChangeEvent.Joined, events.receiveWithin())
+
+                // When — a select (never asked for), an update, then an insert
+                val row = buildJsonObject {
+                    put("id", "t1")
+                    put("title", "Oat milk")
+                }
+                socket.answer(change(join.topic, ids = listOf(1), data = select(row)))
+                socket.answer(change(join.topic, ids = listOf(1), data = update(row)))
+                socket.answer(change(join.topic, ids = listOf(1), data = insert(row)))
+
+                // Then — the update and the insert, both as saved; nothing for the select
+                assertEquals(
+                    ServerChangeEvent.Saved("tasks", "public", row),
+                    events.receiveWithin(),
+                )
+                assertEquals(
+                    ServerChangeEvent.Saved("tasks", "public", row),
+                    events.receiveWithin(),
+                )
+                collecting.cancelAndJoin()
+                val leave = socket.awaitSent("phx_leave")
+                socket.answer(
+                    RealtimeMessage(
+                        leave.topic,
+                        "phx_reply",
+                        buildJsonObject { put("status", "ok") },
+                        leave.ref,
+                    )
+                )
+            }
+            supabase.close()
+        }
+
+    @Test
+    fun without_auth_the_feed_from_the_installed_plugin_refreshes_the_providers_token() =
+        runTest(timeout = 2.minutes) {
+            withContext(Dispatchers.Default) {
+                // Given — a client with its own token provider and no Auth plugin, whose token
+                // expires sooner than the refresher's lead
+                val ownSockets = ScriptedRealtimeWebsocketFactory()
+                val own = newTestSupabaseClient {
+                    accessToken = { jwt(expiresAtSeconds = Clock.System.now().epochSeconds + 30) }
+                    install(Postgrest)
+                    install(Realtime) {
+                        websocketFactory = ownSockets
+                        heartbeatInterval = 1.hours
+                        reconnectDelay = 1.hours
+                    }
+                }
+                val ownFeed =
+                    SupabaseRealtimeFeed.forInstalledPlugin(
+                        own,
+                        logs.asEngineLogger(),
+                        Clock.System,
+                    )
+                val collecting = launch { ownFeed.follow(tables, "public").collect {} }
+                val socket = ownSockets.awaitSocket(0)
+                val join = socket.awaitSent("phx_join")
+
+                // Then — the token is sent again before it expires
+                withTimeout(10.seconds) {
+                    while (logs.entries.none { entry -> "Realtime:" in entry.message }) delay(20)
+                }
+                val said = logs.entries.map { entry -> entry.message }
+                assertTrue(
+                    said.any { message -> "sent the provider's token again" in message },
+                    "$said",
+                )
+                // When — the collector is canceled before the join was ever answered
+                collecting.cancelAndJoin()
+
+                // Then — nothing is subscribed, so supabase-kt disconnects
+                assertTrue(join.topic.startsWith("realtime:supabase-offline-"), join.topic)
+                socket.awaitDisconnected()
+                own.close()
+            }
+            supabase.close()
+        }
+
+    /** A JWT whose payload carries [expiresAtSeconds] as `exp`. */
+    private fun jwt(expiresAtSeconds: Long): String {
+        val encoder = Base64.UrlSafe.withPadding(Base64.PaddingOption.ABSENT)
+        val header = encoder.encode("""{"alg":"HS256","typ":"JWT"}""".encodeToByteArray())
+        val payload =
+            encoder.encode("""{"sub":"user","exp":$expiresAtSeconds}""".encodeToByteArray())
+        // supabase-kt decodes the signature too, so it must be base64 as well
+        return "$header.$payload.${encoder.encode("signature".encodeToByteArray())}"
+    }
+
     /** The server's answer to [join]: every binding taken, numbered from one. */
     private fun joinTaken(join: RealtimeMessage, bindings: List<JsonElement>): RealtimeMessage =
         RealtimeMessage(
@@ -278,6 +387,21 @@ class SupabaseRealtimeFeedTest {
 
     private fun insert(record: JsonObject): JsonObject = buildJsonObject {
         put("type", "INSERT")
+        put("record", record)
+        putJsonArray("columns") {}
+        put("commit_timestamp", "2026-10-13T12:00:00Z")
+    }
+
+    private fun update(record: JsonObject): JsonObject = buildJsonObject {
+        put("type", "UPDATE")
+        put("record", record)
+        put("old_record", buildJsonObject { put("id", "t1") })
+        putJsonArray("columns") {}
+        put("commit_timestamp", "2026-10-13T12:00:00Z")
+    }
+
+    private fun select(record: JsonObject): JsonObject = buildJsonObject {
+        put("type", "SELECT")
         put("record", record)
         putJsonArray("columns") {}
         put("commit_timestamp", "2026-10-13T12:00:00Z")

@@ -3,6 +3,9 @@
 package io.github.nesfeder.supabase.offline.internal.realtime
 
 import io.github.jan.supabase.SupabaseClient
+import io.github.jan.supabase.auth.Auth
+import io.github.jan.supabase.auth.MemoryCodeVerifierCache
+import io.github.jan.supabase.auth.MemorySessionManager
 import io.github.jan.supabase.postgrest.Postgrest
 import io.github.jan.supabase.realtime.Realtime
 import io.github.nesfeder.supabase.offline.Offline
@@ -17,8 +20,12 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.minutes
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withContext
 import okio.Path.Companion.toPath
 
 /**
@@ -81,6 +88,56 @@ class WatchedTableWiringTest {
             assertEquals(1, config.watchedTables.size)
             client.close()
             supabase.close()
+        }
+
+    @Test
+    fun with_auth_installed_the_channel_waits_for_a_user() =
+        runTest(timeout = 2.minutes) {
+            // Given — the Auth plugin installed with nobody signed in, and a scripted feed
+            val feed = FakeServerChangeFeed()
+            val config =
+                Offline.Config().apply {
+                    watchedTables = listOf(WatchedTable("tasks"))
+                    serverChangeFeed = { feed }
+                }
+            val supabase = newTestSupabaseClient {
+                install(Postgrest)
+                install(Auth) {
+                    sessionManager = MemorySessionManager()
+                    codeVerifierCache = MemoryCodeVerifierCache()
+                    autoLoadFromStorage = false
+                    alwaysAutoRefresh = false
+                    enableLifecycleCallbacks = false
+                }
+            }
+
+            // When
+            val client = config.open(supabase)
+
+            // Then — nothing is followed while there is no user
+            withContext(Dispatchers.Default) { delay(300.milliseconds) }
+            assertTrue(feed.follows.value.isEmpty())
+            client.close()
+            supabase.close()
+        }
+
+    @Test
+    fun without_the_postgrest_plugin_the_default_schema_is_public() =
+        runTest(timeout = 2.minutes) {
+            // Given
+            val feed = FakeServerChangeFeed()
+            val config =
+                Offline.Config().apply {
+                    watchedTables = listOf(WatchedTable("tasks"))
+                    serverChangeFeed = { feed }
+                }
+
+            // When
+            val client = config.open(newTestSupabaseClient(plugins = {}))
+
+            // Then
+            assertEquals("public", feed.awaitFollow(0).defaultSchema)
+            client.close()
         }
 
     private fun Offline.Config.open(supabase: SupabaseClient): OfflineClient =
