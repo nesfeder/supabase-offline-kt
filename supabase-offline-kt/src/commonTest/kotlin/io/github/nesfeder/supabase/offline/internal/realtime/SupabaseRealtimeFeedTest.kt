@@ -10,6 +10,7 @@ import io.github.jan.supabase.postgrest.query.filter.FilterOperator
 import io.github.jan.supabase.realtime.Realtime
 import io.github.jan.supabase.realtime.RealtimeMessage
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingLogSink
+import io.github.nesfeder.supabase.offline.testdoubles.ScriptedRealtimeWebsocket
 import io.github.nesfeder.supabase.offline.testdoubles.ScriptedRealtimeWebsocketFactory
 import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
 import kotlin.io.encoding.Base64
@@ -26,11 +27,13 @@ import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.channels.ClosedReceiveChannelException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.add
@@ -228,16 +231,9 @@ class SupabaseRealtimeFeedTest {
                 // When — the server closes the channel
                 socket.answer(RealtimeMessage(join.topic, "phx_close", buildJsonObject {}, null))
 
-                // Then — the feed ends, and the leave supabase-kt sends is answered
-                val leave = socket.awaitSent("phx_leave")
-                socket.answer(
-                    RealtimeMessage(
-                        leave.topic,
-                        "phx_reply",
-                        buildJsonObject { put("status", "ok") },
-                        leave.ref,
-                    )
-                )
+                // Then — the feed ends; supabase-kt leaves and disconnects at once on a close, and
+                // the leave may or may not reach the socket before the disconnect closes it
+                socket.answerLeaveIfSent()
                 val ended = withTimeout(10.seconds) { outcome.receive() }
                 assertTrue(ended.exceptionOrNull() is ServerChangeFeedEndedException, "$ended")
             }
@@ -425,4 +421,26 @@ class SupabaseRealtimeFeedTest {
 
     private suspend fun Channel<ServerChangeEvent>.receiveWithin(): ServerChangeEvent =
         withTimeout(10.seconds) { receive() }
+
+    /**
+     * Answers the leave supabase-kt sends, when it reaches this socket within two seconds: after a
+     * close from the server, supabase-kt disconnects right after the leave, which can close the
+     * socket before the leave is written.
+     */
+    private suspend fun ScriptedRealtimeWebsocket.answerLeaveIfSent() {
+        val leave =
+            try {
+                withTimeoutOrNull(2.seconds) { awaitSent("phx_leave") }
+            } catch (closed: ClosedReceiveChannelException) {
+                null
+            } ?: return
+        answer(
+            RealtimeMessage(
+                leave.topic,
+                "phx_reply",
+                buildJsonObject { put("status", "ok") },
+                leave.ref,
+            )
+        )
+    }
 }
