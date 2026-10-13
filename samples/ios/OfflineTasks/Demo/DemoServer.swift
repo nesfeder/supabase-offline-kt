@@ -6,14 +6,15 @@ import SupabaseOfflineTesting
 
 /// A stand-in for the samples' Supabase project, in memory: it answers the in-memory client's
 /// PostgREST, database-function and Storage requests the way the project's schema would, and
-/// reports each row change as Realtime would, for demo mode, previews and tests. It is not part of
-/// what an app built on the library needs.
+/// reports each row change to the client's channel, through the testing product's ``FakeRealtime``,
+/// as Realtime would, for demo mode, previews and tests. It is not part of what an app built on the
+/// library needs.
 ///
 /// It keeps the schema's rules: a request without a user's token reaches nothing, each user reaches
 /// only their own rows and files, a blank or over-long title and over-long notes are refused (HTTP
 /// 400, 23514), a photo needs its owner's task (23503), an id already taken is refused (23505), and
 /// the bucket takes only a JPEG under 5 MB at the owner's own path.
-actor DemoServer: ServerChangeSource {
+actor DemoServer {
 
     /// One request the client sent, as a test reads it.
     struct RecordedRequest: Sendable, Hashable {
@@ -56,8 +57,9 @@ actor DemoServer: ServerChangeSource {
     /// The photo uploads a test holds before they are answered; `nil` while uploads are not held.
     private var heldUploads: [CheckedContinuation<Void, Never>]?
 
-    /// The Realtime-like feeds open now, with the tables each follows.
-    private var feeds: [UUID: (tables: Set<String>, continuation: AsyncThrowingStream<ServerFeedEvent, any Error>.Continuation)] = [:]
+    /// Where the server reports each row change: the channel the in-memory client joins for the
+    /// tables its configuration names, in place of Realtime.
+    nonisolated let realtime = FakeRealtime()
 
     /// Every request so far, in order.
     private(set) var requests: [RecordedRequest] = []
@@ -121,53 +123,41 @@ actor DemoServer: ServerChangeSource {
         files.keys.sorted()
     }
 
-    /// How many Realtime-like feeds are open: a test waits for one before it changes a row.
-    func openFeedCount() -> Int {
-        feeds.count
-    }
-
     /// The bytes of the file at `objectPath`.
     func fileData(at objectPath: String) -> Data? {
         files[objectPath]?.data
     }
 
     /// Changes task `id` as another device would: `values` set on the server, and the change
-    /// reported to the open feeds, never through this client.
+    /// reported to the client's channel, never through this client.
     func changeElsewhere(task id: String, _ values: [String: OfflineJSON]) {
         guard let index = tables[Tables.tasks]?.firstIndex(where: { $0.id == id }) else { return }
         tables[Tables.tasks]?[index].row.merge(values) { _, given in given }
         tables[Tables.tasks]?[index].row["updated_at"] = .string(Self.timestamp(.now))
-        if let row = tables[Tables.tasks]?[index].row { report(.saved(table: Tables.tasks, record: row)) }
+        if let row = tables[Tables.tasks]?[index].row { report(saved: row, in: Tables.tasks) }
     }
 
     // MARK: - Realtime
 
-    nonisolated func changes(of tables: [String]) -> AsyncThrowingStream<ServerFeedEvent, any Error> {
-        let (stream, continuation) = AsyncThrowingStream<ServerFeedEvent, any Error>.makeStream()
-        let id = UUID()
-        Task { await self.open(feed: id, tables: Set(tables), continuation: continuation) }
-        continuation.onTermination = { _ in Task { await self.close(feed: id) } }
-        return stream
-    }
-
-    /// Starts reporting changes to `tables` through `continuation`, which hears first that it joined.
-    private func open(feed id: UUID, tables: Set<String>, continuation: AsyncThrowingStream<ServerFeedEvent, any Error>.Continuation) {
-        feeds[id] = (tables, continuation)
-        continuation.yield(.joined)
-    }
-
-    /// Stops reporting to feed `id`.
-    private func close(feed id: UUID) {
-        feeds[id] = nil
-    }
-
-    /// Reports `change` to every feed that follows its table, as Realtime would.
-    private func report(_ change: ServerChange) {
-        let table: String
-        switch change {
-        case .saved(let name, _), .deleted(let name, _): table = name
+    /// Reports `row` of `table` saved to the client's channel, as Realtime would an insert or an
+    /// update; a channel following the table applies it, and one not joined (Live updates off,
+    /// the network down) misses it, as Realtime replays nothing.
+    private func report(saved row: [String: OfflineJSON], in table: String) {
+        do {
+            try realtime.reportUpdate(table: table, record: row)
+        } catch {
+            assertionFailure("A row is always a JSON object: \(error)")
         }
-        for feed in feeds.values where feed.tables.contains(table) { feed.continuation.yield(.change(change)) }
+    }
+
+    /// Reports the row with `key` of `table` deleted, as Realtime would: the key is all a delete
+    /// carries.
+    private func report(deleted key: [String: OfflineJSON], in table: String) {
+        do {
+            try realtime.reportDelete(table: table, oldRecord: key)
+        } catch {
+            assertionFailure("A key is always a JSON object: \(error)")
+        }
     }
 
     // MARK: - Answering
@@ -226,7 +216,7 @@ actor DemoServer: ServerChangeSource {
                 guard tables[Tables.tasks]?[index].row["done"] != .bool(true) else { continue }
                 tables[Tables.tasks]?[index].row["done"] = .bool(true)
                 tables[Tables.tasks]?[index].row["updated_at"] = .string(Self.timestamp(.now))
-                if let row = tables[Tables.tasks]?[index].row { report(.saved(table: Tables.tasks, record: row)) }
+                if let row = tables[Tables.tasks]?[index].row { report(saved: row, in: Tables.tasks) }
             }
             return .status(204)
         case "tasks_done_count":
@@ -329,7 +319,7 @@ actor DemoServer: ServerChangeSource {
             }
         }
         tables[table] = rows
-        written.forEach { report(.saved(table: table, record: $0)) }
+        written.forEach { report(saved: $0, in: table) }
         return Self.writeResponse(written, query: query, created: true)
     }
 
@@ -348,7 +338,7 @@ actor DemoServer: ServerChangeSource {
             updated.append(row)
         }
         tables[table] = rows
-        updated.forEach { report(.saved(table: table, record: $0)) }
+        updated.forEach { report(saved: $0, in: table) }
         return Self.writeResponse(updated, query: query, created: false)
     }
 
@@ -366,8 +356,8 @@ actor DemoServer: ServerChangeSource {
                 return true
             }
         }
-        doomed.forEach { report(.deleted(table: table, oldRecord: ["id": .string($0.id)])) }
-        cascaded.forEach { report(.deleted(table: Tables.taskPhotos, oldRecord: ["id": .string($0)])) }
+        doomed.forEach { report(deleted: ["id": .string($0.id)], in: table) }
+        cascaded.forEach { report(deleted: ["id": .string($0)], in: Tables.taskPhotos) }
         return Self.writeResponse(doomed.map(\.row), query: query, created: false)
     }
 

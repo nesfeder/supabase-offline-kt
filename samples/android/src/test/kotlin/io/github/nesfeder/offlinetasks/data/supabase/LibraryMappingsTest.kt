@@ -5,6 +5,7 @@ package io.github.nesfeder.offlinetasks.data.supabase
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.jan.supabase.postgrest.result.PostgrestResult
 import io.github.nesfeder.offlinetasks.data.AppNetworkStatus
+import io.github.nesfeder.offlinetasks.data.LiveUpdatesStatus
 import io.github.nesfeder.offlinetasks.data.NetworkSwitchedOffException
 import io.github.nesfeder.offlinetasks.data.NotSavedOnDeviceException
 import io.github.nesfeder.offlinetasks.data.PhotoFile
@@ -17,6 +18,7 @@ import io.github.nesfeder.offlinetasks.data.WriteNeedsConnectionException
 import io.github.nesfeder.offlinetasks.testing.FakeSupabaseServer
 import io.github.nesfeder.supabase.offline.MutationOperation
 import io.github.nesfeder.supabase.offline.NetworkStatus
+import io.github.nesfeder.supabase.offline.RealtimeStatus
 import io.github.nesfeder.supabase.offline.testing.appliedOutcome
 import io.github.nesfeder.supabase.offline.testing.cacheMissException
 import io.github.nesfeder.supabase.offline.testing.cachedFile
@@ -27,6 +29,7 @@ import io.github.nesfeder.supabase.offline.testing.querySnapshot
 import io.github.nesfeder.supabase.offline.testing.queuedOutcome
 import io.github.nesfeder.supabase.offline.testing.rejectedMutation
 import io.github.nesfeder.supabase.offline.testing.serverError
+import io.github.nesfeder.supabase.offline.testing.stalledRealtime
 import io.github.nesfeder.supabase.offline.testing.stalledRefresh
 import io.github.nesfeder.supabase.offline.testing.syncFailedException
 import io.github.nesfeder.supabase.offline.testing.syncReport
@@ -224,5 +227,17 @@ class LibraryMappingsTest {
     private companion object {
         val MADE: Instant = Instant.parse("2026-10-01T09:00:00Z")
         val REFUSED: Instant = Instant.parse("2026-10-01T09:05:00Z")
+    }
+
+    @Test
+    fun the_realtime_status_maps_onto_the_apps_five_words() {
+        assertEquals(LiveUpdatesStatus.Off, RealtimeStatus.Off.toLiveUpdatesStatus())
+        assertEquals(LiveUpdatesStatus.Paused, RealtimeStatus.Paused.toLiveUpdatesStatus())
+        assertEquals(LiveUpdatesStatus.Connecting, RealtimeStatus.Subscribing.toLiveUpdatesStatus())
+        assertEquals(LiveUpdatesStatus.Connected, RealtimeStatus.Subscribed.toLiveUpdatesStatus())
+        assertEquals(
+            LiveUpdatesStatus.Failed,
+            stalledRealtime(IllegalStateException("refused")).toLiveUpdatesStatus(),
+        )
     }
 }

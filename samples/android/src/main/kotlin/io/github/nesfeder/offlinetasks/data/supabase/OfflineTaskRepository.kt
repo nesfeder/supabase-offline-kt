@@ -75,7 +75,6 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
-import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
@@ -134,9 +133,8 @@ private val STARTER_TITLES =
  * Photos are added to [pendingPhotos], the app's own queue on the device, and uploaded from there
  * whenever the network allows: the library queues writes to tables, never to Storage.
  *
- * @param scope where work runs that must finish even when its caller goes away, Realtime, and the
- *   pending photos' uploads.
- * @param liveUpdates applies other devices' changes; null leaves Live updates off for good.
+ * @param scope where work runs that must finish even when its caller goes away, and the pending
+ *   photos' uploads.
  * @param describeFailure the sentence a pending photo's failed upload is kept with.
  */
 class OfflineTaskRepository(
@@ -146,18 +144,27 @@ class OfflineTaskRepository(
     private val pendingPhotos: PendingPhotoDirectory,
     private val clock: Clock = Clock.System,
     private val newId: () -> String = { Uuid.random().toString() },
-    private val liveUpdates: LiveUpdates? = LiveUpdates(supabase),
     private val describeFailure: (Throwable) -> String = { it::class.simpleName.orEmpty() },
 ) : TaskRepository {
 
     private val offline = supabase.offline
     private val files = TaskPhotoFiles(offline)
     private val switches = MutableStateFlow(SyncSettings())
-    private val liveUpdatesState = MutableStateFlow(LiveUpdatesStatus.Paused)
 
     override val settings: StateFlow<SyncSettings> = switches.asStateFlow()
 
-    override val liveUpdatesStatus: StateFlow<LiveUpdatesStatus> = liveUpdatesState.asStateFlow()
+    // --8<-- [start:realtime-status]
+    /** Where the plugin's channel stands, in the app's five words. */
+    override val liveUpdatesStatus: StateFlow<LiveUpdatesStatus> =
+        offline.realtimeStatus
+            .map { it.toLiveUpdatesStatus() }
+            .stateIn(
+                scope,
+                SharingStarted.Eagerly,
+                offline.realtimeStatus.value.toLiveUpdatesStatus(),
+            )
+
+    // --8<-- [end:realtime-status]
 
     override val syncStatus: StateFlow<AppSyncStatus> =
         offline.syncStatus
@@ -176,7 +183,6 @@ class OfflineTaskRepository(
         )
 
     init {
-        scope.launch { keepLiveUpdatesRunning() }
         uploader.start(scope)
     }
 
@@ -304,8 +310,11 @@ class OfflineTaskRepository(
         return when (outcome) {
             is MutationOutcome.Applied -> {
                 val stored = outcome.result.decodeSingle<TaskRecord>()
-                // An online-only write is never patched into the cache: the stored row goes there.
+                // --8<-- [start:apply-record]
+                // An online-only write is never patched into the cache: the stored row goes there,
+                // applied as a record Realtime reports is.
                 if (needsConnection) offline.applyServerRecord(Tables.TASKS, stored)
+                // --8<-- [end:apply-record]
                 NewTaskOutcome.Saved(outcome.result.decodeSingle<TaskRow>().toTask(emptySet()))
             }
             is MutationOutcome.Queued -> NewTaskOutcome.SavedOnDevice(row.id) // sent when it can be
@@ -920,58 +929,18 @@ class OfflineTaskRepository(
         switches.update { it.copy(preferFreshData = prefer) }
     }
 
+    // --8<-- [start:live-updates-switch]
+    /**
+     * Live updates: the plugin's own switch, which leaves the channel at once and joins it again as
+     * soon as the network allows (reading both tables again, since Realtime replays nothing). The
+     * switch is kept for the app's run, as the plugin keeps its own.
+     */
     override fun setLiveUpdates(enabled: Boolean) {
         switches.update { it.copy(liveUpdates = enabled) }
+        scope.launch { if (enabled) offline.enableRealtime() else offline.disableRealtime() }
     }
 
-    /**
-     * Runs [liveUpdates] while the switch is on, a user is signed in and the network is neither
-     * known to be down nor switched off: Simulate offline pauses it too, so it simulates being
-     * offline for Realtime. A channel that failed starts again when the network comes back.
-     */
-    @OptIn(ExperimentalCoroutinesApi::class)
-    private suspend fun keepLiveUpdatesRunning() {
-        val updates = liveUpdates
-        if (updates == null) {
-            liveUpdatesState.value = LiveUpdatesStatus.Off
-            return
-        }
-        combine(switches, session.userId, offline.syncStatus) { switch, userId, status ->
-                liveUpdatesWanted(switch.liveUpdates, signedIn = userId != null, status.network)
-            }
-            .distinctUntilChanged()
-            .collectLatest { wanted ->
-                liveUpdatesState.value = wanted
-                if (wanted != LiveUpdatesStatus.Connecting) return@collectLatest
-                try {
-                    updates.applyChangesUntilCanceled { connected ->
-                        val wasConnected = liveUpdatesState.value == LiveUpdatesStatus.Connected
-                        liveUpdatesState.value =
-                            if (connected) LiveUpdatesStatus.Connected
-                            else LiveUpdatesStatus.Connecting
-                        if (connected && !wasConnected) scope.launch { readListsAgain() }
-                    }
-                } catch (cancellation: CancellationException) {
-                    throw cancellation
-                } catch (failure: Exception) {
-                    liveUpdatesState.value = LiveUpdatesStatus.Failed
-                }
-            }
-    }
-
-    // --8<-- [start:read-again]
-    /**
-     * Reads both lists from the server once more: Realtime does not replay what happened while it
-     * was not connected, so each new connection catches up this way.
-     */
-    private suspend fun readListsAgain() {
-        refreshTasks()
-        offline.from(Tables.TASK_PHOTOS).select(readStrategy = ReadStrategy.NetworkOnly) {
-            newestFirst() // the query of allPhotos()
-        }
-    }
-
-    // --8<-- [end:read-again]
+    // --8<-- [end:live-updates-switch]
 
     // --8<-- [start:first-observed-read]
     /** The user's tasks that [query] selects, as a live read mapped to the app's snapshot. */

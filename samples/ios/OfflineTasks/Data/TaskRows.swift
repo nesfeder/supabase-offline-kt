@@ -125,30 +125,7 @@ nonisolated struct TaskTextPatch: Encodable, Sendable {
 }
 // --8<-- [end:off-main-actor]
 
-/// A `tasks` row as Realtime reports it. Its times stay the text the server sent, as a cached
-/// answer from PostgREST keeps them, so the record is applied exactly as it arrived.
-nonisolated struct ReportedTaskRow: Codable, Sendable {
-    let id: String
-    let userID: String
-    let title: String
-    let notes: String?
-    let done: Bool
-    let createdAt: String
-    let updatedAt: String
-
-    /// The table's column names.
-    enum CodingKeys: String, CodingKey {
-        case id
-        case userID = "user_id"
-        case title
-        case notes
-        case done
-        case createdAt = "created_at"
-        case updatedAt = "updated_at"
-    }
-}
-
-/// The key of a row the server reports deleted: all a Realtime delete carries.
+/// A row's key alone, as a read of ids returns it.
 nonisolated struct RowKey: Codable, Sendable {
     let id: String
 }

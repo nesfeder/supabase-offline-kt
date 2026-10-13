@@ -26,9 +26,6 @@ final class AppModel {
     /// The Photos tab.
     let photos: PhotosModel
 
-    /// Where the server's row changes come from, for Live updates.
-    let changeSource: any ServerChangeSource
-
     /// Uploads the photos picked on this device, as the network allows.
     let photoUploader: PendingPhotoUploader
 
@@ -43,6 +40,9 @@ final class AppModel {
 
     /// The status of the queue and the network, as the client last reported it.
     private(set) var syncStatus: SyncStatus
+
+    /// Where the client's Realtime channel stands, as it last reported it: Live updates' status.
+    private(set) var realtimeStatus: RealtimeStatus = .off
 
     /// The failure shown now; the next one waits until it is dismissed.
     private(set) var failure: FailureAlert?
@@ -60,7 +60,8 @@ final class AppModel {
     /// Settings → Prefer fresh data: the task list asks the server before showing anything.
     var prefersFreshData = false
 
-    /// Settings → Live updates: rows changed elsewhere arrive from Realtime and are applied at once.
+    /// Settings → Live updates: the client's Realtime channel, which applies rows changed elsewhere
+    /// at once; the root view matches the channel to it and to the signed-in user.
     var isLiveUpdatesOn = true
 
     /// Failures reported while another was showing.
@@ -78,11 +79,10 @@ final class AppModel {
     /// The ids of the refused writes already announced.
     @ObservationIgnored private var announcedRejections: Set<Int64>?
 
-    /// The app over `repository`, running as `mode`, with Live updates from `changeSource`.
-    init(mode: LaunchMode, repository: TaskRepository, changeSource: any ServerChangeSource) {
+    /// The app over `repository`, running as `mode`.
+    init(mode: LaunchMode, repository: TaskRepository) {
         self.mode = mode
         self.repository = repository
-        self.changeSource = changeSource
         syncStatus = repository.syncStatus.value
         let failures = FailureSink()
         failureSink = failures
@@ -121,11 +121,11 @@ final class AppModel {
         TaskRepository.readStrategy(prefersFreshData: prefersFreshData)
     }
 
-    /// What Live updates follows: on, for the signed-in user, while the network can be reached. A
-    /// drop, real or Simulate offline, ends the subscription, and its return makes a new one.
+    /// What Live updates follows: the signed-in user, while the switch is on. A change of either
+    /// has the root view match the client's channel to it again; a network drop, real or Simulate
+    /// offline, the client handles itself.
     var liveUpdatesKey: LiveUpdatesKey {
-        let isReachable = syncStatus.network == .online || syncStatus.network == .unknown
-        return LiveUpdatesKey(userID: session.userID, isOn: isLiveUpdatesOn && isReachable)
+        LiveUpdatesKey(userID: session.userID, isOn: isLiveUpdatesOn)
     }
 
     // MARK: - Running
@@ -136,33 +136,26 @@ final class AppModel {
         await withDiscardingTaskGroup { group in
             group.addTask { await self.readPendingAtLaunch() }
             group.addTask { await self.followSyncStatus() }
+            group.addTask { await self.followRealtimeStatus() }
             group.addTask { await self.session.signInWhenReachable(self.repository.syncStatus) }
             group.addTask { await self.announceRefusedWrites() }
             group.addTask { await self.photoUploader.run() }
         }
     }
 
-    // --8<-- [start:live-updates-apply]
-    /// Applies the server's row changes as they arrive, for as long as the calling task runs: the
-    /// root view runs it while Live updates is on, a user is signed in and the network can be
-    /// reached. Each time the subscription joins, the lists are read again, to catch up with
-    /// what changed while it was not there.
-    func followLiveUpdates() async {
-        guard liveUpdatesKey.isOn, liveUpdatesKey.userID != nil else { return }
-        do {
-            for try await event in changeSource.changes(of: [Tables.tasks, Tables.taskPhotos]) {
-                switch event {
-                case .joined: try await repository.readListsAgain()
-                case .change(let change): try await repository.apply(change)
-                }
-            }
-        } catch is CancellationError {
-            return
-        } catch {
-            report(error)
+    // --8<-- [start:live-updates-switch]
+    /// Matches the client's Realtime channel to Live updates and the signed-in user: the root view
+    /// runs it whenever either changes. The client joins with the token it is given at the join
+    /// and does not join again by itself when the user changes, so a sign-in or sign-out leaves
+    /// the channel and, with the switch on, joins it again as the new user; the client reads both
+    /// tables again on each join, since Realtime replays nothing.
+    func applyLiveUpdates() async {
+        await perform {
+            try await repository.setLiveUpdates(false)
+            if liveUpdatesKey.isOn, liveUpdatesKey.userID != nil { try await repository.setLiveUpdates(true) }
         }
     }
-    // --8<-- [end:live-updates-apply]
+    // --8<-- [end:live-updates-switch]
 
     // --8<-- [start:foreground]
     /// Sends the queue as the app comes back to the foreground: the library sends it by itself
@@ -255,6 +248,15 @@ final class AppModel {
         }
     }
 
+    /// Follows where the client's Realtime channel stands, for the Sync tab.
+    private func followRealtimeStatus() async {
+        do {
+            for try await status in repository.realtimeStatus { realtimeStatus = status }
+        } catch {
+            report(error)
+        }
+    }
+
     /// Shows "All changes synced" for a moment.
     private func showJustSynced() {
         showsJustSynced = true
@@ -297,13 +299,14 @@ enum AppTab: Hashable {
     case sync
 }
 
-/// What Live updates depends on: the user, and whether it is on. A change restarts it.
+/// What Live updates depends on: the user, and whether it is on. A change matches the channel to
+/// it again.
 struct LiveUpdatesKey: Hashable {
 
     /// The signed-in user; `nil` before there is one.
     let userID: String?
 
-    /// Whether Live updates is on and the network can be reached.
+    /// Whether Live updates is on.
     let isOn: Bool
 }
 
@@ -367,19 +370,17 @@ extension AppModel {
                 )
             )
             // --8<-- [end:install]
-            let changes = RealtimeChangeSource(projectURL: url, publishableKey: publishableKey) {
-                await session.accessToken()
-            }
-            return AppModel(mode: mode, repository: TaskRepository(client: client, session: session), changeSource: changes)
+            return AppModel(mode: mode, repository: TaskRepository(client: client, session: session))
         case .demo:
             return demo(mode: mode)
         }
     }
 
-    /// The app in demo mode, on the testing product's in-memory client and `server`, whose time is
-    /// `clock` when one is given, with the photos waiting to upload in `pendingPhotoFolder`; for
-    /// previews and tests too. By default that folder is a new one in the temporary directory, as
-    /// demo mode keeps nothing between launches.
+    /// The app in demo mode, on the testing product's in-memory client and `server`, which reports
+    /// its row changes to the client's channel in place of Realtime, whose time is `clock` when
+    /// one is given, with the photos waiting to upload in `pendingPhotoFolder`; for previews and
+    /// tests too. By default that folder is a new one in the temporary directory, as demo mode
+    /// keeps nothing between launches.
     static func demo(
         mode: LaunchMode = .demo(reason: .requested),
         server: DemoServer = DemoServer(),
@@ -396,7 +397,8 @@ extension AppModel {
                 networkAvailability: networkAvailability
             ),
             server: server.fakeServer,
-            clock: clock
+            clock: clock,
+            realtime: server.realtime
         )
         // --8<-- [end:in-memory-client]
         let repository = TaskRepository(
@@ -405,7 +407,7 @@ extension AppModel {
             photoBytes: .bucketDownload,
             pendingPhotos: PendingPhotoQueue(folder: pendingPhotoFolder)
         )
-        return AppModel(mode: mode, repository: repository, changeSource: server)
+        return AppModel(mode: mode, repository: repository)
     }
 }
 

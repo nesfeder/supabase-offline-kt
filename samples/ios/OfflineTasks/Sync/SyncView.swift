@@ -76,8 +76,14 @@ struct SyncView: View {
         return Section {
             Toggle("Prefer fresh data", isOn: $app.prefersFreshData)
                 .accessibilityIdentifier("prefer-fresh-data")
-            Toggle("Live updates", isOn: $app.isLiveUpdatesOn)
-                .accessibilityIdentifier("live-updates")
+            VStack(alignment: .leading, spacing: 4) {
+                Toggle("Live updates", isOn: $app.isLiveUpdatesOn)
+                    .accessibilityIdentifier("live-updates")
+                Text(Self.liveUpdatesDescription(app.realtimeStatus))
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("live-updates-status")
+            }
         } header: {
             Text("Settings")
         } footer: {
@@ -85,6 +91,17 @@ struct SyncView: View {
                 "Prefer fresh data asks the server before the task list shows anything; off, the list shows what’s saved at once and refreshes alongside. "
                     + "Live updates applies changes made elsewhere as they happen\(app.mode.isDemo ? " (in demo mode, the stand-in server’s)" : ""). Both last until the app restarts."
             )
+        }
+    }
+
+    /// Where Live updates stands, in a sentence under its switch.
+    static func liveUpdatesDescription(_ status: RealtimeStatus) -> String {
+        switch status {
+        case .off: return "Off: changes made elsewhere show after the next refresh."
+        case .paused: return "Waiting for a user, for the network, or for Simulate offline to be switched off."
+        case .subscribing: return "Connecting to Realtime…"
+        case .subscribed: return "On: changes made elsewhere show as they happen."
+        case .stalled: return "Couldn’t connect to Realtime. It tries again shortly, and when the network comes back."
         }
     }
 

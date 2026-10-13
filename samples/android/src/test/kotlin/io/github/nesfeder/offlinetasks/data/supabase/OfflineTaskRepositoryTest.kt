@@ -3,8 +3,6 @@
 package io.github.nesfeder.offlinetasks.data.supabase
 
 import io.github.jan.supabase.SupabaseClient
-import io.github.jan.supabase.realtime.PostgresAction
-import io.github.jan.supabase.serializer.KotlinXSerializer
 import io.github.nesfeder.offlinetasks.data.AppNetworkStatus
 import io.github.nesfeder.offlinetasks.data.EncodedPhoto
 import io.github.nesfeder.offlinetasks.data.InvalidRequestException
@@ -32,7 +30,6 @@ import io.github.nesfeder.offlinetasks.testing.FakeSteppingClock
 import io.github.nesfeder.offlinetasks.testing.FakeSupabaseServer
 import io.github.nesfeder.offlinetasks.testing.FakeUserSession
 import io.github.nesfeder.offlinetasks.testing.addUploadedPhoto
-import io.github.nesfeder.supabase.offline.NetworkStatus
 import java.io.File
 import kotlin.io.path.createTempDirectory
 import kotlin.test.AfterTest
@@ -45,7 +42,6 @@ import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
-import kotlin.time.Clock
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CompletableDeferred
@@ -56,7 +52,10 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -292,52 +291,46 @@ class OfflineTaskRepositoryTest {
     }
 
     @Test
-    fun live_updates_pause_while_the_network_is_down_so_a_failed_channel_starts_again() {
-        // A change of the wanted state restarts the channel, so the network's return restarts it.
-        assertEquals(
-            LiveUpdatesStatus.Paused,
-            liveUpdatesWanted(switchedOn = true, signedIn = true, NetworkStatus.OFFLINE),
-        )
-        assertEquals(
-            LiveUpdatesStatus.Paused,
-            liveUpdatesWanted(switchedOn = true, signedIn = true, NetworkStatus.DISABLED),
-        )
-        assertEquals(
-            LiveUpdatesStatus.Connecting,
-            liveUpdatesWanted(switchedOn = true, signedIn = true, NetworkStatus.ONLINE),
-        )
-        assertEquals(
-            LiveUpdatesStatus.Paused,
-            liveUpdatesWanted(switchedOn = true, signedIn = false, NetworkStatus.ONLINE),
-        )
-        assertEquals(
-            LiveUpdatesStatus.Off,
-            liveUpdatesWanted(switchedOn = false, signedIn = true, NetworkStatus.ONLINE),
-        )
+    fun live_updates_follow_the_plugins_channel_and_its_switch() = runTest {
+        // Given — the plugin names both tables, so its channel is joined as soon as it may be
+        server.realtime.subscribedTables.awaitState {
+            Tables.TASKS in it && Tables.TASK_PHOTOS in it
+        }
+        repository.liveUpdatesStatus.awaitState { it == LiveUpdatesStatus.Connected }
+
+        // When — the switch goes off, then on again
+        repository.setLiveUpdates(false)
+
+        // Then — the channel is left, and the status says so
+        repository.liveUpdatesStatus.awaitState { it == LiveUpdatesStatus.Off }
+        server.realtime.subscribedTables.awaitState { it.isEmpty() }
+        assertFalse(repository.settings.value.liveUpdates)
+        repository.setLiveUpdates(true)
+        repository.liveUpdatesStatus.awaitState { it == LiveUpdatesStatus.Connected }
+        server.realtime.subscribedTables.awaitState { Tables.TASKS in it }
     }
 
     @Test
     fun another_devices_change_is_applied_to_the_open_list() = runTest {
-        // Given — the list read once, then the network switched off, so no refresh can run
-        repository.tasks().awaitValue { it.isEmpty() }
-        repository.setNetworkEnabled(false)
-        val updates = LiveUpdates(supabase)
-        val row = serverOnlyTask("From elsewhere")
+        // Given — the list on screen, read once, and the plugin's channel following the table
+        val shown = repository.tasks().map { it.value }.stateIn(scope, SharingStarted.Eagerly, null)
+        shown.awaitState { it != null && it.isEmpty() }
+        server.realtime.subscribedTables.awaitState { Tables.TASKS in it }
+        val sentBefore = server.requests.size
 
         // When — Realtime reports a row inserted elsewhere
-        updates.applyTaskChange(PostgresAction.Insert(row, emptyList(), now(), KotlinXSerializer()))
+        server.realtime.reportInsert(Tables.TASKS, serverOnlyTask("From elsewhere"))
 
-        // Then — the device's copy has it, with nothing asked of the server
-        assertEquals(
-            "From elsewhere",
-            repository.tasks().awaitValue { it.size == 1 }.single().title,
-        )
+        // Then — the list on screen has it, with nothing asked of the server
+        assertEquals("From elsewhere", shown.awaitState { it?.size == 1 }?.single()?.title)
 
-        // When — and then deleted
-        updates.applyTaskChange(PostgresAction.Delete(row, emptyList(), now(), KotlinXSerializer()))
+        // When — and then deleted; a delete carries the key alone
+        server.realtime.reportDelete(Tables.TASKS, buildJsonObject { put("id", SERVER_TASK_ID) })
 
         // Then
-        repository.tasks().awaitValue { it.isEmpty() }
+        shown.awaitState { it?.isEmpty() == true }
+        assertEquals(sentBefore, server.requests.size)
+        assertEquals(0, server.realtime.droppedReportCount)
     }
 
     @Test
@@ -837,9 +830,6 @@ class OfflineTaskRepositoryTest {
                 it.pendingUpload == null
             }
 
-    /** The time a Realtime change is stamped with; the library does not read it. */
-    private fun now() = Clock.System.now()
-
     /** A task row as the server stores it, for one the app did not make. */
     private fun serverOnlyTask(title: String, id: String = SERVER_TASK_ID): JsonObject =
         buildJsonObject {
@@ -856,6 +846,10 @@ class OfflineTaskRepositoryTest {
     private suspend fun <T> Flow<RowsSnapshot<List<T>>>.awaitValue(
         matches: (List<T>) -> Boolean
     ): List<T> = withTimeout(WAIT) { first { it.value?.let(matches) == true } }.value.orEmpty()
+
+    /** The first value of this state that [matches], within a bounded wait. */
+    private suspend fun <T> Flow<T>.awaitState(matches: (T) -> Boolean): T =
+        withTimeout(WAIT) { first(matches) }
 
     /** Runs [body] on a real thread with a bounded wait, since the library works on its own. */
     private fun runTest(body: suspend CoroutineScope.() -> Unit) = runBlocking {

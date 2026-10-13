@@ -81,6 +81,12 @@ nonisolated enum ClientSettings {
             autoSync: true,
             // The columns that tell one row from another, per table: id, the default for a table not named.
             primaryKeys: primaryKeys,
+            // --8<-- [start:realtime-tables]
+            // The tables the client keeps current through Realtime (Live updates): one channel, each
+            // change applied to the cached lists, both tables read again on every join. None, the
+            // default, opens no channel.
+            realtimeTables: [RealtimeTable(Tables.tasks), RealtimeTable(Tables.taskPhotos)],
+            // --8<-- [end:realtime-tables]
             // What the library logs: more in a debug build than .warning, the default.
             logLevel: logLevel
         )

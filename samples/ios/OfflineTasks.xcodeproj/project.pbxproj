@@ -10,7 +10,6 @@
 		A10000000000000000000075 /* SupabaseOffline in Frameworks */ = {isa = PBXBuildFile; productRef = A10000000000000000000072 /* SupabaseOffline */; };
 		A10000000000000000000076 /* SupabaseOfflineTesting in Frameworks */ = {isa = PBXBuildFile; productRef = A10000000000000000000073 /* SupabaseOfflineTesting */; };
 		A10000000000000000000077 /* Auth in Frameworks */ = {isa = PBXBuildFile; productRef = A10000000000000000000074 /* Auth */; };
-		A10000000000000000000079 /* Realtime in Frameworks */ = {isa = PBXBuildFile; productRef = A10000000000000000000078 /* Realtime */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -66,7 +65,6 @@
 				A10000000000000000000075 /* SupabaseOffline in Frameworks */,
 				A10000000000000000000076 /* SupabaseOfflineTesting in Frameworks */,
 				A10000000000000000000077 /* Auth in Frameworks */,
-				A10000000000000000000079 /* Realtime in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -142,7 +140,6 @@
 				A10000000000000000000072 /* SupabaseOffline */,
 				A10000000000000000000073 /* SupabaseOfflineTesting */,
 				A10000000000000000000074 /* Auth */,
-				A10000000000000000000078 /* Realtime */,
 			);
 			productName = OfflineTasks;
 			productReference = A10000000000000000000010 /* OfflineTasks.app */;
@@ -564,11 +561,6 @@
 			isa = XCSwiftPackageProductDependency;
 			package = A10000000000000000000071 /* XCRemoteSwiftPackageReference "supabase-swift" */;
 			productName = Auth;
-		};
-		A10000000000000000000078 /* Realtime */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = A10000000000000000000071 /* XCRemoteSwiftPackageReference "supabase-swift" */;
-			productName = Realtime;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

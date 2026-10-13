@@ -452,12 +452,13 @@ struct ApiTourTests {
         try await test.start()
         try await test.addTask("Buy milk")
         let task = try await test.task(titled: "Buy milk")
-        let photoReadsBefore = await test.server.requests.filter { $0.path == "/rest/v1/\(Tables.taskPhotos)" }.count
+        let taskReadsBefore = await test.server.requests.filter { $0.path == "/rest/v1/\(Tables.tasks)" }.count
         try await test.startLiveUpdates()
-        // Starting reads both lists again, since Realtime does not replay what it missed.
-        try await eventually("the lists are read again") {
-            await test.server.requests.filter { $0.path == "/rest/v1/\(Tables.taskPhotos)" }.count > photoReadsBefore
+        // Each join reads the lists on screen again, since Realtime does not replay what it missed.
+        try await eventually("the task list is read again") {
+            await test.server.requests.filter { $0.path == "/rest/v1/\(Tables.tasks)" }.count > taskReadsBefore
         }
+        try await eventually("the Sync tab says so") { test.app.realtimeStatus == .subscribed }
         let readsBefore = await test.server.requests.filter { $0.method == "GET" }.count
 
         // When
@@ -481,20 +482,21 @@ struct ApiTourTests {
         try await test.addTask("Buy milk")
         let task = try await test.task(titled: "Buy milk")
         try await test.startLiveUpdates()
+        try await eventually("the channel is joined") { test.app.realtimeStatus == .subscribed }
 
         // When: the network drops, and the task changes on another device meanwhile
         network.yield(false)
-        try await eventually("Live updates stops following") { !test.app.liveUpdatesKey.isOn }
-        try await test.stopLiveUpdates()
+        try await eventually("the client leaves the channel") { test.app.realtimeStatus == .paused }
+        try await eventually("the channel is left") { test.server.realtime.subscribedTables.isEmpty }
         await test.server.changeElsewhere(task: task.id, ["title": "Buy oat milk"])
-        let photoReadsBefore = await test.server.requests.filter { $0.path == "/rest/v1/\(Tables.taskPhotos)" }.count
+        #expect(test.server.realtime.droppedReportCount == 1)
+        let taskReadsBefore = await test.server.requests.filter { $0.path == "/rest/v1/\(Tables.tasks)" }.count
 
-        // Then: back online, Live updates joins again and reads both lists, so the change shows
+        // Then: back online, the client joins again and reads the list again, so the change shows
         network.yield(true)
-        try await eventually("Live updates follows again") { test.app.liveUpdatesKey.isOn }
-        try await test.startLiveUpdates()
-        try await eventually("the lists are read again") {
-            await test.server.requests.filter { $0.path == "/rest/v1/\(Tables.taskPhotos)" }.count > photoReadsBefore
+        try await eventually("the client joins again") { test.app.realtimeStatus == .subscribed }
+        try await eventually("the task list is read again") {
+            await test.server.requests.filter { $0.path == "/rest/v1/\(Tables.tasks)" }.count > taskReadsBefore
         }
         try await eventually("the change made during the drop shows") { test.app.tasks.tasks?.first?.title == "Buy oat milk" }
         network.finish()

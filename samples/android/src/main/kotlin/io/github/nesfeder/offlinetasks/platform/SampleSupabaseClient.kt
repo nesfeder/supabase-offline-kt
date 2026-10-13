@@ -41,7 +41,7 @@ fun createSampleSupabaseClient(
         install(Auth) // the anonymous session; the cache belongs to one user at a time
         install(Postgrest) // required
         install(Storage) // for offline.storage
-        install(Realtime) // for Live updates
+        install(Realtime) // for the tables realtime { } names below
         // Last, so no plugin after it can fail once it has claimed its database.
         install(Offline) { writeEverySetting(networkAvailability, debugBuild) }
     }
@@ -80,6 +80,15 @@ private fun Offline.Config.writeEverySetting(
     primaryKey(Tables.TASKS, "id")
     primaryKeys[Tables.TASK_PHOTOS] = listOf("id") // the same thing, as a map entry
     // --8<-- [end:primary-keys]
+    // --8<-- [start:realtime]
+    // The tables the plugin keeps current through Realtime (Live updates): one channel, joined
+    // while a user is signed in and the network is not known down, each change applied to the
+    // cached lists, both tables read again on every join. None is the default: no channel then.
+    realtime {
+        table(Tables.TASKS)
+        table(Tables.TASK_PHOTOS)
+    }
+    // --8<-- [end:realtime]
     // --8<-- [start:response-trust]
     // Which answers may replace the cache: those sent and answered under one settled session.
     responseTrust = ResponseTrust.SettledSession // the default

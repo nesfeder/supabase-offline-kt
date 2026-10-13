@@ -230,17 +230,22 @@ final class TaskRepository {
     }
     // --8<-- [end:operator-filter]
 
-    // --8<-- [start:read-again]
-    /// Reads both lists from the server once more: Realtime does not replay what happened while it
-    /// was not connected, so each new subscription catches up this way.
-    func readListsAgain() async throws {
-        _ = try await refreshTasks(TaskQuery())
-        try await client.from(Tables.taskPhotos)
-            .select(readStrategy: .networkOnly)
-            .order("created_at", ascending: false)
-            .execute()
+    // --8<-- [start:realtime-switch]
+    /// Where the client's Realtime channel stands: Live updates' status.
+    var realtimeStatus: RealtimeStatusSequence {
+        client.realtimeStatus
     }
-    // --8<-- [end:read-again]
+
+    /// Turns the client's Realtime channel off, which leaves it at once, or on, which joins it
+    /// again as soon as the network allows and reads both tables again. Live updates' switch.
+    func setLiveUpdates(_ isOn: Bool) async throws {
+        if isOn {
+            try await client.enableRealtime()
+        } else {
+            try await client.disableRealtime()
+        }
+    }
+    // --8<-- [end:realtime-switch]
 
     // MARK: - Task writes
 
@@ -267,7 +272,7 @@ final class TaskRepository {
         switch outcome {
         case .applied(let result):
             // A write sent only straight to the server is never put into the device's lists:
-            // the app puts in the row the server stored, as it would a row Realtime reports.
+            // the app puts in the row the server stored, as a record Realtime reports is applied.
             if needsConnection { try await client.applyServerRecord(table: Tables.tasks, record: result.value) }
             return .saved(storedAt: result.value.updatedAt)
         case .queued(let pendingMutation):
