@@ -78,18 +78,25 @@ final class TestApp {
         startReads()
     }
 
-    /// Starts Live updates, as the root view does, and waits until the server reports to it.
+    /// Matches the client's channel to Live updates and the user, as the root view does when either
+    /// changes, and waits until the channel follows the app's tables.
     func startLiveUpdates() async throws {
-        let app = app
-        liveUpdates = Task { await app.followLiveUpdates() }
-        try await eventually("the feed is open") { await server.openFeedCount() > 0 }
+        applyLiveUpdates()
+        try await eventually("the channel follows the tables") { server.realtime.subscribedTables.contains(Tables.tasks) }
     }
 
-    /// Stops Live updates, as the root view does when what it follows changes, and waits until the
-    /// server has closed the feed.
+    /// Switches Live updates off, as the Sync tab does, and waits until the channel is left.
     func stopLiveUpdates() async throws {
+        app.isLiveUpdatesOn = false
+        applyLiveUpdates()
+        try await eventually("the channel is left") { server.realtime.subscribedTables.isEmpty }
+    }
+
+    /// Runs the root view's match of the channel to Live updates and the user, once more.
+    private func applyLiveUpdates() {
+        let app = app
         liveUpdates?.cancel()
-        try await eventually("the feed is closed") { await server.openFeedCount() == 0 }
+        liveUpdates = Task { await app.applyLiveUpdates() }
     }
 
     /// Adds a task through New task, and fails the test when it is not saved.

@@ -23,7 +23,7 @@ struct RootView: View {
             .task(id: VisibleListKey(userID: app.session.userID, query: app.tasks.query, prefersFreshData: app.prefersFreshData)) {
                 await app.tasks.observeVisibleTasks(readStrategy: app.listReadStrategy)
             }
-            .task(id: app.liveUpdatesKey) { await app.followLiveUpdates() }
+            .task(id: app.liveUpdatesKey) { await app.applyLiveUpdates() }
             .onChange(of: scenePhase) { _, phase in
                 if phase == .active { app.syncOnForeground() }
             }

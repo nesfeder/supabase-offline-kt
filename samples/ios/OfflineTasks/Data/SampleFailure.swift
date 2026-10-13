@@ -26,8 +26,6 @@ nonisolated enum SampleFailure: Error, Equatable {
     /// The photo's file is in neither the device's cache nor the bucket.
     case photoMissing
 
-    /// Realtime's feed could not be reached, or sent a change the app could not read.
-    case liveUpdatesStopped
 
     /// The records of `count` photos waiting to upload could not be read from the device.
     case pendingPhotoUnreadable(count: Int)
@@ -45,8 +43,6 @@ nonisolated enum SampleFailure: Error, Equatable {
             return "That image couldn’t be read."
         case .photoMissing:
             return "This photo’s file is missing."
-        case .liveUpdatesStopped:
-            return "Live updates stopped: the server’s change feed couldn’t be reached. Pull to refresh still works."
         case .pendingPhotoUnreadable(let count):
             return "\(Wording.count(count, "photo", "photos")) waiting to upload couldn’t be read on this device. Clear local cache removes them."
         }

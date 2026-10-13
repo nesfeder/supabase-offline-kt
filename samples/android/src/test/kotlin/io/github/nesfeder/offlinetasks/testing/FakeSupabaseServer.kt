@@ -7,7 +7,9 @@ import io.github.jan.supabase.createSupabaseClient
 import io.github.jan.supabase.postgrest.Postgrest
 import io.github.jan.supabase.storage.Storage
 import io.github.jan.supabase.storage.resumable.MemoryResumableCache
+import io.github.nesfeder.offlinetasks.data.Tables
 import io.github.nesfeder.supabase.offline.Offline
+import io.github.nesfeder.supabase.offline.testing.FakeRealtime
 import io.github.nesfeder.supabase.offline.testing.inMemory
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.MockRequestHandleScope
@@ -114,10 +116,14 @@ class FakeSupabaseServer {
 
     private val lock = Any()
 
+    /** The Realtime channel's stand-in: a test reports another device's changes here. */
+    val realtime: FakeRealtime = FakeRealtime()
+
     // --8<-- [start:in-memory-client]
     /**
      * A client of this server with PostgREST, Storage and the offline plugin keeping its data in
-     * memory; no Auth, so every request is the one anonymous identity.
+     * memory, its Realtime tables followed through [realtime] (so no Realtime plugin); no Auth, so
+     * every request is the one anonymous identity.
      */
     fun supabaseClient(): SupabaseClient =
         createSupabaseClient(
@@ -127,7 +133,13 @@ class FakeSupabaseServer {
             httpEngine = MockEngine { request -> answer(request) } // this fake server
             install(Postgrest) { maxRetries = 0 } // a failed read fails now, not after retries
             install(Storage) { resumable { cache = MemoryResumableCache() } }
-            install(Offline) { inMemory(Clock.System) } // the cache and the queue in memory
+            install(Offline) {
+                inMemory(Clock.System, realtime) // the cache and the queue in memory
+                realtime { // the app's two tables, as the app names them
+                    table(Tables.TASKS)
+                    table(Tables.TASK_PHOTOS)
+                }
+            }
         }
 
     // --8<-- [end:in-memory-client]

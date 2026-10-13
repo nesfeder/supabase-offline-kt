@@ -200,7 +200,7 @@
     <string name="live_updates_paused">Waiting for a user, for the network, or for Simulate offline to be switched off.</string>
     <string name="live_updates_connecting">Connecting to Realtime…</string>
     <string name="live_updates_connected">On: other devices’ changes show as they happen.</string>
-    <string name="live_updates_failed">Couldn’t connect to Realtime. It tries again when you switch it or the network comes back.</string>
+    <string name="live_updates_failed">Couldn’t connect to Realtime. It tries again shortly, and when the network comes back.</string>
     <string name="sync_queue">Waiting changes</string>
     <string name="sync_queue_empty">Nothing waiting</string>
     <string name="sync_queue_by_table">Tasks: %1$d · Photos: %2$d</string>

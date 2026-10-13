@@ -3,10 +3,8 @@
 import Foundation
 import SupabaseOffline
 
-/// What only the server can answer, and what the server tells the device: the schema's two
-/// database functions, an exact count, and the row changes Realtime reports. A function and a
-/// count are never cached and never queued, so offline they fail; a reported change is applied to
-/// every cached list it belongs in.
+/// What only the server can answer: the schema's two database functions and an exact count. A
+/// function and a count are never cached and never queued, so offline they fail.
 extension TaskRepository {
 
     // --8<-- [start:rpc-no-params]
@@ -44,23 +42,6 @@ extension TaskRepository {
         return response.count ?? 0
     }
     // --8<-- [end:count]
-
-    // --8<-- [start:apply-records]
-    /// Applies a row change the server reported to every cached list of its table, so the screens
-    /// show it without asking the server. Tasks use the typed forms, photos the JSON forms.
-    func apply(_ change: ServerChange) async throws {
-        switch change {
-        case .saved(Tables.tasks, let record):
-            try await client.applyServerRecord(table: Tables.tasks, record: try record.decoded(as: ReportedTaskRow.self))
-        case .saved(let table, let record):
-            try await client.applyServerRecord(table: table, record: record)
-        case .deleted(Tables.tasks, let oldRecord):
-            try await client.applyServerDelete(table: Tables.tasks, oldRecord: try oldRecord.decoded(as: RowKey.self))
-        case .deleted(let table, let oldRecord):
-            try await client.applyServerDelete(table: table, oldRecord: oldRecord)
-        }
-    }
-    // --8<-- [end:apply-records]
 }
 
 /// The parameters of `tasks_done_count`: count only the tasks created since a moment, or all.

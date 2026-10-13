@@ -5,6 +5,7 @@ package io.github.nesfeder.offlinetasks.data.supabase
 import io.github.jan.supabase.postgrest.result.PostgrestResult
 import io.github.nesfeder.offlinetasks.data.AppNetworkStatus
 import io.github.nesfeder.offlinetasks.data.AppSyncStatus
+import io.github.nesfeder.offlinetasks.data.LiveUpdatesStatus
 import io.github.nesfeder.offlinetasks.data.PhotoFile
 import io.github.nesfeder.offlinetasks.data.ReadProvenance
 import io.github.nesfeder.offlinetasks.data.RejectedTaskMutation
@@ -21,6 +22,7 @@ import io.github.nesfeder.supabase.offline.MutationOutcome
 import io.github.nesfeder.supabase.offline.NetworkStatus
 import io.github.nesfeder.supabase.offline.PendingMutation
 import io.github.nesfeder.supabase.offline.QuerySnapshot
+import io.github.nesfeder.supabase.offline.RealtimeStatus
 import io.github.nesfeder.supabase.offline.RefreshState
 import io.github.nesfeder.supabase.offline.RejectedMutation
 import io.github.nesfeder.supabase.offline.ServerError
@@ -73,6 +75,22 @@ internal fun PostgrestResult.toReadProvenance(): ReadProvenance =
 
 // --8<-- [start:sync-banner]
 /** The library's status in the app's terms; the banner, the badges and the Sync tab read it. */
+// --8<-- [start:realtime-status]
+/**
+ * The plugin's Realtime status in the app's words: off, paused for want of a user or a network,
+ * connecting while the join is in flight, connected, or failed while the plugin waits to try again.
+ */
+internal fun RealtimeStatus.toLiveUpdatesStatus(): LiveUpdatesStatus =
+    when (this) {
+        RealtimeStatus.Off -> LiveUpdatesStatus.Off
+        RealtimeStatus.Paused -> LiveUpdatesStatus.Paused
+        RealtimeStatus.Subscribing -> LiveUpdatesStatus.Connecting
+        RealtimeStatus.Subscribed -> LiveUpdatesStatus.Connected
+        is RealtimeStatus.Stalled -> LiveUpdatesStatus.Failed
+    }
+
+// --8<-- [end:realtime-status]
+
 internal fun SyncStatus.toAppSyncStatus(): AppSyncStatus =
     AppSyncStatus(
         network =
