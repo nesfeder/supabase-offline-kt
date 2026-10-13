@@ -141,7 +141,8 @@ first read reaches the server nothing is kept ([One-shot reads](../behaviors/rea
 ## First live read
 
 `selectAsFlow` emits the rows as they change: when you write through the plugin, when a refresh
-lands, and when a Realtime record is applied; it needs no Realtime channel.
+lands, and when the server reports a change to a table `realtime { }` names, or a record is applied
+by hand; it needs no channel of its own.
 
 From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/OfflineTaskRepository.kt) · [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift) · [TasksModel.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Tasks/TasksModel.swift)
 

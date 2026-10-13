@@ -97,6 +97,7 @@ The settings:
 | `networkAvailability: Flow<Boolean>?` | `null` | The app's own connectivity signal, `true` while online, in place of the platform's monitor. `null` uses the monitor. |
 | `autoSync: Boolean` | `true` | Whether the library sends queued writes by itself when the session settles and when the network comes back. |
 | `primaryKeys`, `primaryKey(table, vararg columns)` | `id` | Each table's key columns, by its name in the default schema and as `schema.table` in another: how the cache recognizes a row. `primaryKey` throws `IllegalArgumentException` for no column. |
+| `realtime { table(name, schema, filter) }`, `realtimeTables: List<RealtimeTable>` | none | The tables the plugin keeps current through supabase-kt's Realtime plugin: one channel, joined while a user is signed in (or Auth is absent) and the network is not known down, each change applied as `applyServerRecord` and `applyServerDelete` do, the named tables read again on every join. A blank table, one named twice for one schema, or a `RealtimeFilter` with an operator Realtime does not evaluate throws `IllegalArgumentException` when named; a table named without `install(Realtime)` fails `createSupabaseClient` with `IllegalStateException`. |
 | `responseTrust: ResponseTrust` | `SettledSession` | Which server responses may replace what the cache holds. |
 | `logLevel: LogLevel?` | `null` | The least severe level the plugin logs at; `null` takes the client's `defaultLogLevel`. |
 
@@ -131,7 +132,7 @@ filter values or object paths; `DEBUG` may.
 | `from(table)`, `from(schema, table)`, `get(table)`, `get(schema, table)` | A table's `OfflinePostgrestQueryBuilder`; `offline["todos"]` is `offline.from("todos")`. | A table of another schema is cached apart from the default schema's table of the same name. | `IllegalStateException` without PostgREST |
 | `class OfflinePostgrestQueryBuilder` | The offline counterpart of supabase-kt's `PostgrestQueryBuilder`, with its `postgrest`, `table` and `schema`. | Final, with an internal constructor. Each verb takes its offline choice as a named parameter with a default, before the trailing request lambda. | — |
 | `select(columns, readStrategy = ReadStrategy.NetworkFirst(), request): PostgrestResult` | Reads rows once, from the server or the cache. | Each request is cached on its own. Only a list of rows is cached. `single()`, `maybeSingle()` (supabase-kt 3.8), `head`, a count (with rows or without), `csv()`, `geojson()`, `stripNulls()` and `explain()` go to the server under every strategy but `CacheOnly`, are never stored, and fail offline as `NetworkOnly` does. | `CacheMissException` under `CacheOnly`; `NetworkDisabledException` while network access is off and the cache cannot answer; `IllegalArgumentException` for two top-level filters on one column or a pattern list the server would misread |
-| `selectAsFlow(columns, readStrategy = FlowReadStrategy.CacheFirstThenNetwork, request): Flow<QuerySnapshot>` | Reads rows as they change: emits again whenever a write, a refresh or a server record changes them. | A failing refresh is reported in the snapshot, not thrown. A failure the read cannot recover from ends the flow after the values before it. A shape the cache never holds emits the server's answer once and completes. Needs no Realtime channel. | Through the flow: `CacheMissException` under `CacheOnly` for a shape the cache never holds; `NetworkDisabledException` while network access is off, for such a shape or for `NetworkFirstThenCache` with nothing cached; `IllegalArgumentException` for two top-level filters on one column or a pattern list the server would misread |
+| `selectAsFlow(columns, readStrategy = FlowReadStrategy.CacheFirstThenNetwork, request): Flow<QuerySnapshot>` | Reads rows as they change: emits again whenever a write, a refresh or a server record changes them. | A failing refresh is reported in the snapshot, not thrown. A failure the read cannot recover from ends the flow after the values before it. A shape the cache never holds emits the server's answer once and completes. Needs no channel of its own: it follows the cache, which the tables `realtime { }` names keep current through the plugin's channel. | Through the flow: `CacheMissException` under `CacheOnly` for a shape the cache never holds; `NetworkDisabledException` while network access is off, for such a shape or for `NetworkFirstThenCache` with nothing cached; `IllegalArgumentException` for two top-level filters on one column or a pattern list the server would misread |
 
 A verb may run its `request` lambda more than once: a read once to learn its shape and once per
 request sent, a queueable write up to three times. The lambda must build the same request every
@@ -422,6 +423,24 @@ a list read the cache cannot answer goes out once rather than with supabase-kt's
 whether a sync returns at once rather than wait for an unsettled session, and what
 `syncStatus.network` says.
 
+### Realtime
+
+| Member | What it does | Rule | Throws |
+| --- | --- | --- | --- |
+| `realtimeStatus: StateFlow<RealtimeStatus>` | Where the channel for the named tables stands. | `Off` with no table named and after `close()`; `Paused` while nobody is signed in, the network is known down or access is off; `Subscribing` while a join is in flight; `Subscribed` while changes arrive; `Stalled(cause)` after a refused join or an ended channel, until the next try, a second to a minute later. The same flow whether or not the client is open, and it never throws. | — |
+| `disableRealtime()` | Leaves the channel at once and joins none until `enableRealtime()`; the status reads `Off` when it returns. | Not kept: a new client starts with the subscription on. Calling it again changes nothing. | The closed error |
+| `enableRealtime()` | Joins the channel again as soon as the network allows, which reads the named tables again. | Calling it while the subscription is on changes nothing. | The closed error |
+
+`RealtimeStatus` is a sealed interface: the objects `Off`, `Paused`, `Subscribing` and
+`Subscribed`, and `Stalled(cause: Throwable)`, built by the library (the testing artifact's
+`stalledRealtime(cause)` builds one). `RealtimeTable` (`table`, `schema`, `filter`) is what
+`realtime { }` names, and `RealtimeFilter(column, operator, value)` the one condition the server
+evaluates for a table, with `eq`, `neq`, `gt`, `gte`, `lt`, `lte` or `in`. Without the Auth plugin
+and with the client's own token provider, the library reads the `exp` claim of the token the
+provider returns and asks Realtime to send a fresh one a minute before it, so the server does not
+close the channel when the token expires; a change of user it cannot see, so an app with its own
+provider brackets a sign-in or sign-out with the switch.
+
 ### Storage
 
 | Member | What it does | Rule | Throws |
@@ -475,9 +494,10 @@ reports as a network failure, so every call that puts such a name in its URL thr
 | `rpc(function, request)`, `rpc(function, parameters: JsonObject, request)`; reified `rpc(function, parameters: T, request)` | Calls a database function, as `supabase.postgrest.rpc` does. | Network only: never cached, never queued, since a function may change data. | `NetworkDisabledException` while access is off; `IllegalStateException` without PostgREST; the reified form, `IllegalArgumentException` when `parameters` does not encode to a JSON object |
 | `close()` | Closes the plugin and frees its database for another client. Nothing is deleted. | The close contract, below. | — |
 
-Realtime does not replay what happened while the device was disconnected, so
-`applyServerRecord` keeps the cache current between refreshes and never replaces them: read again
-after a reconnect.
+Realtime does not replay what happened while the device was disconnected, so applying records keeps
+the cache current between refreshes and never replaces them: the plugin reads the tables
+`realtime { }` names again on every join, and a channel of the app's own reads again after a
+reconnect.
 
 **The close contract.** `supabase.close()` closes the plugin once supabase-kt has begun closing its
 HTTP client. `supabase.offline.close()` closes the plugin alone, and called first lets the calls
@@ -562,7 +582,12 @@ the database's tables and owns their lifecycle. One function, `buildCacheCompone
 cache and queue parts, for the client and for the engine's tests alike. Calls go downward. The cache
 reports back up only through callbacks the client wires in: which queries are live, which went
 stale, who the current identity is, and a cache another identity owns. The client also builds the
-public types it hands out.
+public types it hands out. For the tables `realtime { }` names, a `ServerChangeFollower` decides
+when the channel is wanted (the switch, the session, the network) and joins it again after each
+end with a doubling wait cut short by a reconnection or a sign-in, and a `SupabaseRealtimeFeed`
+turns supabase-kt's channel into the events the follower applies through the client's own
+`applyServerRecord` and `applyServerDelete` paths, marking the cache stale on each join; a test's
+scripted feed stands in for it.
 
 The client and its parts:
 
@@ -577,6 +602,8 @@ flowchart TB
     OC --> FC
     OC --> G["ClientOperationGate"]
     OC --> N["NetworkAccess"]
+    OC --> SF["ServerChangeFollower and SupabaseRealtimeFeed"]
+    SF --> N
     T --> QR["QueryReader and LiveQueries"]
     T --> R
     T --> G
@@ -1119,6 +1146,7 @@ The decisions that shaped the API and the engine, with the date each was settled
 | 2026-09-28 | Nothing internal is visible to a consumer. | Only what is documented is API: internal code lives in internal packages, and a check in CI enforces it. |
 | 2026-09-28 | One tested supabase-kt minor per release, with a weekly canary (2026-09-30) and a warning at install (2026-10-02). | The artifact compiles supabase-kt's inline functions into itself, implements its `BucketApi` by delegation and names each of its filter operators, so a range of minors cannot be promised. |
 | 2026-10-04 | supabase-kt 3.6.0 now; the first release that carries both Realtime fixes when it lands. Ktor and kotlinx.coroutines are held at the versions 3.6.0 was released with. | supabase-kt 3.7.0 and 3.8.0 carry an uncaught Realtime heartbeat crash and a protocol-V2 leave defect, and the library's pin sets an app's Realtime with the rest. The 3.8-only tests build only while the pin is 3.8 or later, so the weekly canary still runs them and the move costs a version and one Gradle condition. |
+| 2026-10-13 | Realtime from the configuration: the plugin owns one channel for the tables `realtime { }` names, reads them again on every join, and keeps `applyServerRecord` and `applyServerDelete` for a channel of the app's own; `realtime-kt` is a dependency of the library. | Every app that wanted Realtime wired the same channel, pause and re-read by hand, and the iOS sample needed supabase-swift's Realtime beside the core for it. Replaying what a dropped channel missed is not possible with Realtime, so the re-read on join is the cost of correctness. |
 | 2026-09-28 | Before 1.0, a patch changes nothing in the contract; a supabase-kt minor or a schema version is a minor release. | No change should alter what a version promises without anyone noticing. |
 | 2026-09-29 | The cache belongs to one identity at a time. | A signed-out empty answer was served to the next user to sign in, and one user's cached rows and files could be read by the next. |
 | 2026-09-29 | A read the cache answers never touches the network. | Built through the app's own plugin, each cached read offline with an expired token asked for a token refresh. |
@@ -1156,6 +1184,7 @@ The decisions that shaped the API and the engine, with the date each was settled
 | 2026-09-30 | Evaluate conditions beyond `eq`, `neq`, `in` and `is`. | Each needs Postgres's collation and type rules to be right; unknown is always safe. |
 | 2026-09-30 | Cache `single()`, counts and the other shapes. | Stored over the list with the same filters, they were served in its place. |
 | 2026-09-30 | Resolve conflicts. | The last write wins; a value several writers change belongs in a server-side computation. |
+| 2026-10-13 | Catch up with what a Realtime channel missed by replaying it. | Realtime replays nothing, so the plugin reads the named tables again on every join instead; a channel the app wires itself reads again on its own terms. |
 
 The cache also does not follow the server's cascades and triggers. A write patches only its own
 table's cached queries, so a cascade or a trigger that changes another table shows when that

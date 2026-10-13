@@ -71,7 +71,7 @@ The list, open tasks first, with a search field and four chips above it.
 | Section | What it shows | The calls | On iOS | Explained on |
 | --- | --- | --- | --- | --- |
 | Connection | The network, and **Simulate offline** | `syncStatus.network`; `disableNetwork()` and `enableNetwork()` | The same | [Replaying the queue](../behaviors/sync.md#the-network-switch) |
-| Settings | **Prefer fresh data**, and **Live updates** with where its channel stands | The list's read strategy; supabase-kt's Realtime, each change applied with `applyServerRecord` or `applyServerDelete`, typed for tasks and as JSON for photos | supabase-swift's Realtime (`RealtimeClientV2`), each change applied with `applyServerRecord` or `applyServerDelete`, typed for tasks and as `[String: OfflineJSON]` for photos | [Reactive reads](../behaviors/reactive-reads.md#the-three-strategies), [Applying Realtime events](../behaviors/realtime.md) |
+| Settings | **Prefer fresh data**, and **Live updates** with where its channel stands | The list's read strategy; `realtime { table(…) }` in the plugin's configuration, `realtimeStatus` mapped onto the row's words, and `enableRealtime()` / `disableRealtime()` behind the switch | `Config.realtimeTables`, `realtimeStatus`, and the same switch, called again around a sign-in | [Reactive reads](../behaviors/reactive-reads.md#the-three-strategies), [Applying Realtime events](../behaviors/realtime.md) |
 | Waiting changes | The count per table, one row per change ("Added “Buy milk”, 2 minutes ago") with **Discard**, when it last synced or why it stopped, and **Sync now** with every count of its report | `pendingMutationCountFlow(table)`, `pendingMutations()`, `discardPendingMutation(id)`, `lastSyncedAt`, `lastSyncError`, `syncPendingMutations()` and its `SyncReport` | `pendingMutationCountSequence(table:)`, `pendingMutations()`, `discardPendingMutation(id:)`, then the same | [Writes and the offline queue](../behaviors/mutations.md#seeing-and-dropping-queued-writes), [Replaying the queue](../behaviors/sync.md) |
 | Refresh | Where the list's refresh stands | `QuerySnapshot.refresh` | The same | [Refresh lifecycle](../behaviors/refresh-lifecycle.md) |
 | Refused changes | Each refused change, when it was made and refused, its rows and the server's answer, with **Retry** (off when it cannot be retried) and **Dismiss** | `rejectedMutations()`, `retryRejectedMutation(id)`, `dismissRejectedMutation(id)` | The same, with what the change did, and the server's details and hint | [Conflicts and failures](../behaviors/failures.md#the-rejected-list) |
@@ -99,8 +99,8 @@ Each change was sent at once, because nothing waited ahead of it.
 ### Live updates
 
 With **Live updates** on (the Sync tab's Settings), change a task's title in the Table Editor. The
-app shows the new title within a second or two: Realtime sent the row, and the app applied it to
-the list it keeps on the device.
+app shows the new title within a second or two: Realtime sent the row, and the library applied it
+to the list it keeps on the device, as the table is named in the app's configuration.
 
 ### Go offline
 
