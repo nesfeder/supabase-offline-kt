@@ -146,6 +146,40 @@ class RealtimeTokenRefreshTest {
     }
 
     @Test
+    fun a_refresh_that_fails_is_logged_by_type_and_asked_again_after_the_retry_wait() = runTest {
+        // Given — a token that expires in ten minutes, and a refresh that fails the first time
+        var refreshes = 0
+        val refresher =
+            RealtimeTokenRefresher(
+                accessToken = { jwt(expiresAtSeconds = 600) },
+                refresh = {
+                    refreshedAt += testScheduler.currentTime
+                    if (refreshes++ == 0) throw IllegalStateException("secret token text")
+                },
+                clock = clock(),
+                engineLogger = logs.asEngineLogger(),
+                lead = 1.minutes,
+                retryWait = 30.seconds,
+            )
+
+        // When
+        val keeping = launch { refresher.keepFresh() }
+        advanceTimeBy(9.minutes + 1.seconds)
+        runCurrent()
+
+        // Then — the failure is logged by its type, never its text, and the refresh is asked for
+        // again after the wait (and the provider's unchanged expiry waits once more)
+        assertEquals(listOf(540_000L), refreshedAt)
+        val warning = logs.entriesAt(EngineLogLevel.WARNING).single().message
+        assertTrue("IllegalStateException" in warning, warning)
+        assertTrue("secret" !in warning, warning)
+        advanceTimeBy(1.minutes)
+        runCurrent()
+        assertEquals(listOf(540_000L, 600_000L), refreshedAt)
+        keeping.cancel()
+    }
+
+    @Test
     fun the_expiry_is_read_from_a_jwt_with_or_without_padding_and_from_nothing_else() {
         // Given / When / Then
         assertEquals(Instant.fromEpochSeconds(600), jwtExpiryOrNull(jwt(expiresAtSeconds = 600)))
@@ -156,7 +190,17 @@ class RealtimeTokenRefreshTest {
         assertNull(jwtExpiryOrNull("not.a.jwt"))
         assertNull(jwtExpiryOrNull("only-one-part"))
         assertNull(jwtExpiryOrNull(jwt(expiresAtSeconds = null)))
+        // A payload that is not base64, not JSON, not an object, or whose exp is not a number
+        val header = jwt(expiresAtSeconds = 600).substringBefore('.')
+        assertNull(jwtExpiryOrNull("$header.%%%.signature"))
+        assertNull(jwtExpiryOrNull("$header.${payload("not json")}.signature"))
+        assertNull(jwtExpiryOrNull("$header.${payload("[1, 2]")}.signature"))
+        assertNull(jwtExpiryOrNull("$header.${payload("""{"exp":"soon"}""")}.signature"))
     }
+
+    /** [claims] as a JWT payload segment. */
+    private fun payload(claims: String): String =
+        Base64.UrlSafe.withPadding(Base64.PaddingOption.ABSENT).encode(claims.encodeToByteArray())
 
     /** A JWT whose payload carries [expiresAtSeconds] as `exp`, or no `exp` when `null`. */
     private fun jwt(expiresAtSeconds: Long?, padded: Boolean = false): String {

@@ -8,6 +8,8 @@ import io.github.nesfeder.supabase.offline.internal.realtime.WatchedTableFilter
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
+import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
 
 /**
@@ -51,6 +53,47 @@ class RealtimeConfigTest {
             ),
             config.watchedTables,
         )
+    }
+
+    @Test
+    fun tables_and_filters_compare_by_value_and_describe_themselves() {
+        // Given — filters that differ in one field each, and tables named with and without one
+        val open = RealtimeFilter("status", FilterOperator.EQ, "open")
+        val openAgain = RealtimeFilter("status", FilterOperator.EQ, "open")
+        val closed = RealtimeFilter("status", FilterOperator.EQ, "closed")
+        val byOwner = RealtimeFilter("owner", FilterOperator.EQ, "open")
+        val after = RealtimeFilter("status", FilterOperator.GT, "open")
+        val config = Offline.Config()
+        config.realtime {
+            table("audit", schema = "app", filter = open)
+            table("audit", schema = "archive")
+            table("tasks")
+        }
+        val (audit, archived, tasks) = config.realtimeTables
+
+        // Then — a filter is its column, operator and value
+        assertEquals(open, openAgain)
+        assertEquals(open.hashCode(), openAgain.hashCode())
+        assertNotEquals(open, closed)
+        assertNotEquals(open, byOwner)
+        assertNotEquals(open, after)
+        assertFalse(open.equals("status=eq.open"))
+        assertEquals("RealtimeFilter(column=status, operator=eq, value=open)", open.toString())
+
+        // Then — a table is its name, schema and filter
+        assertEquals(RealtimeTable("audit", "app", openAgain), audit)
+        assertEquals(RealtimeTable("audit", "app", openAgain).hashCode(), audit.hashCode())
+        assertNotEquals(audit, archived)
+        assertNotEquals(audit, tasks)
+        assertNotEquals(audit, RealtimeTable("audit", "app", closed))
+        assertNotEquals(tasks, RealtimeTable("tasks", null, open))
+        assertFalse(audit.equals("audit"))
+        assertEquals(
+            "RealtimeTable(table=audit, schema=app, filter=" +
+                "RealtimeFilter(column=status, operator=eq, value=open))",
+            audit.toString(),
+        )
+        assertEquals("RealtimeTable(table=tasks, schema=null, filter=null)", tasks.toString())
     }
 
     @Test
