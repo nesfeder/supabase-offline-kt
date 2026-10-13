@@ -86,8 +86,12 @@ if [[ -n "$out" ]]; then
     # archive's root index.html at the server root (/js/…, /css/…, baseUrl "/"), so it loads nothing.
     sed -i '' -E -e "s#(href|src)=\"/#\1=\"/${base_path}/#g" \
         -e "s#var baseUrl = \"/\"#var baseUrl = \"/${base_path}/\"#" "$out/index.html"
-    if grep -qE '(href|src)="/(js|css|favicon)|baseUrl = "/"' "$out/index.html"; then
-        echo "The root index.html still loads from the server root: docc's output changed." >&2
+    # Every root-relative href and src now starts with the base path, once, and so does baseUrl.
+    unprefixed=$(grep -oE '(href|src)="/[^"]*"' "$out/index.html" | grep -vF "=\"/${base_path}/" || true)
+    if [[ -n "$unprefixed" ]] || grep -qF "/${base_path}/${base_path}/" "$out/index.html" \
+        || ! grep -qF "var baseUrl = \"/${base_path}/\"" "$out/index.html" \
+        || ! grep -qF "src=\"/${base_path}/js/" "$out/index.html"; then
+        echo "The root index.html does not load from /${base_path}/: docc's output changed." >&2
         exit 1
     fi
     pages=$(find "$out/documentation" -name index.html | wc -l | tr -d ' ')
