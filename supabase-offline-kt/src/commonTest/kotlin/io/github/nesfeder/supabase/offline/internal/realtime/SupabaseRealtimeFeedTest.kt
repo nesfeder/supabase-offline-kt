@@ -1,0 +1,446 @@
+// Copyright (c) 2026 nesfeder
+// SPDX-License-Identifier: MIT
+@file:OptIn(SupabaseInternal::class)
+
+package io.github.nesfeder.supabase.offline.internal.realtime
+
+import io.github.jan.supabase.annotations.SupabaseInternal
+import io.github.jan.supabase.postgrest.Postgrest
+import io.github.jan.supabase.postgrest.query.filter.FilterOperator
+import io.github.jan.supabase.realtime.Realtime
+import io.github.jan.supabase.realtime.RealtimeMessage
+import io.github.nesfeder.supabase.offline.testdoubles.RecordingLogSink
+import io.github.nesfeder.supabase.offline.testdoubles.ScriptedRealtimeWebsocket
+import io.github.nesfeder.supabase.offline.testdoubles.ScriptedRealtimeWebsocketFactory
+import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
+import kotlin.io.encoding.Base64
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertNotNull
+import kotlin.test.assertTrue
+import kotlin.time.Clock
+import kotlin.time.Duration.Companion.hours
+import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.minutes
+import kotlin.time.Duration.Companion.seconds
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.channels.ClosedReceiveChannelException
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.add
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
+import kotlinx.serialization.json.putJsonArray
+import kotlinx.serialization.json.putJsonObject
+
+/**
+ * The feed over supabase-kt's real Realtime plugin, driven through a scripted websocket: the join
+ * names each table with its schema and filter, a subscribed channel reports joined and then each
+ * change as sent, a refused join ends the feed, a close from the server ends it too, and a canceled
+ * collector leaves the channel.
+ */
+class SupabaseRealtimeFeedTest {
+
+    private val sockets = ScriptedRealtimeWebsocketFactory()
+    private val logs = RecordingLogSink()
+    private val supabase = newTestSupabaseClient {
+        install(Postgrest)
+        install(Realtime) {
+            websocketFactory = sockets
+            heartbeatInterval = 1.hours
+            reconnectDelay = 1.hours
+            rejoinDelay = 10.milliseconds
+            maxAttempts = 2
+        }
+    }
+    private val feed = SupabaseRealtimeFeed(supabase, logs.asEngineLogger())
+    private val tables =
+        listOf(
+            WatchedTable("tasks"),
+            WatchedTable(
+                "audit",
+                schema = "app",
+                filter = WatchedTableFilter("status", FilterOperator.EQ, "open"),
+            ),
+        )
+
+    @Test
+    fun the_join_names_each_table_and_a_subscribed_channel_reports_joined_then_each_change() =
+        runTest(timeout = 2.minutes) {
+            withContext(Dispatchers.Default) {
+                // Given — following two tables
+                val events = Channel<ServerChangeEvent>(Channel.UNLIMITED)
+                val collecting = launch {
+                    feed.follow(tables, "public").collect { event -> events.send(event) }
+                }
+                val socket = sockets.awaitSocket(0)
+
+                // When — supabase-kt joins
+                val join = socket.awaitSent("phx_join")
+
+                // Then — the join names each table, its schema and its filter, on a topic of
+                // the feed's own
+                assertTrue(join.topic.startsWith("realtime:supabase-offline-"), join.topic)
+                val bindings =
+                    assertNotNull(
+                        join.payload["config"]?.jsonObject?.get("postgres_changes")?.jsonArray
+                    )
+                assertEquals(
+                    setOf("public.tasks:null", "app.audit:status=eq.open"),
+                    bindings.map { binding -> binding.described() }.toSet(),
+                )
+
+                // When — the server takes the join
+                socket.answer(joinTaken(join, bindings))
+
+                // Then
+                assertEquals(ServerChangeEvent.Joined, events.receiveWithin())
+
+                // When — an insert of tasks, then a delete of audit
+                socket.answer(
+                    change(
+                        join.topic,
+                        ids = listOf(1),
+                        data =
+                            insert(
+                                buildJsonObject {
+                                    put("id", "t1")
+                                    put("title", "Milk")
+                                }
+                            ),
+                    )
+                )
+                socket.answer(
+                    change(
+                        join.topic,
+                        ids = listOf(2),
+                        data =
+                            delete(
+                                buildJsonObject {
+                                    put("id", "a1")
+                                }
+                            ),
+                    )
+                )
+
+                // Then — each as sent, with its table and schema
+                assertEquals(
+                    ServerChangeEvent.Saved(
+                        "tasks",
+                        "public",
+                        buildJsonObject {
+                            put("id", "t1")
+                            put("title", "Milk")
+                        },
+                    ),
+                    events.receiveWithin(),
+                )
+                assertEquals(
+                    ServerChangeEvent.Deleted("audit", "app", buildJsonObject { put("id", "a1") }),
+                    events.receiveWithin(),
+                )
+
+                // When — the collector is canceled
+                collecting.cancelAndJoin()
+
+                // Then — the channel is left, and the socket closed once nothing is subscribed
+                val leave = socket.awaitSent("phx_leave")
+                socket.answer(
+                    RealtimeMessage(
+                        leave.topic,
+                        "phx_reply",
+                        buildJsonObject { put("status", "ok") },
+                        leave.ref,
+                    )
+                )
+                socket.awaitDisconnected()
+            }
+            supabase.close()
+        }
+
+    @Test
+    fun a_refused_join_ends_the_feed() =
+        runTest(timeout = 2.minutes) {
+            withContext(Dispatchers.Default) {
+                // Given — a server that refuses every join and takes every leave, as supabase-kt's
+                // rejoin leaves the channel before joining it again
+                val refusing = launch {
+                    val socket = sockets.awaitSocket(0)
+                    for (message in socket.sent) {
+                        val reply =
+                            when (message.event) {
+                                "phx_join" ->
+                                    buildJsonObject {
+                                        put("status", "error")
+                                        putJsonObject("response") {
+                                            put("reason", "no publication")
+                                        }
+                                    }
+                                "phx_leave" -> buildJsonObject { put("status", "ok") }
+                                else -> continue
+                            }
+                        socket.answer(
+                            RealtimeMessage(message.topic, "phx_reply", reply, message.ref)
+                        )
+                    }
+                }
+
+                // When / Then — the feed ends, leaving the next join to the follower
+                assertFailsWith<ServerChangeFeedEndedException> {
+                    withTimeout(30.seconds) { feed.follow(tables, "public").collect {} }
+                }
+                refusing.cancelAndJoin()
+            }
+            supabase.close()
+        }
+
+    @Test
+    fun a_close_from_the_server_ends_the_feed() =
+        runTest(timeout = 2.minutes) {
+            withContext(Dispatchers.Default) {
+                // Given — joined
+                val events = Channel<ServerChangeEvent>(Channel.UNLIMITED)
+                val outcome = Channel<Result<Unit>>(Channel.UNLIMITED)
+                launch {
+                    outcome.send(
+                        runCatching { feed.follow(tables, "public").collect { events.send(it) } }
+                    )
+                }
+                val socket = sockets.awaitSocket(0)
+                val join = socket.awaitSent("phx_join")
+                val bindings =
+                    assertNotNull(
+                        join.payload["config"]?.jsonObject?.get("postgres_changes")?.jsonArray
+                    )
+                socket.answer(joinTaken(join, bindings))
+                assertEquals(ServerChangeEvent.Joined, events.receiveWithin())
+
+                // When — the server closes the channel
+                socket.answer(RealtimeMessage(join.topic, "phx_close", buildJsonObject {}, null))
+
+                // Then — the feed ends; supabase-kt leaves and disconnects at once on a close, and
+                // the leave may or may not reach the socket before the disconnect closes it
+                socket.answerLeaveIfSent()
+                val ended = withTimeout(10.seconds) { outcome.receive() }
+                assertTrue(ended.exceptionOrNull() is ServerChangeFeedEndedException, "$ended")
+            }
+            supabase.close()
+        }
+
+    @Test
+    fun an_update_is_reported_as_saved_and_a_select_is_dropped() =
+        runTest(timeout = 2.minutes) {
+            withContext(Dispatchers.Default) {
+                // Given — joined
+                val events = Channel<ServerChangeEvent>(Channel.UNLIMITED)
+                val collecting = launch {
+                    feed.follow(tables, "public").collect { event -> events.send(event) }
+                }
+                val socket = sockets.awaitSocket(0)
+                val join = socket.awaitSent("phx_join")
+                val bindings =
+                    assertNotNull(
+                        join.payload["config"]?.jsonObject?.get("postgres_changes")?.jsonArray
+                    )
+                socket.answer(joinTaken(join, bindings))
+                assertEquals(ServerChangeEvent.Joined, events.receiveWithin())
+
+                // When — a select (never asked for), an update, then an insert
+                val row = buildJsonObject {
+                    put("id", "t1")
+                    put("title", "Oat milk")
+                }
+                socket.answer(change(join.topic, ids = listOf(1), data = select(row)))
+                socket.answer(change(join.topic, ids = listOf(1), data = update(row)))
+                socket.answer(change(join.topic, ids = listOf(1), data = insert(row)))
+
+                // Then — the update and the insert, both as saved; nothing for the select
+                assertEquals(
+                    ServerChangeEvent.Saved("tasks", "public", row),
+                    events.receiveWithin(),
+                )
+                assertEquals(
+                    ServerChangeEvent.Saved("tasks", "public", row),
+                    events.receiveWithin(),
+                )
+                collecting.cancelAndJoin()
+                val leave = socket.awaitSent("phx_leave")
+                socket.answer(
+                    RealtimeMessage(
+                        leave.topic,
+                        "phx_reply",
+                        buildJsonObject { put("status", "ok") },
+                        leave.ref,
+                    )
+                )
+            }
+            supabase.close()
+        }
+
+    @Test
+    fun without_auth_the_feed_from_the_installed_plugin_refreshes_the_providers_token() =
+        runTest(timeout = 2.minutes) {
+            withContext(Dispatchers.Default) {
+                // Given — a client with its own token provider and no Auth plugin, whose token
+                // expires sooner than the refresher's lead
+                val ownSockets = ScriptedRealtimeWebsocketFactory()
+                val own = newTestSupabaseClient {
+                    accessToken = { jwt(expiresAtSeconds = Clock.System.now().epochSeconds + 30) }
+                    install(Postgrest)
+                    install(Realtime) {
+                        websocketFactory = ownSockets
+                        heartbeatInterval = 1.hours
+                        reconnectDelay = 1.hours
+                    }
+                }
+                val ownFeed =
+                    SupabaseRealtimeFeed.forInstalledPlugin(
+                        own,
+                        logs.asEngineLogger(),
+                        Clock.System,
+                    )
+                val collecting = launch { ownFeed.follow(tables, "public").collect {} }
+                val socket = ownSockets.awaitSocket(0)
+                val join = socket.awaitSent("phx_join")
+
+                // Then — the token is sent again before it expires
+                withTimeout(10.seconds) {
+                    while (logs.entries.none { entry -> "Realtime:" in entry.message }) delay(20)
+                }
+                val said = logs.entries.map { entry -> entry.message }
+                assertTrue(
+                    said.any { message -> "sent the provider's token again" in message },
+                    "$said",
+                )
+                // When — the collector is canceled before the join was ever answered
+                collecting.cancelAndJoin()
+
+                // Then — nothing is subscribed, so supabase-kt disconnects
+                assertTrue(join.topic.startsWith("realtime:supabase-offline-"), join.topic)
+                socket.awaitDisconnected()
+                own.close()
+            }
+            supabase.close()
+        }
+
+    /** A JWT whose payload carries [expiresAtSeconds] as `exp`. */
+    private fun jwt(expiresAtSeconds: Long): String {
+        val encoder = Base64.UrlSafe.withPadding(Base64.PaddingOption.ABSENT)
+        val header = encoder.encode("""{"alg":"HS256","typ":"JWT"}""".encodeToByteArray())
+        val payload =
+            encoder.encode("""{"sub":"user","exp":$expiresAtSeconds}""".encodeToByteArray())
+        // supabase-kt decodes the signature too, so it must be base64 as well
+        return "$header.$payload.${encoder.encode("signature".encodeToByteArray())}"
+    }
+
+    /** The server's answer to [join]: every binding taken, numbered from one. */
+    private fun joinTaken(join: RealtimeMessage, bindings: List<JsonElement>): RealtimeMessage =
+        RealtimeMessage(
+            join.topic,
+            "phx_reply",
+            buildJsonObject {
+                put("status", "ok")
+                putJsonObject("response") {
+                    putJsonArray("postgres_changes") {
+                        bindings.forEachIndexed { index, binding ->
+                            add(
+                                buildJsonObject {
+                                    binding.jsonObject.forEach { (key, value) -> put(key, value) }
+                                    put("id", index + 1)
+                                }
+                            )
+                        }
+                    }
+                }
+            },
+            join.ref,
+        )
+
+    /** A `postgres_changes` message for the bindings [ids], carrying [data]. */
+    private fun change(topic: String, ids: List<Int>, data: JsonObject): RealtimeMessage =
+        RealtimeMessage(
+            topic,
+            "postgres_changes",
+            buildJsonObject {
+                putJsonArray("ids") { ids.forEach { id -> add(id) } }
+                put("data", data)
+            },
+            null,
+        )
+
+    private fun insert(record: JsonObject): JsonObject = buildJsonObject {
+        put("type", "INSERT")
+        put("record", record)
+        putJsonArray("columns") {}
+        put("commit_timestamp", "2026-10-13T12:00:00Z")
+    }
+
+    private fun update(record: JsonObject): JsonObject = buildJsonObject {
+        put("type", "UPDATE")
+        put("record", record)
+        put("old_record", buildJsonObject { put("id", "t1") })
+        putJsonArray("columns") {}
+        put("commit_timestamp", "2026-10-13T12:00:00Z")
+    }
+
+    private fun select(record: JsonObject): JsonObject = buildJsonObject {
+        put("type", "SELECT")
+        put("record", record)
+        putJsonArray("columns") {}
+        put("commit_timestamp", "2026-10-13T12:00:00Z")
+    }
+
+    private fun delete(oldRecord: JsonObject): JsonObject = buildJsonObject {
+        put("type", "DELETE")
+        put("old_record", oldRecord)
+        putJsonArray("columns") {}
+        put("commit_timestamp", "2026-10-13T12:00:00Z")
+    }
+
+    /** `schema.table:filter` of a binding supabase-kt sent. */
+    private fun JsonElement.described(): String {
+        val binding = jsonObject
+        val schema = binding["schema"]?.jsonPrimitive?.contentOrNull
+        val table = binding["table"]?.jsonPrimitive?.contentOrNull
+        val filter = binding["filter"]?.jsonPrimitive?.contentOrNull
+        return "$schema.$table:$filter"
+    }
+
+    private suspend fun Channel<ServerChangeEvent>.receiveWithin(): ServerChangeEvent =
+        withTimeout(10.seconds) { receive() }
+
+    /**
+     * Answers the leave supabase-kt sends, when it reaches this socket within two seconds: after a
+     * close from the server, supabase-kt disconnects right after the leave, which can close the
+     * socket before the leave is written.
+     */
+    private suspend fun ScriptedRealtimeWebsocket.answerLeaveIfSent() {
+        val leave =
+            try {
+                withTimeoutOrNull(2.seconds) { awaitSent("phx_leave") }
+            } catch (closed: ClosedReceiveChannelException) {
+                null
+            } ?: return
+        answer(
+            RealtimeMessage(
+                leave.topic,
+                "phx_reply",
+                buildJsonObject { put("status", "ok") },
+                leave.ref,
+            )
+        )
+    }
+}

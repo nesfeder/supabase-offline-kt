@@ -134,9 +134,9 @@ supabase-kt 3.7.0 and 3.8.0 carry two Realtime defects, as upstream describes th
 - `phx_leave` and `access_token` messages are sent with `join_ref: null`, a Phoenix protocol
   violation.
 
-Both fixes are merged upstream and not yet released. This library never uses Realtime, but it
-declares supabase-kt through its BOM, so its pin sets an app's whole supabase-kt, Realtime
-included. The pin moves to the first supabase-kt release that contains both fixes. Ktor and
+Both fixes are merged upstream and not yet released. This library depends on supabase-kt's Realtime
+module and declares supabase-kt through its BOM, so its pin sets an app's whole supabase-kt,
+Realtime included. The pin moves to the first supabase-kt release that contains both fixes. Ktor and
 kotlinx.coroutines are held at the versions supabase-kt 3.6.0 was released with (3.4.3 and
 1.10.2), so adopting the library does not move your app past them.
 

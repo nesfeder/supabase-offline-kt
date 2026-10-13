@@ -42,7 +42,10 @@ struct MutationQueueTests {
         // Then it is gone and was never sent
         #expect(try await client.pendingMutations().first().isEmpty)
         #expect(try await client.pendingMutationCount(table: "todos") == 0)
-        #expect(await eventually { lists.last == [] && counts.last == 0 })
+        #expect(
+            await eventually { lists.last == [] && counts.last == 0 },
+            "lists.last = \(String(describing: lists.last)), counts.last = \(String(describing: counts.last))"
+        )
         #expect(server.requests(withMethod: "POST").count == 1)
         lists.stop()
         counts.stop()
@@ -96,7 +99,10 @@ struct MutationQueueTests {
 
         // Then the list is empty and nothing is queued
         #expect(try await client.rejectedMutations().first().isEmpty)
-        #expect(await eventually { rejectedLists.last == [] && client.syncStatus.value.rejectedMutationCount == 0 })
+        #expect(
+            await eventually { rejectedLists.last == [] && client.syncStatus.value.rejectedMutationCount == 0 },
+            "rejectedLists.last = \(String(describing: rejectedLists.last)), status = \(client.syncStatus.value)"
+        )
         #expect(try await client.pendingMutationCount() == 0)
         rejectedLists.stop()
         try await client.close()

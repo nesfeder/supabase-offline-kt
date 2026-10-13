@@ -52,13 +52,13 @@ The library is on Maven Central, which needs no credentials. Add it to the share
     }
     ```
 
-It brings supabase-kt's PostgREST, Storage and Auth modules and its BOM. Take any other
-supabase-kt module, such as Realtime, from the same BOM, so every module stays on one version:
+It brings supabase-kt's PostgREST, Storage, Auth and Realtime modules and its BOM. Take any other
+supabase-kt module, such as Functions, from the same BOM, so every module stays on one version:
 
 ```kotlin
 commonMain.dependencies {
     implementation(project.dependencies.platform("io.github.jan-tennert.supabase:bom:3.6.0"))
-    implementation("io.github.jan-tennert.supabase:realtime-kt")
+    implementation("io.github.jan-tennert.supabase:functions-kt")
 }
 ```
 
