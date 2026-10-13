@@ -27,7 +27,10 @@ extension SupabaseOfflineClient {
         /// tells the server; with an Auth that keeps a session it failed to end, end it yourself
         /// first); and turn the network back on with ``SupabaseOfflineClient/enableNetwork()`` once
         /// this returns the next user's token, which makes open live reads fetch again with it.
-        /// Signing out and back in as the same user needs nothing.
+        /// Signing out and back in as the same user needs nothing. The channel for ``realtimeTables``
+        /// is joined with the token this returns at the join, and is not joined again by itself
+        /// when the token changes: bracket a sign-in or sign-out with
+        /// ``SupabaseOfflineClient/disableRealtime()`` and ``SupabaseOfflineClient/enableRealtime()``.
         public var accessToken: (@Sendable () async throws -> String?)?
 
         /// The directory for the local database and cached files, created when missing; `nil` for
@@ -65,10 +68,22 @@ extension SupabaseOfflineClient {
         /// Each table's primary-key columns, by table name; a table not named here has the key `id`.
         public var primaryKeys: [String: [String]]
 
+        /// The tables the client keeps current through Realtime; none by default, and then no
+        /// channel is opened.
+        ///
+        /// The client joins one channel for them while the network is not known down and the
+        /// subscription is on (``SupabaseOfflineClient/disableRealtime()`` turns it off), applies
+        /// each change to the cached queries with the keys ``primaryKeys`` names, reads the tables
+        /// again on every join, and refreshes the channel's token before it expires, through
+        /// ``accessToken``. ``SupabaseOfflineClient/realtimeStatus`` reports where the channel
+        /// stands. A filter whose operator Realtime does not evaluate fails the open with
+        /// ``OfflineError/Code/configuration``.
+        public var realtimeTables: [RealtimeTable]
+
         /// The least severe message written to the unified log, under the subsystem `SupabaseOffline`.
         public var logLevel: LogLevel
 
-        /// A configuration with every value given or defaulted.
+        /// A configuration with every value given or defaulted, and no Realtime table.
         public init(
             defaultSchema: String = "public",
             accessToken: (@Sendable () async throws -> String?)? = nil,
@@ -80,6 +95,34 @@ extension SupabaseOfflineClient {
             primaryKeys: [String: [String]] = [:],
             logLevel: LogLevel = .warning
         ) {
+            self.init(
+                defaultSchema: defaultSchema,
+                accessToken: accessToken,
+                dataDirectory: dataDirectory,
+                cacheSize: cacheSize,
+                fileCacheSize: fileCacheSize,
+                networkAvailability: networkAvailability,
+                autoSync: autoSync,
+                primaryKeys: primaryKeys,
+                realtimeTables: [],
+                logLevel: logLevel
+            )
+        }
+
+        /// A configuration with every value given or defaulted, naming the tables the client keeps
+        /// current through Realtime.
+        public init(
+            defaultSchema: String = "public",
+            accessToken: (@Sendable () async throws -> String?)? = nil,
+            dataDirectory: URL? = nil,
+            cacheSize: CacheSize = .bytes(100 * 1_024 * 1_024),
+            fileCacheSize: CacheSize = .bytes(256 * 1_024 * 1_024),
+            networkAvailability: (@Sendable () -> AsyncStream<Bool>)? = nil,
+            autoSync: Bool = true,
+            primaryKeys: [String: [String]] = [:],
+            realtimeTables: [RealtimeTable],
+            logLevel: LogLevel = .warning
+        ) {
             self.defaultSchema = defaultSchema
             self.accessToken = accessToken
             self.dataDirectory = dataDirectory
@@ -88,6 +131,7 @@ extension SupabaseOfflineClient {
             self.networkAvailability = networkAvailability
             self.autoSync = autoSync
             self.primaryKeys = primaryKeys
+            self.realtimeTables = realtimeTables
             self.logLevel = logLevel
         }
 

@@ -77,7 +77,7 @@ struct ClientTests {
         let client = SupabaseOfflineClient(supabaseURL: Self.projectURL, supabaseKey: "key", config: .init()) {
             openedOnMain.append(isOnMainThread())
             Thread.sleep(forTimeInterval: 0.3)
-            return BridgeTesting.shared.openInMemory(options: $0, server: FakeSilentServer(), clock: nil)
+            return BridgeTesting.shared.openInMemory(options: $0, server: FakeSilentServer(), clock: nil, realtime: nil)
         }
         let returnedAfter = ContinuousClock.now - created
         let count = try await client.rawPendingMutationCount()

@@ -5,8 +5,9 @@ The offline client in memory, for tests and previews, and the values its fakes r
 ## Overview
 
 `SupabaseOfflineClient.inMemory(…)` runs the same cache, queue and sync as the client your app ships,
-kept in memory, with every request answered by a ``FakeServer``. The factories build the values the
-client reports, for fakes of your own.
+kept in memory, with every request answered by a ``FakeServer`` and the Realtime tables it names
+followed through a ``FakeRealtime``. The factories build the values the client reports, for fakes
+of your own.
 
 ## Topics
 
@@ -14,6 +15,7 @@ client reports, for fakes of your own.
 
 - ``SupabaseOffline/SupabaseOfflineClient``
 - ``FakeServer``
+- ``FakeRealtime``
 - ``ManualClock``
 
 ### Values

@@ -4,8 +4,8 @@ Move your app's table and file calls to the offline client: the same chains, on 
 
 ## Overview
 
-Keep supabase-swift for Auth, Realtime and Functions, and move the PostgREST and Storage calls that
-should work offline to a ``SupabaseOfflineClient``. Its filters, transforms, function arguments and
+Keep supabase-swift for Auth and Functions, and move the PostgREST and Storage calls that should
+work offline to a ``SupabaseOfflineClient``. Its filters, transforms, function arguments and
 Storage operations take supabase-swift's names and labels, so most calls change only their receiver:
 
 <!-- swift-listing: ComingFromSupabaseSwiftListings.swift:same-calls -->
@@ -44,7 +44,9 @@ takes a ``MutationStrategy``; ``MutationStrategy/onlineOnly`` is supabase-swift'
 or thrown.
 
 **Live reads are new.** ``OfflinePostgrestQueryBuilder/selectAsSequence(_:as:readStrategy:)``
-yields the rows again whenever a write, a sync or a refresh changes them, with no Realtime channel.
+yields the rows again whenever a write, a sync or a refresh changes them, with no Realtime channel
+of your own; name the tables the server should keep current in
+``SupabaseOfflineClient/Config/realtimeTables``, and the client joins one channel for them.
 
 **The token comes from a closure.** ``SupabaseOfflineClient/Config/accessToken`` returns the user's
 token for each request, and the app clears local data when the user changes

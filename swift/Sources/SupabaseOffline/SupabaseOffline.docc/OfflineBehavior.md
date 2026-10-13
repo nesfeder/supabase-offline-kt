@@ -149,8 +149,11 @@ as base64 text.
   fetched or used go first.
 - A live read carries no count.
 - ``OfflineBucketApi/createSignedURLs(paths:expiresIn:)`` fails whole when one path cannot be signed.
-- The client does not subscribe to Realtime. Hand its records to
+- The client keeps only the tables ``SupabaseOfflineClient/Config/realtimeTables`` names current
+  through Realtime, with one filter each, and reads them again on every join, since Realtime does
+  not replay what was missed. It joins the channel with the token ``SupabaseOfflineClient/Config/accessToken``
+  returns at the join and does not join again by itself when the user changes: bracket a sign-in
+  or sign-out with ``SupabaseOfflineClient/disableRealtime()`` and ``SupabaseOfflineClient/enableRealtime()``.
+  Records from a channel of your own still go through
   ``SupabaseOfflineClient/applyServerRecord(table:record:primaryKeys:schema:)-(_,Encodable,_,_)`` and
-  ``SupabaseOfflineClient/applyServerDelete(table:oldRecord:primaryKeys:schema:)-(_,Encodable,_,_)`` to keep the
-  device's copy current between reads, and read again after a reconnection: Realtime does not replay
-  what was missed.
+  ``SupabaseOfflineClient/applyServerDelete(table:oldRecord:primaryKeys:schema:)-(_,Encodable,_,_)``.

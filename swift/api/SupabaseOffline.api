@@ -336,6 +336,29 @@ enum.case ReadStrategy.cacheOnly(maxAge:) | case cacheOnly(maxAge: Duration? = n
 type.property ReadStrategy.networkFirst | static var networkFirst: ReadStrategy { get }
 enum.case ReadStrategy.networkFirst(maxAge:) | case networkFirst(maxAge: Duration? = nil)
 enum.case ReadStrategy.networkOnly | case networkOnly
+struct RealtimeFilter | struct RealtimeFilter
+property RealtimeFilter.column | let column: String
+init RealtimeFilter.init(column:in:) | init(column: String, in values: [some OfflineFilterValue])
+init RealtimeFilter.init(column:operator:value:) | init(column: String, operator: FilterOperator, value: some OfflineFilterValue)
+property RealtimeFilter.operator | let `operator`: FilterOperator
+enum RealtimeStatus | enum RealtimeStatus
+func.op RealtimeStatus.==(_:_:) | static func == (lhs: RealtimeStatus, rhs: RealtimeStatus) -> Bool
+enum.case RealtimeStatus.off | case off
+enum.case RealtimeStatus.paused | case paused
+enum.case RealtimeStatus.stalled(cause:) | case stalled(cause: OfflineError)
+enum.case RealtimeStatus.subscribed | case subscribed
+enum.case RealtimeStatus.subscribing | case subscribing
+struct RealtimeStatusSequence | struct RealtimeStatusSequence
+typealias RealtimeStatusSequence.Element | typealias Element = RealtimeStatus
+struct RealtimeStatusSequence.Iterator | struct Iterator
+method RealtimeStatusSequence.Iterator.next() | mutating func next() async throws -> RealtimeStatusSequence.Element?
+method RealtimeStatusSequence.makeAsyncIterator() | func makeAsyncIterator() -> RealtimeStatusSequence.Iterator
+property RealtimeStatusSequence.value | var value: RealtimeStatus { get }
+struct RealtimeTable | struct RealtimeTable
+property RealtimeTable.filter | let filter: RealtimeFilter?
+init RealtimeTable.init(_:schema:filter:) | init(_ table: String, schema: String? = nil, filter: RealtimeFilter? = nil)
+property RealtimeTable.schema | let schema: String?
+property RealtimeTable.table | let table: String
 enum RefreshState | enum RefreshState
 func.op RefreshState.==(_:_:) | static func == (lhs: RefreshState, rhs: RefreshState) -> Bool
 enum.case RefreshState.idle | case idle
@@ -376,9 +399,11 @@ property SupabaseOfflineClient.Config.dataDirectory | var dataDirectory: URL?
 property SupabaseOfflineClient.Config.defaultSchema | var defaultSchema: String
 property SupabaseOfflineClient.Config.fileCacheSize | var fileCacheSize: SupabaseOfflineClient.CacheSize
 init SupabaseOfflineClient.Config.init(defaultSchema:accessToken:dataDirectory:cacheSize:fileCacheSize:networkAvailability:autoSync:primaryKeys:logLevel:) | init(defaultSchema: String = "public", accessToken: (@Sendable () async throws -> String?)? = nil, dataDirectory: URL? = nil, cacheSize: SupabaseOfflineClient.CacheSize = .bytes(100 * 1_024 * 1_024), fileCacheSize: SupabaseOfflineClient.CacheSize = .bytes(256 * 1_024 * 1_024), networkAvailability: (@Sendable () -> AsyncStream<Bool>)? = nil, autoSync: Bool = true, primaryKeys: [String : [String]] = [:], logLevel: SupabaseOfflineClient.LogLevel = .warning)
+init SupabaseOfflineClient.Config.init(defaultSchema:accessToken:dataDirectory:cacheSize:fileCacheSize:networkAvailability:autoSync:primaryKeys:realtimeTables:logLevel:) | init(defaultSchema: String = "public", accessToken: (@Sendable () async throws -> String?)? = nil, dataDirectory: URL? = nil, cacheSize: SupabaseOfflineClient.CacheSize = .bytes(100 * 1_024 * 1_024), fileCacheSize: SupabaseOfflineClient.CacheSize = .bytes(256 * 1_024 * 1_024), networkAvailability: (@Sendable () -> AsyncStream<Bool>)? = nil, autoSync: Bool = true, primaryKeys: [String : [String]] = [:], realtimeTables: [RealtimeTable], logLevel: SupabaseOfflineClient.LogLevel = .warning)
 property SupabaseOfflineClient.Config.logLevel | var logLevel: SupabaseOfflineClient.LogLevel
 property SupabaseOfflineClient.Config.networkAvailability | var networkAvailability: (@Sendable () -> AsyncStream<Bool>)?
 property SupabaseOfflineClient.Config.primaryKeys | var primaryKeys: [String : [String]]
+property SupabaseOfflineClient.Config.realtimeTables | var realtimeTables: [RealtimeTable]
 enum SupabaseOfflineClient.LogLevel | enum LogLevel
 enum.case SupabaseOfflineClient.LogLevel.debug | case debug
 enum.case SupabaseOfflineClient.LogLevel.error | case error
@@ -392,15 +417,18 @@ method SupabaseOfflineClient.applyServerRecord(table:record:primaryKeys:schema:)
 method SupabaseOfflineClient.clearLocalData() | func clearLocalData() async throws
 method SupabaseOfflineClient.close() | func close() async throws
 method SupabaseOfflineClient.disableNetwork() | func disableNetwork() async throws
+method SupabaseOfflineClient.disableRealtime() | func disableRealtime() async throws
 method SupabaseOfflineClient.discardPendingMutation(id:) | func discardPendingMutation(id: Int64) async throws
 method SupabaseOfflineClient.dismissRejectedMutation(id:) | func dismissRejectedMutation(id: Int64) async throws
 method SupabaseOfflineClient.enableNetwork() | func enableNetwork() async throws
+method SupabaseOfflineClient.enableRealtime() | func enableRealtime() async throws
 method SupabaseOfflineClient.from(_:) | func from(_ table: String) -> OfflinePostgrestQueryBuilder
 method SupabaseOfflineClient.from(schema:table:) | func from(schema: String, table: String) -> OfflinePostgrestQueryBuilder
 init SupabaseOfflineClient.init(supabaseURL:supabaseKey:config:) | convenience init(supabaseURL: URL, supabaseKey: String, config: SupabaseOfflineClient.Config = Config())
 method SupabaseOfflineClient.pendingMutationCount(table:) | func pendingMutationCount(table: String? = nil) async throws -> Int
 method SupabaseOfflineClient.pendingMutationCountSequence(table:) | func pendingMutationCountSequence(table: String? = nil) -> PendingMutationCountSequence
 method SupabaseOfflineClient.pendingMutations(table:) | func pendingMutations(table: String? = nil) -> PendingMutationSequence
+property SupabaseOfflineClient.realtimeStatus | var realtimeStatus: RealtimeStatusSequence { get }
 method SupabaseOfflineClient.rejectedMutations() | func rejectedMutations() -> RejectedMutationSequence
 method SupabaseOfflineClient.retryRejectedMutation(id:) | func retryRejectedMutation(id: Int64) async throws
 method SupabaseOfflineClient.rpc(_:head:get:count:schema:) | func rpc(_ function: String, head: Bool = false, get: Bool = false, count: Count? = nil, schema: String? = nil) -> OfflineRPCRequestBuilder
@@ -567,6 +595,17 @@ conformance QuerySnapshotSequence.Iterator | _Concurrency.AsyncIteratorProtocol
 conformance ReadStrategy | Swift.Equatable
 conformance ReadStrategy | Swift.Hashable
 conformance ReadStrategy | Swift.Sendable
+conformance RealtimeFilter | Swift.Equatable
+conformance RealtimeFilter | Swift.Hashable
+conformance RealtimeFilter | Swift.Sendable
+conformance RealtimeStatus | Swift.Equatable
+conformance RealtimeStatus | Swift.Sendable
+conformance RealtimeStatusSequence | Swift.Sendable
+conformance RealtimeStatusSequence | _Concurrency.AsyncSequence
+conformance RealtimeStatusSequence.Iterator | _Concurrency.AsyncIteratorProtocol
+conformance RealtimeTable | Swift.Equatable
+conformance RealtimeTable | Swift.Hashable
+conformance RealtimeTable | Swift.Sendable
 conformance RefreshState | Swift.Equatable
 conformance RefreshState | Swift.Sendable
 conformance RejectedMutation | Swift.Equatable
