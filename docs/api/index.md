@@ -10,5 +10,5 @@ MkDocs cannot check them. The docs check's link check covers the Kotlin one. -->
 - <a href="../swift/documentation/supabaseoffline/">Swift</a>: the Swift package's two products,
   `SupabaseOffline` and `SupabaseOfflineTesting`, for apps written in Swift.
 
-The Kotlin reference is built from the branch the site was published from; the Swift one comes
-from the latest release.
+The Kotlin reference is built from the branch or tag the site was published from; the Swift one
+comes from the latest release.
