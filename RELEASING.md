@@ -224,7 +224,13 @@ must be signed by the same identity.
    description are filled in, and CI starts by itself because you opened it. It sets
    `VERSION_NAME` to the next minor's `-SNAPSHOT`, adds an empty `## Unreleased` section to the
    changelog and an `Unreleased` row to the compatibility table, and empties
-   `compat/overrides.txt`. Review it and merge it.
+   `compat/overrides.txt`. It also moves the sample apps to `X.Y.Z`, since they take the published
+   library, not this checkout: `supabase-offline` in `gradle/libs.versions.toml` for the Android
+   sample, and for the iOS sample the project's exact version of `supabase-offline-swift` with its
+   pin, the tag's commit, in the project's `Package.resolved`. CI builds both samples on the
+   checkout, so check them as a reader gets them: `./gradlew :samples:android:assembleDebug`
+   without `-PsupabaseOffline.local=true`, and `samples/ios/OfflineTasks.xcodeproj` (the project,
+   not the workspace) resolving the package at `X.Y.Z`. Review it and merge it.
 6. If the next release is a patch, set that version in the pull request that prepares it.
 
 ## Republish the site

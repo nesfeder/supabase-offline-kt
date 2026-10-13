@@ -103,6 +103,10 @@ sqlite-system = "2.7.1"
 # V2 leave defect, fixed upstream but not yet released. Move to the first release with both fixes;
 # supabase-offline-kt/build.gradle.kts adds the tests that need 3.8 API from that minor on.
 supabase-bom = "3.6.0"
+# The library as the samples take it: its newest release on Maven Central, never the version this
+# build makes. The post-release pull request moves it (RELEASING.md); the Android sample builds
+# this checkout instead with -PsupabaseOffline.local=true (settings.gradle.kts).
+supabase-offline = "0.1.0"
 
 [libraries]
 # The `gradleApi` and `gradlePlugin` entries are the plugins build-logic compiles against; the
@@ -177,6 +181,10 @@ okio = { module = "com.squareup.okio:okio", version.ref = "okio" }
 robolectric = { module = "org.robolectric:robolectric", version.ref = "robolectric" }
 supabase-auth-kt = { module = "io.github.jan-tennert.supabase:auth-kt" }
 supabase-bom = { module = "io.github.jan-tennert.supabase:bom", version.ref = "supabase-bom" }
+# The published library and its testing artifact, for the Android sample only; the library's alias
+# is the one the setup page gives an app.
+supabase-offline = { module = "io.github.nesfeder.supabase-offline:supabase-offline-kt", version.ref = "supabase-offline" }
+supabase-offline-testing = { module = "io.github.nesfeder.supabase-offline:supabase-offline-kt-testing", version.ref = "supabase-offline" }
 supabase-postgrest-kt = { module = "io.github.jan-tennert.supabase:postgrest-kt" }
 # The Android sample's Live updates; nothing published depends on it.
 supabase-realtime-kt = { module = "io.github.jan-tennert.supabase:realtime-kt" }

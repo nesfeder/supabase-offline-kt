@@ -307,7 +307,12 @@ the Mac. In a checkout `Package.swift` takes the core framework from `swift/Loca
 git), whatever is on disk, so its answer never depends on the folder; `SUPABASE_OFFLINE_LOCAL_CORE=0`
 in its environment takes the release's archive instead (in a checkout that is version `0.0.0`, which
 never resolves). `scripts/prepare-local-swift-package.sh` builds the framework and puts it there,
-which is all the iOS sample (`samples/ios`, which depends on `swift/` by path) needs.
+which is all the iOS sample's workspace needs: the project, `samples/ios/OfflineTasks.xcodeproj`,
+takes the published package, and `samples/ios/OfflineTasks.xcworkspace` overrides it with `swift/`
+(through the link `samples/ios/supabase-offline-swift`, since Xcode overrides a package only with a
+folder named for its identity). The Android sample likewise takes the published artifacts, and
+`-PsupabaseOffline.local=true` builds it on this checkout's modules. CI builds both samples on the
+checkout.
 
 To build the framework and run the tests on a simulator of your own, with every warning an error,
 followed by the check that the public API names nothing of the framework underneath it:

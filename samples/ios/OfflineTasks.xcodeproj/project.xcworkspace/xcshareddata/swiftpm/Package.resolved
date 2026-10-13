@@ -1,6 +1,15 @@
 {
-  "originHash" : "8c02cda4cc737096bfc00a67fb3325c0110d282fb6c1907388c90a1c67732119",
+  "originHash" : "656ed216a89bcf61f1d8e0a43cff4446e3f835c264b0d8cc4d2911d100fb6143",
   "pins" : [
+    {
+      "identity" : "supabase-offline-swift",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/nesfeder/supabase-offline-swift",
+      "state" : {
+        "revision" : "de9d2d3532ec2a5eed933864284a2f937fd3780c",
+        "version" : "0.1.0"
+      }
+    },
     {
       "identity" : "supabase-swift",
       "kind" : "remoteSourceControl",
