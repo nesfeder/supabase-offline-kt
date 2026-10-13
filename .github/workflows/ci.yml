@@ -184,6 +184,12 @@ jobs:
               supabase-offline-kt/src/androidHostTest/kotlin/io/github/nesfeder/supabase/offline/docs/* \
                 | samples/android/src/* | samples/ios/OfflineTasks/* | samples/ios/OfflineTasksTests/*)
                 kotlin=true; docs=true ;;
+              # The build itself: the docs job builds the Kotlin API reference with it (the Dokka
+              # version, the convention plugins, Gradle), so a change that breaks the reference fails
+              # here rather than in a release's docs job.
+              build-logic/* | build.gradle.kts | settings.gradle.kts | gradle.properties \
+                | gradle/libs.versions.toml | gradle/wrapper/*)
+                kotlin=true; docs=true ;;
               # scripts/check-spelling.py runs in formatting, on every run.
               .github/* | LICENSE | .gitignore | .editorconfig | .git-blame-ignore-revs \
                 | .kempt.toml | config/license-header* | *.properties.example \

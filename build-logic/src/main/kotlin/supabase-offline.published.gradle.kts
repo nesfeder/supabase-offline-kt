@@ -119,6 +119,18 @@ pluginManager.apply("org.jetbrains.dokka")
 
 pluginManager.apply("com.vanniktech.maven.publish.base")
 
+// The commit the site's reference links its sources to (-Psupabase.offline.sourceCommit=<SHA>),
+// which only the docs workflows pass. Without it no source link is written, so the published
+// documentation jars never carry one.
+private val sourceCommit: String? =
+    providers.gradleProperty("supabase.offline.sourceCommit").orNull?.also { commit ->
+        if (!Regex("[0-9a-f]{40}").matches(commit)) {
+            throw GradleException(
+                "-Psupabase.offline.sourceCommit is \"$commit\", not a full commit SHA"
+            )
+        }
+    }
+
 // The reference documents the public packages only. Everything under `…offline.internal` is left
 // out, including the public declarations that exist for another module of this project.
 extensions.configure<DokkaExtension> {
@@ -127,6 +139,13 @@ extensions.configure<DokkaExtension> {
         perPackageOption {
             matchingRegex.set("""io\.github\.nesfeder\.supabase\.offline\.internal(\..*)?""")
             suppress.set(true)
+        }
+        if (sourceCommit != null) {
+            sourceLink {
+                localDirectory.set(isolated.rootProject.projectDirectory)
+                remoteUrl("${requiredGradleProperty("POM_SCM_URL")}/blob/$sourceCommit")
+                remoteLineSuffix.set("#L")
+            }
         }
     }
 }

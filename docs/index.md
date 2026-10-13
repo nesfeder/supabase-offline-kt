@@ -49,6 +49,8 @@ no answer yet. That is the one difference in what a call returns.
 - [Behaviors](behaviors/index.md): what each read and write does online, offline and in
   between.
 - [Sample apps](samples/index.md): a to-do app with photos that shows all of it.
+- [API reference](api/index.md): every public declaration, in the Kotlin reference for both
+  modules beside the Swift reference for the Swift package.
 
 ## Platforms
 

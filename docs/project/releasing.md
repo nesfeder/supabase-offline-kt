@@ -105,12 +105,14 @@ A release runs as a GitHub Actions workflow that a maintainer starts by hand on 
 5. **GitHub.** The tag `X.Y.Z` is pushed at the commit that was checked and published, and the draft
    GitHub Release, with the changelog's section, the merged pull requests and the framework, is
    published.
-6. **The documentation site** is built from the tag and published, with the Swift API reference
-   under `/swift/`, which the macOS job built against the framework it tested. Between releases, a
-   maintainer can publish a change to these pages from `main` with a second workflow, which places
-   the Swift API reference the latest release built under `/swift/` again. It takes the reference
-   only from a run of this repository's own release workflow, started on `main`, that succeeded and
-   was a real release rather than a rehearsal, and checks that before it downloads anything.
+6. **The documentation site** is built from the tag and published, with both API references: the
+   Kotlin one under `/api/kotlin/`, which the site's own build generates with Dokka from the commit
+   it builds, and the Swift one under `/swift/`, which the macOS job built against the framework it
+   tested. Between releases, a maintainer can publish a change to these pages from `main` with a
+   second workflow: it builds the pages and the Kotlin reference from `main`, and places the Swift
+   API reference the latest release built under `/swift/` again. It takes that reference only from
+   a run of this repository's own release workflow, started on `main`, that succeeded and was a
+   real release rather than a rehearsal, and checks that before it downloads anything.
 7. **The next version.** A branch moves the version on to the next `-SNAPSHOT` and opens a new
    `Unreleased` section in the changelog, and the maintainer opens its pull request.
 

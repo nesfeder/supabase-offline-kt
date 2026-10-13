@@ -1,10 +1,11 @@
 name: Docs check
 
 # Strict build, link checks, and the built site uploaded as the `docs-site` artifact so it can be
-# downloaded and previewed. Nothing is published: publishing is docs-publish.yml, which CI never
-# calls. ci.yml calls this workflow when the documentation changed and folds its result into the
-# single required `All Green` check; the pages' spelling is checked by ci.yml's formatting job, on
-# every run.
+# downloaded and previewed, with the Kotlin API reference built and placed at site/api/kotlin/ as
+# docs-publish.yml does it (the Swift one is a release's, and is left out). Nothing is published:
+# publishing is docs-publish.yml, which CI never calls. ci.yml calls this workflow when the
+# documentation changed and folds its result into the single required `All Green` check; the
+# pages' spelling is checked by ci.yml's formatting job, on every run.
 
 on:
   workflow_call:
@@ -20,13 +21,25 @@ jobs:
   check:
     name: Strict build and link check
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 20
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+
+      # The Kotlin API reference, built as docs-publish.yml builds it: JDK 17, the wrapper's
+      # checksum, no Gradle cache, and the image's ANDROID_HOME for the Android SDK.
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/wrapper-validation@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+
+      - name: Build the Kotlin API reference
+        run: bash .github/scripts/run-gradle.sh :dokkaGenerate -Psupabase.offline.sourceCommit="$(git rev-parse HEAD)"
 
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
@@ -46,6 +59,17 @@ jobs:
       - name: Build the site in strict mode
         id: build
         run: mkdocs build --strict
+
+      # After MkDocs, as docs-publish.yml does it, so the link checks below see it.
+      - name: Place the Kotlin API reference
+        run: cp -R build/dokka/html site/api/kotlin
+
+      - name: Check the Kotlin API reference
+        run: |
+          if [[ ! -f site/api/kotlin/index.html ]]; then
+            echo "::error::The Kotlin API reference holds no landing page."
+            exit 1
+          fi
 
       # Every Swift block of the DocC articles, the package's own README (swift/README.md), the
       # README's Swift section and the site's Swift pages is code the Swift package's tests
@@ -71,6 +95,10 @@ jobs:
           mkdir -p "$RUNNER_TEMP/linkcheck-root"
           ln -s "$GITHUB_WORKSPACE/site" "$RUNNER_TEMP/linkcheck-root/supabase-offline-kt"
 
+      # The links into the Swift API reference (site/swift/) are left out: only a release's publish
+      # places it. So are the Kotlin one's own pages as inputs, which hold two kinds of broken link:
+      # anchors Dokka never writes (members OfflineBucketApi inherits), and --root--.html pages that
+      # a bare KDoc link to a constructor property produces. The link into it is checked.
       - name: Check internal links and anchors in the built site
         uses: lycheeverse/lychee-action@e7477775783ea5526144ba13e8db5eec57747ce8 # v2.9.0
         with:
@@ -80,6 +108,8 @@ jobs:
             --include-fragments
             --index-files index.html
             --root-dir ${{ runner.temp }}/linkcheck-root
+            --exclude '/site/swift/'
+            --exclude-path 'site/api/kotlin/'
             'site/**/*.html'
           output: ${{ runner.temp }}/lychee-internal.md
           fail: true

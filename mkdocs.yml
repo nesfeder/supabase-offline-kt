@@ -186,6 +186,6 @@ nav:
       - Contributing: project/contributing.md
       - Releasing: project/releasing.md
       - Compatibility: project/compatibility.md
-  # A placeholder page until the Dokka reference is generated into docs/api/. That change replaces
-  # this entry with `api/index.html`, deletes docs/api/index.md and gitignores docs/api/.
-  - API: api/index.md
+  # The landing page of the two references, which the docs workflows place beside it after this
+  # build: the Kotlin one (Dokka) at api/kotlin/, the Swift one (DocC) at swift/.
+  - API reference: api/index.md

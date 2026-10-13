@@ -76,8 +76,11 @@ It fails when:
        the artifact the caller names, when it names one, from the calling run with the default token,
        into the runner's temporary directory, and directly after that unpacks it into site/swift with
        the one pinned step (`mkdir -p` and `tar -xf … -C site/swift --strip-components=1`, which
-       writes files and runs nothing); no other step runs, sources, `uses:` or works in anything
-       under the site, or names that temporary directory.
+       writes files and runs nothing), then directly after that writes the one pinned static page
+       over site/swift/index.html, under the same condition, which sends a reader to
+       documentation/supabaseoffline/; no other step runs, sources, `uses:` or works in anything
+       under the site (but rule 11's placement of the Kotlin reference), or names that temporary
+       directory.
      - What they run: only the Central steps run a Maven Central publish task, and only
        release.yml releases, waiting until Central says PUBLISHED; the snapshot job's publish step
        runs only for a -SNAPSHOT version; no job of either release workflow, nor the snapshot job,
@@ -111,6 +114,16 @@ It fails when:
      no secret, and calls docs-publish.yml with that artifact and no ref, so the site is built from
      main. Every action it uses is pinned to a full commit SHA, and no job or step of it may
      continue on error.
+ 11. The Kotlin API reference, which docs-publish.yml's build job and docs-check.yml's check job
+     each build and place the same way: the workflow grants nothing by default and the job holds
+     `contents: read` alone; every action it uses is pinned to a full commit SHA; and, in this
+     order, it sets up JDK 17 once (Temurin, no cache, no condition), validates the Gradle wrapper
+     once, runs Gradle once, with the one pinned step (the wrapper script, `:dokkaGenerate`, source
+     links at the commit checked out), builds the site with MkDocs, copies the reference to
+     site/api/kotlin with the one pinned step, and directly after that checks its landing page with
+     the one pinned step. docs-publish.yml's build job, whose output is published as built,
+     restores no cache at all (a cache action, setup-gradle, the setup-project action, or a setup
+     action's `cache:` input).
 
 The check stops accidents, not intent: a pull request runs its own copy of this script.
 """
@@ -219,6 +232,47 @@ REFERENCE_UNPACK = {
     "run": ("mkdir -p site/swift\n"
             "tar -xf \"$RUNNER_TEMP/swift-reference-artifact/swift-reference.tar\""
             " -C site/swift --strip-components=1"),
+}
+# The static page written over the Swift reference's root, which documents nothing: it sends a
+# reader to the package's page. To the letter, as the unpack is: it writes one file and runs nothing.
+REFERENCE_REDIRECT = {
+    "name": "Write the Swift API reference's landing redirect",
+    "if": REFERENCE_IF,
+    "run": "\n".join((
+        "cat > site/swift/index.html <<'EOF'",
+        "<!doctype html>",
+        '<html lang="en">',
+        "<head>",
+        '<meta charset="utf-8">',
+        "<title>Swift API reference</title>",
+        '<meta http-equiv="refresh" content="0; url=documentation/supabaseoffline/">',
+        '<link rel="canonical" href="documentation/supabaseoffline/">',
+        "</head>",
+        "<body>",
+        '<p><a href="documentation/supabaseoffline/">The Swift API reference</a></p>',
+        "</body>",
+        "</html>",
+        "EOF",
+    )),
+}
+# The Kotlin API reference (rule 11): the jobs that build it, and the pinned steps each runs.
+KOTLIN_REFERENCE_JOBS = (("docs-publish.yml", "build"), ("docs-check.yml", "check"))
+JDK_SETUP = {"distribution": "temurin", "java-version": "17"}
+KOTLIN_REFERENCE_BUILD = {
+    "name": "Build the Kotlin API reference",
+    "run": ('bash .github/scripts/run-gradle.sh :dokkaGenerate'
+            ' -Psupabase.offline.sourceCommit="$(git rev-parse HEAD)"'),
+}
+KOTLIN_REFERENCE_PLACE = {"name": "Place the Kotlin API reference",
+                          "run": "cp -R build/dokka/html site/api/kotlin"}
+KOTLIN_REFERENCE_CHECK = {
+    "name": "Check the Kotlin API reference",
+    "run": "\n".join((
+        "if [[ ! -f site/api/kotlin/index.html ]]; then",
+        '  echo "::error::The Kotlin API reference holds no landing page."',
+        "  exit 1",
+        "fi",
+    )),
 }
 # The runner's temporary directory, where the tar lies, however it is spelled.
 NAMES_RUNNER_TEMP = re.compile(r"RUNNER_TEMP|runner\s*(?:\.\s*temp|\[\s*'temp')|/_temp\b"
@@ -877,9 +931,14 @@ def verify_problems(where: str, job: dict, steps: list[dict]) -> list[str]:
     return problems
 
 
+def is_exact_step(step: dict, pinned: dict) -> bool:
+    """Whether `step` is the pinned step, to the letter, keys included."""
+    return dict(step, run=str(step.get("run", "")).rstrip("\n")) == pinned
+
+
 def is_reference_unpack(step: dict) -> bool:
     """Whether `step` is the pinned unpack of the Swift reference, to the letter, keys included."""
-    return dict(step, run=str(step.get("run", "")).rstrip("\n")) == REFERENCE_UNPACK
+    return is_exact_step(step, REFERENCE_UNPACK)
 
 
 def docs_build_problems(name: str, document: dict) -> list[str]:
@@ -902,6 +961,8 @@ def docs_build_problems(name: str, document: dict) -> list[str]:
     downloads = [index for index, step in enumerate(steps)
                  if str(step.get("uses", "")).startswith("actions/download-artifact@")]
     unpacks = [index for index, step in enumerate(steps) if is_reference_unpack(step)]
+    redirects = [index for index, step in enumerate(steps) if is_exact_step(step, REFERENCE_REDIRECT)]
+    placements = [index for index, step in enumerate(steps) if is_exact_step(step, KOTLIN_REFERENCE_PLACE)]
     for index, step in enumerate(steps):
         uses = str(step.get("uses", ""))
         with_ = step.get("with") if isinstance(step.get("with"), dict) else {}
@@ -917,7 +978,7 @@ def docs_build_problems(name: str, document: dict) -> list[str]:
                 problems.append(f"{where} downloads the Swift reference if {step.get('if')!r}, not"
                                 f" {REFERENCE_IF!r}")
             continue
-        if index in unpacks:
+        if index in unpacks or index in redirects or index in placements:
             continue
         if TOUCHES_SITE.search(SITE_TEST.sub("", str(step.get("run", "")))):
             problems.append(f"{where} runs a step that uses what the site holds beyond testing a"
@@ -932,6 +993,75 @@ def docs_build_problems(name: str, document: dict) -> list[str]:
         problems.append(f"{where} unpacks the Swift reference {len(unpacks)} times, not once")
     elif unpacks and unpacks[0] - 1 not in downloads:
         problems.append(f"{where} unpacks the Swift reference other than directly after its download")
+    if len(redirects) > 1:
+        problems.append(f"{where} writes the Swift reference's landing redirect {len(redirects)} times, not once")
+    elif unpacks and (not redirects or redirects[0] - 1 not in unpacks):
+        problems.append(f"{where} does not, directly after unpacking the Swift reference, write its landing"
+                        f" redirect with exactly the step {REFERENCE_REDIRECT}")
+    elif redirects and not unpacks:
+        problems.append(f"{where} writes the Swift reference's landing redirect with no reference unpacked")
+    return problems
+
+
+def steps_using(steps: list[dict], action: str) -> list[int]:
+    """The indexes of the steps that use `action`, at any version."""
+    return [index for index, step in enumerate(steps) if str(step.get("uses", "")).startswith(action + "@")]
+
+
+def kotlin_reference_problems(name: str, document: dict) -> list[str]:
+    """Rule 11: a docs workflow builds the Kotlin reference with the pinned steps, then places it."""
+    jobs = document.get("jobs") if isinstance(document.get("jobs"), dict) else {}
+    problems = []
+    for job_id in [job_id for workflow, job_id in KOTLIN_REFERENCE_JOBS if workflow == name]:
+        where = f"{name}: job {job_id}"
+        job = jobs.get(job_id)
+        if not isinstance(job, dict):
+            problems.append(f"{name}: has no job {job_id}, which builds the Kotlin API reference")
+            continue
+        if document.get("permissions") != {}:
+            problems.append(f"{name}: its default permissions are {document.get('permissions')!r}, not {{}}")
+        # docs-publish.yml's build job's permissions are rule 9's.
+        if (name, job_id) != DOCS_BUILD_JOB and job.get("permissions") != {"contents": "read"}:
+            problems.append(f"{where} holds {job.get('permissions')}, not exactly {{'contents': 'read'}}:"
+                            " the job that builds the Kotlin reference holds nothing more")
+        steps = steps_of(job)
+        for step in steps:
+            uses = str(step.get("uses", ""))
+            if uses and not PINNED_ACTION.fullmatch(uses):
+                problems.append(f"{where} uses {uses}, which is not pinned to a full commit SHA")
+            # Its Gradle and MkDocs output goes into the Pages artifact as built.
+            if (name, job_id) == DOCS_BUILD_JOB and restores_cache(step):
+                problems.append(f"{where} restores a cache ({uses}): the site it publishes is built from"
+                                " nothing another run wrote")
+        java = steps_using(steps, "actions/setup-java")
+        validation = steps_using(steps, "gradle/actions/wrapper-validation")
+        if len(java) != 1 or not is_pinned_step(steps[java[0]], "actions/setup-java", JDK_SETUP):
+            problems.append(f"{where} does not set up the JDK once, with exactly {JDK_SETUP}: no cache,"
+                            " no condition")
+        if len(validation) != 1 or set(steps[validation[0]]) - {"name", "uses"}:
+            problems.append(f"{where} does not validate the Gradle wrapper once, unconditionally")
+        gradle = [index for index, step in enumerate(steps) if RUNS_GRADLE.search(str(step.get("run", "")))]
+        if len(gradle) != 1 or not is_exact_step(steps[gradle[0]], KOTLIN_REFERENCE_BUILD):
+            problems.append(f"{where} runs Gradle other than once, with exactly the step"
+                            f" {KOTLIN_REFERENCE_BUILD}: the wrapper script, the one task, the commit"
+                            " checked out")
+        mkdocs = [index for index, step in enumerate(steps)
+                  if str(step.get("run", "")).strip().startswith("mkdocs build")]
+        placements = [index for index, step in enumerate(steps) if is_exact_step(step, KOTLIN_REFERENCE_PLACE)]
+        checks = [index for index, step in enumerate(steps) if is_exact_step(step, KOTLIN_REFERENCE_CHECK)]
+        if len(placements) != 1:
+            problems.append(f"{where} does not place the Kotlin reference once, with exactly the step"
+                            f" {KOTLIN_REFERENCE_PLACE}")
+        if len(checks) != 1:
+            problems.append(f"{where} does not check the Kotlin reference's landing page once, with exactly"
+                            f" the step {KOTLIN_REFERENCE_CHECK}")
+        order = [found[0] for found in (java, validation, gradle, mkdocs, placements, checks) if found]
+        if len(order) == 6 and (order != sorted(order) or checks[0] != placements[0] + 1):
+            problems.append(f"{where} does not, in order, set up the JDK, validate the wrapper, build the"
+                            " Kotlin reference, build the site, place the reference and, directly after,"
+                            " check it")
+        elif not mkdocs:
+            problems.append(f"{where} does not build the site with MkDocs")
     return problems
 
 
@@ -1199,6 +1329,7 @@ def check_tree(root: Path) -> list[str]:
         problems += oidc_problems(path.name, document)
         problems += release_problems(path.name, document)
         problems += docs_build_problems(path.name, document)
+        problems += kotlin_reference_problems(path.name, document)
         problems += scheduled_problems(path.name, document)
         problems += republish_problems(path.name, document)
     workflows = root / ".github" / "workflows"
@@ -1308,6 +1439,22 @@ SWIFT_STEP = """\
         if: always()
         run: rm -f "$RUNNER_TEMP/swift-package-deploy-key"
 """
+# The Kotlin API reference's steps in both docs workflows (rule 11): its build before the site's,
+# then its placement and the check of its landing page after it.
+KOTLIN_JDK_STEP = ("      - uses: actions/setup-java@0123456789abcdef0123456789abcdef01234567\n"
+                   "        with: {distribution: temurin, java-version: '17'}\n")
+KOTLIN_VALIDATION_STEP = "      - uses: gradle/actions/wrapper-validation@0123456789abcdef0123456789abcdef01234567\n"
+KOTLIN_BUILD_STEP = (f"      - name: {KOTLIN_REFERENCE_BUILD['name']}\n"
+                     f"        run: {KOTLIN_REFERENCE_BUILD['run']}\n")
+KOTLIN_BUILD_STEPS = KOTLIN_JDK_STEP + KOTLIN_VALIDATION_STEP + KOTLIN_BUILD_STEP
+SITE_BUILD_STEP = "      - run: mkdocs build --strict\n"
+KOTLIN_PLACE_STEP = (f"      - name: {KOTLIN_REFERENCE_PLACE['name']}\n"
+                     f"        run: {KOTLIN_REFERENCE_PLACE['run']}\n")
+KOTLIN_CHECK_STEP = (f"      - name: {KOTLIN_REFERENCE_CHECK['name']}\n        run: |\n"
+                     + textwrap.indent(KOTLIN_REFERENCE_CHECK["run"], " " * 10) + "\n")
+KOTLIN_PLACE_STEPS = KOTLIN_PLACE_STEP + KOTLIN_CHECK_STEP
+REDIRECT_STEP = (f"      - name: {REFERENCE_REDIRECT['name']}\n        if: {REFERENCE_IF}\n        run: |\n"
+                 + textwrap.indent(REFERENCE_REDIRECT["run"], " " * 10) + "\n")
 COMPLIANT_DOCS_PUBLISH = """\
 on: {workflow_call: {inputs: {ref: {type: string}, swift-reference: {type: string}}}, workflow_dispatch: {}}
 permissions: {}
@@ -1316,7 +1463,7 @@ jobs:
     runs-on: ubuntu-24.04
     permissions: {contents: read}
     steps:
-      - run: mkdocs build --strict
+""" + KOTLIN_BUILD_STEPS + SITE_BUILD_STEP + KOTLIN_PLACE_STEPS + """\
       - if: inputs.swift-reference != ''
         uses: actions/download-artifact@0123456789abcdef0123456789abcdef01234567
         with: {name: '${{ inputs.swift-reference }}', path: '${{ runner.temp }}/swift-reference-artifact'}
@@ -1325,6 +1472,7 @@ jobs:
         run: |
           mkdir -p site/swift
           tar -xf "$RUNNER_TEMP/swift-reference-artifact/swift-reference.tar" -C site/swift --strip-components=1
+""" + REDIRECT_STEP + """\
       - run: |
           if [[ ! -f site/swift/documentation/supabaseoffline/index.html ]]; then
             echo "Published without the Swift API reference: /swift/ is not part of this site."
@@ -1453,9 +1601,13 @@ on:
   workflow_call:
   push:
     tags: ['v*']
+permissions: {}
 jobs:
-  check: {runs-on: ubuntu-24.04, steps: [{run: echo supabase-offline-kt}]}
-"""
+  check:
+    runs-on: ubuntu-24.04
+    permissions: {contents: read}
+    steps:
+""" + KOTLIN_BUILD_STEPS + SITE_BUILD_STEP + KOTLIN_PLACE_STEPS + "      - run: echo supabase-offline-kt\n"
 COMPLIANT_CANARY = f"""\
 on:
   schedule:
@@ -2299,6 +2451,91 @@ CASES: list[tuple[str, str, str | None, str]] = [
                                     "    permissions: {contents: read}\n"
                                     "    defaults: {run: {working-directory: '${{ runner.temp }}'}}\n    steps:"),
      "job build runs its steps in the runner's temporary directory by default"),
+    # The Swift reference's landing redirect: one static page, to the package's page, after the unpack.
+    ("the Swift landing redirect sending readers elsewhere", "docs-publish.yml",
+     COMPLIANT_DOCS_PUBLISH.replace("url=documentation/supabaseoffline/", "url=https://example.com/"),
+     "job build does not, directly after unpacking the Swift reference, write its landing redirect"),
+    ("the Swift landing redirect written by a script", "docs-publish.yml",
+     COMPLIANT_DOCS_PUBLISH.replace(REDIRECT_STEP, f"      - name: {REFERENCE_REDIRECT['name']}\n"
+                                    f"        if: {REFERENCE_IF}\n"
+                                    "        run: bash scripts/write-redirect.sh site/swift/index.html\n"),
+     "job build does not, directly after unpacking the Swift reference, write its landing redirect"),
+    ("the Swift landing redirect written when the caller names no reference", "docs-publish.yml",
+     COMPLIANT_DOCS_PUBLISH.replace(REDIRECT_STEP, REDIRECT_STEP.replace(f"        if: {REFERENCE_IF}\n", "")),
+     "job build does not, directly after unpacking the Swift reference, write its landing redirect"),
+    ("a second write under the Swift reference", "docs-publish.yml",
+     docs_publish_with_step("      - run: echo '<p>moved</p>' > site/swift/documentation/index.html\n"),
+     "job build runs a step that uses what the site holds"),
+    ("the Swift landing redirect written twice", "docs-publish.yml",
+     docs_publish_with_step(REDIRECT_STEP),
+     "job build writes the Swift reference's landing redirect 2 times, not once"),
+    ("the Swift landing redirect written before the unpack", "docs-publish.yml",
+     COMPLIANT_DOCS_PUBLISH.replace(DOCS_UNPACK_STEP + REDIRECT_STEP, REDIRECT_STEP + DOCS_UNPACK_STEP),
+     "job build does not, directly after unpacking the Swift reference, write its landing redirect"),
+    ("the Swift landing redirect with no reference unpacked", "docs-publish.yml",
+     COMPLIANT_DOCS_PUBLISH.replace(DOCS_DOWNLOAD_STEP + DOCS_UNPACK_STEP, ""),
+     "job build writes the Swift reference's landing redirect with no reference unpacked"),
+    # The Kotlin reference in the site's build (rule 11).
+    ("the site's build setting up an unpinned JDK", "docs-publish.yml",
+     COMPLIANT_DOCS_PUBLISH.replace("actions/setup-java@0123456789abcdef0123456789abcdef01234567",
+                                    "actions/setup-java@v6"),
+     "job build uses actions/setup-java@v6, which is not pinned to a full commit SHA"),
+    ("the site's build setting up the JDK with a Gradle cache", "docs-publish.yml",
+     COMPLIANT_DOCS_PUBLISH.replace("java-version: '17'}", "java-version: '17', cache: gradle}"),
+     "job build does not set up the JDK once"),
+    ("the site's build leaving the wrapper unvalidated", "docs-publish.yml",
+     COMPLIANT_DOCS_PUBLISH.replace(KOTLIN_VALIDATION_STEP, ""),
+     "job build does not validate the Gradle wrapper once"),
+    ("the site's build running Gradle outside the wrapper script", "docs-publish.yml",
+     COMPLIANT_DOCS_PUBLISH.replace("run: bash .github/scripts/run-gradle.sh :dokkaGenerate",
+                                    "run: ./gradlew :dokkaGenerate"),
+     "job build runs Gradle other than once, with exactly the step"),
+    ("the site's build running Gradle twice", "docs-publish.yml",
+     docs_publish_with_step("      - run: bash .github/scripts/run-gradle.sh help\n"),
+     "job build runs Gradle other than once, with exactly the step"),
+    ("the site's build placing the Kotlin reference over the site's API page", "docs-publish.yml",
+     COMPLIANT_DOCS_PUBLISH.replace("cp -R build/dokka/html site/api/kotlin", "cp -R build/dokka/html site/api"),
+     "job build does not place the Kotlin reference once"),
+    ("the site's build placing the Kotlin reference before MkDocs builds the site", "docs-publish.yml",
+     COMPLIANT_DOCS_PUBLISH.replace(SITE_BUILD_STEP + KOTLIN_PLACE_STEPS, KOTLIN_PLACE_STEPS + SITE_BUILD_STEP),
+     "job build does not, in order, set up the JDK"),
+    ("the site's build without the Kotlin reference's landing-page check", "docs-publish.yml",
+     COMPLIANT_DOCS_PUBLISH.replace(KOTLIN_CHECK_STEP, ""),
+     "job build does not check the Kotlin reference's landing page once"),
+    ("the site's workflow granting a default permission", "docs-publish.yml",
+     COMPLIANT_DOCS_PUBLISH.replace("permissions: {}\njobs:", "permissions: {contents: read}\njobs:"),
+     "docs-publish.yml: its default permissions are"),
+    ("the site's build restoring Gradle's cache with setup-gradle", "docs-publish.yml",
+     docs_publish_with_step("      - uses: gradle/actions/setup-gradle@0123456789abcdef0123456789abcdef01234567\n"),
+     "job build restores a cache (gradle/actions/setup-gradle@"),
+    ("the site's build restoring a cache with actions/cache", "docs-publish.yml",
+     docs_publish_with_step("      - uses: actions/cache@0123456789abcdef0123456789abcdef01234567\n"
+                            "        with: {path: ~/.gradle/caches, key: gradle}\n"),
+     "job build restores a cache (actions/cache@"),
+    ("the site's build restoring pip's cache", "docs-publish.yml",
+     docs_publish_with_step("      - uses: actions/setup-python@0123456789abcdef0123456789abcdef01234567\n"
+                            "        with: {python-version: '3.14', cache: pip}\n"),
+     "job build restores a cache (actions/setup-python@"),
+    # The Kotlin reference in the docs check (rule 11).
+    ("the docs check setting up an unpinned JDK", "docs-check.yml",
+     COMPLIANT_DOCS.replace("actions/setup-java@0123456789abcdef0123456789abcdef01234567", "actions/setup-java@v6"),
+     "job check uses actions/setup-java@v6, which is not pinned to a full commit SHA"),
+    ("the docs check running Gradle outside the wrapper script", "docs-check.yml",
+     COMPLIANT_DOCS.replace("run: bash .github/scripts/run-gradle.sh :dokkaGenerate",
+                            "run: ./gradlew :dokkaGenerate"),
+     "docs-check.yml: job check runs Gradle other than once, with exactly the step"),
+    ("the docs check building the reference on a condition", "docs-check.yml",
+     COMPLIANT_DOCS.replace(KOTLIN_BUILD_STEP, KOTLIN_BUILD_STEP.replace("        run:", "        if: false\n        run:")),
+     "docs-check.yml: job check runs Gradle other than once, with exactly the step"),
+    ("the docs check without the Kotlin reference's landing-page check", "docs-check.yml",
+     COMPLIANT_DOCS.replace(KOTLIN_CHECK_STEP, ""),
+     "docs-check.yml: job check does not check the Kotlin reference's landing page once"),
+    ("the docs check holding another permission", "docs-check.yml",
+     COMPLIANT_DOCS.replace("permissions: {contents: read}", "permissions: {contents: read, pages: write}"),
+     "docs-check.yml: job check holds"),
+    ("the docs check granting a default permission", "docs-check.yml",
+     COMPLIANT_DOCS.replace("permissions: {}\n", "permissions: {contents: write}\n"),
+     "docs-check.yml: its default permissions are"),
     ("publish downloading another run's framework with a token", "release.yml",
      release_with_publish_steps(
          "      - uses: actions/download-artifact@0123456789abcdef0123456789abcdef01234567\n"
