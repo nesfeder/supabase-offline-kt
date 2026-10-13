@@ -12,7 +12,8 @@
 # (scripts/prepare-local-swift-package.sh, or in CI scripts/test-swift-package.sh, which copies the
 # same build there). Xcode overrides a package only with a folder named for its identity, which is
 # why the workspace names swift/ through the link samples/ios/supabase-offline-swift. With
-# --published it builds the project alone, on the published package at the version it pins.
+# --published it builds the project alone, on the published package at the version it pins. Either
+# way it first checks that the workspace's Package.resolved pins what the project's does.
 #
 # Usage, from the repository root:
 #   scripts/test-ios-sample.sh --simulator <UDID> --derived-data <DIR> [--published]
@@ -38,6 +39,30 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 : "${simulator:?--simulator is required}" "${derived_data:?--derived-data is required}"
+
+# The workspace must pin every package the project pins but the one swift/ overrides, each at the
+# same version and commit: CI tests the workspace's pins and a reader gets the project's, and
+# nothing moves them together.
+ios="$root/samples/ios"
+if ! python3 - "$ios/OfflineTasks.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved" \
+    "$ios/OfflineTasks.xcworkspace/xcshareddata/swiftpm/Package.resolved" <<'PINS'
+import json
+import sys
+
+project, workspace = ({pin["identity"]: pin["state"] for pin in json.load(open(name))["pins"]}
+                      for name in sys.argv[1:])
+project.pop("supabase-offline-swift", None)
+for identity in sorted(project.keys() | workspace.keys()):
+    if project.get(identity) != workspace.get(identity):
+        print(f"{identity}: the project pins {project.get(identity)}, the workspace"
+              f" {workspace.get(identity)}", file=sys.stderr)
+        sys.exit(1)
+PINS
+then
+    echo "The project's and the workspace's Package.resolved disagree: resolve both (open each in" \
+        "Xcode, or xcodebuild -resolvePackageDependencies) after changing a package." >&2
+    exit 1
+fi
 
 # The line xcodebuild prints for the SupabaseOffline package it resolved, as a pattern.
 if [[ "$published" == true ]]; then

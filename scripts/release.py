@@ -42,7 +42,7 @@ Commands (from the repository root):
       Rewrites the working tree for the version after VERSION: VERSION_NAME becomes the next
       minor's -SNAPSHOT, CHANGELOG.md gets an empty `## Unreleased` section again, the
       compatibility page an `Unreleased` row, and compat/overrides.txt is emptied of findings. The
-      samples move to VERSION: the catalog's supabaseOffline, and the iOS project's exact version
+      samples move to VERSION: the catalog's supabase-offline, and the iOS project's exact version
       of the Swift package with its Package.resolved pin, at the commit of the package's tag
       VERSION in its repository (default https://github.com/nesfeder/supabase-offline-swift).
   self-test
@@ -101,7 +101,7 @@ SWIFT_FRAMEWORK_ASSET = "SupabaseOfflineCore.xcframework.zip"
 # The samples take the newest release, and the post-release pull request moves them to it: the
 # catalog's version of the Android sample's library, and the iOS project's package requirement and
 # its pin. The workspace's Package.resolved never pins the package: swift/ overrides it there.
-SAMPLE_CATALOG_KEY = "supabaseOffline"
+SAMPLE_CATALOG_KEY = "supabase-offline"
 IOS_SAMPLE_PROJECT = "samples/ios/OfflineTasks.xcodeproj/project.pbxproj"
 IOS_SAMPLE_RESOLVED = "samples/ios/OfflineTasks.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved"
 SWIFT_PACKAGE_URL = "https://github.com/nesfeder/supabase-offline-swift"
@@ -455,7 +455,7 @@ def post_release_body(version: str, following: str, group: str) -> str:
         - `CHANGELOG.md` has an empty `## Unreleased` section again, above `{version}`'s.
         - The supabase-kt table of `docs/project/compatibility.md` has an `Unreleased` row again.
         - `compat/overrides.txt` holds no finding: the overrides {version} shipped with are spent.
-        - The samples take {version}: `supabaseOffline` in `gradle/libs.versions.toml`, and the iOS
+        - The samples take {version}: `supabase-offline` in `gradle/libs.versions.toml`, and the iOS
           project's exact version of the Swift package, with its pin in the project's `Package.resolved`.
 
         Before merging, check:
@@ -629,8 +629,8 @@ FIXTURE_RESOLVED = """\
 """
 FIXTURE_FILES = {
     GRADLE_PROPERTIES: "GROUP=io.example.group\nVERSION_NAME=0.1.0\n",
-    CATALOG: '[versions]\nsupabase-bom = "3.8.0"\nsupabaseOffline = "0.0.9"\n\n[libraries]\n'
-             'supabaseOffline = { module = "io.example.group:lib", version.ref = "supabaseOffline" }\n',
+    CATALOG: '[versions]\nsupabase-bom = "3.8.0"\nsupabase-offline = "0.0.9"\n\n[libraries]\n'
+             'supabase-offline = { module = "io.example.group:lib", version.ref = "supabase-offline" }\n',
     IOS_SAMPLE_PROJECT: FIXTURE_PROJECT,
     IOS_SAMPLE_RESOLVED: FIXTURE_RESOLVED,
     COMPATIBILITY: FIXTURE_COMPATIBILITY,
@@ -862,7 +862,7 @@ def self_test() -> int:
                "next-snapshot empties the overrides and keeps their explanation")
         expect(refused(lambda: next_snapshot(bumped, "0.1.0", swift_commit), "has been started already"),
                "next-snapshot refuses to run twice")
-        expect((bumped / CATALOG).read_text() == FIXTURE_FILES[CATALOG].replace('supabaseOffline = "0.0.9"', 'supabaseOffline = "0.1.0"'),
+        expect((bumped / CATALOG).read_text() == FIXTURE_FILES[CATALOG].replace('supabase-offline = "0.0.9"', 'supabase-offline = "0.1.0"'),
                "next-snapshot moves the Android sample's catalog version to the release, and nothing else")
         expect((bumped / IOS_SAMPLE_PROJECT).read_text() == FIXTURE_PROJECT.replace("version = 0.0.9;", "version = 0.1.0;"),
                "next-snapshot moves the iOS project's exact version of the Swift package, and no other package")
@@ -871,7 +871,7 @@ def self_test() -> int:
                    f'"{swift_commit}",\n        "version" : "0.1.0"'),
                "next-snapshot pins the Swift package's tag commit in Xcode's layout, its originHash and other pins kept")
         for name, path, before, after, phrase in [
-                ("a catalog without the samples' version", CATALOG, 'supabaseOffline = "0.0.9"', 'supabase-offline = "0.0.9"', "no single `supabaseOffline`"),
+                ("a catalog without the samples' version", CATALOG, 'supabase-offline = "0.0.9"', 'supabase-offline-kt = "0.0.9"', "no single `supabase-offline`"),
                 ("a project that takes the package at a range", IOS_SAMPLE_PROJECT, "kind = exactVersion;", "kind = upToNextMajorVersion;", "at one exact version"),
                 ("a Package.resolved without the package's pin", IOS_SAMPLE_RESOLVED, '"identity" : "supabase-offline-swift"', '"identity" : "elsewhere"', "no single pin")]:
             unpinnable = make_repository(work, f"unpinnable-{path.count('/')}-{len(before)}", dict(base, **{path: FIXTURE_FILES[path].replace(before, after)}))

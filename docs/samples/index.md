@@ -15,6 +15,9 @@ Both samples take the library as your app does, at its newest release: the Andro
 artifacts, the iOS sample the Swift package `supabase-offline-swift`. CI builds them on the
 repository's own code instead, and so can you: [on Android](android.md#build-on-this-checkout), with
 one Gradle property, and [on iOS](ios.md#build-on-this-checkout), by opening the sample's workspace.
+On `main`, and at a release's tag until the pull request that follows the release moves the pins,
+a sample's code can use API newer than the release it pins: if its default build fails, build it on
+this checkout.
 
 ## What the app shows
 

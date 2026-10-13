@@ -42,8 +42,9 @@ Open `samples/ios/OfflineTasks.xcodeproj` in Xcode, choose the **OfflineTasks** 
 simulator, and run. The project depends on the published Swift package,
 `https://github.com/nesfeder/supabase-offline-swift` at an exact version, as your app would: Xcode
 resolves it and downloads its prebuilt library the first time. Each release moves that version to
-the one just published. To build the sample on this checkout's package instead, see [Build on this
-checkout](#build-on-this-checkout).
+the one just published. On `main`, and at a release's tag until the pull request that follows the
+release moves the pin, the sample's code can use API newer than the release it pins: if the project
+does not build, [build on this checkout](#build-on-this-checkout) instead.
 
 From the command line:
 

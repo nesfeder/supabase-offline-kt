@@ -225,7 +225,7 @@ must be signed by the same identity.
    `VERSION_NAME` to the next minor's `-SNAPSHOT`, adds an empty `## Unreleased` section to the
    changelog and an `Unreleased` row to the compatibility table, and empties
    `compat/overrides.txt`. It also moves the sample apps to `X.Y.Z`, since they take the published
-   library, not this checkout: `supabaseOffline` in `gradle/libs.versions.toml` for the Android
+   library, not this checkout: `supabase-offline` in `gradle/libs.versions.toml` for the Android
    sample, and for the iOS sample the project's exact version of `supabase-offline-swift` with its
    pin, the tag's commit, in the project's `Package.resolved`. CI builds both samples on the
    checkout, so check them as a reader gets them: `./gradlew :samples:android:assembleDebug`

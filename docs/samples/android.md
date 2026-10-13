@@ -42,9 +42,10 @@ Or open the repository in Android Studio and run the app module in `samples/andr
 
 The sample takes the library from Maven Central, as your app does:
 `io.github.nesfeder.supabase-offline:supabase-offline-kt`, with `supabase-offline-kt-testing` for its
-tests, at the release `supabaseOffline` names in `gradle/libs.versions.toml`. Each release moves it
-to the version just published. To build it on this checkout's library instead, see [Build on this
-checkout](#build-on-this-checkout).
+tests, at the release `supabase-offline` names in `gradle/libs.versions.toml`. Each release moves it
+to the version just published. On `main`, and at a release's tag until the pull request that follows
+the release moves the pin, the sample's code can use API newer than the release it pins: if the
+default build does not compile, [build on this checkout](#build-on-this-checkout) instead.
 
 The first launch signs in anonymously and opens on an empty list: add a task with **New task**.
 Every row and photo belongs to that anonymous user, and the session is kept on the device, so the
