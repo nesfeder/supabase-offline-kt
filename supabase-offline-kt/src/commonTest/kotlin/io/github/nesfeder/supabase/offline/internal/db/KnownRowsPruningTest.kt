@@ -430,231 +430,258 @@ class KnownRowsPruningTest {
             .overlay(payload, mutations, known)
 
     @Test
-    fun every_read_overlay_shows_what_every_known_row_would() = runTest {
-        var compared = 0
-        val mismatches = mutableListOf<String>()
-        for (keys in Keys.entries) {
-            repeat(SCENARIOS) { seed ->
-                // Given — a table cached by twelve queries, one of them live with no payload, and
-                // pending writes, some replayed and some whose send may have reached the server
-                val random = Random(seed * 31 + keys.ordinal)
-                val queries = queriesFor(keys)
-                val queryCacheDao = FakeQueryCacheDao()
-                val mutationDao = FakeMutationDao()
-                val store =
-                    newTestStore(
-                        queryCacheDao = queryCacheDao,
-                        mutationDao = mutationDao,
-                        nowMillis = { NOW },
-                        primaryKeys = PrimaryKeys { keys.columns },
-                    )
-                val payloads = seed(random, keys, queryCacheDao, store, queries)
-                val unconfirmed = mutableSetOf<Long>()
-                repeat(1 + random.nextInt(7)) {
-                    val id = queue(store, random.write(keys))
-                    when (random.nextInt(8)) {
-                        0 -> store.mutationQueue.recordReplayed(id, TABLE)
-                        1 -> if (store.mutationQueue.markSendUnconfirmed(id)) unconfirmed += id
-                    }
-                }
-                val all = mutationDao.allForTable(TABLE)
-                val pending = all.filter { mutation -> mutation.syncedAtMs == null }
-                val mayAlreadyHold: (MutationRow) -> Boolean = { mutation ->
-                    mutation.syncedAtMs != null || mutation.id in unconfirmed
-                }
-
-                queries.forEach { query ->
-                    // When — the query is read reactively, and, when it has a payload, one-shot
-                    // and with a server answer holding some of its rows
-                    val known =
-                        everyRow(
-                            query,
-                            queries,
-                            payloads,
-                            keys.columns,
-                            sameProjection = true,
-                            null,
-                        )
-                    val passShape = query.shaped && seed % 2 == 0
-                    val reactive =
-                        store.queryOverlay
-                            .overlaidPayloadFlow(
-                                TABLE,
-                                query.cacheKey,
-                                if (passShape) shapeOf(query) else null,
-                            )
-                            .first()
-
-                    // Then — each as with every row the others hold
-                    if (!query.cached) {
-                        val expected =
-                            everyRowOverlay("[]", all, query, keys.columns, known, mayAlreadyHold)
-                                .takeUnless { overlaid -> overlaid == "[]" }
-                        compared++
-                        if (reactive != expected)
-                            mismatches +=
-                                "$keys seed $seed ${query.cacheKey} reactive, no payload: " +
-                                    "$reactive, not $expected"
-                        return@forEach
-                    }
-                    val payload = payloads.getValue(query.cacheKey).payload
-                    val expected =
-                        everyRowOverlay(payload, all, query, keys.columns, known, mayAlreadyHold)
-                    val oneShot =
-                        store.queryOverlay.overlayCachedPayload(TABLE, query.cacheKey, payload)
-                    val answer =
-                        JsonArray(
-                                payloadRowsOf(EngineJson, payload).orEmpty().filter {
-                                    random.nextInt(3) != 0
-                                }
-                            )
-                            .toString()
-                    val expectedResponse =
-                        everyRowOverlay(answer, pending, query, keys.columns, known) { mutation ->
-                            mutation.id in unconfirmed
-                        }
-                    val response =
-                        store.queryOverlay.overlayPendingOnResponse(TABLE, query.cacheKey, answer)
-                    compared += 3
-                    if (oneShot != expected)
-                        mismatches +=
-                            "$keys seed $seed ${query.cacheKey} one-shot: $oneShot, not $expected"
-                    if (reactive != expected)
-                        mismatches +=
-                            "$keys seed $seed ${query.cacheKey} reactive: $reactive, not $expected"
-                    if (response != expectedResponse)
-                        mismatches +=
-                            "$keys seed $seed ${query.cacheKey} response: $response, " +
-                                "not $expectedResponse"
-                }
-            }
-        }
-        assertEquals(0, mismatches.size, "$compared compared: ${mismatches.take(2)}")
+    fun every_read_overlay_shows_what_every_known_row_would_over_integer_keys() = runTest {
+        assertReadOverlaysMatchEveryKnownRow(Keys.INT)
     }
 
     @Test
-    fun every_patch_writes_and_marks_what_every_known_row_would() = runTest {
+    fun every_read_overlay_shows_what_every_known_row_would_over_uuid_keys() = runTest {
+        assertReadOverlaysMatchEveryKnownRow(Keys.UUID)
+    }
+
+    @Test
+    fun every_read_overlay_shows_what_every_known_row_would_over_composite_keys() = runTest {
+        assertReadOverlaysMatchEveryKnownRow(Keys.COMPOSITE)
+    }
+
+    /**
+     * Compares every read overlay over [SCENARIOS] tables keyed by [keys] with the same overlay
+     * given every known row. One key kind per test keeps each well inside `runTest`'s one-minute
+     * timeout on a slow simulator.
+     */
+    private suspend fun assertReadOverlaysMatchEveryKnownRow(keys: Keys) {
         var compared = 0
         val mismatches = mutableListOf<String>()
-        for (keys in Keys.entries) {
-            repeat(SCENARIOS) { seed ->
-                // Given — a table cached by twelve queries, and one of them live with no payload
-                val random = Random(seed * 17 + keys.ordinal)
-                val queries = queriesFor(keys)
-                val queryCacheDao = FakeQueryCacheDao()
-                val primaryKeys = PrimaryKeys { keys.columns }
-                val marked = mutableSetOf<String>()
-                val store =
-                    newTestStore(
-                        queryCacheDao = queryCacheDao,
-                        nowMillis = { NOW },
-                        primaryKeys = primaryKeys,
-                        liveCacheKeysOf = { setOf(LIVE) },
-                        onQueriesMarkedStale = { _, cacheKeys -> marked += cacheKeys },
+        repeat(SCENARIOS) { seed ->
+            // Given — a table cached by twelve queries, one of them live with no payload, and
+            // pending writes, some replayed and some whose send may have reached the server
+            val random = Random(seed * 31 + keys.ordinal)
+            val queries = queriesFor(keys)
+            val queryCacheDao = FakeQueryCacheDao()
+            val mutationDao = FakeMutationDao()
+            val store =
+                newTestStore(
+                    queryCacheDao = queryCacheDao,
+                    mutationDao = mutationDao,
+                    nowMillis = { NOW },
+                    primaryKeys = PrimaryKeys { keys.columns },
+                )
+            val payloads = seed(random, keys, queryCacheDao, store, queries)
+            val unconfirmed = mutableSetOf<Long>()
+            repeat(1 + random.nextInt(7)) {
+                val id = queue(store, random.write(keys))
+                when (random.nextInt(8)) {
+                    0 -> store.mutationQueue.recordReplayed(id, TABLE)
+                    1 -> if (store.mutationQueue.markSendUnconfirmed(id)) unconfirmed += id
+                }
+            }
+            val all = mutationDao.allForTable(TABLE)
+            val pending = all.filter { mutation -> mutation.syncedAtMs == null }
+            val mayAlreadyHold: (MutationRow) -> Boolean = { mutation ->
+                mutation.syncedAtMs != null || mutation.id in unconfirmed
+            }
+
+            queries.forEach { query ->
+                // When — the query is read reactively, and, when it has a payload, one-shot
+                // and with a server answer holding some of its rows
+                val known =
+                    everyRow(
+                        query,
+                        queries,
+                        payloads,
+                        keys.columns,
+                        sameProjection = true,
+                        null,
                     )
-                val payloads = seed(random, keys, queryCacheDao, store, queries)
+                val passShape = query.shaped && seed % 2 == 0
+                val reactive =
+                    store.queryOverlay
+                        .overlaidPayloadFlow(
+                            TABLE,
+                            query.cacheKey,
+                            if (passShape) shapeOf(query) else null,
+                        )
+                        .first()
 
-                // When — the server accepted one write, or an update that returned several rows
-                val writes = acceptWrite(random, keys, store)
+                // Then — each as with every row the others hold
+                if (!query.cached) {
+                    val expected =
+                        everyRowOverlay("[]", all, query, keys.columns, known, mayAlreadyHold)
+                            .takeUnless { overlaid -> overlaid == "[]" }
+                    compared++
+                    if (reactive != expected)
+                        mismatches +=
+                            "$keys seed $seed ${query.cacheKey} reactive, no payload: " +
+                                "$reactive, not $expected"
+                    return@forEach
+                }
+                val payload = payloads.getValue(query.cacheKey).payload
+                val expected =
+                    everyRowOverlay(payload, all, query, keys.columns, known, mayAlreadyHold)
+                val oneShot =
+                    store.queryOverlay.overlayCachedPayload(TABLE, query.cacheKey, payload)
+                val answer =
+                    JsonArray(
+                            payloadRowsOf(EngineJson, payload).orEmpty().filter {
+                                random.nextInt(3) != 0
+                            }
+                        )
+                        .toString()
+                val expectedResponse =
+                    everyRowOverlay(answer, pending, query, keys.columns, known) { mutation ->
+                        mutation.id in unconfirmed
+                    }
+                val response =
+                    store.queryOverlay.overlayPendingOnResponse(TABLE, query.cacheKey, answer)
+                compared += 3
+                if (oneShot != expected)
+                    mismatches +=
+                        "$keys seed $seed ${query.cacheKey} one-shot: $oneShot, not $expected"
+                if (reactive != expected)
+                    mismatches +=
+                        "$keys seed $seed ${query.cacheKey} reactive: $reactive, not $expected"
+                if (response != expectedResponse)
+                    mismatches +=
+                        "$keys seed $seed ${query.cacheKey} response: $response, " +
+                            "not $expectedResponse"
+            }
+        }
+        assertEquals(0, mismatches.size, "$keys: $compared compared: ${mismatches.take(2)}")
+    }
 
-                // Then — each payload, and each query to fetch again, as with every row
-                val expectedMarked = mutableSetOf<String>()
-                queries.forEach { query ->
-                    val before = payloads[query.cacheKey]
-                    val rows = before?.let { payloadRowsOf(EngineJson, it.payload) }.orEmpty()
-                    val same =
-                        everyRow(
+    @Test
+    fun every_patch_writes_and_marks_what_every_known_row_would_over_integer_keys() = runTest {
+        assertPatchesMatchEveryKnownRow(Keys.INT)
+    }
+
+    @Test
+    fun every_patch_writes_and_marks_what_every_known_row_would_over_uuid_keys() = runTest {
+        assertPatchesMatchEveryKnownRow(Keys.UUID)
+    }
+
+    @Test
+    fun every_patch_writes_and_marks_what_every_known_row_would_over_composite_keys() = runTest {
+        assertPatchesMatchEveryKnownRow(Keys.COMPOSITE)
+    }
+
+    /**
+     * Compares every patch over [SCENARIOS] tables keyed by [keys], and the queries it marks stale,
+     * with the same patch given every known row; split by key kind as
+     * [assertReadOverlaysMatchEveryKnownRow] is.
+     */
+    private suspend fun assertPatchesMatchEveryKnownRow(keys: Keys) {
+        var compared = 0
+        val mismatches = mutableListOf<String>()
+        repeat(SCENARIOS) { seed ->
+            // Given — a table cached by twelve queries, and one of them live with no payload
+            val random = Random(seed * 17 + keys.ordinal)
+            val queries = queriesFor(keys)
+            val queryCacheDao = FakeQueryCacheDao()
+            val primaryKeys = PrimaryKeys { keys.columns }
+            val marked = mutableSetOf<String>()
+            val store =
+                newTestStore(
+                    queryCacheDao = queryCacheDao,
+                    nowMillis = { NOW },
+                    primaryKeys = primaryKeys,
+                    liveCacheKeysOf = { setOf(LIVE) },
+                    onQueriesMarkedStale = { _, cacheKeys -> marked += cacheKeys },
+                )
+            val payloads = seed(random, keys, queryCacheDao, store, queries)
+
+            // When — the server accepted one write, or an update that returned several rows
+            val writes = acceptWrite(random, keys, store)
+
+            // Then — each payload, and each query to fetch again, as with every row
+            val expectedMarked = mutableSetOf<String>()
+            queries.forEach { query ->
+                val before = payloads[query.cacheKey]
+                val rows = before?.let { payloadRowsOf(EngineJson, it.payload) }.orEmpty()
+                val same =
+                    everyRow(
+                        query,
+                        queries,
+                        payloads,
+                        keys.columns,
+                        sameProjection = true,
+                        rows,
+                    )
+                val sameKeys = same.mapTo(HashSet()) { row -> keyOf(row, keys.columns) }
+                val other =
+                    everyRow(
                             query,
                             queries,
                             payloads,
                             keys.columns,
-                            sameProjection = true,
+                            sameProjection = false,
                             rows,
                         )
-                    val sameKeys = same.mapTo(HashSet()) { row -> keyOf(row, keys.columns) }
-                    val other =
-                        everyRow(
-                                query,
-                                queries,
-                                payloads,
-                                keys.columns,
-                                sameProjection = false,
-                                rows,
-                            )
-                            .filter { row -> keyOf(row, keys.columns) !in sameKeys }
-                    val target =
-                        PatchTarget(
-                            rows,
-                            if (query.shaped) shapeOf(query) else null,
-                            same,
-                            other,
-                            keys.columns.toSet(),
-                        )
-                    val overlay =
-                        MutationOverlay(
-                            json = EngineJson,
-                            admission = target.admission,
-                            primaryKeys = primaryKeys,
-                            mayAlreadyHold = { true },
-                            placesKeylessUpsertRows = false,
-                        )
-                    val wrong =
-                        patchMayLeaveWrong(writes, target, EngineJson) { mutation ->
-                            conflictColumnsOf(mutation, primaryKeys)
-                        }
-                    val expected =
-                        if (before == null) {
-                            // A live query with no payload: made of the rows written, or fetched
-                            // again
-                            val made =
-                                overlay
-                                    .overlayRows(emptyList(), writes, same)
-                                    .written
-                                    .filter(target.admission::admits)
-                            when {
-                                wrong -> null.also { expectedMarked += query.cacheKey }
-                                made.isEmpty() -> null
-                                else ->
-                                    CachedQueryRow(
-                                        TABLE,
-                                        query.cacheKey,
-                                        overlay.encode(made),
-                                        staleStampOf(NOW),
-                                    )
-                            }
-                        } else {
-                            val patched = overlay.overlayRows(rows, writes, same)
-                            if (
-                                patched.visible == rows &&
-                                    (!wrong || isStaleStamp(before.updatedAt))
-                            ) {
-                                before
-                            } else {
-                                if (wrong) expectedMarked += query.cacheKey
-                                before.copy(
-                                    payload = overlay.encode(patched.visible),
-                                    updatedAt =
-                                        if (wrong) staleStampOf(before.updatedAt)
-                                        else before.updatedAt,
-                                )
-                            }
-                        }
-                    val after = queryCacheDao.getRow(TABLE, query.cacheKey)
-                    compared++
-                    if (
-                        after?.payload != expected?.payload ||
-                            after?.updatedAt != expected?.updatedAt
+                        .filter { row -> keyOf(row, keys.columns) !in sameKeys }
+                val target =
+                    PatchTarget(
+                        rows,
+                        if (query.shaped) shapeOf(query) else null,
+                        same,
+                        other,
+                        keys.columns.toSet(),
                     )
-                        mismatches +=
-                            "$keys seed $seed ${query.cacheKey}: ${after?.payload} " +
-                                "@${after?.updatedAt}, not ${expected?.payload} " +
-                                "@${expected?.updatedAt}"
-                }
-                if (marked != expectedMarked)
-                    mismatches += "$keys seed $seed marked $marked, not $expectedMarked"
+                val overlay =
+                    MutationOverlay(
+                        json = EngineJson,
+                        admission = target.admission,
+                        primaryKeys = primaryKeys,
+                        mayAlreadyHold = { true },
+                        placesKeylessUpsertRows = false,
+                    )
+                val wrong =
+                    patchMayLeaveWrong(writes, target, EngineJson) { mutation ->
+                        conflictColumnsOf(mutation, primaryKeys)
+                    }
+                val expected =
+                    if (before == null) {
+                        // A live query with no payload: made of the rows written, or fetched
+                        // again
+                        val made =
+                            overlay
+                                .overlayRows(emptyList(), writes, same)
+                                .written
+                                .filter(target.admission::admits)
+                        when {
+                            wrong -> null.also { expectedMarked += query.cacheKey }
+                            made.isEmpty() -> null
+                            else ->
+                                CachedQueryRow(
+                                    TABLE,
+                                    query.cacheKey,
+                                    overlay.encode(made),
+                                    staleStampOf(NOW),
+                                )
+                        }
+                    } else {
+                        val patched = overlay.overlayRows(rows, writes, same)
+                        if (patched.visible == rows && (!wrong || isStaleStamp(before.updatedAt))) {
+                            before
+                        } else {
+                            if (wrong) expectedMarked += query.cacheKey
+                            before.copy(
+                                payload = overlay.encode(patched.visible),
+                                updatedAt =
+                                    if (wrong) staleStampOf(before.updatedAt) else before.updatedAt,
+                            )
+                        }
+                    }
+                val after = queryCacheDao.getRow(TABLE, query.cacheKey)
+                compared++
+                if (after?.payload != expected?.payload || after?.updatedAt != expected?.updatedAt)
+                    mismatches +=
+                        "$keys seed $seed ${query.cacheKey}: ${after?.payload} " +
+                            "@${after?.updatedAt}, not ${expected?.payload} " +
+                            "@${expected?.updatedAt}"
             }
+            if (marked != expectedMarked)
+                mismatches += "$keys seed $seed marked $marked, not $expectedMarked"
         }
-        assertEquals(0, mismatches.size, "$compared compared: ${mismatches.take(2)}")
+        assertEquals(0, mismatches.size, "$keys: $compared compared: ${mismatches.take(2)}")
     }
 
     /**
@@ -725,98 +752,113 @@ class KnownRowsPruningTest {
     }
 
     @Test
-    fun reads_after_a_patch_show_what_every_known_row_would() = runTest {
+    fun reads_after_a_patch_show_what_every_known_row_would_over_integer_keys() = runTest {
+        assertReadsAfterPatchesMatchEveryKnownRow(Keys.INT)
+    }
+
+    @Test
+    fun reads_after_a_patch_show_what_every_known_row_would_over_uuid_keys() = runTest {
+        assertReadsAfterPatchesMatchEveryKnownRow(Keys.UUID)
+    }
+
+    @Test
+    fun reads_after_a_patch_show_what_every_known_row_would_over_composite_keys() = runTest {
+        assertReadsAfterPatchesMatchEveryKnownRow(Keys.COMPOSITE)
+    }
+
+    /**
+     * Compares every read after a patch over a quarter of [SCENARIOS] tables keyed by [keys] with
+     * the same read given every known row; split by key kind as
+     * [assertReadOverlaysMatchEveryKnownRow] is.
+     */
+    private suspend fun assertReadsAfterPatchesMatchEveryKnownRow(keys: Keys) {
         var compared = 0
         val mismatches = mutableListOf<String>()
-        for (keys in Keys.entries) {
-            repeat(SCENARIOS / 4) { seed ->
-                // Given — pending writes, and every read once, so the store keeps what it parsed
-                val random = Random(seed * 13 + keys.ordinal)
-                val queries = queriesFor(keys)
-                val queryCacheDao = FakeQueryCacheDao()
-                val mutationDao = FakeMutationDao()
-                val store =
-                    newTestStore(
-                        queryCacheDao = queryCacheDao,
-                        mutationDao = mutationDao,
-                        nowMillis = { NOW },
-                        primaryKeys = PrimaryKeys { keys.columns },
-                        liveCacheKeysOf = { setOf(LIVE) },
-                    )
-                val before = seed(random, keys, queryCacheDao, store, queries)
-                repeat(1 + random.nextInt(5)) { queue(store, random.write(keys)) }
-                queries.forEach { query ->
-                    before[query.cacheKey]?.let { payload ->
-                        store.queryOverlay.overlayCachedPayload(
-                            TABLE,
-                            query.cacheKey,
-                            payload.payload,
-                        )
-                    }
-                    store.queryOverlay.overlaidPayloadFlow(TABLE, query.cacheKey).first()
-                }
-
-                // When — accepted writes rewrite the payloads
-                repeat(1 + random.nextInt(3)) {
-                    val write = random.write(keys)
-                    store.cachePatcher.patchCachedQueries(
+        repeat(SCENARIOS / 4) { seed ->
+            // Given — pending writes, and every read once, so the store keeps what it parsed
+            val random = Random(seed * 13 + keys.ordinal)
+            val queries = queriesFor(keys)
+            val queryCacheDao = FakeQueryCacheDao()
+            val mutationDao = FakeMutationDao()
+            val store =
+                newTestStore(
+                    queryCacheDao = queryCacheDao,
+                    mutationDao = mutationDao,
+                    nowMillis = { NOW },
+                    primaryKeys = PrimaryKeys { keys.columns },
+                    liveCacheKeysOf = { setOf(LIVE) },
+                )
+            val before = seed(random, keys, queryCacheDao, store, queries)
+            repeat(1 + random.nextInt(5)) { queue(store, random.write(keys)) }
+            queries.forEach { query ->
+                before[query.cacheKey]?.let { payload ->
+                    store.queryOverlay.overlayCachedPayload(
                         TABLE,
-                        write.operation,
-                        write.body,
-                        write.filter?.let { filter -> encodeFilter(filter, EngineJson) },
-                        onConflict = write.onConflict,
-                        ignoreDuplicates =
-                            if (write.operation == MutationOperation.UPSERT) write.ignoreDuplicates
-                            else null,
-                        liveCacheKeys = setOf(LIVE),
+                        query.cacheKey,
+                        payload.payload,
                     )
                 }
+                store.queryOverlay.overlaidPayloadFlow(TABLE, query.cacheKey).first()
+            }
 
-                // Then — every read again, as with every row the others now hold
-                val payloads =
-                    queries
-                        .mapNotNull { query ->
-                            queryCacheDao.getRow(TABLE, query.cacheKey)?.let { row ->
-                                query.cacheKey to row
-                            }
+            // When — accepted writes rewrite the payloads
+            repeat(1 + random.nextInt(3)) {
+                val write = random.write(keys)
+                store.cachePatcher.patchCachedQueries(
+                    TABLE,
+                    write.operation,
+                    write.body,
+                    write.filter?.let { filter -> encodeFilter(filter, EngineJson) },
+                    onConflict = write.onConflict,
+                    ignoreDuplicates =
+                        if (write.operation == MutationOperation.UPSERT) write.ignoreDuplicates
+                        else null,
+                    liveCacheKeys = setOf(LIVE),
+                )
+            }
+
+            // Then — every read again, as with every row the others now hold
+            val payloads =
+                queries
+                    .mapNotNull { query ->
+                        queryCacheDao.getRow(TABLE, query.cacheKey)?.let { row ->
+                            query.cacheKey to row
                         }
-                        .toMap()
-                val all = mutationDao.allForTable(TABLE)
-                queries.forEach { query ->
-                    val known =
-                        everyRow(
-                            query,
-                            queries,
-                            payloads,
-                            keys.columns,
-                            sameProjection = true,
-                            null,
-                        )
-                    val payload = payloads[query.cacheKey]?.payload
-                    val overlaid =
-                        everyRowOverlay(payload ?: "[]", all, query, keys.columns, known) { false }
-                    val expected =
-                        if (payload == null) overlaid.takeUnless { text -> text == "[]" }
-                        else overlaid
-                    val reactive =
-                        store.queryOverlay.overlaidPayloadFlow(TABLE, query.cacheKey).first()
-                    compared++
-                    if (reactive != expected)
-                        mismatches +=
-                            "$keys seed $seed ${query.cacheKey} reactive: $reactive, not $expected"
-                    if (payload != null) {
-                        val oneShot =
-                            store.queryOverlay.overlayCachedPayload(TABLE, query.cacheKey, payload)
-                        compared++
-                        if (oneShot != expected)
-                            mismatches +=
-                                "$keys seed $seed ${query.cacheKey} one-shot: $oneShot, " +
-                                    "not $expected"
                     }
+                    .toMap()
+            val all = mutationDao.allForTable(TABLE)
+            queries.forEach { query ->
+                val known =
+                    everyRow(
+                        query,
+                        queries,
+                        payloads,
+                        keys.columns,
+                        sameProjection = true,
+                        null,
+                    )
+                val payload = payloads[query.cacheKey]?.payload
+                val overlaid =
+                    everyRowOverlay(payload ?: "[]", all, query, keys.columns, known) { false }
+                val expected =
+                    if (payload == null) overlaid.takeUnless { text -> text == "[]" } else overlaid
+                val reactive = store.queryOverlay.overlaidPayloadFlow(TABLE, query.cacheKey).first()
+                compared++
+                if (reactive != expected)
+                    mismatches +=
+                        "$keys seed $seed ${query.cacheKey} reactive: $reactive, not $expected"
+                if (payload != null) {
+                    val oneShot =
+                        store.queryOverlay.overlayCachedPayload(TABLE, query.cacheKey, payload)
+                    compared++
+                    if (oneShot != expected)
+                        mismatches +=
+                            "$keys seed $seed ${query.cacheKey} one-shot: $oneShot, " +
+                                "not $expected"
                 }
             }
         }
-        assertEquals(0, mismatches.size, "$compared compared: ${mismatches.take(2)}")
+        assertEquals(0, mismatches.size, "$keys: $compared compared: ${mismatches.take(2)}")
     }
 
     /**
