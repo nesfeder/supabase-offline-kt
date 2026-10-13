@@ -96,9 +96,7 @@ jobs:
           ln -s "$GITHUB_WORKSPACE/site" "$RUNNER_TEMP/linkcheck-root/supabase-offline-kt"
 
       # The links into the Swift API reference (site/swift/) are left out: only a release's publish
-      # places it. So are the Kotlin one's own pages as inputs, which hold two kinds of broken link:
-      # anchors Dokka never writes (members OfflineBucketApi inherits), and --root--.html pages that
-      # a bare KDoc link to a constructor property produces. The link into it is checked.
+      # places it. The Kotlin one's pages are checked like every other page, anchors included.
       - name: Check internal links and anchors in the built site
         uses: lycheeverse/lychee-action@e7477775783ea5526144ba13e8db5eec57747ce8 # v2.9.0
         with:
@@ -109,7 +107,6 @@ jobs:
             --index-files index.html
             --root-dir ${{ runner.temp }}/linkcheck-root
             --exclude '/site/swift/'
-            --exclude-path 'site/api/kotlin/'
             'site/**/*.html'
           output: ${{ runner.temp }}/lychee-internal.md
           fail: true

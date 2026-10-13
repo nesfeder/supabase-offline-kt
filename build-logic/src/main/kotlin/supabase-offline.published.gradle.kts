@@ -135,7 +135,22 @@ private val sourceCommit: String? =
 // out, including the public declarations that exist for another module of this project.
 extensions.configure<DokkaExtension> {
     moduleName.set(project.name)
+    // Dokka gives an inherited member no page and links each overload of one to an anchor it never
+    // writes, as on OfflineBucketApi's page. So inherited members are left out: each is listed on
+    // the type that declares it, and supabase-kt's reference, linked below, documents its own.
+    dokkaPublications.configureEach { suppressInheritedMembers.set(true) }
+    // Dokka resolves a link through a source set's direct dependencies only, so without this a
+    // commonMain type named in iosMain, three levels below it, links to an anchor no page has.
+    dokkaSourceSets
+        .matching { it.name == "iosMain" }
+        .configureEach {
+            dependentSourceSets.add(dokkaSourceSets.getByName("commonMain").sourceSetId.get())
+        }
     dokkaSourceSets.configureEach {
+        // The supabase-kt types the reference names link to supabase-kt's own reference.
+        externalDocumentationLinks.register("supabase-kt") {
+            url("https://supabase-community.github.io/supabase-kt/")
+        }
         perPackageOption {
             matchingRegex.set("""io\.github\.nesfeder\.supabase\.offline\.internal(\..*)?""")
             suppress.set(true)
