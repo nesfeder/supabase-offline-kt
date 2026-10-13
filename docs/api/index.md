@@ -1,6 +1,14 @@
 # API reference
 
-The reference for every public class and function in the library, generated from its KDoc.
+Every public declaration of the library, generated from its documentation comments.
 
-> **Not generated yet.** The API reference will be generated with Dokka and published here in
-> place of this page.
+<!-- Plain HTML links: the two references are placed beside this page after MkDocs builds it, so
+MkDocs cannot check them. The docs check's link check covers the Kotlin one. -->
+
+- <a href="kotlin/">Kotlin (Android, iOS)</a>: both published modules, `supabase-offline-kt` and
+  `supabase-offline-kt-testing`, for apps written in Kotlin.
+- <a href="../swift/documentation/supabaseoffline/">Swift</a>: the Swift package's two products,
+  `SupabaseOffline` and `SupabaseOfflineTesting`, for apps written in Swift.
+
+The Kotlin reference is built from the branch the site was published from; the Swift one comes
+from the latest release.

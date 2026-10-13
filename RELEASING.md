@@ -19,7 +19,8 @@ A release is one version number, `X.Y.Z`, published on every channel at once:
   followed by GitHub's list of the pull requests merged since the last release, grouped by label as
   `.github/release.yml` says, holding the Swift package's framework.
 - **The documentation site**: `https://nesfeder.github.io/supabase-offline-kt/`, built from the
-  release's tag.
+  release's tag, with the Kotlin API reference under `/api/kotlin/` and the Swift one under
+  `/swift/`.
 
 The version is `VERSION_NAME` in the root `gradle.properties`. Between releases it ends in
 `-SNAPSHOT`; the pull request that prepares a release removes the suffix. Nothing else holds a
@@ -188,9 +189,12 @@ the 0.1.0 release, beside about 20 Linux minutes; a real release takes the same 
    it.
 8. **docs** builds the documentation site from the tag `X.Y.Z` and deploys it to GitHub Pages
    (`.github/workflows/docs-publish.yml`). It holds the Pages and OIDC permissions only, and no
-   release secret. The Swift API reference under `/swift/` is the one the framework job built with
-   DocC against the framework it tested (`scripts/build-swift-docs.sh`), handed over as the run's
-   `swift-reference` artifact; the docs job only places it.
+   release secret. The site's API reference page (`/api/`) leads to the two references. The Kotlin
+   one under `/api/kotlin/` is built by that workflow itself, with Dokka, from the commit it checked
+   out (`./gradlew :dokkaGenerate`, written to `build/dokka/html`), here the tag. The Swift one
+   under `/swift/` is the one the framework job built with DocC against the framework it tested
+   (`scripts/build-swift-docs.sh`), handed over as the run's `swift-reference` artifact; the docs
+   job only places it, with a page at `/swift/` itself that opens the package's page.
 
 So the order in which things become public is: Maven Central, then the Swift package's tag, then
 this repository's tag and its GitHub Release with the framework, then the site. Between the Swift
@@ -231,8 +235,9 @@ must be signed by the same identity.
 
 A release publishes the site from its tag. To publish a change to the documentation before the next
 release, run **Docs republish** (`.github/workflows/docs-republish.yml`). It builds the site from
-`main`, and places under `/swift/` the Swift API reference a Release run built; **Docs publish**,
-run by hand, has no such reference and leaves `/swift/` out.
+`main`, the Kotlin API reference under `/api/kotlin/` included, and places under `/swift/` the
+Swift API reference a Release run built; **Docs publish**, run by hand, builds the site and the
+Kotlin reference from the branch it runs on, has no Swift reference and leaves `/swift/` out.
 
 1. Find the newest release's run: **Actions → Release**, the newest run whose `finish` job ran (a
    dry run skips it), and take the number at the end of its URL (`…/actions/runs/<id>`). For 0.1.0
@@ -251,8 +256,9 @@ reference was built from. The `publish` job calls `docs-publish.yml` as the rele
 does, with the Pages and OIDC permissions only and no secret, but with no ref, so the site is built
 from `main` as it was when the run started.
 
-The Swift API reference is the release's, not `main`'s: a change to the Swift package's
-documentation reaches `/swift/` with the next release. A Release run keeps its `swift-reference`
+The Kotlin API reference is `main`'s, as the pages are: a change to a KDoc comment on `main` reaches
+`/api/kotlin/` with the republish. The Swift API reference is the release's, not `main`'s: a change
+to the Swift package's documentation reaches `/swift/` with the next release. A Release run keeps its `swift-reference`
 artifact for 90 days; after that, a republish fails at the download, and `/swift/` comes back with
 the next release.
 
