@@ -92,6 +92,33 @@ From the samples: [OfflineTaskRepositoryTest.kt](https://github.com/nesfeder/sup
     --8<-- "ApiTourTests.swift:offline-test"
     ```
 
+## Report Realtime changes
+
+A test of an app that names tables in `realtime { }` gives the in-memory client a `FakeRealtime`
+in place of a Realtime channel, so `install(Realtime)` is not needed. The client joins the fake's
+channel as it would Realtime's (signed in or without Auth, the network not known down, the
+subscription on), and `subscribedTables` says which tables it follows now; wait for a table there
+before reporting a change to it, since nothing is replayed. Each report reaches the cached queries
+as `applyServerRecord` and `applyServerDelete` apply a record; a report to a table nothing follows
+is dropped and counted in `droppedReportCount`. `failChannel(cause)` ends the channel as a server
+that refuses it would, and `dropChannel()` as a lost socket: `realtimeStatus` reads `Stalled`, and
+the client joins again after a short wait.
+
+```kotlin
+val fakeRealtime = FakeRealtime()
+val supabase = createSupabaseClient(url, key) {
+    httpEngine = MockEngine { request -> … }
+    install(Postgrest) { maxRetries = 0 }
+    install(Offline) {
+        inMemory(realtime = fakeRealtime)
+        realtime { table("tasks") }
+    }
+}
+fakeRealtime.subscribedTables.first { "tasks" in it }
+fakeRealtime.reportInsert("tasks", buildJsonObject { put("id", "t1"); put("title", "Milk") })
+fakeRealtime.reportDelete("tasks", buildJsonObject { put("id", "t1") })
+```
+
 ## Waiting for the client
 
 The client runs on real time, not the test's virtual clock: `inMemory(clock)` sets the times it
