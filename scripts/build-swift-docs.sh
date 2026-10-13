@@ -82,6 +82,14 @@ if [[ -n "$out" ]]; then
     xcrun docc process-archive transform-for-static-hosting "$merged" \
         --output-path "$out" \
         --hosting-base-path "$base_path" >> "$log" 2>&1
+    # docc's transform gives every page under documentation/ the hosting base path but leaves the
+    # archive's root index.html at the server root (/js/…, /css/…, baseUrl "/"), so it loads nothing.
+    sed -i '' -E -e "s#(href|src)=\"/#\1=\"/${base_path}/#g" \
+        -e "s#var baseUrl = \"/\"#var baseUrl = \"/${base_path}/\"#" "$out/index.html"
+    if grep -qE '(href|src)="/(js|css|favicon)|baseUrl = "/"' "$out/index.html"; then
+        echo "The root index.html still loads from the server root: docc's output changed." >&2
+        exit 1
+    fi
     pages=$(find "$out/documentation" -name index.html | wc -l | tr -d ' ')
     echo "The Swift API reference for /$base_path/: $pages pages in ${out}."
 fi
