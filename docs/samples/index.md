@@ -11,6 +11,11 @@ same offline behavior.
 | The Android sample | [`samples/android/`](https://github.com/nesfeder/supabase-offline-kt/tree/main/samples/android) | [Run the Android sample](android.md) |
 | The iOS sample | [`samples/ios/`](https://github.com/nesfeder/supabase-offline-kt/tree/main/samples/ios) | [Run the iOS sample](ios.md) |
 
+Both samples take the library as your app does, at its newest release: the Android sample the Maven
+artifacts, the iOS sample the Swift package `supabase-offline-swift`. CI builds them on the
+repository's own code instead, and so can you: [on Android](android.md#build-on-this-checkout), with
+one Gradle property, and [on iOS](ios.md#build-on-this-checkout), by opening the sample's workspace.
+
 ## What the app shows
 
 Every screen is built to make the library's offline behavior visible:
