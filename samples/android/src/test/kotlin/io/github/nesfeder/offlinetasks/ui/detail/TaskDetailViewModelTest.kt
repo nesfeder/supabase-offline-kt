@@ -5,6 +5,11 @@ package io.github.nesfeder.offlinetasks.ui.detail
 import io.github.nesfeder.offlinetasks.data.PendingPhotoState
 import io.github.nesfeder.offlinetasks.data.PhotoEncoder
 import io.github.nesfeder.offlinetasks.data.PhotoUnreadableException
+import io.github.nesfeder.offlinetasks.data.RowsSnapshot
+import io.github.nesfeder.offlinetasks.data.Task
+import io.github.nesfeder.offlinetasks.data.TaskListSnapshot
+import io.github.nesfeder.offlinetasks.data.TaskMutationOutcome
+import io.github.nesfeder.offlinetasks.data.TaskRefreshState
 import io.github.nesfeder.offlinetasks.data.TaskRepository
 import io.github.nesfeder.offlinetasks.testing.FailingReadsTaskRepository
 import io.github.nesfeder.offlinetasks.testing.FakePhotoEncoder
@@ -21,8 +26,13 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Rule
 
@@ -53,6 +63,31 @@ class TaskDetailViewModelTest {
                     !snapshot.hasPendingMutations
             }
         assertTrue(saved.value.orEmpty().any { it.title == "Water the basil" })
+    }
+
+    /**
+     * The device's list can still carry the old title after an autosave: it must not replace what
+     * was typed, which would move the field's cursor back (#178).
+     */
+    @Test
+    fun the_old_title_arriving_after_an_autosave_does_not_replace_what_was_typed() = runTest {
+        // Given — a title typed and saved, before the device's list has it
+        val fixture = repositoryFixture(seedSampleTasks = true).repository
+        val task = fixture.awaitServerTasks().first()
+        val repository = LaggingRowRepository(fixture, task)
+        val viewModel = detailViewModel(repository, task.id, backgroundScope)
+        viewModel.editing()
+        val typed = "${task.title} abc"
+        viewModel.onTitleChange(typed)
+        repository.savedTitles.first { typed in it }
+
+        // When — a list update with the write's pending mark but still the old title
+        repository.row.value = task.copy(hasPendingMutations = true)
+
+        // Then — what was typed stays
+        viewModel.editing { it.syncState != TaskDetailSyncState.Synced }
+        runCurrent()
+        assertEquals(typed, viewModel.editing().title)
     }
 
     @Test
@@ -299,4 +334,37 @@ class TaskDetailViewModelTest {
 
     private suspend fun TaskRepository.titleOf(taskId: String): String? =
         tasks().first().value?.firstOrNull { it.id == taskId }?.title
+}
+
+/**
+ * [delegate], except that the task's row is whatever [row] holds and an edit only records its
+ * title: a device whose list has not caught up with a write yet.
+ */
+private class LaggingRowRepository(private val delegate: TaskRepository, task: Task) :
+    TaskRepository by delegate {
+
+    /** The task as the device's list shows it. */
+    val row = MutableStateFlow(task)
+
+    /** The titles saved, oldest first. */
+    val savedTitles = MutableStateFlow(emptyList<String>())
+
+    override fun task(id: String): Flow<TaskListSnapshot> = row.map { shown ->
+        RowsSnapshot(
+            value = listOf(shown).filter { it.id == id },
+            isFromCache = false,
+            fetchedAt = null,
+            hasPendingMutations = shown.hasPendingMutations,
+            refresh = TaskRefreshState.Idle,
+        )
+    }
+
+    override suspend fun updateTask(
+        id: String,
+        title: String,
+        notes: String?,
+    ): TaskMutationOutcome {
+        savedTitles.update { it + title }
+        return TaskMutationOutcome.Queued(pendingMutationId = savedTitles.value.size.toLong())
+    }
 }

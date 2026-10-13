@@ -127,8 +127,14 @@ class TaskDetailViewModel(
     /** The title and notes as typed; null until the task has loaded. */
     private val draft = MutableStateFlow<Draft?>(null)
 
-    /** The title and notes the device holds, which the draft is compared with. */
+    /**
+     * The title and notes the device holds, which the draft is compared with. Only the device's
+     * rows set it: an edit saved here counts once the device has it.
+     */
     private var stored: Draft? = null
+
+    /** The draft last saved, so the same text is not saved twice before the device has it. */
+    private var saved: Draft? = null
     private val messageChannel = Channel<TaskDetailMessage>(Channel.BUFFERED)
     private val task = MutableStateFlow<TaskLookup>(TaskLookup.Unknown)
 
@@ -252,14 +258,18 @@ class TaskDetailViewModel(
     private fun adoptStoredText(task: Task) {
         val incoming = Draft(task.title, task.notes.orEmpty())
         val current = draft.value
-        // Text from elsewhere replaces the draft only where the user has not typed over it.
-        if (current == null || current == stored) draft.value = incoming
+        // Text from elsewhere replaces the draft only where the user has not typed over it. A row
+        // that still has the text from before the last save is not that: the user typed over it.
+        if (current == null || current == stored) {
+            draft.value = incoming
+            saved = null // typing the last saved text again, after this, is a change to save
+        }
         stored = incoming
     }
 
     private fun save(edited: Draft) {
-        if (edited == stored || edited.title.isBlank()) return
-        stored = edited
+        if (edited == stored || edited == saved || edited.title.isBlank()) return
+        saved = edited
         writeScope.launchReporting(failures) {
             repository.updateTask(
                 id = taskId,
