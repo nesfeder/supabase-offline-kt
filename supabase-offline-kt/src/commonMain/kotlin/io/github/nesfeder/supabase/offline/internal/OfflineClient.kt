@@ -70,6 +70,11 @@ import io.github.nesfeder.supabase.offline.internal.postgrest.installTransportFa
 import io.github.nesfeder.supabase.offline.internal.postgrest.readShapePostgrestOf
 import io.github.nesfeder.supabase.offline.internal.postgrest.refreshWakeUps
 import io.github.nesfeder.supabase.offline.internal.postgrest.requestSessionFor
+import io.github.nesfeder.supabase.offline.internal.realtime.ServerChangeEvent
+import io.github.nesfeder.supabase.offline.internal.realtime.ServerChangeFeed
+import io.github.nesfeder.supabase.offline.internal.realtime.ServerChangeFollowState
+import io.github.nesfeder.supabase.offline.internal.realtime.ServerChangeFollower
+import io.github.nesfeder.supabase.offline.internal.realtime.WatchedTable
 import io.github.nesfeder.supabase.offline.internal.storage.CachingBucketApi
 import io.github.nesfeder.supabase.offline.internal.storage.StorageFileCache
 import io.github.nesfeder.supabase.offline.internal.storage.installDownloadStatusCheck
@@ -191,6 +196,10 @@ internal class OfflineClient(
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
     /** Where [close] waits out its bound, which is real time unless a test injects otherwise. */
     private val closeWaitDispatcher: CoroutineDispatcher = Dispatchers.Default,
+    /** The tables whose changes on the server the client follows and applies; none by default. */
+    watchedTables: List<WatchedTable> = emptyList(),
+    /** Where those changes come from; `null` follows nothing. */
+    serverChangeFeed: ServerChangeFeed? = null,
 ) : Offline {
 
     /**
@@ -409,6 +418,35 @@ internal class OfflineClient(
     private val wakeUps: Flow<Unit> =
         refreshWakeUps(supabaseClient, networkAccess.reconnections, responseTrust)
 
+    /**
+     * Follows the watched tables' changes on the server and applies them, in the client's scope so
+     * [close] leaves the channel; `null` when nothing is watched.
+     */
+    private val serverChangeFollower: ServerChangeFollower? =
+        if (watchedTables.isEmpty() || serverChangeFeed == null) null
+        else
+            ServerChangeFollower(
+                scope = clientScope,
+                tables = watchedTables,
+                feed = serverChangeFeed,
+                defaultSchema = ::defaultSchema,
+                sessionReady =
+                    authPluginOrNull()?.sessionStatus?.map { status ->
+                        status is SessionStatus.Authenticated
+                    } ?: flowOf(true),
+                networkStatuses = networkAccess.statusChanges,
+                wakeUps = wakeUps,
+                apply = ::applyServerChange,
+                markStale = ::markCachedQueriesStale,
+                engineLogger = engineLogger,
+            )
+
+    /**
+     * Where the subscription to the watched tables stands; [ServerChangeFollowState.Off] with none.
+     */
+    internal val realtimeFollowState: StateFlow<ServerChangeFollowState> =
+        serverChangeFollower?.state ?: MutableStateFlow(ServerChangeFollowState.Off)
+
     init {
         if (prepareFileCacheDirectories) fileCache.prepareDirectories()
         // Before the app sends anything through this client, so the hooks are on the pipeline once,
@@ -421,9 +459,45 @@ internal class OfflineClient(
         networkAccess.watchIn(clientScope, onReconnected = ::replayAsTheNetworkReturns)
         replayWhenTheSessionSettles()
         keepCacheWithTheSession()
+        serverChangeFollower?.start()
     }
 
     private fun authPluginOrNull(): Auth? = supabaseClient.pluginManager.getPluginOrNull(Auth)
+
+    /** Switches the subscription to the watched tables on or off; nothing happens without them. */
+    internal fun setRealtimeEnabled(enabled: Boolean) {
+        serverChangeFollower?.setEnabled(enabled)
+    }
+
+    /** The PostgREST plugin's default schema, `public` without the plugin. */
+    private fun defaultSchema(): String =
+        supabaseClient.pluginManager.getPluginOrNull(Postgrest)?.config?.defaultSchema ?: "public"
+
+    /**
+     * Applies a change the feed reported through the same path an app's [applyServerRecord] or
+     * [applyServerDelete] takes; nothing once the client is closing.
+     */
+    private suspend fun applyServerChange(event: ServerChangeEvent) {
+        if (operationGate.isClosed) return
+        when (event) {
+            is ServerChangeEvent.Saved ->
+                applyServerRecord(event.table, event.record, primaryKeys = null, event.schema)
+            is ServerChangeEvent.Deleted ->
+                applyServerDelete(event.table, event.oldRecord, primaryKeys = null, event.schema)
+            ServerChangeEvent.Joined -> Unit
+        }
+    }
+
+    /**
+     * Marks every cached query of [table] in [schema] stale and has its live readers fetch again:
+     * what a join asks for, since Realtime replays nothing. Nothing once the client is closing.
+     */
+    private suspend fun markCachedQueriesStale(table: String, schema: String) {
+        if (operationGate.isClosed) return
+        operationGate.call {
+            cachePatcher.markEveryQueryStale(cachedTableOf(table, schema), freshness.tickNow())
+        }
+    }
 
     /**
      * Logs, once per client, that a write asked PostgREST to roll it back and was committed: an
@@ -1051,6 +1125,7 @@ internal class OfflineClient(
     override suspend fun close() {
         if (operationGate.close()) clientScope.coroutineContext.job.cancel()
         publishFinalStatus()
+        serverChangeFollower?.stop()
         readShapePostgrest.value = null
         // On a real clock whatever calls it: under a test scheduler the caller's clock skips ahead
         val releasedInTime =

@@ -186,7 +186,8 @@ supabase-bom = { module = "io.github.jan-tennert.supabase:bom", version.ref = "s
 supabase-offline = { module = "io.github.nesfeder.supabase-offline:supabase-offline-kt", version.ref = "supabase-offline" }
 supabase-offline-testing = { module = "io.github.nesfeder.supabase-offline:supabase-offline-kt-testing", version.ref = "supabase-offline" }
 supabase-postgrest-kt = { module = "io.github.jan-tennert.supabase:postgrest-kt" }
-# The Android sample's Live updates; nothing published depends on it.
+# The library's channel for the tables its configuration names, and the Android sample's Live
+# updates.
 supabase-realtime-kt = { module = "io.github.jan-tennert.supabase:realtime-kt" }
 supabase-storage-kt = { module = "io.github.jan-tennert.supabase:storage-kt" }
 

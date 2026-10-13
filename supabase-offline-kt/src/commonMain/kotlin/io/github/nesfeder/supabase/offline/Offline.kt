@@ -16,6 +16,8 @@ import io.github.jan.supabase.storage.Storage
 import io.github.nesfeder.supabase.offline.internal.OfflineClient
 import io.github.nesfeder.supabase.offline.internal.OfflinePlugin
 import io.github.nesfeder.supabase.offline.internal.openPlatformClient
+import io.github.nesfeder.supabase.offline.internal.realtime.ServerChangeFeed
+import io.github.nesfeder.supabase.offline.internal.realtime.WatchedTable
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.serialization.json.JsonObject
@@ -577,6 +579,18 @@ public interface Offline : SupabasePlugin<Offline.Config> {
 
         /** Opens the plugin's local data: the platform's database, unless a test replaces it. */
         internal var openLocalData: (SupabaseClient, Config) -> OfflineClient = ::openPlatformClient
+
+        /**
+         * The tables whose changes on the server the plugin follows and applies to the cache; none
+         * until the configuration can name them.
+         */
+        internal var watchedTables: List<WatchedTable> = emptyList()
+
+        /**
+         * Makes the feed those changes arrive through, in place of Realtime's: a test's script.
+         * `null` follows the Realtime plugin.
+         */
+        internal var serverChangeFeed: ((SupabaseClient) -> ServerChangeFeed)? = null
     }
 
     /** Installs the plugin: `install(Offline) { … }`. */

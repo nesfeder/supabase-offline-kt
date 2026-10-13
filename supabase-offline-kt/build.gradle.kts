@@ -96,6 +96,9 @@ kotlin {
             api(libs.supabase.auth.kt)
             api(libs.supabase.postgrest.kt)
             api(libs.supabase.storage.kt)
+            // The channel that follows the tables the configuration names; optional at runtime, as
+            // Auth is.
+            api(libs.supabase.realtime.kt)
             api(libs.kotlinx.serialization.json)
             api(libs.kotlinx.coroutines.core)
             api(libs.ktor.client.core)

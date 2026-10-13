@@ -21,6 +21,8 @@ import io.github.nesfeder.supabase.offline.internal.mutationqueue.DEFAULT_PRIMAR
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.DefaultPrimaryKeys
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.PrimaryKeys
 import io.github.nesfeder.supabase.offline.internal.postgrest.ResponseTrustPolicy
+import io.github.nesfeder.supabase.offline.internal.realtime.ServerChangeFeed
+import io.github.nesfeder.supabase.offline.internal.realtime.SupabaseRealtimeFeed
 import io.github.nesfeder.supabase.offline.internal.storage.markFileUsed
 import kotlin.time.Clock
 import kotlin.time.Duration
@@ -163,7 +165,24 @@ internal fun Offline.Config.buildOfflineClient(
         markFileUsed = markFileUsed,
         clock = clock,
         rowClock = rowClock,
+        watchedTables = watchedTables,
+        serverChangeFeed = serverChangeFeedFor(supabase, engineLogger, clock),
     )
+
+/**
+ * The feed the watched tables are followed through: a test's script when one is set, Realtime's
+ * when tables are watched, or none.
+ *
+ * @throws IllegalStateException when tables are watched and the Realtime plugin is not installed.
+ */
+private fun Offline.Config.serverChangeFeedFor(
+    supabase: SupabaseClient,
+    engineLogger: EngineLogger,
+    clock: Clock,
+): ServerChangeFeed? =
+    serverChangeFeed?.invoke(supabase)
+        ?: if (watchedTables.isEmpty()) null
+        else SupabaseRealtimeFeed.forInstalledPlugin(supabase, engineLogger, clock)
 
 /** The object-cache eviction settings [Offline.Config.cacheSizeBytes] asks for. */
 internal fun Offline.Config.toQueryCacheLimits(): QueryCacheLimits =

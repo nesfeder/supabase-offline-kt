@@ -55,8 +55,8 @@ From the samples: [LiveUpdates.kt](https://github.com/nesfeder/supabase-offline-
     --8<-- "App/AppModel.swift:live-updates-apply"
     ```
 
-Add `realtime-kt` from the same supabase-kt BOM as the rest, and install `Realtime` beside the
-other plugins ([Project setup](../getting-started/setup.md#add-the-dependency)). Each table must be
+`realtime-kt` comes with the library; install `Realtime` beside the other plugins
+([Project setup](../getting-started/setup.md#add-the-dependency)). Each table must be
 in Supabase's `supabase_realtime` publication, or no change of it is sent;
 [Set up Supabase](../samples/supabase-setup.md) adds the samples' two. The library is built on
 supabase-kt 3.6 partly because of Realtime: 3.7.0 and 3.8.0 carry a Realtime crash

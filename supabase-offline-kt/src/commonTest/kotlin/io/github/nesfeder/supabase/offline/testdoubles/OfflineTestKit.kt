@@ -43,6 +43,8 @@ import io.github.nesfeder.supabase.offline.internal.postgrest.ResponseTrustPolic
 import io.github.nesfeder.supabase.offline.internal.postgrest.SupabaseRemoteTable
 import io.github.nesfeder.supabase.offline.internal.postgrest.queryShapeOf
 import io.github.nesfeder.supabase.offline.internal.postgrest.readShapePostgrestOf
+import io.github.nesfeder.supabase.offline.internal.realtime.ServerChangeFeed
+import io.github.nesfeder.supabase.offline.internal.realtime.WatchedTable
 import io.github.nesfeder.supabase.offline.internal.storage.CachingBucketApi
 import io.github.nesfeder.supabase.offline.internal.storage.StorageFileCache
 import io.github.nesfeder.supabase.offline.internal.testing.InMemoryCachedFileDao
@@ -248,6 +250,8 @@ internal fun newTestOfflineClient(
     config: Offline.Config = Offline.Config(),
     networkAvailability: Flow<Boolean>? = null,
     fileSystem: FileSystem = FileSystem.SYSTEM,
+    watchedTables: List<WatchedTable> = emptyList(),
+    serverChangeFeed: ServerChangeFeed? = null,
 ): OfflineClient =
     OfflineClient(
         supabaseClient = supabase,
@@ -270,6 +274,8 @@ internal fun newTestOfflineClient(
         config = config,
         networkAvailability = networkAvailability,
         fileSystem = fileSystem,
+        watchedTables = watchedTables,
+        serverChangeFeed = serverChangeFeed,
     )
 
 /**

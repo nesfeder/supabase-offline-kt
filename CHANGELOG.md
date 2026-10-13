@@ -13,6 +13,11 @@ All notable changes to this project are recorded in this file. The format follow
 
 ### Breaking
 
+- The library depends on supabase-kt's `realtime-kt`, from the same BOM as its other modules, for
+  the tables an app names in its configuration to keep current through Realtime. An app that
+  already lists `realtime-kt` changes nothing; one that did not now resolves the module, which it
+  can leave uninstalled.
+
 ### Added
 
 ### Changed
