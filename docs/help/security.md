@@ -51,7 +51,9 @@ tagged `Supabase-Offline`. It writes nothing to the console itself.
   filter values, object paths. Keep `DEBUG` out of release builds.
 
 supabase-kt's own plugins log at the same `defaultLogLevel`, and at `DEBUG` they log requests
-with their URLs. Set the level for release builds where you build the client; see
+with their URLs; its Realtime plugin logs each channel's join payload at `DEBUG`, the user's token
+included, so a client that names tables in `realtime { }` has one more reason to keep `DEBUG` out
+of release builds. Set the level for release builds where you build the client; see
 [Configuration](../reference/configuration.md#loglevel).
 
 ## Exceptions

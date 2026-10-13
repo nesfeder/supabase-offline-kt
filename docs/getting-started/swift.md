@@ -2,7 +2,8 @@
 
 The Swift package gives an iOS app the library's offline reads, queued writes and file cache through
 a native Swift API. Its calls read as supabase-swift's do, and supabase-swift stays in the app for
-Auth, Realtime and Functions.
+Auth and Functions, and for Realtime's broadcast and presence; the tables `Config.realtimeTables`
+names, the client keeps current through Realtime itself ([Applying Realtime events](../behaviors/realtime.md)).
 
 The full Swift API, with articles on offline behavior, errors and testing, is the
 [Swift API reference](https://nesfeder.github.io/supabase-offline-kt/swift/documentation/supabaseoffline/).

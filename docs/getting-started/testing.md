@@ -119,6 +119,10 @@ fakeRealtime.reportInsert("tasks", buildJsonObject { put("id", "t1"); put("title
 fakeRealtime.reportDelete("tasks", buildJsonObject { put("id", "t1") })
 ```
 
+In Swift, `SupabaseOfflineClient.inMemory(…, realtime:)` takes the testing product's `FakeRealtime`
+the same way, with `reportInsert(table:record:)` and the rest; the Swift API reference's Testing
+your app article has the listing.
+
 ## Waiting for the client
 
 The client runs on real time, not the test's virtual clock: `inMemory(clock)` sets the times it

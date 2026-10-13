@@ -236,10 +236,12 @@ changes refused.
 The Sync tab's **Settings** has two switches, which last until the app restarts. **Prefer fresh
 data** makes the task list ask the server before it shows anything, the device's rows only when the
 server cannot be reached; off, the default, the saved rows show at once and are refreshed alongside.
-**Live updates**, on by default, subscribes to Realtime's changes to `tasks` and `task_photos` and
-applies each to the device's lists: edit a task in the dashboard's Table Editor and it changes in the
-app without a refresh. Simulate offline and a lost network pause it, and it subscribes again, reading
-both lists again, when the network is back.
+**Live updates**, on by default, is the client's own Realtime channel for `tasks` and
+`task_photos`, which the app names in its configuration: edit a task in the dashboard's Table Editor
+and it changes in the app without a refresh. A sentence under the switch says where the channel
+stands. Simulate offline and a lost network pause it, and the client joins again, reading both lists
+afresh, when the network is back; the app leaves and rejoins the channel around a sign-in, since
+the client learns who the user is from the token alone.
 
 ### Ask the server
 
@@ -292,9 +294,9 @@ network is off in between; the Sync tab shows **Offline (simulated)** for that m
   tables' keys and the log level.
 - **Every call the app makes to it** is in `Data/TaskRepository.swift` and its three extensions:
   `TaskRepository+Photos.swift` for the offline bucket, `TaskRepository+PendingPhotos.swift` for the
-  photos waiting to upload, and `TaskRepository+Server.swift` for the database functions, the exact
-  count and the server's row changes. Realtime's subscription, through
-  supabase-swift, is in `Data/ServerChanges.swift`.
+  photos waiting to upload, and `TaskRepository+Server.swift` for the database functions and the
+  exact count. The Realtime tables are named in `App/ClientSettings.swift`, and the Live updates
+  switch is matched to the client's channel in `App/AppModel.swift`.
 - **Photos wait in the app's own queue.** `Data/PendingPhotoQueue.swift` keeps each picked photo,
   `Data/PendingPhotoUploader.swift` uploads the waiting ones as the sync status allows, and
   `Data/TaskRepository+PendingPhotos.swift` files a photo, uploads it (the file, then the row, then
@@ -339,7 +341,8 @@ app's own sections.
   photo, so Retry stays switched off: remove the photo, fix the cause, and add it again.
 - **Mark all done or Ask the server fails online, or Replace and Move are refused.** The project
   lacks the second migration: run it from [Set up Supabase](supabase-setup.md).
-- **Live updates stopped.** The app could not subscribe: check that `tasks` and `task_photos` are in
-  the `supabase_realtime` publication, as the schema puts them. Pull to refresh still works.
+- **Live updates says it couldn't connect.** The channel was refused: check that `tasks` and
+  `task_photos` are in the `supabase_realtime` publication, as the schema puts them. The client
+  tries again by itself, and pull to refresh still works.
 - **A device build fails to sign.** Add `DEVELOPMENT_TEAM` and a bundle identifier of your own to
   `Secrets.xcconfig`.

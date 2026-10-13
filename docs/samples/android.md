@@ -141,8 +141,11 @@ data** makes the list ask the server first rather than show the device's copy fi
 ### Live updates
 
 With **Live updates** on, the default, a change made elsewhere (in the Table Editor, say) shows in
-the list as it happens. The Sync tab says whether the Realtime channel is connected; Simulate
-offline and a lost network pause it, and it connects again when the network is back.
+the list as it happens: the app names its two tables in the plugin's configuration, and the plugin
+keeps their cached lists current through Realtime. The Sync tab says where the channel stands
+(waiting for a user or the network, connecting, connected, or failed and trying again); Simulate
+offline and a lost network pause it, and it connects again, reading both lists afresh, when the
+network is back. The switch is the plugin's own `disableRealtime()` and `enableRealtime()`.
 
 ### Photos, beyond the upload
 
@@ -194,9 +197,9 @@ included, then reads both lists again from your project.
 - **Mark all done or the Server section fails, or Replace and Move photo are refused.** The second
   migration file is not applied: run it as [Set up Supabase](supabase-setup.md#apply-the-schema)
   says.
-- **Live updates stays at "Connecting to Realtime…", or changes from elsewhere never show.** Check
-  that the second migration file added `tasks` and `task_photos` to the `supabase_realtime`
-  publication (Database, Publications, in the dashboard). Without it, Realtime refuses the
-  subscription and the app keeps trying to join again.
+- **Live updates says it couldn't connect, or changes from elsewhere never show.** Check that the
+  second migration file added `tasks` and `task_photos` to the `supabase_realtime` publication
+  (Database, Publications, in the dashboard). Without it, Realtime refuses the subscription, or
+  sends nothing, and the plugin keeps trying to join again.
 - **The build asks for platform 37.** Install Android SDK Platform 37 in Android Studio's SDK
   Manager.

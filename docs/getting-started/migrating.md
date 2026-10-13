@@ -63,7 +63,7 @@ type, make these call shapes differ:
 | A write whose result is read, as in `insert(row) { select() }.decodeSingle<Row>()` | Read it through `resultOrNull()`, and decide what to show while the write is queued |
 | A suspending call, or an early `return`, inside a request lambda | Make the call, or return, before the verb; use its result inside the lambda |
 | A request lambda inside the parentheses, as in `insert(row, { select() })` | The second parameter is `mutationStrategy` (the first, for `delete`): name the lambda `request = { … }`, or move it after the parentheses |
-| Realtime's `selectAsFlow(…)` on a table | The builder's own `selectAsFlow` is the offline one: keep Realtime calls on `supabase.from(table)` |
+| Realtime's `selectAsFlow(…)` on a table | The builder's own `selectAsFlow` is the offline one, and it follows the server once the table is named in `realtime { }`; keep broadcast and presence calls on supabase-kt's channels |
 | The typed `rpc(function, parameters)` | Import `io.github.nesfeder.supabase.offline.rpc` in place of `io.github.jan.supabase.postgrest.rpc` |
 | Bucket management (`createBucket`, `listBuckets`, `emptyBucket` and the rest) | Keep it on `supabase.storage` |
 
@@ -153,8 +153,9 @@ which lacks a few things 3.8 has:
 
 The library caches PostgREST lists and Storage downloads, and queues PostgREST writes; everything
 else goes to the server as supabase-kt sends it, and offline fails as there. That is `rpc` (a
-function may change data, so it is neither cached nor queued), Realtime, Auth and Functions
-(feed Realtime's records into the cache with [`applyServerRecord`](../behaviors/realtime.md)),
+function may change data, so it is neither cached nor queued), Auth and Functions, Realtime's
+broadcast and presence (the tables `realtime { }` names are kept current by the plugin, and another
+channel's records go into the cache with [`applyServerRecord`](../behaviors/realtime.md)),
 Storage writes, and reads of another shape (`single()`, a `count`, `head`, `csv()`, `geojson()`,
 `stripNulls()`, `explain()`; read one row offline from the list, by its key). The samples' two
 database functions say so offline: Mark all done takes no parameters, the Sync tab's Server

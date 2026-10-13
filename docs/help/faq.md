@@ -87,8 +87,10 @@ whether the server holds the row already. See [Optimistic overlay](../behaviors/
 ## A change made in the dashboard does not show
 
 The library does not poll. A cached list changes when your app writes through the library, when
-the list is fetched again, and when you apply a Realtime record. Fetch the list again (a
-`NetworkOnly` read of the same query, for a pull to refresh), or apply Realtime's records; see
+the list is fetched again, when the server reports a change to a table named in `realtime { }`,
+and when you apply a record by hand. Name the table in the configuration and the change shows as
+it happens ([Applying Realtime events](../behaviors/realtime.md)); otherwise fetch the list again
+(a `NetworkOnly` read of the same query, for a pull to refresh); see
 [Reactive reads](../behaviors/reactive-reads.md#when-it-fetches-again).
 
 ## A debug log line says a request was stopped
