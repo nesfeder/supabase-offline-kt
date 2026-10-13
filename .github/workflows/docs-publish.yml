@@ -13,11 +13,17 @@ name: Docs publish
 # A workflow that calls this one must grant `pages: write` and `id-token: write` to the calling
 # job, and must not use the concurrency group `docs-publish` or `pages`, which this one uses.
 #
-# The Swift API reference is DocC, which builds only on macOS: the release's macOS job builds it
-# (scripts/build-swift-docs.sh) and uploads it as an artifact of the run, which the caller names
-# in `swift-reference`; it is placed at site/swift/, beside the MkDocs pages, in the one Pages
-# artifact. A publish without it (by hand, or a caller that names none) leaves /swift/ out of the
-# site and says so in the run's summary. Docs republish publishes main with a Release run's copy.
+# The site's API reference page (docs/api/index.md) leads to two references, placed beside the
+# MkDocs pages in the one Pages artifact:
+#
+#   /api/kotlin/  Dokka, which runs on Linux: this job builds it from the commit it checked out
+#                 (`:dokkaGenerate`, the published modules' public packages), so a publish by hand
+#                 or a republish shows the branch it ran on, and a release the released tag.
+#   /swift/       DocC, which builds only on macOS: the release's macOS job builds it
+#                 (scripts/build-swift-docs.sh) and uploads it as an artifact of the run, which the
+#                 caller names in `swift-reference`. A publish without it (by hand, or a caller that
+#                 names none) leaves /swift/ out of the site and says so in the run's summary. Docs
+#                 republish publishes main with a Release run's copy.
 
 on:
   workflow_call:
@@ -47,7 +53,7 @@ jobs:
   build:
     name: Build the site for GitHub Pages
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 20
     permissions:
       contents: read
     steps:
@@ -55,6 +61,19 @@ jobs:
         with:
           ref: ${{ inputs.ref }}
           persist-credentials: false
+
+      # JDK 17 and the wrapper's checksum, as CI's jobs have them. No Gradle cache, for the reason
+      # there is no pip cache below. The image's ANDROID_HOME gives Gradle the Android SDK.
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/wrapper-validation@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+
+      # Into build/dokka/html, with its source links pinned to the commit checked out.
+      - name: Build the Kotlin API reference
+        run: bash .github/scripts/run-gradle.sh :dokkaGenerate -Psupabase.offline.sourceCommit="$(git rev-parse HEAD)"
 
       # No pip cache: a publishing workflow restores nothing another run could have written.
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
@@ -71,6 +90,18 @@ jobs:
       - name: Build the site in strict mode
         run: mkdocs build --strict
 
+      # After MkDocs, which would otherwise read the generated pages as its own; beside the page
+      # site/api/index.html that links to it.
+      - name: Place the Kotlin API reference
+        run: cp -R build/dokka/html site/api/kotlin
+
+      - name: Check the Kotlin API reference
+        run: |
+          if [[ ! -f site/api/kotlin/index.html ]]; then
+            echo "::error::The Kotlin API reference holds no landing page."
+            exit 1
+          fi
+
       # The Swift API reference, as the release's macOS job built it: data, placed and never run.
       - name: Download the Swift API reference
         if: inputs.swift-reference != ''
@@ -86,6 +117,26 @@ jobs:
         run: |
           mkdir -p site/swift
           tar -xf "$RUNNER_TEMP/swift-reference-artifact/swift-reference.tar" -C site/swift --strip-components=1
+
+      # DocC's root page documents nothing (and, in a release built before build-swift-docs.sh
+      # rewrote it, loads nothing): this static page, written over it, opens the package's page.
+      - name: Write the Swift API reference's landing redirect
+        if: inputs.swift-reference != ''
+        run: |
+          cat > site/swift/index.html <<'EOF'
+          <!doctype html>
+          <html lang="en">
+          <head>
+          <meta charset="utf-8">
+          <title>Swift API reference</title>
+          <meta http-equiv="refresh" content="0; url=documentation/supabaseoffline/">
+          <link rel="canonical" href="documentation/supabaseoffline/">
+          </head>
+          <body>
+          <p><a href="documentation/supabaseoffline/">The Swift API reference</a></p>
+          </body>
+          </html>
+          EOF
 
       - name: Check the Swift API reference
         env:
