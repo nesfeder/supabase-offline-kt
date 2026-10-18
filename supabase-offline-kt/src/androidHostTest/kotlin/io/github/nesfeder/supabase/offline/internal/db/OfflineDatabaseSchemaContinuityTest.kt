@@ -14,11 +14,11 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
 /**
- * Pins the exported Room schema the library ships: version 1, identity hash
- * `d82a2435c50b4595368573f8728a370b`, and no other version. Any change to a table, column or index
- * changes the hash, and Room then takes the destructive fallback on a device — deleting the unsent
- * writes the file holds. The exported schema is the record of what the build compiles; these cases
- * fail the build if it drifts.
+ * Pins the exported Room schemas: version 1 (0.1.0's, identity hash
+ * `d82a2435c50b4595368573f8728a370b`) and version 2, the current one, which adds the queue's base
+ * columns. Any change to a table, column or index changes the hash, and a version with no migration
+ * takes the destructive fallback on a device, deleting the unsent writes the file holds; these
+ * cases fail the build if the exported record drifts.
  *
  * Reads the checked-in `schemas/` directory (its location is passed in by the build), so it runs on
  * the JVM host only.
@@ -59,14 +59,52 @@ class OfflineDatabaseSchemaContinuityTest {
     }
 
     @Test
-    fun the_current_schema_version_is_the_exported_one_and_the_only_one() {
+    fun exported_schema_2_has_the_pinned_identity_hash() {
+        // Given
+        val schema = exportedSchema(version = 2)
+
+        // When
+        val version = schema.getValue("version").jsonPrimitive.int
+        val identityHash = schema.getValue("identityHash").jsonPrimitive.content
+
+        // Then
+        assertEquals(2, version)
+        assertEquals(ShippedDatabaseFixture.CURRENT_IDENTITY_HASH, identityHash)
+    }
+
+    @Test
+    fun the_current_schema_version_is_2_and_1_json_and_2_json_are_the_exported_files() {
         // Given / When — the version the database class compiles with, and the exported files
         val current = OFFLINE_DB_VERSION
         val exported = schemaDirectory.list().orEmpty().sorted()
 
         // Then — raising it is a deliberate schema change that needs its own migration
-        assertEquals(ShippedDatabaseFixture.VERSION.toInt(), current)
-        assertEquals(listOf("$current.json"), exported)
+        assertEquals(ShippedDatabaseFixture.CURRENT_VERSION.toInt(), current)
+        assertEquals(listOf("1.json", "2.json"), exported)
+    }
+
+    @Test
+    fun schema_2_is_schema_1_with_the_two_columns_its_migration_adds() {
+        // Given
+        val first = creationStatements(exportedSchema(version = 1))
+        val second = creationStatements(exportedSchema(version = 2))
+
+        // When — version 1's statements, the queue table with the columns MIGRATION_1_2 adds
+        val migrated = first.map { statement ->
+            when {
+                statement.startsWith("CREATE TABLE IF NOT EXISTS `mutation_cache`") ->
+                    statement.removeSuffix(")") + ", `base_version` TEXT, `base_json` TEXT)"
+                statement.startsWith("INSERT OR REPLACE INTO room_master_table") ->
+                    statement.replace(
+                        ShippedDatabaseFixture.IDENTITY_HASH,
+                        ShippedDatabaseFixture.CURRENT_IDENTITY_HASH,
+                    )
+                else -> statement
+            }
+        }
+
+        // Then — nothing else differs, so the migration leaves the schema Room expects
+        assertEquals(second, migrated)
     }
 
     @Test

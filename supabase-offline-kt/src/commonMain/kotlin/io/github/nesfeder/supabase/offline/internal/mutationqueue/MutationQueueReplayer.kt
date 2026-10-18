@@ -516,14 +516,15 @@ internal class MutationQueueReplayer(
         if (now != identity) return Claim.Stop(SyncStop.SessionChanged)
         if (inFlight.value.any { id -> id <= candidate.id })
             return Claim.Stop(SyncStop.HeadInFlight)
-        if (!mutationQueue.isPending(candidate.id)) return Claim.Skip
+        // Read again: a write sent before it may have moved its base
+        val current = mutationQueue.pendingMutation(candidate.id) ?: return Claim.Skip
         if (
             table != null &&
                 mutationQueue.hasEarlierPendingMutation(candidate.id, identity.storedValue)
         )
             return Claim.Stop(SyncStop.HeldBehindOtherTables(candidate.id))
         inFlight.update { ids -> ids + candidate.id }
-        return Claim.Send(candidate)
+        return Claim.Send(current)
     }
 
     /**

@@ -4,12 +4,20 @@
 
 package io.github.nesfeder.supabase.offline
 
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.StoredConflict
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.SyncReport as EngineSyncReport
+import io.github.nesfeder.supabase.offline.testdoubles.FakeRelationalPostgrestServer
+import io.github.nesfeder.supabase.offline.testdoubles.GUARDED_TABLE
+import io.github.nesfeder.supabase.offline.testdoubles.GUARDED_VERSION_COLUMNS
+import io.github.nesfeder.supabase.offline.testdoubles.MOVED_VERSION
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.postgrestError
+import io.github.nesfeder.supabase.offline.testdoubles.VERSION_COLUMN
 import io.github.nesfeder.supabase.offline.testdoubles.idleCoroutineScope
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
+import io.github.nesfeder.supabase.offline.testdoubles.taskRow
 import io.ktor.http.HttpStatusCode
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -266,6 +274,87 @@ class SyncReportTest {
             assertEquals(2, server.requests.count { it.method == "POST" })
             scope.cancel()
         }
+
+    @Test
+    fun a_settled_conflict_counts_as_synced_in_the_report_the_app_is_shown() = runTest {
+        // Given — a task read into the cache, renamed while the server cannot be reached, and
+        // renamed on the server too
+        val server =
+            FakeRelationalPostgrestServer(
+                versionColumns =
+                    mapOf(
+                        GUARDED_TABLE to FakeRelationalPostgrestServer.VersionColumn(VERSION_COLUMN)
+                    )
+            )
+        val client =
+            newTestOfflineClient(
+                supabase = server.supabaseClient(),
+                versionColumns = GUARDED_VERSION_COLUMNS,
+                coordinatorScope = idleCoroutineScope(),
+                closeWait = 100.milliseconds,
+            )
+        server.seed(GUARDED_TABLE, taskRow(1, "theirs"))
+        client.from(GUARDED_TABLE).select()
+        server.failsRequest = { true }
+        client.from(GUARDED_TABLE).update(buildJsonObject { put("title", "mine") }) {
+            filter { eq("id", 1) }
+        }
+        server.failsRequest = null
+        server.replaceRow(GUARDED_TABLE, taskRow(1, "elsewhere", version = MOVED_VERSION))
+
+        // When
+        val report = client.syncPendingMutations()
+
+        // Then — resent and applied: one synced write, and nothing left
+        assertEquals(1 to 0, report.syncedCount to report.remainingCount)
+        assertEquals(emptyList(), report.rejected)
+        client.close()
+    }
+
+    @Test
+    fun the_engine_report_adds_up_its_conflict_counts_across_passes() {
+        // Given
+        val first =
+            EngineSyncReport(
+                syncedCount = 2,
+                rejected = emptyList(),
+                remainingCount = 3,
+                stop = null,
+                conflictsResolvedCount = 1,
+                conflictsKeptServerCount = 1,
+                conflicted = listOf(conflict(1)),
+            )
+        val second =
+            EngineSyncReport(
+                syncedCount = 1,
+                rejected = emptyList(),
+                remainingCount = 0,
+                stop = null,
+                conflictsResolvedCount = 1,
+                conflicted = listOf(conflict(2)),
+            )
+
+        // When
+        val total = first.followedBy(second)
+
+        // Then
+        assertEquals(3, total.syncedCount)
+        assertEquals(2, total.conflictsResolvedCount)
+        assertEquals(1, total.conflictsKeptServerCount)
+        assertEquals(listOf(1L, 2L), total.conflicted.map { it.id })
+        assertEquals(0, total.remainingCount)
+    }
+
+    private fun conflict(id: Long): StoredConflict =
+        StoredConflict(
+            id = id,
+            table = GUARDED_TABLE,
+            operation = "UPDATE",
+            bodyJson = "{}",
+            createdAtMs = 0,
+            message = "moved",
+            conflictedAtMs = 0,
+        )
 
     private fun row(id: Int): JsonArray = buildJsonArray {
         add(

@@ -24,6 +24,7 @@ import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueue
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.PrimaryKeys
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.StoredRejection
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.VersionColumns
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 import io.github.nesfeder.supabase.offline.internal.postgrest.QueryShape
 import io.github.nesfeder.supabase.offline.internal.storage.cachedFileKeyOf
@@ -47,6 +48,7 @@ import okio.Path
  * @param identityProvider the identity whose queued writes the overlay and counts show, or `null`
  *   for every identity's.
  * @param identityChanges emits when the identity may have changed.
+ * @param versionColumns each table's version column, which guards a queued write's replay.
  */
 internal class TestStore(
     queryCacheDao: QueryCacheDao,
@@ -69,6 +71,7 @@ internal class TestStore(
     allLiveCacheKeys: () -> Set<String>,
     onQueriesMarkedStale: (table: String, cacheKeys: Set<String>) -> Unit,
     onCacheNotServed: () -> Unit,
+    versionColumns: VersionColumns,
 ) {
 
     /** The components, which this store copies into its fields. */
@@ -90,6 +93,7 @@ internal class TestStore(
             allLiveCacheKeys = allLiveCacheKeys,
             onQueriesMarkedStale = onQueriesMarkedStale,
             onCacheNotServed = onCacheNotServed,
+            versionColumns = versionColumns,
         )
 
     /** The cached queries' table, every write to it counted, as the components write it. */

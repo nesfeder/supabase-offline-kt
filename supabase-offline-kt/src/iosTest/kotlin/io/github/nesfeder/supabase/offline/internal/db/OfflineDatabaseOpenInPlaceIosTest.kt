@@ -14,10 +14,8 @@ import okio.SYSTEM
 /**
  * Persistence continuity on iOS: a `supabase_offline.db` with schema version 1 on disk — cached
  * queries, a storage row and unsent writes, written by the raw driver — opens in place through the
- * library's own database builder, with every row intact, and its queue replays.
- *
- * Opening also proves the identity hash compiled into this build equals the exported one: Room
- * checks `room_master_table` against its generated hash on open and refuses a mismatch.
+ * library's own database builder, migrated to this build's schema with every row intact, and its
+ * queue replays.
  */
 class OfflineDatabaseOpenInPlaceIosTest {
 
@@ -53,14 +51,38 @@ class OfflineDatabaseOpenInPlaceIosTest {
         assertEquals(0, callback.creates, "the existing database must not be created again")
         assertEquals(0, callback.destructiveMigrations, "no destructive recreate may run")
         assertEquals(1, callback.opens)
+        // Migrated to this build's schema in place, with no row lost
         assertEquals(
-            ShippedDatabaseFixture.VERSION,
+            ShippedDatabaseFixture.CURRENT_VERSION,
             ShippedDatabaseFixture.readUserVersion(databasePath, defaultSQLiteDriver()),
         )
         assertEquals(
-            ShippedDatabaseFixture.IDENTITY_HASH,
+            ShippedDatabaseFixture.CURRENT_IDENTITY_HASH,
             ShippedDatabaseFixture.readIdentityHash(databasePath, defaultSQLiteDriver()),
         )
+    }
+
+    @Test
+    fun a_migrated_queue_keeps_every_write_with_no_base_until_one_is_written() = runTest {
+        // Given — 0.1.0's file, written with the raw driver
+        FileSystem.SYSTEM.createDirectories(directory)
+        val databasePath = (directory / "supabase_offline.db").toString()
+        ShippedDatabaseFixture.writeTo(databasePath, defaultSQLiteDriver())
+        val callback = RecordingRoomCallback()
+
+        // When — migrated as it opens
+        val database =
+            buildOfflineDatabase(offlineDatabaseBuilder(databasePath).addCallback(callback))
+        val bases =
+            try {
+                database.basesBeforeAndAfterOneIsWritten()
+            } finally {
+                database.close()
+            }
+
+        // Then
+        assertEquals(MIGRATED_QUEUE_BASES, bases)
+        assertEquals(0, callback.destructiveMigrations, "no destructive recreate may run")
     }
 
     @Test

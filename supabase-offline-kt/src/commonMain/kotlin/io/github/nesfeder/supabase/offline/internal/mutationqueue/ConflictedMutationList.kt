@@ -82,7 +82,8 @@ internal data class StoredConflictList(
 
 /**
  * The mutation queue's conflicted list, kept in a reserved `object_cache` row within the rejected
- * list's bounds. Callers hold the queue lock and write the row this builds in their own transaction.
+ * list's bounds. Callers hold the queue lock and write the row this builds in their own
+ * transaction.
  */
 internal class ConflictedMutationList(
     private val queryCacheDao: QueryCacheDao,
@@ -112,7 +113,8 @@ internal class ConflictedMutationList(
      * @return The removed entry, or `null` when there is none.
      */
     suspend fun removeConflict(id: Long): StoredConflict? {
-        val removed = conflictedList().entries.firstOrNull { entry -> entry.id == id } ?: return null
+        val removed =
+            conflictedList().entries.firstOrNull { entry -> entry.id == id } ?: return null
         val (row, list) = conflictedRowWith(removeId = id)
         queryCacheDao.upsert(row)
         conflictWritten(list)
@@ -121,7 +123,8 @@ internal class ConflictedMutationList(
 
     /**
      * The list's row with [add] added as the newest entry and the entry with [removeId] removed,
-     * bounded as the rejected list is. Write it in the caller's transaction, then [conflictWritten].
+     * bounded as the rejected list is. Write it in the caller's transaction, then
+     * [conflictWritten].
      *
      * @return The row and the new list.
      */
@@ -168,7 +171,9 @@ internal class ConflictedMutationList(
             queryCacheDao.get(RESERVED_TABLE_NAME, CONFLICTED_MUTATIONS_CACHE_KEY)?.payload
         val loaded =
             if (payload == null) StoredConflictList()
-            else decodeOrNull(StoredConflictList.serializer(), payload) ?: moveAsideUnreadable(payload)
+            else
+                decodeOrNull(StoredConflictList.serializer(), payload)
+                    ?: moveAsideUnreadable(payload)
         conflictedCache.compareAndSet(null, loaded)
         return conflictedCache.value ?: loaded
     }

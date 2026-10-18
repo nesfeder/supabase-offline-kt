@@ -73,6 +73,9 @@ internal class RecordingPostgrestServer(
          * equality.
          */
         var retryCount: String? = null
+
+        /** The query string as it went on the wire, percent-encoded. Outside equality. */
+        var encodedQuery: String? = null
     }
 
     /** Every request received, in order. */
@@ -101,6 +104,7 @@ internal class RecordingPostgrestServer(
                                 accept = request.headers.getAll("Accept")?.joinToString(",")
                                 authorization = request.headers["Authorization"]
                                 retryCount = request.headers["x-retry-count"]
+                                encodedQuery = request.url.encodedQuery
                             }
                     requests += recorded
                     answer(recorded)

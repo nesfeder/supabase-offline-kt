@@ -7,7 +7,10 @@ import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.serialization.json.JsonObject
 
-/** How long a [ConflictPolicy] may take to decide before its answer reads as [ConflictDecision.Hold]. */
+/**
+ * How long a [ConflictPolicy] may take to decide before its answer reads as
+ * [ConflictDecision.Hold].
+ */
 internal val CONFLICT_POLICY_TIMEOUT: Duration = 30.seconds
 
 /** What a replay found when a guarded write's precondition no longer held on the server. */

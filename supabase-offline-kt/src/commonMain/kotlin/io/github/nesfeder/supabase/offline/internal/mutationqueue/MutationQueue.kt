@@ -564,8 +564,9 @@ internal class MutationQueue(
     suspend fun hasEarlierPendingMutation(id: Long, identity: String): Boolean =
         mutationDao.hasPendingOwnedBy(identity, mayAdoptOwnerlessMutations(identity), id)
 
-    /** Whether the mutation [id] is queued and not yet synced. */
-    suspend fun isPending(id: Long): Boolean = mutationDao.isPending(id)
+    /** The mutation [id] as stored now, when it is queued and not yet synced; `null` otherwise. */
+    suspend fun pendingMutation(id: Long): MutationRow? =
+        mutationDao.byId(id)?.takeIf { row -> row.syncedAtMs == null }
 
     /**
      * Removes a write sent at the head of the queue once the server accepted it: its mutation row,
