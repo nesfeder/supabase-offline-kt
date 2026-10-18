@@ -47,6 +47,10 @@ All notable changes to this project are recorded in this file. The format follow
 
 ### Changed
 
+- The database moves to schema version 2, which adds two columns to the mutation queue, with a
+  migration that keeps every queued write. Going back to 0.1.0 across it is not supported, and
+  loses the writes queued since.
+
 ### Deprecated
 
 ### Removed

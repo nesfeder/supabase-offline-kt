@@ -35,7 +35,7 @@ deleted once it is more than a day old.
 
 ## The database
 
-Room schema version 1, identity hash `d82a2435c50b4595368573f8728a370b`.
+Room schema version 2, identity hash `5f1a878933e35eebaa2b64aac7fccab0`.
 
 ### `object_cache`
 
@@ -85,6 +85,8 @@ It is indexed on (`owner`, `synced_at_ms`) and indexed on (`table_name`).
 | `sync_sequence` | INTEGER | yes | The order in which replayed writes were accepted, against the lists that have seen them |
 | `schema_cache_misses` | INTEGER, default `0` | no | How many times PostgREST's schema cache did not know the table or a column yet |
 | `send_unconfirmed` | INTEGER, default `0` | no | Whether a send may have reached the server without its answer arriving |
+| `base_version` | TEXT | yes | The version of the row an UPDATE or DELETE targets, as the device last saw it; `NULL` when the write replays unchecked |
+| `base_json` | TEXT | yes | That row's columns the write sets, and its version, as JSON text; `NULL` with `base_version` |
 
 
 The library's own records (the rejected list, whose cache it is, and each cached list's query
@@ -106,7 +108,8 @@ overlaid.
 
 ## Schema versions
 
-0.1.0 ships schema version 1. A later schema change is a new version with a migration that keeps
-the queued writes, and a minor release of the library. Going back to an older version of the
+0.1.0 ships schema version 1. Version 2 adds `base_version` and `base_json` to `mutation_cache`,
+with a migration that keeps every queued write. Each later schema change is a new version with a
+migration that keeps the queued writes, and a minor release of the library. Going back to an older version of the
 library across a schema version is not supported, and loses the writes queued since. See
 [Compatibility](../project/compatibility.md).
