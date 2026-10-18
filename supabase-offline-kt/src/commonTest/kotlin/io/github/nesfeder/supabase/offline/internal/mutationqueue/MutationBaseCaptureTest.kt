@@ -4,8 +4,8 @@ package io.github.nesfeder.supabase.offline.internal.mutationqueue
 
 import io.github.nesfeder.supabase.offline.internal.db.MutationRow
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
-import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.FIRST_VERSION
+import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.GUARDED_TABLE
 import io.github.nesfeder.supabase.offline.testdoubles.MOVED_VERSION
 import io.github.nesfeder.supabase.offline.testdoubles.cacheRows
@@ -54,7 +54,11 @@ class MutationBaseCaptureTest {
             )
 
             // When
-            store.mutationQueue.enqueueUpdate(GUARDED_TABLE, body("""{"title":"mine"}"""), rowWithId(1))
+            store.mutationQueue.enqueueUpdate(
+                GUARDED_TABLE,
+                body("""{"title":"mine"}"""),
+                rowWithId(1),
+            )
 
             // Then — the newest copy that has a version, its written columns and the version
             val queued = queued()
@@ -126,7 +130,9 @@ class MutationBaseCaptureTest {
         composite.mutationQueue.enqueueUpdate(
             GUARDED_TABLE,
             body("""{"role":"editor"}"""),
-            FilterDescriptor(conditions = listOf(FilterDescriptor.Condition("list_id", "eq", "l-1"))),
+            FilterDescriptor(
+                conditions = listOf(FilterDescriptor.Condition("list_id", "eq", "l-1"))
+            ),
         )
 
         // Then

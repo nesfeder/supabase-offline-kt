@@ -43,9 +43,7 @@ class GuardedReplayOutcomesTest {
     private val server =
         FakeRelationalPostgrestServer(
             versionColumns =
-                mapOf(
-                    GUARDED_TABLE to FakeRelationalPostgrestServer.VersionColumn(VERSION_COLUMN)
-                )
+                mapOf(GUARDED_TABLE to FakeRelationalPostgrestServer.VersionColumn(VERSION_COLUMN))
         )
     private val policy = RecordingConflictPolicy()
 
@@ -97,7 +95,10 @@ class GuardedReplayOutcomesTest {
         val moved = assertIs<ConflictCase.Moved>(policy.cases.single())
         assertEquals(emptySet(), moved.changedOnServer)
         val onServer = server.rows(GUARDED_TABLE).single()
-        assertEquals(JsonPrimitive("mine") to JsonPrimitive(true), onServer["title"] to onServer["done"])
+        assertEquals(
+            JsonPrimitive("mine") to JsonPrimitive(true),
+            onServer["title"] to onServer["done"],
+        )
     }
 
     @Test
@@ -163,7 +164,10 @@ class GuardedReplayOutcomesTest {
 
         // Then
         val rejected = report.rejected.single()
-        assertEquals("The row cannot be changed under the server's current policies", rejected.message)
+        assertEquals(
+            "The row cannot be changed under the server's current policies",
+            rejected.message,
+        )
         assertNull(rejected.serverError)
         assertEquals(emptyList(), policy.cases)
         assertEquals(JsonPrimitive("theirs"), server.rows(GUARDED_TABLE).single()["title"])
@@ -199,7 +203,10 @@ class GuardedReplayOutcomesTest {
         var moves = 0
         policy.answer = { case ->
             moves++
-            server.replaceRow(GUARDED_TABLE, taskRow(1, "move $moves", version = server.nextVersion(GUARDED_TABLE).content))
+            server.replaceRow(
+                GUARDED_TABLE,
+                taskRow(1, "move $moves", version = server.nextVersion(GUARDED_TABLE).content),
+            )
             DefaultConflictPolicy.decide(case)
         }
 
@@ -210,9 +217,15 @@ class GuardedReplayOutcomesTest {
         assertEquals(3, server.requests.count { it.method == "PATCH" && it.query["id"] == "eq.1" })
         val parked = report.conflicted.single()
         assertEquals(1L, parked.id)
-        assertEquals("The row kept changing on the server while this write was replayed", parked.message)
+        assertEquals(
+            "The row kept changing on the server while this write was replayed",
+            parked.message,
+        )
         assertEquals(1, report.syncedCount)
-        assertEquals(JsonPrimitive("second"), server.rows(GUARDED_TABLE).first { it["id"] == JsonPrimitive(2) }["title"])
+        assertEquals(
+            JsonPrimitive("second"),
+            server.rows(GUARDED_TABLE).first { it["id"] == JsonPrimitive(2) }["title"],
+        )
         assertEquals(listOf(parked), store.mutationQueue.conflictedList.conflicts())
         assertEquals(0, store.pendingMutationCount())
     }
@@ -265,8 +278,11 @@ class GuardedReplayOutcomesTest {
     }
 
     private suspend fun cachedRows(): List<JsonObject> {
-        val payload = store.queryOverlay.overlaidPayloadFlow(GUARDED_TABLE, GUARDED_CACHE_KEY).first()
-        return (Json.parseToJsonElement(payload.orEmpty().ifEmpty { "[]" }) as JsonArray).map { it as JsonObject }
+        val payload =
+            store.queryOverlay.overlaidPayloadFlow(GUARDED_TABLE, GUARDED_CACHE_KEY).first()
+        return (Json.parseToJsonElement(payload.orEmpty().ifEmpty { "[]" }) as JsonArray).map {
+            it as JsonObject
+        }
     }
 
     private fun titled(title: String): JsonObject =

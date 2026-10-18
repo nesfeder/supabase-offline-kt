@@ -36,9 +36,7 @@ class BaseForwardingTest {
     private val server =
         FakeRelationalPostgrestServer(
             versionColumns =
-                mapOf(
-                    GUARDED_TABLE to FakeRelationalPostgrestServer.VersionColumn(VERSION_COLUMN)
-                )
+                mapOf(GUARDED_TABLE to FakeRelationalPostgrestServer.VersionColumn(VERSION_COLUMN))
         )
 
     @Test
@@ -74,7 +72,8 @@ class BaseForwardingTest {
         val mutationDao = FakeMutationDao()
         val store = newGuardedStore(mutationDao = mutationDao)
         store.cacheRows(taskRow(1, "theirs"), taskRow(2, "other"))
-        val sent = store.mutationQueue.enqueueUpdate(GUARDED_TABLE, column("title", "a"), rowWithId(1))
+        val sent =
+            store.mutationQueue.enqueueUpdate(GUARDED_TABLE, column("title", "a"), rowWithId(1))
         store.mutationQueue.enqueueUpdate(GUARDED_TABLE, column("title", "b"), rowWithId(1))
         store.mutationQueue.enqueueUpdate(GUARDED_TABLE, column("title", "c"), rowWithId(2))
 
@@ -123,7 +122,10 @@ class BaseForwardingTest {
         server.recorder.requests.clear()
         val report = client.syncPendingMutations()
         assertEquals(1, report.syncedCount)
-        assertEquals("eq.$FIRST_VERSION", server.requests.first { it.method == "PATCH" }.query[VERSION_COLUMN])
+        assertEquals(
+            "eq.$FIRST_VERSION",
+            server.requests.first { it.method == "PATCH" }.query[VERSION_COLUMN],
+        )
         client.close()
     }
 

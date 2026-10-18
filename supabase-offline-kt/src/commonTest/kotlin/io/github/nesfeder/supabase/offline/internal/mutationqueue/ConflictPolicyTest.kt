@@ -39,9 +39,7 @@ class ConflictPolicyTest {
     private val server =
         FakeRelationalPostgrestServer(
             versionColumns =
-                mapOf(
-                    GUARDED_TABLE to FakeRelationalPostgrestServer.VersionColumn(VERSION_COLUMN)
-                )
+                mapOf(GUARDED_TABLE to FakeRelationalPostgrestServer.VersionColumn(VERSION_COLUMN))
         )
     private val logs = RecordingLogSink()
     private val policy = RecordingConflictPolicy()

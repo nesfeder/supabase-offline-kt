@@ -37,7 +37,9 @@ class GuardedReplayRequestTest {
             store.mutationQueue.enqueueUpdate(GUARDED_TABLE, body, rowWithId(1))
             val server =
                 RecordingPostgrestServer(
-                    answer = { okJson(JsonArray(listOf(taskRow(1, "mine", version = NEXT))).toString()) }
+                    answer = {
+                        okJson(JsonArray(listOf(taskRow(1, "mine", version = NEXT))).toString())
+                    }
                 )
 
             // When
@@ -70,7 +72,9 @@ class GuardedReplayRequestTest {
         store.mutationQueue.enqueueDelete(GUARDED_TABLE, rowWithId(1))
         val server =
             RecordingPostgrestServer(
-                answer = { okJson(JsonArray(listOf(taskRow(1, "theirs", version = BASE))).toString()) }
+                answer = {
+                    okJson(JsonArray(listOf(taskRow(1, "theirs", version = BASE))).toString())
+                }
             )
 
         // When

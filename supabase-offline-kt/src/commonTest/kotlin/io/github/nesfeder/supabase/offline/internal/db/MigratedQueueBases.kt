@@ -11,7 +11,11 @@ package io.github.nesfeder.supabase.offline.internal.db
 internal suspend fun OfflineDatabase.basesBeforeAndAfterOneIsWritten(): Pair<RowBases, RowBases> {
     val dao = mutationDao()
     val before = dao.allRowsById().associate { row -> row.id to (row.baseVersion to row.baseJson) }
-    dao.updateBase(id = UPDATE_ID, baseVersion = MIGRATED_BASE_VERSION, baseJson = MIGRATED_BASE_JSON)
+    dao.updateBase(
+        id = UPDATE_ID,
+        baseVersion = MIGRATED_BASE_VERSION,
+        baseJson = MIGRATED_BASE_JSON,
+    )
     val after = dao.allRowsById().associate { row -> row.id to (row.baseVersion to row.baseJson) }
     return before to after
 }
