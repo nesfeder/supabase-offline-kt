@@ -65,8 +65,13 @@ internal data class RejectedMutation(
  * @property remainingCount The current identity's writes still pending once the pass ended, within
  *   its scope (one table or every table). When the identity could not be told, every pending write.
  * @property stop Why the pass ended before the queue was empty, or `null` when it ran to the end.
- * @property alreadyOnServerCount Of [syncedCount], the INSERTs whose rows the server already held:
- *   an earlier send whose answer was lost had arrived.
+ * @property alreadyOnServerCount Of [syncedCount], the writes the server already held: an earlier
+ *   send whose answer was lost had arrived.
+ * @property conflictsResolvedCount Of [syncedCount], the guarded writes whose row moved on the
+ *   server, settled by the conflict policy and sent again.
+ * @property conflictsKeptServerCount Guarded writes dropped because the policy let the server's row
+ *   stand.
+ * @property conflicted Guarded writes parked in this pass, now on the conflicted list.
  */
 internal data class SyncReport(
     val syncedCount: Int,
@@ -74,6 +79,9 @@ internal data class SyncReport(
     val remainingCount: Int,
     val stop: SyncStop?,
     val alreadyOnServerCount: Int = 0,
+    val conflictsResolvedCount: Int = 0,
+    val conflictsKeptServerCount: Int = 0,
+    val conflicted: List<StoredConflict> = emptyList(),
 ) {
     /** This report and [later]'s, as one: counts summed, what remains and why from [later]. */
     fun followedBy(later: SyncReport): SyncReport =
@@ -83,6 +91,9 @@ internal data class SyncReport(
             remainingCount = later.remainingCount,
             stop = later.stop,
             alreadyOnServerCount = alreadyOnServerCount + later.alreadyOnServerCount,
+            conflictsResolvedCount = conflictsResolvedCount + later.conflictsResolvedCount,
+            conflictsKeptServerCount = conflictsKeptServerCount + later.conflictsKeptServerCount,
+            conflicted = conflicted + later.conflicted,
         )
 }
 

@@ -100,15 +100,23 @@ private fun rowKeysOf(
     if (fromBody.isNotEmpty()) return fromBody
 
     val filter = decodeFilterOrNull(filterJson, json) ?: return emptyList()
-    if (filter.mode != FilterDescriptor.Mode.AND) return emptyList()
+    return listOfNotNull(pinnedRowKeyOf(filter, keyColumns))
+}
+
+/**
+ * The one row key [filter] pins: each of [keyColumns] by exactly one `eq` condition of an AND
+ * filter, as text. `null` when it pins none.
+ */
+internal fun pinnedRowKeyOf(filter: FilterDescriptor, keyColumns: List<String>): JsonObject? {
+    if (filter.mode != FilterDescriptor.Mode.AND || keyColumns.isEmpty()) return null
     val keyValues = keyColumns.associateWith { column ->
         val condition =
             filter.conditions.singleOrNull { condition ->
                 condition.column == column && condition.operatorId == EQ_OPERATOR
-            } ?: return emptyList()
+            } ?: return null
         JsonPrimitive(condition.value)
     }
-    return listOf(JsonObject(keyValues))
+    return JsonObject(keyValues)
 }
 
 private const val EQ_OPERATOR = "eq"

@@ -46,12 +46,14 @@ import io.github.nesfeder.supabase.offline.internal.mutationqueue.AutomaticRepla
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.DefaultPrimaryKeys
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueue
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueueReplayer
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.NoVersionColumns
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.PrimaryKeys
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentity
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentityReader
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.RejectedMutation as EngineRejectedMutation
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.SyncReport as EngineSyncReport
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.SyncStop
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.VersionColumns
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.currentReplayIdentity
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.replayIdentityFor
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.syncFailureOf
@@ -178,6 +180,8 @@ internal class OfflineClient(
     private val onStillClosing: (callsInFlight: () -> Int) -> Unit = {},
     /** Each table's primary-key columns; `id` for every table unless the app says otherwise. */
     private val primaryKeys: PrimaryKeys = DefaultPrimaryKeys,
+    /** Each table's version column, which guards a queued UPDATE's or DELETE's replay; none. */
+    versionColumns: VersionColumns = NoVersionColumns,
     /** Which read responses may replace what the cache holds; see [ResponseTrustPolicy]. */
     private val responseTrust: ResponseTrustPolicy = ResponseTrustPolicy.SETTLED_SESSION,
     /** The configuration the client was opened with, as [Offline.config] reports it. */
@@ -315,6 +319,7 @@ internal class OfflineClient(
                 liveQueries.requestRefresh(table, cacheKeys)
             },
             onCacheNotServed = { cacheOwnerChecks.tryEmit(Unit) },
+            versionColumns = versionColumns,
         )
 
     /*
@@ -392,6 +397,7 @@ internal class OfflineClient(
             networkAccess = networkAccess,
             primaryKeys = primaryKeys,
             passEnded = { _, report -> recordPassEnded(report) },
+            cachePatcher = cachePatcher,
         )
 
     /**

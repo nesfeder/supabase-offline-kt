@@ -603,6 +603,12 @@ public interface Offline : SupabasePlugin<Offline.Config> {
          */
         public var logLevel: LogLevel? = null
 
+        /**
+         * Each table's version column, keyed as [primaryKeys] is; none by default. A test names
+         * them here until the public setting exists.
+         */
+        internal val versionColumnSettings: MutableMap<String, String> = mutableMapOf()
+
         /** Opens the plugin's local data: the platform's database, unless a test replaces it. */
         internal var openLocalData: (SupabaseClient, Config) -> OfflineClient = ::openPlatformClient
 

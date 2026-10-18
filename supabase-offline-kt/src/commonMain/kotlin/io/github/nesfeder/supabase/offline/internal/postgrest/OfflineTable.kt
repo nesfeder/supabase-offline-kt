@@ -662,7 +662,11 @@ internal class OfflineTable(
                             try {
                                 direct.overlay(result)
                             } finally {
-                                mutationQueue.completeSentMutation(queued.id)
+                                // Rows it returned are the base of later guarded writes to them
+                                val returned =
+                                    if (mutationQueue.versionColumns.of(table) == null) emptyList()
+                                    else returnedRowsOf(json, result.data)
+                                mutationQueue.completeSentMutation(queued.id, table, returned)
                             }
                         }
                     }

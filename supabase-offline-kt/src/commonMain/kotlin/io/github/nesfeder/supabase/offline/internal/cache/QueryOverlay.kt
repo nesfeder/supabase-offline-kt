@@ -520,6 +520,26 @@ internal class QueryOverlay(
     }
 
     /**
+     * The newest cached row of [table] with [key] (as [keyOf] gives it) that holds [column], from
+     * the payloads newest fetch first. `null` when none does, the cache is not the current
+     * identity's, or the table is too large for its key index.
+     */
+    suspend fun cachedRowHolding(table: String, key: List<String>, column: String): JsonObject? {
+        if (isReservedTable(table) || !ownership.cacheServesCurrentIdentity()) return null
+        val keyColumns = primaryKeys.of(table)
+        val index = tableKeyIndexOf(table, keyColumns) ?: return null
+        for (holder in index.holders[key].orEmpty()) {
+            val row = queryCacheDao.get(table, holder.cacheKey) ?: continue
+            val payload = queryCache.parsedPayloadOf(row)
+            // The index may predate a write to this payload: the row must still be the key's
+            if (payload.keysFor(keyColumns).getOrNull(holder.position) != key) continue
+            val candidate = payload.rows?.getOrNull(holder.position) as? JsonObject ?: continue
+            if (column in candidate) return candidate
+        }
+        return null
+    }
+
+    /**
      * [table]'s cached rows by key, as last read, or read now when a payload of the table was
      * written since; `null` when the table holds more rows than [MAX_KEY_INDEXED_ROWS]. Kept only
      * when no payload write landed while it was read.
