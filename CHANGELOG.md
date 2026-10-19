@@ -79,6 +79,16 @@ All notable changes to this project are recorded in this file. The format follow
   `ConflictStagingTest` shows how to stage a row moved on the server between enqueue and replay
   with a Ktor `MockEngine` alone: answer the guarded write with `[]` and the read by key with the
   moved row.
+- Swift: `Config.versionColumns` and `Config.conflictResolver`, an `async throws` closure from a
+  `MutationConflict` to a `ConflictResolution` (`keepLocal`, `keepServer`, `apply(columns:)`,
+  `hold`), with a `Config` initializer that takes them beside the existing ones;
+  `conflictedMutations()`, a `ConflictedMutationSequence` of `ConflictedMutation`, with
+  `resolveConflictedMutation(id:resolution:)` and `dismissConflictedMutation(id:)`; and
+  `SyncReport.conflictsResolvedCount`, `conflictsKeptServerCount` and `conflicted`,
+  `SyncStatus.conflictedMutationCount` and `PendingMutation.baseVersion`. The resolver runs in a
+  task of its own, off the caller's actor; a throw holds the write. `mutationConflict(…)`,
+  `conflictedMutation(…)` and overloads of `pendingMutation`, `syncReport` and `syncStatus` in
+  `SupabaseOfflineTesting` build the new values.
 
 ### Changed
 
