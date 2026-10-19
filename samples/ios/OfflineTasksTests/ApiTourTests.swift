@@ -354,6 +354,19 @@ struct ApiTourTests {
         try await test.stop()
     }
 
+    @Test("A pull to refresh made while a failed read is still starting to wait is not missed", .timeLimit(.minutes(1)))
+    func readAgainRequestBeforeTheWait() async {
+        // Given: a read that failed, having seen no request yet
+        let requests = ReadAgainRequests()
+        let seen = requests.sent
+
+        // When: the user pulls to refresh before the read waits
+        requests.send()
+
+        // Then: the wait returns at once
+        await requests.next(after: seen)
+    }
+
     @Test("Offline, pull to refresh answers from the device and says how old the list is")
     func pullToRefreshOffline() async throws {
         // Given: the list read online, then three minutes on the client's clock, offline
