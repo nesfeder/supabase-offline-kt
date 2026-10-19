@@ -112,6 +112,7 @@ class MutationIdAndSyncReportTest {
                     createdAt = Instant.fromEpochMilliseconds(7_000L),
                     rowKeys = listOf(key("a")),
                     body = rows("""[{"id":"a","title":"x"},{"title":"no key"}]"""),
+                    baseVersion = null,
                 ),
                 PendingMutation(
                     id = updateId,
@@ -120,6 +121,7 @@ class MutationIdAndSyncReportTest {
                     createdAt = Instant.fromEpochMilliseconds(7_000L),
                     rowKeys = listOf(key("b")),
                     body = Json.parseToJsonElement("""{"done":true}"""),
+                    baseVersion = null,
                 ),
             ),
             pending,

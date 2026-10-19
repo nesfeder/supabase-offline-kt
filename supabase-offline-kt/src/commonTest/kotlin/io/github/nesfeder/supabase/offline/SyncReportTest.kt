@@ -305,9 +305,11 @@ class SyncReportTest {
         // When
         val report = client.syncPendingMutations()
 
-        // Then — resent and applied: one synced write, and nothing left
+        // Then — resent and applied: one synced write, settled as a conflict, and nothing left
         assertEquals(1 to 0, report.syncedCount to report.remainingCount)
         assertEquals(emptyList(), report.rejected)
+        assertEquals(1 to 0, report.conflictsResolvedCount to report.conflictsKeptServerCount)
+        assertEquals(emptyList(), report.conflicted)
         client.close()
     }
 

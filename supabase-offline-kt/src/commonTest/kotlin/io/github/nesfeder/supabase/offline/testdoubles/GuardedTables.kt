@@ -2,10 +2,18 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.testdoubles
 
+import io.github.jan.supabase.SupabaseClient
+import io.github.nesfeder.supabase.offline.ConflictResolver
+import io.github.nesfeder.supabase.offline.MutationOutcome
+import io.github.nesfeder.supabase.offline.Offline
+import io.github.nesfeder.supabase.offline.internal.OfflineClient
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.DefaultPrimaryKeys
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.PrimaryKeys
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.VersionColumns
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.serialization.json.JsonArray
@@ -91,3 +99,69 @@ internal suspend fun TestStore.cacheRows(
 
 /** [row]'s [VERSION_COLUMN], as text. */
 internal fun versionOf(row: JsonObject): String? = (row[VERSION_COLUMN] as? JsonPrimitive)?.content
+
+/** A relational server that stamps [VERSION_COLUMN] on every update of [GUARDED_TABLE]. */
+internal fun newGuardedServer(
+    kind: FakeRelationalPostgrestServer.VersionKind =
+        FakeRelationalPostgrestServer.VersionKind.TIMESTAMP
+): FakeRelationalPostgrestServer =
+    FakeRelationalPostgrestServer(
+        versionColumns =
+            mapOf(
+                GUARDED_TABLE to FakeRelationalPostgrestServer.VersionColumn(VERSION_COLUMN, kind)
+            )
+    )
+
+/**
+ * A client of [server] whose [GUARDED_TABLE] is guarded by [VERSION_COLUMN], as an app configures
+ * it, with [resolver] as its conflict resolver, and background work idle so only the test's calls
+ * run.
+ */
+internal fun newGuardedClient(
+    server: FakeRelationalPostgrestServer,
+    resolver: ConflictResolver? = null,
+    conflictPolicyTimeout: Duration = 30.seconds,
+    supabase: SupabaseClient = server.supabaseClient(),
+): OfflineClient =
+    newTestOfflineClient(
+        supabase = supabase,
+        config =
+            Offline.createConfig {
+                versionColumn(GUARDED_TABLE, VERSION_COLUMN)
+                conflictResolver = resolver
+            },
+        coordinatorScope = idleCoroutineScope(),
+        closeWait = 100.milliseconds,
+        conflictPolicyTimeout = conflictPolicyTimeout,
+    )
+
+/**
+ * Reads [GUARDED_TABLE] into the cache from [server], then makes [write] while [server] cannot be
+ * reached, so it is queued with the row's version as its base.
+ *
+ * @return The queued write's id.
+ */
+internal suspend fun Offline.queueWhileOffline(
+    server: FakeRelationalPostgrestServer,
+    write: suspend Offline.() -> MutationOutcome,
+): Long {
+    from(GUARDED_TABLE).select()
+    server.failsRequest = { true }
+    val outcome =
+        try {
+            write()
+        } finally {
+            server.failsRequest = null
+        }
+    return (outcome as MutationOutcome.Queued).pendingMutation.id
+}
+
+/** Renames [GUARDED_TABLE]'s row [id] to [title]. */
+internal suspend fun Offline.renameTask(id: Int, title: String): MutationOutcome =
+    from(GUARDED_TABLE).update(buildJsonObject { put("title", title) }) {
+        filter { eq("id", id) }
+    }
+
+/** Deletes [GUARDED_TABLE]'s row [id]. */
+internal suspend fun Offline.deleteTask(id: Int): MutationOutcome =
+    from(GUARDED_TABLE).delete { filter { eq("id", id) } }
