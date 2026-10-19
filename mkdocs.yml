@@ -127,7 +127,8 @@ markdown_extensions:
       # The repository root, for the root files; then the two samples' source roots, so a page
       # names a section as `--8<-- "data/supabase/OfflineTaskRepository.kt:first-write"` or
       # `--8<-- "Data/TaskRepository.swift:first-write"`, the same name on both for the same
-      # step; then the library's compiled listings (`--8<-- "GettingStartedExamples.kt:before"`).
+      # step; then the library's compiled listings (`--8<-- "GettingStartedExamples.kt:before"`)
+      # and the testing artifact's tests (`--8<-- "ConflictStagingTest.kt:stage-conflict"`).
       base_path:
         - "."
         - samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks
@@ -135,6 +136,7 @@ markdown_extensions:
         - samples/ios/OfflineTasks
         - samples/ios/OfflineTasksTests
         - supabase-offline-kt/src/androidHostTest/kotlin/io/github/nesfeder/supabase/offline/docs
+        - supabase-offline-kt-testing/src/commonTest/kotlin/io/github/nesfeder/supabase/offline/testing
       check_paths: true
       # A sample's lines are indented as its function body is; the page shows them unindented.
       dedent_subsections: true

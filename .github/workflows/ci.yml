@@ -178,10 +178,11 @@ jobs:
               # Every other Markdown file: the docs job builds the site and checks its listings.
               docs/* | mkdocs.yml | *.md | samples/supabase/*)
                 docs=true ;;
-              # The code the site shows: the sample apps' sources and the library's compiled listings.
-              # The build jobs compile them; the docs build includes their sections, and fails when
-              # a section a page names is renamed or gone.
+              # The code the site shows: the sample apps' sources, the library's compiled listings
+              # and the testing artifact's tests. The build jobs compile them; the docs build
+              # includes their sections, and fails when a section a page names is renamed or gone.
               supabase-offline-kt/src/androidHostTest/kotlin/io/github/nesfeder/supabase/offline/docs/* \
+                | supabase-offline-kt-testing/src/commonTest/* \
                 | samples/android/src/* | samples/ios/OfflineTasks/* | samples/ios/OfflineTasksTests/*)
                 kotlin=true; docs=true ;;
               # The build itself: the docs job builds the Kotlin API reference with it (the Dokka

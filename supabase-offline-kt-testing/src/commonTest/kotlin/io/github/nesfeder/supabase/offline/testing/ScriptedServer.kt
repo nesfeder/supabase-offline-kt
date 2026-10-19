@@ -11,6 +11,7 @@ import io.github.nesfeder.supabase.offline.Offline
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.MockRequestHandleScope
 import io.ktor.client.engine.mock.respond
+import io.ktor.client.request.HttpRequestData
 import io.ktor.client.request.HttpResponseData
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
@@ -21,15 +22,19 @@ import kotlinx.io.IOException
 
 /**
  * A server for one test, scripted through a Ktor `MockEngine`: PostgREST answers every read with
- * [rows] and every write with an empty list, and Storage serves [objectBytes] for every object.
+ * [rows] and every write with [writtenRows], and Storage serves [objectBytes] for every object.
  * While [online] is `false`, every request fails at the transport.
  */
 class ScriptedServer(
     private val rows: String = """[{"id":1,"title":"Buy milk"}]""",
     private val objectBytes: ByteArray = "a photo".encodeToByteArray(),
+    private val writtenRows: String = "[]",
 ) {
     /** Flipped by a test to take the server offline. */
     var online: Boolean = true
+
+    /** Every PostgREST write that reached the server, in order. */
+    val writes: MutableList<HttpRequestData> = mutableListOf()
 
     /**
      * A client of this server with PostgREST, Storage and the offline plugin installed, the plugin
@@ -53,8 +58,11 @@ class ScriptedServer(
                                     ContentType.Application.OctetStream.toString(),
                                 ),
                         )
-                    request.method == HttpMethod.Get -> respondJson(rows, HttpStatusCode.OK)
-                    else -> respondJson("[]", HttpStatusCode.Created)
+                    request.method == HttpMethod.Get -> respondJson(rows)
+                    else -> {
+                        writes += request
+                        respondJson(writtenRows, HttpStatusCode.Created)
+                    }
                 }
             }
             install(Postgrest) { maxRetries = 0 }
@@ -65,9 +73,9 @@ class ScriptedServer(
 }
 
 /** A JSON response of [body] with [status]. */
-private fun MockRequestHandleScope.respondJson(
+internal fun MockRequestHandleScope.respondJson(
     body: String,
-    status: HttpStatusCode,
+    status: HttpStatusCode = HttpStatusCode.OK,
 ): HttpResponseData =
     respond(
         content = body,
