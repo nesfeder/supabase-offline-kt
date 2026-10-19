@@ -149,6 +149,22 @@ final class TestApp {
         return try #require(app.tasks.tasks?.first { $0.title == title })
     }
 
+    /// The task titled `title` once the server holds it: listed on the device, and its write, which
+    /// the queue sends on its own, arrived. A change staged on the server for the task needs that.
+    func savedTask(titled title: String) async throws -> TaskItem {
+        let task = try await task(titled: title)
+        let server = server
+        try await eventually("“\(title)” is on the server") {
+            await server.rows(of: Tables.tasks).contains { $0["id"] == .string(task.id) }
+        }
+        return task
+    }
+
+    /// How many times the task list has been read from the server: its `GET`s, not the writes to it.
+    func taskListReads() async -> Int {
+        await server.requests.filter { $0.method == "GET" && $0.path == "/rest/v1/\(Tables.tasks)" }.count
+    }
+
     /// The requests the server has had that change something: every method but `GET` and `HEAD`.
     func writeRequests() async -> [DemoServer.RecordedRequest] {
         await server.requests.filter { $0.method != "GET" && $0.method != "HEAD" }
