@@ -178,7 +178,10 @@ final class TasksModel {
     /// (back online, or Simulate offline switched off), or the user pulled to refresh. A server's
     /// own error does not pass by itself.
     private func untilWorthReadingAgain() async {
+        // Both read before the first suspension: a pull to refresh made while the waits below are
+        // still starting counts too.
         let network = repository.syncStatus.value.network
+        let requestsSeen = readAgainRequests.sent
         let statuses = repository.syncStatus
         let requests = readAgainRequests
         await withTaskGroup(of: Void.self) { group in
@@ -189,7 +192,7 @@ final class TasksModel {
                     // The status ends only when the client closes; nothing to read again then.
                 }
             }
-            group.addTask { await requests.next() }
+            group.addTask { await requests.next(after: requestsSeen) }
             await group.next()
             group.cancelAll()
         }
@@ -327,11 +330,16 @@ final class TasksModel {
 /// waiting when one is sent.
 final class ReadAgainRequests {
 
+    /// How many requests have been sent.
+    private(set) var sent = 0
+
     /// The reads waiting, by an id each.
     private var listeners: [UUID: AsyncStream<Void>.Continuation] = [:]
 
-    /// Returns at the next request, or when the calling task is canceled.
-    func next() async {
+    /// Returns at the first request after the `seen`-th, at once when it was sent already, or when
+    /// the calling task is canceled.
+    func next(after seen: Int) async {
+        guard sent == seen else { return }
         let id = UUID()
         let (stream, continuation) = AsyncStream<Void>.makeStream()
         continuation.onTermination = { _ in Task { @MainActor in self.listeners[id] = nil } }
@@ -341,6 +349,7 @@ final class ReadAgainRequests {
 
     /// Starts every read waiting now.
     func send() {
+        sent += 1
         listeners.values.forEach { $0.yield() }
     }
 }

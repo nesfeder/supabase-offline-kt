@@ -296,6 +296,31 @@ class TasksViewModelTest {
     }
 
     @Test
+    fun a_pull_to_refresh_as_soon_as_a_read_fails_starts_it_again() = runTest {
+        // Given — the screen up, its list read failing once it has loaded
+        val inMemory = repositoryFixture(seedSampleTasks = true).repository
+        val failure = IllegalStateException("A row the app cannot read")
+        val repository = FailingReadsTaskRepository(inMemory, failure)
+        val viewModel = tasksViewModel(repository)
+        backgroundScope.launch { viewModel.uiState.collect {} } // the screen stays up throughout
+        viewModel.loaded()
+        assertEquals(failure, failures.reported.first())
+
+        // When — reads work again, and the user pulls to refresh the moment the failure is told,
+        // before the read has started waiting
+        repository.failing.value = false
+        viewModel.refresh()
+        inMemory.addTask("Made after the failure", notes = null)
+
+        // Then — the list was read again, and keeps following the device's copy
+        withTimeout(30.seconds) {
+            viewModel.loaded { state ->
+                state.openTasks.any { it.title == "Made after the failure" }
+            }
+        }
+    }
+
+    @Test
     fun a_failing_read_is_a_message_and_the_list_stays() = runTest {
         // Given — the list loads, then its read fails
         val failure = IllegalStateException("A row the app cannot read")
