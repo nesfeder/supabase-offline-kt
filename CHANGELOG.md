@@ -9,7 +9,7 @@ All notable changes to this project are recorded in this file. The format follow
      the heading it needs (before the first release, under any of them). A release renames
      "Unreleased" to its version and date, and starts a new one. -->
 
-## Unreleased
+## [0.2.0] - 2026-10-19
 
 ### Breaking
 
@@ -99,12 +99,6 @@ All notable changes to this project are recorded in this file. The format follow
   queue, with a migration that keeps every queued write; a write queued before the upgrade replays
   unchecked, as it would have. Going back to 0.1.0 across it is not supported, and loses the writes
   queued since.
-
-### Deprecated
-
-### Removed
-
-### Fixed
 
 ## [0.1.0] - 2026-10-12
 
