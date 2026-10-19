@@ -84,6 +84,7 @@ struct WordingTests {
         #expect(
             Wording.syncReport(report)
                 == "Sent 3 · refused 1 · still waiting 2 · already on the server 1 · held behind other tables 2"
+                    + " · conflicts settled 0 · kept the server’s 0 · held for you 0"
         )
     }
 

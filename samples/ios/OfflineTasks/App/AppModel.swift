@@ -79,15 +79,15 @@ final class AppModel {
     /// The ids of the refused writes already announced.
     @ObservationIgnored private var announcedRejections: Set<Int64>?
 
-    /// The app over `repository`, running as `mode`.
-    init(mode: LaunchMode, repository: TaskRepository) {
+    /// The app over `repository`, running as `mode`, with demo mode's stand-in `demoServer`.
+    init(mode: LaunchMode, repository: TaskRepository, demoServer: DemoServer? = nil) {
         self.mode = mode
         self.repository = repository
         syncStatus = repository.syncStatus.value
         let failures = FailureSink()
         failureSink = failures
         tasks = TasksModel(repository: repository, failures: failures)
-        sync = SyncModel(repository: repository, failures: failures)
+        sync = SyncModel(repository: repository, failures: failures, demoServer: demoServer)
         photos = PhotosModel(repository: repository, failures: failures)
         photoUploader = PendingPhotoUploader(repository: repository, failures: failures)
         failures.model = self
@@ -109,11 +109,11 @@ final class AppModel {
         syncStatus.network == .disabled
     }
 
-    /// The Sync tab's badge: the writes waiting and the ones refused. At launch, before the
-    /// client's first status, the count read once.
+    /// The Sync tab's badge: the writes waiting, the ones refused and the ones parked on a
+    /// conflict. At launch, before the client's first status, the count read once.
     var syncBadge: Int {
         guard hasStatus else { return pendingAtLaunch ?? 0 }
-        return syncStatus.pendingMutationCount + syncStatus.rejectedMutationCount
+        return syncStatus.pendingMutationCount + syncStatus.rejectedMutationCount + syncStatus.conflictedMutationCount
     }
 
     /// The read strategy of the task list, as Settings → Prefer fresh data says.
@@ -407,7 +407,7 @@ extension AppModel {
             photoBytes: .bucketDownload,
             pendingPhotos: PendingPhotoQueue(folder: pendingPhotoFolder)
         )
-        return AppModel(mode: mode, repository: repository)
+        return AppModel(mode: mode, repository: repository, demoServer: server)
     }
 }
 

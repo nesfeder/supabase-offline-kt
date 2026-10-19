@@ -288,6 +288,19 @@ interface TaskRepository {
     suspend fun retryRejectedMutation(id: Long)
 
     /**
+     * The writes parked because their row changed on the server meanwhile, newest first, until the
+     * user keeps one side.
+     */
+    fun conflictedMutations(): Flow<List<ConflictedTaskMutation>>
+
+    /**
+     * Settles a parked write: [ConflictChoice.KeepMine] queues it again against the server's row as
+     * it is now, and a replay sends it; [ConflictChoice.KeepTheirs] drops it. Either way it leaves
+     * [conflictedMutations].
+     */
+    suspend fun resolveConflictedMutation(id: Long, choice: ConflictChoice)
+
+    /**
      * Replays the mutation queue now, in order; returns at once when the server is out of reach.
      */
     suspend fun syncPendingMutations(): TaskSyncReport

@@ -9,6 +9,8 @@ data class AppSyncStatus(
     val network: AppNetworkStatus,
     val pendingMutationCount: Int,
     val rejectedMutationCount: Int,
+    /** Writes parked because their row moved on the server, until the user settles them. */
+    val conflictedMutationCount: Int = 0,
     /** True while a replay of the mutation queue is running. */
     val isSyncing: Boolean,
     /** When a replay last finished with the queue empty; kept in memory only. */
@@ -46,6 +48,12 @@ data class TaskSyncReport(
     val alreadyOnServerCount: Int = 0,
     /** Of [remainingCount], writes held back behind an earlier write to another table. */
     val heldBehindOtherTablesCount: Int = 0,
+    /** Of [syncedCount], writes whose row had moved on the server, settled and sent again. */
+    val conflictsResolvedCount: Int = 0,
+    /** Writes whose row had moved or gone, dropped so the server's row stands. */
+    val conflictsKeptServerCount: Int = 0,
+    /** The writes parked during this replay, for the user to settle on the Sync tab. */
+    val conflicted: List<ConflictedTaskMutation> = emptyList(),
 )
 
 /** The verbs of a queued write, in PostgREST's vocabulary. */
@@ -87,6 +95,49 @@ data class RejectedTaskMutation(
     val createdAt: Instant = rejectedAt,
     val isRetryable: Boolean = true,
 )
+
+/**
+ * A queued write parked because its row changed on the server since this device last saw it, and
+ * the change touched what the write sets. The app shows it until the user keeps one side.
+ *
+ * @property id names the entry; [TaskRepository.resolveConflictedMutation] takes it.
+ * @property rowKeys the ids of the rows the write was for.
+ * @property taskTitle the title the write sets, or else the server's, so the app can say which task
+ *   it was.
+ * @property columns the columns both sides changed, with each side's value.
+ * @property changedOnServer every column the write sets that the server changed meanwhile.
+ * @property createdAt when the write was made, on this device.
+ * @property conflictedAt when it was parked.
+ * @property canKeepMine false when this device's change can no longer be sent: the row is gone from
+ *   the server, or the write was too long to keep in full.
+ */
+data class ConflictedTaskMutation(
+    val id: Long,
+    val table: String,
+    val operation: TaskMutationOperation,
+    val rowKeys: List<String>,
+    val taskTitle: String?,
+    val columns: List<ColumnConflict>,
+    val changedOnServer: Set<String>,
+    val createdAt: Instant,
+    val conflictedAt: Instant,
+    val canKeepMine: Boolean = true,
+)
+
+/**
+ * One column both the server and this device changed, with each side's value as text; null where
+ * that side holds SQL null.
+ */
+data class ColumnConflict(val column: String, val theirs: String?, val mine: String?)
+
+/** How the user settles a conflicting change. */
+enum class ConflictChoice {
+    /** Send this device's change again, over the server's row as it is now. */
+    KeepMine,
+
+    /** Drop this device's change: the server's row stands. */
+    KeepTheirs,
+}
 
 /**
  * One write waiting in the mutation queue, as the Sync tab lists it.

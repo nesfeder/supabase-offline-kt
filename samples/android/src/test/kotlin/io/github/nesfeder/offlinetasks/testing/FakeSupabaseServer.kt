@@ -8,6 +8,8 @@ import io.github.jan.supabase.postgrest.Postgrest
 import io.github.jan.supabase.storage.Storage
 import io.github.jan.supabase.storage.resumable.MemoryResumableCache
 import io.github.nesfeder.offlinetasks.data.Tables
+import io.github.nesfeder.offlinetasks.data.supabase.UPDATED_AT
+import io.github.nesfeder.offlinetasks.platform.holdTitleConflicts
 import io.github.nesfeder.supabase.offline.Offline
 import io.github.nesfeder.supabase.offline.testing.FakeRealtime
 import io.github.nesfeder.supabase.offline.testing.inMemory
@@ -25,6 +27,8 @@ import io.ktor.http.decodeURLPart
 import io.ktor.http.headersOf
 import java.io.IOException
 import kotlin.time.Clock
+import kotlin.time.Duration.Companion.microseconds
+import kotlin.time.Instant
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.update
@@ -55,7 +59,8 @@ private const val UPLOAD_PREFIX = "/storage/v1/object/$BUCKET/"
  * The samples' Supabase project, faked on a Ktor [MockEngine] for one test: the `tasks` and
  * `task_photos` tables with the schema's title check and a photo's foreign key to its task, and the
  * `task-photos` bucket. It answers the PostgREST and Storage requests the sample makes, and records
- * them.
+ * them. Like the schema's `moddatetime` trigger it stamps a new `updated_at` on every change, and a
+ * write's `eq` filters, the version precondition among them, pick the rows it changes.
  */
 class FakeSupabaseServer {
 
@@ -119,11 +124,15 @@ class FakeSupabaseServer {
     /** The Realtime channel's stand-in: a test reports another device's changes here. */
     val realtime: FakeRealtime = FakeRealtime()
 
+    /** The last `updated_at` stamped, so every stamp is later than the one before. */
+    private var lastStamp: Instant = Instant.DISTANT_PAST
+
     // --8<-- [start:in-memory-client]
     /**
      * A client of this server with PostgREST, Storage and the offline plugin keeping its data in
-     * memory, its Realtime tables followed through [realtime] (so no Realtime plugin); no Auth, so
-     * every request is the one anonymous identity.
+     * memory, its Realtime tables followed through [realtime] (so no Realtime plugin) and its
+     * version columns and resolver as the app sets them; no Auth, so every request is the one
+     * anonymous identity.
      */
     fun supabaseClient(): SupabaseClient =
         createSupabaseClient(
@@ -139,6 +148,9 @@ class FakeSupabaseServer {
                     table(Tables.TASKS)
                     table(Tables.TASK_PHOTOS)
                 }
+                versionColumn(Tables.TASKS, UPDATED_AT) // and their version columns
+                versionColumn(Tables.TASK_PHOTOS, UPDATED_AT)
+                conflictResolver = holdTitleConflicts
             }
         }
 
@@ -153,6 +165,23 @@ class FakeSupabaseServer {
     fun deleteRows(table: String) {
         synchronized(lock) { tables.getValue(table).clear() }
     }
+
+    // --8<-- [start:stage-server-edit]
+    /**
+     * Sets [values] on the row of [table] with [id], as another device's update would: the server
+     * stamps a new `updated_at`, and nothing reaches this client's channel. A device that queued a
+     * change to the row before this finds it moved when the change replays.
+     */
+    fun replaceRow(table: String, id: String, values: JsonObject) {
+        synchronized(lock) {
+            val rows = tables.getValue(table)
+            val index = rows.indexOfFirst { it["id"]?.jsonPrimitive?.contentOrNull == id }
+            check(index >= 0) { "No row $id in $table" }
+            rows[index] = JsonObject(rows[index] + values + (UPDATED_AT to now()))
+        }
+    }
+
+    // --8<-- [end:stage-server-edit]
 
     /** The rows of [table], as the test reads the server's copy. */
     fun rows(table: String): List<JsonObject> =
@@ -221,22 +250,21 @@ class FakeSupabaseServer {
                 val updated =
                     rows
                         .filter { it.matches(filters) }
-                        .associateWith { JsonObject(it + changes + ("updated_at" to now())) }
+                        .associateWith { JsonObject(it + changes + (UPDATED_AT to now())) }
                 updated.values
                     .firstNotNullOfOrNull { refusalOf(table, it) }
                     ?.let {
                         return it
                     }
                 rows.replaceAll { row -> updated[row] ?: row }
-                json(
-                    if (wantsRows) JsonArray(updated.values.toList()).toString() else "",
-                    HttpStatusCode.OK,
-                )
+                val written = updated.values.map { projected(it, request) }
+                json(if (wantsRows) JsonArray(written).toString() else "", HttpStatusCode.OK)
             }
             HttpMethod.Delete -> {
                 val deleted = rows.filter { it.matches(filters) }
                 rows.removeAll(deleted)
-                json(if (wantsRows) JsonArray(deleted).toString() else "", HttpStatusCode.OK)
+                val written = deleted.map { projected(it, request) }
+                json(if (wantsRows) JsonArray(written).toString() else "", HttpStatusCode.OK)
             }
             else -> error("FakeSupabaseServer has no ${request.method.value} for PostgREST")
         }
@@ -348,7 +376,10 @@ class FakeSupabaseServer {
                 "complete_all_tasks" -> {
                     val open = tasks.indices.filter { tasks[it]["done"] == JsonPrimitive(false) }
                     open.forEach {
-                        tasks[it] = JsonObject(tasks[it] + ("done" to JsonPrimitive(true)))
+                        tasks[it] =
+                            JsonObject(
+                                tasks[it] + ("done" to JsonPrimitive(true)) + (UPDATED_AT to now())
+                            )
                     }
                     open.size
                 }
@@ -407,10 +438,13 @@ class FakeSupabaseServer {
                     .let { if (order.getOrNull(1) == "desc") it.reversed() else it }
         val offset = request.url.parameters["offset"]?.toInt() ?: 0
         val limit = minOf(request.url.parameters["limit"]?.toInt() ?: maxRows, maxRows)
-        val page = ordered.drop(offset).take(limit)
+        return ordered.drop(offset).take(limit).map { projected(it, request) }
+    }
+
+    /** [row] with only the columns the request's `select` names; every column for `*` or none. */
+    private fun projected(row: JsonObject, request: HttpRequestData): JsonObject {
         val columns = request.url.parameters["select"]?.takeUnless { it == "*" }?.split(',')
-        return if (columns == null) page
-        else page.map { row -> JsonObject(row.filterKeys { it in columns }) }
+        return if (columns == null) row else JsonObject(row.filterKeys { it in columns })
     }
 
     /** A new row as the database stores it: `updated_at` set, defaults filled in. */
@@ -422,11 +456,19 @@ class FakeSupabaseServer {
                 put("width", JsonNull)
                 put("height", JsonNull)
                 putAll(row)
-                put("updated_at", now())
+                put(UPDATED_AT, now())
             }
         )
 
-    private fun now(): JsonPrimitive = JsonPrimitive(Clock.System.now().toString())
+    /**
+     * A new `updated_at`, later than every earlier one even within a clock tick, so a version never
+     * repeats: two changes in one microsecond would otherwise look like none to a precondition.
+     */
+    private fun now(): JsonPrimitive {
+        val clockNow = Clock.System.now()
+        lastStamp = if (clockNow > lastStamp) clockNow else lastStamp + 1.microseconds
+        return JsonPrimitive(lastStamp.toString())
+    }
 
     private fun MockRequestHandleScope.json(
         content: String,

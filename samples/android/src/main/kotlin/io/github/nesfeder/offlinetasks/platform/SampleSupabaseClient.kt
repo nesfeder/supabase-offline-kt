@@ -10,6 +10,10 @@ import io.github.jan.supabase.postgrest.Postgrest
 import io.github.jan.supabase.realtime.Realtime
 import io.github.jan.supabase.storage.Storage
 import io.github.nesfeder.offlinetasks.data.Tables
+import io.github.nesfeder.offlinetasks.data.supabase.TITLE
+import io.github.nesfeder.offlinetasks.data.supabase.UPDATED_AT
+import io.github.nesfeder.supabase.offline.ConflictResolution
+import io.github.nesfeder.supabase.offline.ConflictResolver
 import io.github.nesfeder.supabase.offline.Offline
 import io.github.nesfeder.supabase.offline.ResponseTrust
 import kotlinx.coroutines.flow.Flow
@@ -48,10 +52,27 @@ fun createSampleSupabaseClient(
     // --8<-- [end:install]
 }
 
+// --8<-- [start:conflict-resolver]
+/**
+ * Holds a conflict on a task's title for the user to settle on the Sync tab, and settles every
+ * other one as the plugin would without a resolver: this device's change wins a row that moved, and
+ * an edit of a row deleted elsewhere is dropped.
+ */
+internal val holdTitleConflicts = ConflictResolver { conflict ->
+    when {
+        TITLE in conflict.conflictingColumns -> ConflictResolution.Hold // both sides changed it
+        conflict.server == null -> ConflictResolution.KeepServer // gone from the server
+        else -> ConflictResolution.KeepLocal // sent again over the server's row as it is now
+    }
+}
+
+// --8<-- [end:conflict-resolver]
+
 // --8<-- [start:every-setting]
 /**
- * Every setting, each set to the default it would take anyway but the two the app supplies: remove
- * any line and the plugin behaves the same.
+ * Every setting, each set to the default it would take anyway but those the app supplies (its
+ * connectivity signal, the Realtime tables, the version columns and the resolver): remove any other
+ * line and the plugin behaves the same.
  */
 private fun Offline.Config.writeEverySetting(
     networkAvailability: Flow<Boolean>,
@@ -89,6 +110,15 @@ private fun Offline.Config.writeEverySetting(
         table(Tables.TASK_PHOTOS)
     }
     // --8<-- [end:realtime]
+    // --8<-- [start:version-column]
+    // The column the server moves on every change (moddatetime): a queued update or delete of a
+    // row is sent only while the server's row still has the version this device saw, so a change
+    // made elsewhere meanwhile is found, not overwritten. None is the default: the last write wins.
+    versionColumn(Tables.TASKS, UPDATED_AT)
+    versionColumn(Tables.TASK_PHOTOS, UPDATED_AT)
+    // Settles what it finds; null, the default, keeps this device's change of a row that moved.
+    conflictResolver = holdTitleConflicts
+    // --8<-- [end:version-column]
     // --8<-- [start:response-trust]
     // Which answers may replace the cache: those sent and answered under one settled session.
     responseTrust = ResponseTrust.SettledSession // the default

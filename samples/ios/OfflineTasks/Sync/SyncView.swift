@@ -4,7 +4,8 @@ import SupabaseOffline
 import SwiftUI
 
 /// The network and Simulate offline, the settings, the changes waiting, the list's refresh, the
-/// refused changes, the server and the bucket, Try it, and the two ways to start again.
+/// refused and the conflicting changes, the server and the bucket, Try it, and the two ways to
+/// start again.
 struct SyncView: View {
 
     @Environment(AppModel.self) private var app
@@ -23,6 +24,7 @@ struct SyncView: View {
                 waitingChanges
                 refresh
                 refusedChanges.id(Self.refusedChangesID)
+                conflictingChanges
                 server
                 storage
                 tryIt
@@ -211,6 +213,48 @@ struct SyncView: View {
         }
     }
 
+    /// The writes parked because their task changed on the server meanwhile, with Keep mine and
+    /// Keep theirs.
+    private var conflictingChanges: some View {
+        Section {
+            if app.sync.conflicted.isEmpty {
+                Text("No conflicts")
+            }
+            ForEach(app.sync.conflicted) { conflict in
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(Wording.conflictHeadline(conflict)).font(.headline)
+                    ForEach(Wording.conflictingColumns(conflict), id: \.self) { line in
+                        Text(line).font(.subheadline)
+                    }
+                    Text(Wording.conflictTimes(conflict))
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                    HStack {
+                        Button("Keep mine") { app.sync.keepMine(conflict) }
+                            .disabled(!conflict.canKeepMine)
+                            .accessibilityIdentifier("keep-mine")
+                        Button("Keep theirs") { app.sync.keepTheirs(conflict) }
+                            .accessibilityIdentifier("keep-theirs")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    if !conflict.canKeepMine {
+                        Text("The task is gone from the server, or the change was too long to keep: only theirs can be kept.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .accessibilityIdentifier("conflicting-change")
+            }
+        } header: {
+            Text("Conflicting changes")
+        } footer: {
+            if app.sync.conflicted.isEmpty {
+                Text("If a title you changed offline was changed elsewhere too, it waits here for you to choose.")
+            }
+        }
+    }
+
     /// What the server holds, asked of it: a count and a database function.
     private var server: some View {
         Section {
@@ -250,8 +294,8 @@ struct SyncView: View {
             ForEach(TryItItem.allCases, id: \.self) { item in
                 VStack(alignment: .leading, spacing: 4) {
                     Button(item.title) { app.sync.run(item, newestTaskID: app.tasks.newestTaskID) }
-                        .disabled(app.session.userID == nil)
-                    Text(app.sync.tryItResults[item] ?? item.call)
+                        .disabled(app.session.userID == nil || (item == .makeConflict && !app.mode.isDemo))
+                    Text(app.sync.tryItResults[item] ?? item.call(isDemo: app.mode.isDemo))
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
@@ -374,6 +418,7 @@ extension TryItItem {
         case .tasksWithNotes: "Count tasks with notes"
         case .groupedDelete: "Delete last week’s done tasks"
         case .signedUpload: "Upload through a signed URL"
+        case .makeConflict: "Make a conflict"
         }
     }
 
@@ -386,6 +431,16 @@ extension TryItItem {
         case .tasksWithNotes: "The generic filter, filter(\"notes\", operator: \"not.is\", value: \"null\"): it asks the server."
         case .groupedDelete: "A delete with gte and lt on created_at, one group the queue can’t hold: offline, it’s refused."
         case .signedUpload: "createSignedUploadURL, then uploadToSignedURL: a generated photo for your newest task."
+        case .makeConflict: call(isDemo: true)
         }
+    }
+
+    /// The call it makes, shown until it has run, in demo mode (`isDemo`) or against a project:
+    /// only Make a conflict differs, since a project has no stand-in server to edit.
+    func call(isDemo: Bool) -> String {
+        guard self == .makeConflict else { return call }
+        return isDemo
+            ? "Your newest task’s title, changed offline here and on the stand-in server, then synced: the edit waits under Conflicting changes."
+            : "Needs a second writer: go offline, change a task’s title here, change the same title in the Table Editor, then come back online."
     }
 }

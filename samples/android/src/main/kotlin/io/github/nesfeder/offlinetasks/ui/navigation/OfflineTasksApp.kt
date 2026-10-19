@@ -208,8 +208,8 @@ fun OfflineTasksApp(
 }
 
 /**
- * The badge on a destination: the open-task count on Tasks; on Sync, the refused writes in the
- * error color when there are any, the waiting writes otherwise.
+ * The badge on a destination: the open-task count on Tasks; on Sync, the refused and conflicting
+ * writes in the error color when there are any, the waiting writes otherwise.
  */
 @Composable
 private fun DestinationBadge(topLevel: TopLevelDestination, badges: AppShellUiState) {
@@ -218,10 +218,11 @@ private fun DestinationBadge(topLevel: TopLevelDestination, badges: AppShellUiSt
             TopLevelDestination.Tasks -> badges.openTaskCount ?: 0
             TopLevelDestination.Photos -> 0
             TopLevelDestination.Sync ->
-                if (badges.rejectedCount > 0) badges.rejectedCount else badges.pendingCount
+                if (badges.needsAttentionCount > 0) badges.needsAttentionCount
+                else badges.pendingCount
         }
     if (count == 0) return
-    val refused = topLevel == TopLevelDestination.Sync && badges.rejectedCount > 0
+    val refused = topLevel == TopLevelDestination.Sync && badges.needsAttentionCount > 0
     Badge(
         containerColor =
             if (refused) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,

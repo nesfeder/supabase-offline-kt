@@ -7,6 +7,9 @@ import io.github.nesfeder.offlinetasks.data.AppSyncStatus
 import io.github.nesfeder.offlinetasks.data.BucketFile
 import io.github.nesfeder.offlinetasks.data.BucketFolder
 import io.github.nesfeder.offlinetasks.data.BucketListing
+import io.github.nesfeder.offlinetasks.data.ColumnConflict
+import io.github.nesfeder.offlinetasks.data.ConflictChoice
+import io.github.nesfeder.offlinetasks.data.ConflictedTaskMutation
 import io.github.nesfeder.offlinetasks.data.EncodedPhoto
 import io.github.nesfeder.offlinetasks.data.InvalidRequestException
 import io.github.nesfeder.offlinetasks.data.LiveUpdatesStatus
@@ -107,7 +110,10 @@ private val STARTER_TITLES = listOf("Water the plants", "Call the dentist", "Buy
  * changes the device's rows at once and joins the mutation queue; the queue replays in order when
  * the server can be reached, by itself after each write and on every reconnection. A write sent at
  * once that the server refuses is thrown back to its caller; one refused on replay is kept as a
- * rejection. Either way the device's copy goes back to the server's. Nothing survives the process.
+ * rejection. Either way the device's copy goes back to the server's. A queued edit of a task the
+ * device has from the server replays only while the server's row is unchanged, as with the app's
+ * version column; a row moved meanwhile is settled as the app's resolver settles it, a title both
+ * sides changed parked for the user. Nothing survives the process.
  *
  * @param scope where the network watcher, replays, refreshes and photo uploads run; it outlives
  *   every screen.
@@ -364,8 +370,10 @@ class InMemoryTaskRepository(
         id: String,
         title: String,
         notes: String?,
-    ): TaskMutationOutcome = write {
-        QueuedMutation.EditTask(it, id, title, notes)
+    ): TaskMutationOutcome {
+        // The version the device last saw from the server, as the library records its base.
+        val base = state.value.cache?.tasks?.get(id)
+        return write { QueuedMutation.EditTask(it, id, title, notes, base) }
     }
 
     override suspend fun setTaskDone(id: String, isDone: Boolean): TaskMutationOutcome = write {
@@ -642,17 +650,63 @@ class InMemoryTaskRepository(
         scope.launch { syncPendingMutations() }
     }
 
+    override fun conflictedMutations(): Flow<List<ConflictedTaskMutation>> =
+        state.map { it.conflicted }.distinctUntilChanged()
+
+    override suspend fun resolveConflictedMutation(id: Long, choice: ConflictChoice) {
+        val parked = state.value.conflictedWrites[id] ?: return
+        updateState { it.withoutConflict(id) }
+        when (choice) {
+            // Queued again against the server's row as the conflict saw it.
+            ConflictChoice.KeepMine -> {
+                enqueue { parked.write.withId(it).rebasedOn(parked.server) }
+                scope.launch { syncPendingMutations() }
+            }
+            ConflictChoice.KeepTheirs ->
+                updateState { current ->
+                    val rows = current.cache ?: DeviceRows()
+                    current.copy(
+                        cache = rows.copy(tasks = rows.tasks + (parked.server.id to parked.server))
+                    )
+                }
+        }
+    }
+
+    /**
+     * Applies [change] to task [taskId] on the server as another device would, with nothing sent to
+     * this one: a test stages a conflict with it.
+     */
+    suspend fun changeTaskOnServer(taskId: String, change: (Task) -> Task) {
+        check(server.changeElsewhere(taskId, clock.now(), change)) { "No task $taskId" }
+    }
+
+    /** Sets the title of task [taskId] on the server as another device would. */
+    suspend fun changeTitleOnServer(taskId: String, title: String) {
+        changeTaskOnServer(taskId) { it.copy(title = title) }
+    }
+
+    /** Deletes task [taskId] on the server as another device would. */
+    suspend fun deleteTaskOnServer(taskId: String) {
+        check(server.deleteElsewhere(taskId)) { "No task $taskId" }
+    }
+
     override suspend fun syncPendingMutations(): TaskSyncReport {
-        var synced = 0
-        val rejected = mutableListOf<RejectedTaskMutation>()
+        var report = TaskSyncReport(0, emptyList(), 0)
         while (true) {
             val pass = joinOrStartReplay().await()
-            synced += pass.syncedCount
-            rejected += pass.rejected
+            report =
+                report.copy(
+                    syncedCount = report.syncedCount + pass.syncedCount,
+                    rejected = report.rejected + pass.rejected,
+                    alreadyOnServerCount = report.alreadyOnServerCount + pass.alreadyOnServerCount,
+                    conflictsResolvedCount =
+                        report.conflictsResolvedCount + pass.conflictsResolvedCount,
+                    conflicted = report.conflicted + pass.conflicted,
+                )
             val current = state.value
             // A write queued while the pass was finishing waits for one more pass.
             if (current.queue.isEmpty() || !current.canReachServer) {
-                return TaskSyncReport(synced, rejected, current.queue.size)
+                return report.copy(remainingCount = current.queue.size)
             }
         }
     }
@@ -833,6 +887,10 @@ class InMemoryTaskRepository(
                 )
             // The server went out of reach first: it stays queued for the next replay.
             is ReplayStep.Stopped -> TaskMutationOutcome.Queued(mutation.id)
+            // A send at once carries no precondition, so none of these happens; a replay's would.
+            is ReplayStep.Conflicted,
+            is ReplayStep.Rebased,
+            ReplayStep.AlreadyOnServer -> TaskMutationOutcome.Queued(mutation.id)
             // A replay sent it meanwhile; a refusal there is kept, as any found on replay is.
             ReplayStep.Skipped ->
                 if (state.value.rejected.any { it.id == mutation.id }) {
@@ -869,7 +927,10 @@ class InMemoryTaskRepository(
         }
         updateState { it.copy(isSyncing = true) }
         var synced = 0
+        var alreadyOnServer = 0
+        var resolved = 0
         val rejected = mutableListOf<RejectedTaskMutation>()
+        val conflicted = mutableListOf<ConflictedTaskMutation>()
         var stoppedBy: Throwable? = null
         try {
             while (true) {
@@ -883,6 +944,14 @@ class InMemoryTaskRepository(
                     }
                     ReplayStep.Accepted -> synced++
                     is ReplayStep.Refused -> rejected += step.rejection
+                    is ReplayStep.Conflicted -> conflicted += step.conflict
+                    // Heads the queue again over the moved row; counted as resolved only when
+                    // the resolver settled it, and sent (and counted as synced) next.
+                    is ReplayStep.Rebased -> if (step.resolvedConflict) resolved++
+                    ReplayStep.AlreadyOnServer -> {
+                        synced++
+                        alreadyOnServer++
+                    }
                 }
             }
         } finally {
@@ -895,12 +964,20 @@ class InMemoryTaskRepository(
                 )
             }
         }
-        return TaskSyncReport(synced, rejected, state.value.queue.size)
+        return TaskSyncReport(
+            syncedCount = synced,
+            rejected = rejected,
+            remainingCount = state.value.queue.size,
+            alreadyOnServerCount = alreadyOnServer,
+            conflictsResolvedCount = resolved,
+            conflicted = conflicted,
+        )
     }
 
     /**
      * Sends [head] if it still heads the queue. A refusal is kept as a rejection when
-     * [keepRefusal], or dropped when its caller is there to be told.
+     * [keepRefusal], or dropped when its caller is there to be told. Only a replay carries the
+     * edit's precondition, as only a queued write is guarded.
      */
     private suspend fun sendHead(head: QueuedMutation, keepRefusal: Boolean): ReplayStep =
         writeLock.withLock {
@@ -910,9 +987,14 @@ class InMemoryTaskRepository(
             unreachableServerError()?.let {
                 return@withLock ReplayStep.Stopped(it)
             }
-            when (val answer = server.apply(current.userId, head, clock.now())) {
+            val sent = if (keepRefusal) head else head.withoutBase()
+            when (val answer = server.apply(current.userId, sent, clock.now())) {
+                is ServerAnswer.Moved ->
+                    settleMoved(head as QueuedMutation.EditTask, answer.current)
                 is ServerAnswer.Accepted -> {
-                    updateState { it.accepted(head, answer.row) }
+                    // The returned row becomes the base of the later writes guarded on it, as in
+                    // the library.
+                    updateState { it.accepted(head, answer.row).forwardingBase(answer.row) }
                     ReplayStep.Accepted
                 }
                 is ServerAnswer.Refused -> {
@@ -935,6 +1017,51 @@ class InMemoryTaskRepository(
                 }
             }
         }
+
+    /**
+     * Settles an edit whose task moved on the server as the library does: an edit the server
+     * already holds is synced; one whose columns the server left alone (a stale base) is sent again
+     * without asking; otherwise the app's resolver parks a title both sides changed and sends the
+     * rest again over the server's row.
+     */
+    private fun settleMoved(head: QueuedMutation.EditTask, server: Task): ReplayStep {
+        val base = head.base ?: error("Only an edit with a base is preconditioned")
+        if (head.title == server.title && head.notes == server.notes) {
+            updateState { it.accepted(head, server).forwardingBase(server) }
+            return ReplayStep.AlreadyOnServer
+        }
+        val changedOnServer =
+            setOfNotNull(
+                TITLE_COLUMN.takeIf { server.title != base.title },
+                NOTES_COLUMN.takeIf { server.notes != base.notes },
+            )
+        val columns = buildList {
+            if (server.title != base.title && head.title != server.title) {
+                add(ColumnConflict(TITLE_COLUMN, theirs = server.title, mine = head.title))
+            }
+            if (server.notes != base.notes && head.notes != server.notes) {
+                add(ColumnConflict(NOTES_COLUMN, theirs = server.notes, mine = head.notes))
+            }
+        }
+        if (columns.none { it.column == TITLE_COLUMN }) {
+            updateState { it.copy(queue = listOf(head.rebasedOn(server)) + it.queue.drop(1)) }
+            return ReplayStep.Rebased(resolvedConflict = changedOnServer.isNotEmpty())
+        }
+        val conflict =
+            ConflictedTaskMutation(
+                id = head.id,
+                table = head.table,
+                operation = head.operation,
+                rowKeys = listOf(head.taskId),
+                taskTitle = head.title,
+                columns = columns,
+                changedOnServer = changedOnServer,
+                createdAt = state.value.queuedAt[head.id] ?: clock.now(),
+                conflictedAt = clock.now(),
+            )
+        updateState { it.parked(head, conflict, server) }
+        return ReplayStep.Conflicted(conflict)
+    }
 
     /** Reads every row of the user from the server, unless [force] is false and they are fresh. */
     private suspend fun refreshFromServer(force: Boolean) {
@@ -1025,7 +1152,36 @@ private sealed interface ReplayStep {
 
     /** Sent and refused. */
     data class Refused(val rejection: RejectedTaskMutation) : ReplayStep
+
+    /** The row had moved and the edit was parked for the user. */
+    data class Conflicted(val conflict: ConflictedTaskMutation) : ReplayStep
+
+    /**
+     * The row had moved; the edit heads the queue again, preconditioned on the server's row.
+     * [resolvedConflict] is false for a stale base, which the library resends without asking.
+     */
+    data class Rebased(val resolvedConflict: Boolean) : ReplayStep
+
+    /** The row had moved to what the edit sets: an earlier send landed, so it is synced. */
+    data object AlreadyOnServer : ReplayStep
 }
+
+/** The column an edit of a task sets its title in. */
+private const val TITLE_COLUMN = "title"
+
+/** The column an edit of a task sets its notes in. */
+private const val NOTES_COLUMN = "notes"
+
+/** This write without its precondition, as a send at once goes. */
+private fun QueuedMutation.withoutBase(): QueuedMutation =
+    if (this is QueuedMutation.EditTask) copy(base = null) else this
+
+/** This write preconditioned on [server], the task as the server holds it now. */
+private fun QueuedMutation.rebasedOn(server: Task): QueuedMutation =
+    if (this is QueuedMutation.EditTask) copy(base = server) else this
+
+/** A write parked on a conflict, with the server's row it met. */
+private data class ParkedWrite(val write: QueuedMutation, val server: Task)
 
 /** Where the in-memory bucket's links point: nowhere real. */
 private const val FAKE_STORAGE_URL = "https://in-memory.test/storage/v1/object/task-photos"
@@ -1067,6 +1223,10 @@ private data class DeviceState(
     val rejected: List<RejectedTaskMutation> = emptyList(),
     /** The refused writes themselves, by rejection id, for a retry. */
     val rejectedWrites: Map<Long, QueuedMutation> = emptyMap(),
+    /** The writes parked on a conflict, newest first. */
+    val conflicted: List<ConflictedTaskMutation> = emptyList(),
+    /** The parked writes themselves, by id, for Keep mine and Keep theirs. */
+    val conflictedWrites: Map<Long, ParkedWrite> = emptyMap(),
     val nextMutationId: Long = 1,
     val networkEnabled: Boolean = true,
     val deviceOnline: Boolean? = null,
@@ -1146,6 +1306,7 @@ private data class DeviceState(
             network = network,
             pendingMutationCount = queue.size,
             rejectedMutationCount = rejected.size,
+            conflictedMutationCount = conflicted.size,
             isSyncing = isSyncing,
             lastSyncedAt = lastSyncedAt,
             lastSyncError = lastSyncError,
@@ -1163,6 +1324,22 @@ private data class DeviceState(
         return copy(queue = queue.drop(1), cache = rows)
     }
 
+    /**
+     * The later queued edits of [storedRow]'s task preconditioned on it, as the library hands the
+     * row a write returned to the writes guarded behind it; none when there is no row.
+     */
+    fun forwardingBase(storedRow: Task?): DeviceState {
+        storedRow ?: return this
+        return copy(
+            queue =
+                queue.map { mutation ->
+                    val guarded = mutation is QueuedMutation.EditTask && mutation.base != null
+                    if (guarded && mutation.rowKey == storedRow.id) mutation.rebasedOn(storedRow)
+                    else mutation
+                }
+        )
+    }
+
     /** The head write refused: it leaves the queue, so the device shows the server's copy again. */
     fun refused(head: QueuedMutation, rejection: RejectedTaskMutation): DeviceState {
         val kept = (listOf(rejection) + rejected).take(REJECTED_MUTATIONS_KEPT)
@@ -1177,6 +1354,21 @@ private data class DeviceState(
     /** The head write refused while its caller waited: it leaves the queue and is not kept. */
     fun abandoned(head: QueuedMutation): DeviceState =
         copy(queue = queue.filterNot { it.id == head.id })
+
+    /** The head write parked on a conflict with [server]: it leaves the queue for the list. */
+    fun parked(head: QueuedMutation, conflict: ConflictedTaskMutation, server: Task): DeviceState =
+        copy(
+            queue = queue.drop(1),
+            conflicted = listOf(conflict) + conflicted,
+            conflictedWrites = conflictedWrites + (head.id to ParkedWrite(head, server)),
+        )
+
+    /** The parked write [id] gone from the list, kept or dropped. */
+    fun withoutConflict(id: Long): DeviceState =
+        copy(
+            conflicted = conflicted.filterNot { it.id == id },
+            conflictedWrites = conflictedWrites - id,
+        )
 
     fun withoutRejection(id: Long): DeviceState =
         copy(rejected = rejected.filterNot { it.id == id }, rejectedWrites = rejectedWrites - id)
