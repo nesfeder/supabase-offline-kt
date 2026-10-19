@@ -33,7 +33,7 @@ struct ConflictTests {
             .execute([TaskRow].self)
 
         // Then: no row back, and the server's row as the other writer left it
-        #expect(stale.result?.isEmpty == true)
+        #expect(stale.result?.value.isEmpty == true)
         #expect(await serverRow(task.id, test.server)["title"] == .string("Buy oat milk"))
 
         // When: preconditioned on the version the server has now
@@ -45,7 +45,7 @@ struct ConflictTests {
             .execute([TaskRow].self)
 
         // Then: changed, sent back, and at a new version
-        let row = try #require(current.result?.first)
+        let row = try #require(current.result?.value.first)
         #expect(row.title == "Buy milk")
         #expect(await serverRow(task.id, test.server)["updated_at"] != moved)
         try await test.stop()
