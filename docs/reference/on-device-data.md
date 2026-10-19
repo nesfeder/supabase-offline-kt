@@ -89,8 +89,8 @@ It is indexed on (`owner`, `synced_at_ms`) and indexed on (`table_name`).
 | `base_json` | TEXT | yes | That row's columns the write sets, and its version, as JSON text; `NULL` with `base_version` |
 
 
-The library's own records (the rejected list, whose cache it is, and each cached list's query
-shape) are JSON text in reserved rows of `object_cache`, under a table name 94 bytes long:
+The library's own records (the rejected list, the conflicted list, whose cache it is, and each
+cached list's query shape) are JSON text in reserved rows of `object_cache`, under a table name 94 bytes long:
 Postgres cuts identifiers at 63 bytes, so no table of yours can have that name, and `from()`
 refuses it. A reserved row is never evicted, counted against `cacheSizeBytes`, read as a query or
 overlaid.

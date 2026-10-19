@@ -2,20 +2,28 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.mutationqueue
 
+import io.github.jan.supabase.postgrest.postgrest
+import io.github.nesfeder.supabase.offline.MutationOutcome
+import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 import io.github.nesfeder.supabase.offline.testdoubles.FIRST_VERSION
 import io.github.nesfeder.supabase.offline.testdoubles.FakeRelationalPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.GUARDED_CACHE_KEY
 import io.github.nesfeder.supabase.offline.testdoubles.GUARDED_TABLE
 import io.github.nesfeder.supabase.offline.testdoubles.MOVED_VERSION
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingConflictPolicy
+import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
+import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
 import io.github.nesfeder.supabase.offline.testdoubles.VERSION_COLUMN
 import io.github.nesfeder.supabase.offline.testdoubles.cacheRows
 import io.github.nesfeder.supabase.offline.testdoubles.enqueueDelete
 import io.github.nesfeder.supabase.offline.testdoubles.enqueueUpdate
 import io.github.nesfeder.supabase.offline.testdoubles.newGuardedStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestMutationQueueReplayer
+import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineTable
+import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClientWithAuth
 import io.github.nesfeder.supabase.offline.testdoubles.overlaidPayloadFlow
 import io.github.nesfeder.supabase.offline.testdoubles.rowWithId
+import io.github.nesfeder.supabase.offline.testdoubles.signInForTest
 import io.github.nesfeder.supabase.offline.testdoubles.taskRow
 import io.github.nesfeder.supabase.offline.testdoubles.versionOf
 import kotlin.test.Test
@@ -80,26 +88,30 @@ class GuardedReplayOutcomesTest {
     }
 
     @Test
-    fun a_row_moved_on_another_column_is_resent_against_its_new_version() = runTest {
-        // Given — another device marked the task done after this one renamed it
-        queueRenameOfTaskOne()
-        server.replaceRow(GUARDED_TABLE, taskRow(1, "theirs", done = true, version = MOVED_VERSION))
+    fun a_row_moved_on_another_column_is_resent_against_its_new_version_without_a_conflict() =
+        runTest {
+            // Given — another device marked the task done after this one renamed it
+            queueRenameOfTaskOne()
+            server.replaceRow(
+                GUARDED_TABLE,
+                taskRow(1, "theirs", done = true, version = MOVED_VERSION),
+            )
 
-        // When
-        val report = replayer().sync()
+            // When
+            val report = replayer().sync()
 
-        // Then — sent, refused by its precondition, read, resent at the new version: both changes
-        assertEquals(listOf("PATCH", "GET", "PATCH"), server.requests.map { it.method })
-        assertEquals("eq.$MOVED_VERSION", server.requests.last().query[VERSION_COLUMN])
-        assertEquals(1 to 1, report.syncedCount to report.conflictsResolvedCount)
-        val moved = assertIs<ConflictCase.Moved>(policy.cases.single())
-        assertEquals(emptySet(), moved.changedOnServer)
-        val onServer = server.rows(GUARDED_TABLE).single()
-        assertEquals(
-            JsonPrimitive("mine") to JsonPrimitive(true),
-            onServer["title"] to onServer["done"],
-        )
-    }
+            // Then — a stale base, not a conflict: resent at the new version, nobody asked, not
+            // counted as resolved, and both changes kept
+            assertEquals(listOf("PATCH", "GET", "PATCH"), server.requests.map { it.method })
+            assertEquals("eq.$MOVED_VERSION", server.requests.last().query[VERSION_COLUMN])
+            assertEquals(1 to 0, report.syncedCount to report.conflictsResolvedCount)
+            assertEquals(emptyList(), policy.cases)
+            val onServer = server.rows(GUARDED_TABLE).single()
+            assertEquals(
+                JsonPrimitive("mine") to JsonPrimitive(true),
+                onServer["title"] to onServer["done"],
+            )
+        }
 
     @Test
     fun a_row_moved_on_the_same_column_is_won_by_the_local_change_by_default() = runTest {
@@ -215,6 +227,8 @@ class GuardedReplayOutcomesTest {
 
         // Then — three sends of the first, then parked; the second applied
         assertEquals(3, server.requests.count { it.method == "PATCH" && it.query["id"] == "eq.1" })
+        // Asked after the first two sends only: no send is left to act on a third answer
+        assertEquals(2, policy.cases.size)
         val parked = report.conflicted.single()
         assertEquals(1L, parked.id)
         assertEquals(
@@ -276,6 +290,162 @@ class GuardedReplayOutcomesTest {
         assertEquals(1, report.syncedCount)
         assertEquals(JsonPrimitive(6), counted.rows(GUARDED_TABLE).single()[VERSION_COLUMN])
     }
+
+    @Test
+    fun a_delete_of_a_row_edited_elsewhere_is_a_conflict_the_delete_wins_by_default() = runTest {
+        // Given — this device deleted the task while another renamed it
+        server.seed(GUARDED_TABLE, taskRow(1, "theirs"))
+        store.cacheRows(taskRow(1, "theirs"))
+        store.mutationQueue.enqueueDelete(GUARDED_TABLE, rowWithId(1))
+        server.replaceRow(GUARDED_TABLE, taskRow(1, "renamed elsewhere", version = MOVED_VERSION))
+
+        // When
+        val report = replayer().sync()
+
+        // Then — asked once, with no local columns and no column sets; resent and deleted
+        val moved = assertIs<ConflictCase.Moved>(policy.cases.single())
+        assertNull(moved.local)
+        assertEquals(emptySet(), moved.changedOnServer)
+        assertEquals(emptySet(), moved.conflictingColumns)
+        assertEquals(1 to 1, report.syncedCount to report.conflictsResolvedCount)
+        assertEquals(listOf("DELETE", "GET", "DELETE"), server.requests.map { it.method })
+        assertEquals(emptyList(), server.rows(GUARDED_TABLE))
+    }
+
+    @Test
+    fun a_queued_update_after_a_head_send_that_returned_no_rows_replays_straight_through() =
+        runTest {
+            // Given — task 1 cached; one update sent at once, asking for no rows back, so nothing
+            // could move the base of the next; then another made with the server out of reach
+            server.seed(GUARDED_TABLE, taskRow(1, "theirs"))
+            store.cacheRows(taskRow(1, "theirs"))
+            val tasks =
+                newTestOfflineTable(
+                    delegate = server.supabaseClient().postgrest.from(GUARDED_TABLE),
+                    store = store,
+                )
+            val applied = tasks.update(column("done", true)) { filter { eq("id", 1) } }
+            server.failsRequest = { true }
+            val queued = tasks.update(column("title", "mine")) { filter { eq("id", 1) } }
+            server.failsRequest = null
+            server.recorder.requests.clear()
+
+            // When
+            val report = replayer().sync()
+
+            // Then — its base was the earlier version; the device's own write moved it, which is
+            // no conflict: resent at once, with no policy asked and nothing counted as resolved
+            assertIs<MutationOutcome.Applied>(applied)
+            assertIs<MutationOutcome.Queued>(queued)
+            assertEquals(listOf("PATCH", "GET", "PATCH"), server.requests.map { it.method })
+            assertEquals(emptyList(), policy.cases)
+            assertEquals(1 to 0, report.syncedCount to report.conflictsResolvedCount)
+            val onServer = server.rows(GUARDED_TABLE).single()
+            assertEquals(
+                JsonPrimitive("mine") to JsonPrimitive(true),
+                onServer["title"] to onServer["done"],
+            )
+        }
+
+    @Test
+    fun a_row_the_rest_of_the_filter_no_longer_reaches_is_synced_as_the_unguarded_replay_was() =
+        runTest {
+            // Given — an update of task 1 while it is still open; on the server it was closed,
+            // at the same version, so the write's own filter now reaches no row
+            server.seed(GUARDED_TABLE, taskRow(1, "theirs"))
+            store.cacheRows(taskRow(1, "theirs"))
+            store.mutationQueue.enqueueUpdate(GUARDED_TABLE, titled("mine"), notDone(1))
+            server.replaceRow(GUARDED_TABLE, taskRow(1, "theirs", done = true))
+
+            // When
+            val report = replayer().sync()
+
+            // Then — no refusal and no conflict: a write that reached no row, as before
+            assertEquals(1, report.syncedCount)
+            assertEquals(emptyList(), report.rejected)
+            assertEquals(emptyList(), policy.cases)
+            assertEquals(
+                "done,id,updated_at,title".split(',').toSet(),
+                server.requests.last().query.getValue("select").split(',').toSet(),
+            )
+            assertEquals(JsonPrimitive("theirs"), server.rows(GUARDED_TABLE).single()["title"])
+        }
+
+    @Test
+    fun a_row_the_whole_filter_still_reaches_at_the_base_version_is_a_policy_denial() = runTest {
+        // Given — the same filtered update, the row still open, and a policy hiding it from writes
+        server.seed(GUARDED_TABLE, taskRow(1, "theirs"))
+        store.cacheRows(taskRow(1, "theirs"))
+        store.mutationQueue.enqueueUpdate(GUARDED_TABLE, titled("mine"), notDone(1))
+        server.hidesRowsFromWrite = { request -> request.method == "PATCH" }
+
+        // When
+        val report = replayer().sync()
+
+        // Then
+        assertEquals(0, report.syncedCount)
+        assertEquals(
+            "The row cannot be changed under the server's current policies",
+            report.rejected.single().message,
+        )
+    }
+
+    @Test
+    fun a_read_by_key_the_session_change_stops_leaves_the_write_queued() = runTest {
+        // Given — user A's update of task 1, which moved on the server; A is signed out for B
+        // as the precondition fails, so the read would go out under B's token
+        val recording = RecordingPostgrestServer()
+        val supabase = newTestSupabaseClientWithAuth(recording.engine)
+        supabase.signInForTest("user-a")
+        store.cacheRows(taskRow(1, "theirs"))
+        val base = store.mutationQueue.baseFor(GUARDED_TABLE, rowWithId(1), setOf("title"), null)
+        store.mutationQueue.enqueueOwnedBy("user:user-a") {
+            enqueueUpdate(GUARDED_TABLE, titled("mine"), rowWithId(1), base)
+        }
+        recording.answer = { request ->
+            if (request.method == "PATCH") supabase.signInForTest("user-b")
+            okJson("[]")
+        }
+
+        // When
+        val report =
+            newTestMutationQueueReplayer(
+                    store = store,
+                    supabase = supabase,
+                    conflictPolicy = policy,
+                )
+                .sync()
+
+        // Then — never read as a gone row: nothing asked, dropped or parked, still A's to send
+        assertEquals(SyncStop.SessionChanged, report.stop)
+        assertEquals(listOf("PATCH"), recording.requests.map { it.method })
+        assertEquals(emptyList(), policy.cases)
+        assertEquals(0, report.conflictsKeptServerCount)
+        assertEquals(
+            listOf("user:user-a"),
+            store.mutationQueue.allPendingMutations().map { it.owner },
+        )
+    }
+
+    private fun notDone(id: Int): FilterDescriptor =
+        FilterDescriptor(
+            conditions =
+                listOf(
+                    FilterDescriptor.Condition("id", "eq", id.toString()),
+                    FilterDescriptor.Condition("done", "is", "false"),
+                )
+        )
+
+    private fun column(name: String, value: Any): JsonObject =
+        JsonObject(
+            mapOf(
+                name to
+                    when (value) {
+                        is Boolean -> JsonPrimitive(value)
+                        else -> JsonPrimitive(value.toString())
+                    }
+            )
+        )
 
     private suspend fun cachedRows(): List<JsonObject> {
         val payload =

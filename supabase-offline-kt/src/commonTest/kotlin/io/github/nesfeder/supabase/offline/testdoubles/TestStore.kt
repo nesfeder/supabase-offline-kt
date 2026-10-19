@@ -38,6 +38,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
 import okio.Path
 
 /**
@@ -219,18 +220,28 @@ internal suspend fun MutationQueue.enqueueUpsert(
         .enqueueUpsert(table, bodyJson, filter, onConflict, ignoreDuplicates, defaultToNull)
         .id
 
-/** Queues an UPDATE with no recorded owner; see [enqueueInsert]. */
+/**
+ * Queues an UPDATE with no recorded owner, with its base as a writer reads it; see [enqueueInsert].
+ */
 internal suspend fun MutationQueue.enqueueUpdate(
     table: String,
     body: JsonElement,
     filter: FilterDescriptor? = null,
-): Long = MutationWriter(owner = null).enqueueUpdate(table, body, filter).id
+): Long {
+    val base = baseFor(table, filter, (body as? JsonObject)?.keys, identity = null)
+    return MutationWriter(owner = null).enqueueUpdate(table, body, filter, base).id
+}
 
-/** Queues a DELETE with no recorded owner; see [enqueueInsert]. */
+/**
+ * Queues a DELETE with no recorded owner, with its base as a writer reads it; see [enqueueInsert].
+ */
 internal suspend fun MutationQueue.enqueueDelete(
     table: String,
     filter: FilterDescriptor? = null,
-): Long = MutationWriter(owner = null).enqueueDelete(table, filter).id
+): Long {
+    val base = baseFor(table, filter, emptySet(), identity = null)
+    return MutationWriter(owner = null).enqueueDelete(table, filter, base).id
+}
 
 /** Removes the rejected mutation [id] under the queue lock, whoever's it is. */
 internal suspend fun MutationQueue.dismissRejectedMutation(id: Long): Boolean = holdingQueueLock {

@@ -521,11 +521,16 @@ internal class QueryOverlay(
 
     /**
      * The newest cached row of [table] with [key] (as [keyOf] gives it) that holds [column], from
-     * the payloads newest fetch first. `null` when none does, the cache is not the current
-     * identity's, or the table is too large for its key index.
+     * the payloads newest fetch first. `null` when none does, the cache is not [identity]'s, or the
+     * table is too large for its key index. May rebuild the key index: no lock may be held.
      */
-    suspend fun cachedRowHolding(table: String, key: List<String>, column: String): JsonObject? {
-        if (isReservedTable(table) || !ownership.cacheServesCurrentIdentity()) return null
+    suspend fun cachedRowHolding(
+        table: String,
+        key: List<String>,
+        column: String,
+        identity: String?,
+    ): JsonObject? {
+        if (isReservedTable(table) || !ownership.cacheServes(identity)) return null
         val keyColumns = primaryKeys.of(table)
         val index = tableKeyIndexOf(table, keyColumns) ?: return null
         for (holder in index.holders[key].orEmpty()) {

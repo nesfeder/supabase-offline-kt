@@ -3,6 +3,7 @@
 package io.github.nesfeder.supabase.offline.internal.mutationqueue
 
 import io.github.nesfeder.supabase.offline.MutationOperation
+import io.github.nesfeder.supabase.offline.internal.EngineJson
 import io.github.nesfeder.supabase.offline.internal.db.CONFLICTED_MUTATIONS_CACHE_KEY
 import io.github.nesfeder.supabase.offline.internal.db.MutationRow
 import io.github.nesfeder.supabase.offline.internal.db.RESERVED_TABLE_NAME
@@ -17,6 +18,7 @@ import io.github.nesfeder.supabase.offline.testdoubles.taskRow
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -78,9 +80,47 @@ class ConflictedListTest {
         assertEquals(MAX_REJECTED_MUTATIONS, entries.size)
         assertEquals(oversized.id, entries.last().id)
         assertNotNull(oversized.bodyOmittedChars)
-        assertNull(
-            store.mutationQueue.requeueConflict(oversized.id, USER_A, ConflictDecision.KeepLocal)
+        assertEquals(
+            ConflictRequeue.Refused,
+            store.mutationQueue.requeueConflict(oversized.id, USER_A, ConflictDecision.KeepLocal),
         )
+    }
+
+    @Test
+    fun the_list_stays_within_its_total_size_and_counts_what_it_dropped() = runTest {
+        // Given / When — forty entries of nearly the longest body kept, over the list's bound
+        repeat(40) {
+            park(queuedUpdate(owner = USER_A, title = "x".repeat(MAX_REJECTED_BODY_CHARS - 100)))
+        }
+
+        // Then — the oldest left, each counted, and what is kept fits the bound
+        val payload =
+            assertNotNull(queryCacheDao.getRow(RESERVED_TABLE_NAME, CONFLICTED_MUTATIONS_CACHE_KEY))
+                .payload
+        val list = EngineJson.decodeFromString(StoredConflictList.serializer(), payload)
+        assertTrue(list.entries.size < 40, "kept ${list.entries.size}")
+        assertEquals(40L - list.entries.size, list.droppedCount)
+        assertTrue(payload.length <= MAX_REJECTED_LIST_CHARS + 256, "${payload.length} characters")
+        assertEquals(40L, list.entries.last().id)
+    }
+
+    @Test
+    fun a_gone_row_cannot_be_requeued_with_the_local_change() = runTest {
+        // Given — a write whose row was gone when it was parked
+        val row = queuedUpdate(owner = USER_A)
+        val parked =
+            store.mutationQueue.parkConflictedMutation(
+                row,
+                ParkedConflict(null, null, emptySet(), emptySet(), "gone"),
+            )
+
+        // When
+        val outcome =
+            store.mutationQueue.requeueConflict(parked.id, USER_A, ConflictDecision.KeepLocal)
+
+        // Then — it would replay unguarded and change nothing: refused, kept on the list
+        assertEquals(ConflictRequeue.Refused, outcome)
+        assertEquals(listOf(parked), store.mutationQueue.conflictedList.conflicts())
     }
 
     @Test
@@ -100,7 +140,7 @@ class ConflictedListTest {
         assertEquals(listOf(mine), shown)
         assertEquals(1, counts.conflicted)
         assertFalse(dismissedTheirs)
-        assertNull(requeuedTheirs)
+        assertEquals(ConflictRequeue.NotFound, requeuedTheirs)
         assertTrue(store.mutationQueue.dismissConflictOf(mine.id, USER_A))
         assertEquals(listOf(theirs), store.mutationQueue.conflictedList.conflicts())
     }
@@ -116,7 +156,8 @@ class ConflictedListTest {
                 store.mutationQueue.requeueConflict(parked.id, USER_A, ConflictDecision.KeepLocal)
 
             // Then — a new id, the same write, preconditioned on what the app saw on the server
-            val row = assertNotNull(mutationDao.byId(assertNotNull(requeued)))
+            val row =
+                assertNotNull(mutationDao.byId(assertIs<ConflictRequeue.Requeued>(requeued).id))
             assertTrue(row.id > parked.id)
             assertEquals(parked.bodyJson, row.bodyJson)
             assertEquals(parked.filterJson, row.filterJson)
@@ -147,9 +188,10 @@ class ConflictedListTest {
             val heldId = store.mutationQueue.requeueConflict(held.id, USER_A, ConflictDecision.Hold)
 
             // Then
-            assertEquals(merged.toString(), mutationDao.byId(assertNotNull(appliedId))?.bodyJson)
-            assertNull(droppedId)
-            assertNull(heldId)
+            val appliedRow = assertIs<ConflictRequeue.Requeued>(appliedId)
+            assertEquals(merged.toString(), mutationDao.byId(appliedRow.id)?.bodyJson)
+            assertEquals(ConflictRequeue.Dropped, droppedId)
+            assertEquals(ConflictRequeue.Refused, heldId)
             assertEquals(listOf(held), store.mutationQueue.conflictedList.conflicts())
             assertEquals(1, store.mutationQueue.allPendingMutations().size)
         }

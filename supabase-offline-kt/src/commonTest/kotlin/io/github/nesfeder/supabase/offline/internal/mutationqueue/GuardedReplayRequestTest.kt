@@ -51,7 +51,12 @@ class GuardedReplayRequestTest {
                 RecordedRequest(
                     method = "PATCH",
                     table = GUARDED_TABLE,
-                    query = mapOf("id" to "eq.1", "updated_at" to "eq.$BASE", "select" to "*"),
+                    query =
+                        mapOf(
+                            "id" to "eq.1",
+                            "updated_at" to "eq.$BASE",
+                            "select" to "id,updated_at,title",
+                        ),
                     prefer = "return=representation",
                     contentProfile = "public",
                     acceptProfile = null,
@@ -86,7 +91,8 @@ class GuardedReplayRequestTest {
             RecordedRequest(
                 method = "DELETE",
                 table = GUARDED_TABLE,
-                query = mapOf("id" to "eq.1", "updated_at" to "eq.$BASE", "select" to "*"),
+                query =
+                    mapOf("id" to "eq.1", "updated_at" to "eq.$BASE", "select" to "id,updated_at"),
                 prefer = "return=representation",
                 contentProfile = "public",
                 acceptProfile = null,

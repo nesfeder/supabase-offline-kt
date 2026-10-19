@@ -604,8 +604,8 @@ public interface Offline : SupabasePlugin<Offline.Config> {
         public var logLevel: LogLevel? = null
 
         /**
-         * Each table's version column, keyed as [primaryKeys] is; none by default. A test names
-         * them here until the public setting exists.
+         * Each table's version column, keyed as [primaryKeys] is; none by default. An internal
+         * setting the engine's tests fill in.
          */
         internal val versionColumnSettings: MutableMap<String, String> = mutableMapOf()
 
