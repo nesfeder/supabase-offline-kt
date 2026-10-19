@@ -122,9 +122,13 @@ class ConflictedMutationsTest {
 
         // When
         client.resolveConflictedMutation(id, ConflictResolution.apply(titled("mine, elsewhere")))
+        val requeued = client.pendingMutations().first().single()
         client.syncPendingMutations()
 
-        // Then
+        // Then — a new id at the tail, sent against the version the entry recorded
+        assertTrue(requeued.id != id)
+        assertEquals(MOVED_VERSION, requeued.baseVersion)
+        assertEquals(titled("mine, elsewhere"), requeued.body)
         val sent = server.requests.last()
         assertEquals("""{"title":"mine, elsewhere"}""", sent.body)
         assertEquals("eq.$MOVED_VERSION", sent.query[VERSION_COLUMN])
@@ -132,6 +136,31 @@ class ConflictedMutationsTest {
             JsonPrimitive("mine, elsewhere"),
             server.rows(GUARDED_TABLE).single()["title"],
         )
+        client.close()
+    }
+
+    @Test
+    fun an_entry_whose_body_was_too_large_to_keep_takes_apply_but_not_keep_local() = runTest {
+        // Given — a rename whose body is past what the list keeps, parked
+        val client = newGuardedClient(server, holding)
+        server.seed(GUARDED_TABLE, taskRow(1, "theirs"))
+        val id = client.queueWhileOffline(server) { renameTask(1, "x".repeat(OVERSIZED_TITLE)) }
+        server.replaceRow(GUARDED_TABLE, renamedElsewhere)
+        client.syncPendingMutations()
+        assertEquals(null, client.conflictedMutations().first().single().body)
+
+        // When — its own body cannot be resent, other columns can
+        assertFailsWith<IllegalArgumentException> {
+            client.resolveConflictedMutation(id, ConflictResolution.KeepLocal)
+        }
+        client.resolveConflictedMutation(id, ConflictResolution.apply(titled("short")))
+        val requeued = client.pendingMutations().first().single()
+        client.syncPendingMutations()
+
+        // Then
+        assertEquals(MOVED_VERSION to titled("short"), requeued.baseVersion to requeued.body)
+        assertEquals(JsonPrimitive("short"), server.rows(GUARDED_TABLE).single()["title"])
+        assertEquals(emptyList(), client.conflictedMutations().first())
         client.close()
     }
 
@@ -268,5 +297,8 @@ class ConflictedMutationsTest {
     private companion object {
         const val USER_A = "user-a"
         const val USER_B = "user-b"
+
+        /** A title past the 16 K characters the conflicted list keeps of a body. */
+        const val OVERSIZED_TITLE = 17_000
     }
 }

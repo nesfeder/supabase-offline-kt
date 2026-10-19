@@ -53,9 +53,13 @@ public sealed interface ConflictResolution {
         /**
          * An [Apply] that sends [columns].
          *
-         * @param columns the columns to set, and their values.
+         * @param columns the columns to set, and their values; at least one.
          * @return the resolution.
+         * @throws IllegalArgumentException when [columns] is empty.
          */
-        public fun apply(columns: JsonObject): Apply = Apply(columns)
+        public fun apply(columns: JsonObject): Apply {
+            require(columns.isNotEmpty()) { "Apply needs at least one column to set" }
+            return Apply(columns)
+        }
     }
 }

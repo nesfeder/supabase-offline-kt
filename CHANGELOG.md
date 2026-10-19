@@ -46,21 +46,23 @@ All notable changes to this project are recorded in this file. The format follow
   `SupabaseOfflineTesting`, with `inMemory(…, realtime:)`, reports changes to an in-memory client.
 - `versionColumn("tasks", "updated_at")` in `install(Offline)`, and the map
   `Offline.Config.versionColumns` behind it, keyed as `primaryKeys` is: the column a server-side
-  trigger changes on every update of a row (a `timestamptz` kept by `moddatetime`, or an integer).
-  A queued UPDATE or DELETE whose filter pins one cached row of such a table records the row's
-  version, and a sync pass replays it only while the server's row still has that version. A row
-  that moved meanwhile is compared column by column with the row as the device saw it: a change to
-  other columns only is resent against the new version, anything else is a conflict; a lost answer whose write had landed counts as already on the server. Writes sent at once,
-  inserts, upserts and writes the queue cannot pin to one cached row replay as before. A blank
-  version column, or one among the table's key columns, fails `createConfig`.
-- `Offline.Config.conflictResolver`, a `ConflictResolver` the app may implement, asked about a
-  moved row whose written columns changed on the server too, a DELETE of a moved row, or an UPDATE
-  of a gone one, with a `MutationConflict` (the row key, the base, the local columns, the server's row,
+  trigger changes on every update of a row (a `timestamptz` kept by `moddatetime`, or an integer). A
+  queued UPDATE or DELETE whose filter pins one cached row of such a table records the row's
+  version, and a sync pass replays it only while the server's row still has that version. A row that
+  moved meanwhile is compared column by column with the row as the device saw it: a change to other
+  columns only is resent against the new version, anything else is a conflict; a lost answer whose
+  write had landed counts as already on the server. Writes sent at once, inserts, upserts and writes
+  the queue cannot pin to one cached row replay as before. A blank version column, or one among the
+  table's key columns, fails `createConfig`.
+- `Offline.Config.conflictResolver`, a `ConflictResolver` the app may implement, asked about a moved
+  row whose written columns changed on the server too, a DELETE of a moved row, or an UPDATE of a
+  gone one, with a `MutationConflict` (the row key, the base, the local columns, the server's row,
   `changedOnServer` and `conflictingColumns`) and answering a `ConflictResolution`: `KeepLocal`
   (resend against the server's version; the default for a moved row), `KeepServer` (drop it; the
-  default for an UPDATE whose row is gone), `ConflictResolution.apply(columns)` (send other
-  columns; an UPDATE of a row still on the server), or `Hold`. A resolver that throws or takes
-  longer than 30 seconds holds the write.
+  default for an UPDATE whose row is gone), `ConflictResolution.apply(columns)` (send other columns;
+  an UPDATE of a row still on the server), or `Hold`. A resolver that throws (anything but a
+  cancellation) or takes longer than 30 seconds holds the write; it runs on the library's own
+  dispatcher.
 - `Offline.conflictedMutations()`, the current user's held writes as `ConflictedMutation` entries,
   kept across restarts within the rejected list's bounds, with
   `resolveConflictedMutation(id, resolution)` (re-queues under a new id preconditioned on the

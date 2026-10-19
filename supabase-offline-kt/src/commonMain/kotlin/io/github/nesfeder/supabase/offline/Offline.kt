@@ -297,7 +297,8 @@ public interface Offline : SupabasePlugin<Offline.Config> {
      * @param resolution how to settle it.
      * @throws IllegalArgumentException for [ConflictResolution.Hold]; for
      *   [ConflictResolution.Apply] on an entry that is not an UPDATE of a row the server still
-     *   held; and for [ConflictResolution.KeepLocal] on an entry whose body was too large to keep.
+     *   held; and for [ConflictResolution.KeepLocal] on an entry whose row was gone from the server
+     *   ([ConflictedMutation.serverVersion] is `null`) or whose body was too large to keep.
      * @throws IllegalStateException when the client is closed.
      */
     @Throws(Throwable::class)
@@ -665,10 +666,10 @@ public interface Offline : SupabasePlugin<Offline.Config> {
          * settled by [conflictResolver]; see [ConflictResolution] for the defaults.
          *
          * A write sent at once, an INSERT, an UPSERT, and an UPDATE or DELETE whose filter pins no
-         * single row, or whose row the cache does not hold, stay unguarded: they are sent as they
-         * were made, and the last write wins. Without the trigger on the server, a row that moved
-         * cannot be told from one that did not. The value is compared as text, for equality only,
-         * exactly as the server sent it.
+         * single row, whose filter itself names the version column, or whose row the cache does not
+         * hold, stay unguarded: they are sent as they were made, and the last write wins. Without
+         * the trigger on the server, a row that moved cannot be told from one that did not. The
+         * value is compared as text, for equality only, exactly as the server sent it.
          */
         public val versionColumns: MutableMap<String, String> = mutableMapOf()
 

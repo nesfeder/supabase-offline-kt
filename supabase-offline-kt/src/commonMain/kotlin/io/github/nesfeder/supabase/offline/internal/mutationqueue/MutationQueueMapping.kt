@@ -106,7 +106,7 @@ internal fun conflictDecisionOf(resolution: ConflictResolution): ConflictDecisio
     }
 
 /** [text] as a JSON object; `null` when it is not one. */
-private fun jsonObjectOrNull(text: String, json: Json): JsonObject? =
+internal fun jsonObjectOrNull(text: String, json: Json): JsonObject? =
     try {
         json.parseToJsonElement(text) as? JsonObject
     } catch (_: IllegalArgumentException) {

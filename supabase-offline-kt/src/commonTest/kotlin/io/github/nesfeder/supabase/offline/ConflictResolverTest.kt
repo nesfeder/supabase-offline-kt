@@ -2,7 +2,11 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline
 
+import io.github.nesfeder.supabase.offline.internal.buildOfflineClient
+import io.github.nesfeder.supabase.offline.internal.testing.InMemoryCachedFileDao
 import io.github.nesfeder.supabase.offline.testdoubles.FIRST_VERSION
+import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
+import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeRelationalPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.GUARDED_TABLE
 import io.github.nesfeder.supabase.offline.testdoubles.MOVED_VERSION
@@ -11,19 +15,31 @@ import io.github.nesfeder.supabase.offline.testdoubles.VERSION_COLUMN
 import io.github.nesfeder.supabase.offline.testdoubles.deleteTask
 import io.github.nesfeder.supabase.offline.testdoubles.newGuardedClient
 import io.github.nesfeder.supabase.offline.testdoubles.newGuardedServer
+import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
 import io.github.nesfeder.supabase.offline.testdoubles.queueWhileOffline
 import io.github.nesfeder.supabase.offline.testdoubles.renameTask
 import io.github.nesfeder.supabase.offline.testdoubles.taskRow
+import kotlin.coroutines.ContinuationInterceptor
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertNotEquals
 import kotlin.test.assertNull
 import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.minutes
+import kotlin.time.Duration.Companion.seconds
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import okio.Path.Companion.toPath
 
 /**
  * The app's [ConflictResolver], set in the configuration, settles each conflict a replay finds: it
@@ -311,6 +327,146 @@ class ConflictResolverTest {
         assertEquals("eq.8", counting.requests.last().query[VERSION_COLUMN])
         assertEquals(1, report.conflictsResolvedCount)
         client.close()
+    }
+
+    @Test
+    fun a_column_moved_to_the_value_the_write_sets_is_changed_but_not_conflicting() = runTest {
+        // Given — the write renames the task and marks it done; elsewhere it was renamed too, and
+        // marked done as well
+        val client = newGuardedClient(server, resolver)
+        server.seed(GUARDED_TABLE, taskRow(1, "theirs"))
+        client.queueWhileOffline(server) {
+            from(GUARDED_TABLE).update(
+                buildJsonObject {
+                    put("title", "mine")
+                    put("done", true)
+                }
+            ) {
+                filter { eq("id", 1) }
+            }
+        }
+        server.replaceRow(GUARDED_TABLE, taskRow(1, "elsewhere", done = true, MOVED_VERSION))
+        resolver.answer = { ConflictResolution.Hold }
+
+        // When
+        client.syncPendingMutations()
+
+        // Then — both moved on the server, only the title disagrees
+        val conflict = resolver.conflicts.single()
+        assertEquals(setOf("title", "done"), conflict.changedOnServer)
+        assertEquals(setOf("title"), conflict.conflictingColumns)
+        client.close()
+    }
+
+    @Test
+    fun a_resolver_that_throws_an_error_parks_the_write() = runTest {
+        // Given — the app's resolver is not written yet
+        val client = newGuardedClient(server, resolver)
+        client.queueRename()
+        server.replaceRow(GUARDED_TABLE, renamedElsewhere)
+        resolver.answer = { TODO("the app's merge") }
+
+        // When
+        val report = client.syncPendingMutations()
+
+        // Then — read as Hold, not thrown out of the call
+        assertEquals(1, report.conflicted.size)
+        assertEquals(0, client.pendingMutationCount())
+        client.close()
+    }
+
+    @Test
+    fun a_resolver_that_throws_an_error_on_an_automatic_pass_leaves_the_passes_running() = runTest {
+        // Given — a client whose own passes run, and a resolver that is not written yet
+        val client =
+            newTestOfflineClient(
+                supabase = server.supabaseClient(),
+                config =
+                    Offline.createConfig {
+                        versionColumn(GUARDED_TABLE, VERSION_COLUMN)
+                        conflictResolver = resolver
+                    },
+            )
+        resolver.answer = { TODO("the app's merge") }
+        server.seed(GUARDED_TABLE, taskRow(1, "theirs"), taskRow(2, "theirs too"))
+        client.from(GUARDED_TABLE).select()
+
+        // When — two conflicts, each met by a pass the network's return starts
+        for (id in 1..2) {
+            client.disableNetwork()
+            client.renameTask(id, "mine")
+            server.replaceRow(GUARDED_TABLE, taskRow(id, "elsewhere", version = MOVED_VERSION))
+            client.enableNetwork()
+            awaitConflicted(client, id)
+        }
+
+        // Then — both parked, and nothing left queued
+        assertEquals(2, resolver.conflicts.size)
+        assertEquals(0, client.pendingMutationCount())
+        client.close()
+    }
+
+    @Test
+    fun the_resolver_runs_on_the_librarys_dispatcher_not_the_callers() = runTest {
+        // Given
+        val client = newGuardedClient(server, resolver)
+        client.queueRename()
+        server.replaceRow(GUARDED_TABLE, renamedElsewhere)
+        val caller = currentCoroutineContext()[ContinuationInterceptor]
+
+        // When — the app syncs from its own dispatcher
+        client.syncPendingMutations()
+
+        // Then
+        val seen = resolver.dispatchers.single()
+        assertNotEquals(caller, seen)
+        assertEquals(Dispatchers.Default, seen)
+        client.close()
+    }
+
+    @Test
+    fun the_installed_plugin_asks_the_configured_resolver() =
+        runTest(timeout = 2.minutes) {
+            // Given — a client opened as `install(Offline)` opens one, with a resolver that holds
+            resolver.answer = { ConflictResolution.Hold }
+            val config = Offline.createConfig {
+                versionColumn(GUARDED_TABLE, VERSION_COLUMN)
+                conflictResolver = resolver
+                autoSync = false
+            }
+            val client =
+                config.buildOfflineClient(
+                    supabase = server.supabaseClient(),
+                    queryCacheDao = FakeQueryCacheDao(),
+                    cachedFileDao = InMemoryCachedFileDao(),
+                    mutationDao = FakeMutationDao(),
+                    dataDirectory = "/tmp".toPath(),
+                    prepareFileCacheDirectories = false,
+                )
+            client.queueRename()
+            server.replaceRow(GUARDED_TABLE, renamedElsewhere)
+
+            // When
+            client.syncPendingMutations()
+
+            // Then — the configured resolver was asked, and its Hold parked the write
+            assertEquals(1, resolver.conflicts.size)
+            assertEquals(1, client.conflictedMutations().first().size)
+            client.close()
+        }
+
+    @Test
+    fun an_apply_with_no_columns_is_refused() {
+        assertFailsWith<IllegalArgumentException> {
+            ConflictResolution.apply(JsonObject(emptyMap()))
+        }
+    }
+
+    /** Waits, on a real thread and at most ten seconds, until [count] writes are parked. */
+    private suspend fun awaitConflicted(client: Offline, count: Int) {
+        withContext(Dispatchers.Default) {
+            withTimeout(10.seconds) { client.conflictedMutations().first { it.size == count } }
+        }
     }
 
     private val keyOfTaskOne: JsonObject = buildJsonObject { put("id", "1") }

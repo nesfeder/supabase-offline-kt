@@ -166,28 +166,33 @@ class SyncStatusTest {
         server.replaceRow(GUARDED_TABLE, taskRow(1, "elsewhere", version = MOVED_VERSION))
         server.failsRequest = null
 
-        // When — the replay parks it, and the app keeps its change, which the next pass sends
+        // When — the replay parks it, and the app keeps its change while the network is off, so
+        // the pass the resolution asks for cannot send it until the recorder has stopped
         client.syncPendingMutations()
         val parked = status.awaiting { it.conflictedMutationCount == 1 }
+        client.disableNetwork()
         client.resolveConflictedMutation(
             client.conflictedMutations().first().single().id,
             ConflictResolution.KeepLocal,
         )
+        val requeued = status.awaiting {
+            it.conflictedMutationCount == 0 && it.pendingMutationCount == 1
+        }
+        recorder.cancelAndJoin()
+        client.enableNetwork()
         withContext(Dispatchers.Default) {
             withTimeout(10.seconds) { client.pendingMutationCountFlow().first { it == 0 } }
         }
-        val settled = status.awaiting {
-            it.conflictedMutationCount == 0 && it.pendingMutationCount == 0
-        }
-        recorder.cancelAndJoin()
 
-        // Then — every status counted the write in one place at most, and it was sent
+        // Then — once counted, every status counted the write in exactly one place, and it was
+        // sent once the network was back
         assertEquals(0, parked.pendingMutationCount)
-        assertEquals(0, settled.rejectedMutationCount)
+        assertEquals(0, requeued.rejectedMutationCount)
         val counted = seen.map { value ->
             value.pendingMutationCount + value.conflictedMutationCount
         }
-        assertEquals(listOf(), counted.filter { it > 1 }, "counts: $counted")
+        assertEquals(listOf(), counted.dropWhile { it == 0 }.filter { it != 1 }, "counts: $counted")
+        assertTrue(seen.any { it.conflictedMutationCount == 1 }, "counts: $counted")
         assertEquals(JsonPrimitive("mine"), server.rows(GUARDED_TABLE).single()["title"])
         client.close()
     }
