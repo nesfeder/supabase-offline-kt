@@ -248,7 +248,7 @@ jobs:
             echo "\`SupabaseOfflineCore.xcframework.zip\` for $VERSION: $(stat -f %z "$zip") bytes, checksum \`$(python3 scripts/swift-release.py checksum "$zip")\`."
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: swift-framework
           path: ${{ runner.temp }}/swift-release/SupabaseOfflineCore.xcframework.zip
@@ -260,7 +260,7 @@ jobs:
       # colons (`!=(_:_:).json`), which the artifact store refuses as a file name.
       - name: Pack the Swift API reference
         run: tar -C "$RUNNER_TEMP" -cf "$RUNNER_TEMP/swift-reference.tar" swift-reference
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: swift-reference
           path: ${{ runner.temp }}/swift-reference.tar
@@ -285,7 +285,7 @@ jobs:
         id: version
         run: python3 scripts/release.py release-version --github-output "$GITHUB_OUTPUT"
 
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: swift-framework
           path: ${{ runner.temp }}/swift-release
@@ -335,7 +335,7 @@ jobs:
       - uses: gradle/actions/wrapper-validation@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
 
       # The zip the framework job built, the one the draft release holds. It is only hashed here.
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: swift-framework
           path: ${{ runner.temp }}/swift-release
@@ -352,7 +352,7 @@ jobs:
 
       - name: Keep the Swift package's tree (dry run)
         if: inputs.dry_run
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: swift-package-tree
           path: ${{ runner.temp }}/swift-package-staged
