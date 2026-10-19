@@ -17,6 +17,7 @@ import io.github.nesfeder.supabase.offline.MutationNotQueueableException
 import io.github.nesfeder.supabase.offline.Offline
 import io.github.nesfeder.supabase.offline.internal.ClientOperationGate
 import io.github.nesfeder.supabase.offline.internal.OfflineClient
+import io.github.nesfeder.supabase.offline.internal.cache.CachePatcher
 import io.github.nesfeder.supabase.offline.internal.cache.QueryCacheLimits
 import io.github.nesfeder.supabase.offline.internal.cache.monotonicTickSource
 import io.github.nesfeder.supabase.offline.internal.db.CachedFileDao
@@ -24,11 +25,16 @@ import io.github.nesfeder.supabase.offline.internal.db.MutationDao
 import io.github.nesfeder.supabase.offline.internal.db.QueryCacheDao
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogLevel
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.CONFLICT_POLICY_TIMEOUT
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.ConflictPolicy
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.DefaultConflictPolicy
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.DefaultPrimaryKeys
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueueReplayer
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.NoVersionColumns
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.PrimaryKeys
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentity
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.SyncReport
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.VersionColumns
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.awaitSettledSession
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.currentQueueIdentity
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.currentReplayIdentity
@@ -123,6 +129,7 @@ internal fun newTestStore(
     allLiveCacheKeys: () -> Set<String> = { emptySet() },
     onQueriesMarkedStale: (table: String, cacheKeys: Set<String>) -> Unit = { _, _ -> },
     onCacheNotServed: () -> Unit = {},
+    versionColumns: VersionColumns = NoVersionColumns,
 ): TestStore =
     TestStore(
         queryCacheDao = queryCacheDao,
@@ -141,6 +148,7 @@ internal fun newTestStore(
         allLiveCacheKeys = allLiveCacheKeys,
         onQueriesMarkedStale = onQueriesMarkedStale,
         onCacheNotServed = onCacheNotServed,
+        versionColumns = versionColumns,
     )
 
 /**
@@ -222,6 +230,7 @@ internal suspend fun TestStore.recordQueryShape(
  * @param onStillClosing what the client reports when `close()` outlives [closeWait], as the
  *   factories tell the registry; it is handed the count of calls still in flight.
  * @param primaryKeys each table's primary-key columns; `id` for every table by default.
+ * @param versionColumns each table's version column; none by default.
  * @param responseTrust which read responses may replace what the cache holds.
  * @param config the plugin configuration the client reports, and reads `autoSync` from.
  * @param networkAvailability the connectivity signal the client watches; `null` for none.
@@ -246,6 +255,7 @@ internal fun newTestOfflineClient(
     closeWait: Duration = OfflineClient.CLOSE_WAIT,
     onStillClosing: (callsInFlight: () -> Int) -> Unit = {},
     primaryKeys: PrimaryKeys = DefaultPrimaryKeys,
+    versionColumns: VersionColumns = NoVersionColumns,
     responseTrust: ResponseTrustPolicy = ResponseTrustPolicy.SETTLED_SESSION,
     config: Offline.Config = Offline.Config(),
     networkAvailability: Flow<Boolean>? = null,
@@ -270,6 +280,7 @@ internal fun newTestOfflineClient(
         closeWait = closeWait,
         onStillClosing = onStillClosing,
         primaryKeys = primaryKeys,
+        versionColumns = versionColumns,
         responseTrust = responseTrust,
         config = config,
         networkAvailability = networkAvailability,
@@ -380,6 +391,9 @@ internal fun newTestMutationQueueReplayer(
     isSessionSettledNow: () -> Boolean = { supabase.currentReplayIdentity() != null },
     primaryKeys: PrimaryKeys = DefaultPrimaryKeys,
     passEnded: suspend (table: String?, report: SyncReport) -> Unit = { _, _ -> },
+    cachePatcher: CachePatcher? = store.cachePatcher,
+    conflictPolicy: ConflictPolicy = DefaultConflictPolicy,
+    conflictPolicyTimeout: Duration = CONFLICT_POLICY_TIMEOUT,
 ): MutationQueueReplayer =
     MutationQueueReplayer(
         mutationQueue = store.mutationQueue,
@@ -393,6 +407,9 @@ internal fun newTestMutationQueueReplayer(
         isSessionSettledNow = isSessionSettledNow,
         primaryKeys = primaryKeys,
         passEnded = passEnded,
+        cachePatcher = cachePatcher,
+        conflictPolicy = conflictPolicy,
+        conflictPolicyTimeout = conflictPolicyTimeout,
     )
 
 /**

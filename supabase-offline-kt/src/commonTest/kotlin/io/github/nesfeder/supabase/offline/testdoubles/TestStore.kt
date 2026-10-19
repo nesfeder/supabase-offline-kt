@@ -24,6 +24,7 @@ import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueue
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.PrimaryKeys
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.StoredRejection
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.VersionColumns
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 import io.github.nesfeder.supabase.offline.internal.postgrest.QueryShape
 import io.github.nesfeder.supabase.offline.internal.storage.cachedFileKeyOf
@@ -37,6 +38,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
 import okio.Path
 
 /**
@@ -47,6 +49,7 @@ import okio.Path
  * @param identityProvider the identity whose queued writes the overlay and counts show, or `null`
  *   for every identity's.
  * @param identityChanges emits when the identity may have changed.
+ * @param versionColumns each table's version column, which guards a queued write's replay.
  */
 internal class TestStore(
     queryCacheDao: QueryCacheDao,
@@ -69,6 +72,7 @@ internal class TestStore(
     allLiveCacheKeys: () -> Set<String>,
     onQueriesMarkedStale: (table: String, cacheKeys: Set<String>) -> Unit,
     onCacheNotServed: () -> Unit,
+    versionColumns: VersionColumns,
 ) {
 
     /** The components, which this store copies into its fields. */
@@ -90,6 +94,7 @@ internal class TestStore(
             allLiveCacheKeys = allLiveCacheKeys,
             onQueriesMarkedStale = onQueriesMarkedStale,
             onCacheNotServed = onCacheNotServed,
+            versionColumns = versionColumns,
         )
 
     /** The cached queries' table, every write to it counted, as the components write it. */
@@ -215,18 +220,28 @@ internal suspend fun MutationQueue.enqueueUpsert(
         .enqueueUpsert(table, bodyJson, filter, onConflict, ignoreDuplicates, defaultToNull)
         .id
 
-/** Queues an UPDATE with no recorded owner; see [enqueueInsert]. */
+/**
+ * Queues an UPDATE with no recorded owner, with its base as a writer reads it; see [enqueueInsert].
+ */
 internal suspend fun MutationQueue.enqueueUpdate(
     table: String,
     body: JsonElement,
     filter: FilterDescriptor? = null,
-): Long = MutationWriter(owner = null).enqueueUpdate(table, body, filter).id
+): Long {
+    val base = baseFor(table, filter, (body as? JsonObject)?.keys, identity = null)
+    return MutationWriter(owner = null).enqueueUpdate(table, body, filter, base).id
+}
 
-/** Queues a DELETE with no recorded owner; see [enqueueInsert]. */
+/**
+ * Queues a DELETE with no recorded owner, with its base as a writer reads it; see [enqueueInsert].
+ */
 internal suspend fun MutationQueue.enqueueDelete(
     table: String,
     filter: FilterDescriptor? = null,
-): Long = MutationWriter(owner = null).enqueueDelete(table, filter).id
+): Long {
+    val base = baseFor(table, filter, emptySet(), identity = null)
+    return MutationWriter(owner = null).enqueueDelete(table, filter, base).id
+}
 
 /** Removes the rejected mutation [id] under the queue lock, whoever's it is. */
 internal suspend fun MutationQueue.dismissRejectedMutation(id: Long): Boolean = holdingQueueLock {

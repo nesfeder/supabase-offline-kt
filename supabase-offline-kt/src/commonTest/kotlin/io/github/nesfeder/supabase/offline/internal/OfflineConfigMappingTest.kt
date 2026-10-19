@@ -63,6 +63,21 @@ class OfflineConfigMappingTest {
     }
 
     @Test
+    fun the_version_column_setting_names_each_tables_column_and_no_other() {
+        // Given
+        val config = Offline.createConfig { versionColumnSettings["tasks"] = "updated_at" }
+
+        // When
+        val columns = config.versionColumnsByTable()
+
+        // Then
+        assertEquals("updated_at", columns.of("tasks"))
+        assertNull(columns.of("notes"))
+        assertTrue(Offline.createConfig {}.versionColumnSettings.isEmpty())
+        assertNull(Offline.createConfig {}.versionColumnsByTable().of("tasks"))
+    }
+
+    @Test
     fun the_cache_sizes_become_the_engine_bounds() {
         // Then — unlimited turns eviction off; a bound below the minimum counts as the minimum
         assertNull(

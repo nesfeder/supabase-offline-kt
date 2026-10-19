@@ -8,6 +8,7 @@ import io.github.nesfeder.supabase.offline.MutationOperation
 import io.github.nesfeder.supabase.offline.internal.cache.CacheFreshness
 import io.github.nesfeder.supabase.offline.internal.cache.ShownQueueCounts
 import io.github.nesfeder.supabase.offline.internal.cache.TableWriteLocks
+import io.github.nesfeder.supabase.offline.internal.cache.keyOf
 import io.github.nesfeder.supabase.offline.internal.db.CachedQueryRow
 import io.github.nesfeder.supabase.offline.internal.db.ChangeCounts
 import io.github.nesfeder.supabase.offline.internal.db.MutationDao
@@ -21,6 +22,7 @@ import io.github.nesfeder.supabase.offline.internal.db.requireUserTable
 import io.github.nesfeder.supabase.offline.internal.db.storedName
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
+import io.github.nesfeder.supabase.offline.internal.postgrest.decodeFilterOrNull
 import io.github.nesfeder.supabase.offline.internal.postgrest.encodeFilter
 import kotlin.concurrent.atomics.AtomicBoolean
 import kotlin.concurrent.atomics.AtomicReference
@@ -39,6 +41,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
 
 /**
  * The mutation queue: its rows, the records kept beside them, and every change to either, from
@@ -55,6 +58,8 @@ import kotlinx.serialization.json.JsonElement
  * @param liveCacheKeysOf a table's queries with a live reader; retirement keeps what they wait for.
  * @param engineLogger where the rejected list reports a row it could not read, and where a failed
  *   read of the queue is reported.
+ * @property versionColumns each table's version column, which guards a queued UPDATE or DELETE of
+ *   one row.
  */
 internal class MutationQueue(
     private val mutationDao: MutationDao,
@@ -69,6 +74,7 @@ internal class MutationQueue(
     private val ownerlessMutationsAreAnonymous: Boolean,
     private val liveCacheKeysOf: (table: String) -> Set<String>,
     private val engineLogger: EngineLogger,
+    val versionColumns: VersionColumns = NoVersionColumns,
 ) {
 
     /** The mutation queue's record kept beside the rows: the rejected list. */
@@ -79,6 +85,25 @@ internal class MutationQueue(
             nowMillis = nowMillis,
             logger = engineLogger,
         )
+
+    /** The mutation queue's other record kept beside the rows: the conflicted list. */
+    internal val conflictedList: ConflictedMutationList =
+        ConflictedMutationList(
+            queryCacheDao = queryCacheDao,
+            json = json,
+            nowMillis = nowMillis,
+            logger = engineLogger,
+        )
+
+    /**
+     * Where a guarded write's base row is read from: nowhere until [readBasesThrough] is called.
+     */
+    private val cachedRowLookup = AtomicReference<CachedRowLookup?>(null)
+
+    /** Reads every later base from [lookup]; the components call it once, as they are built. */
+    fun readBasesThrough(lookup: CachedRowLookup) {
+        cachedRowLookup.store(lookup)
+    }
 
     /**
      * The ids of the mutations whose send started and whose outcome is unknown
@@ -174,31 +199,40 @@ internal class MutationQueue(
         /**
          * Queues an UPDATE, with an optional [filter] describing the targeted rows.
          *
+         * @param base the write's base, read with [baseFor] before the queue lock; `null` for none.
          * @return The row as stored.
          */
         suspend fun enqueueUpdate(
             table: String,
             body: JsonElement,
             filter: FilterDescriptor? = null,
+            base: MutationBase? = null,
         ): MutationRow =
             insert(
                 table = table,
                 operation = MutationOperation.UPDATE,
                 bodyJson = body.toString(),
                 filter = filter,
+                base = base,
             )
 
         /**
          * Queues a DELETE. [filter] describes which rows are removed.
          *
+         * @param base the write's base, read with [baseFor] before the queue lock; `null` for none.
          * @return The row as stored.
          */
-        suspend fun enqueueDelete(table: String, filter: FilterDescriptor? = null): MutationRow =
+        suspend fun enqueueDelete(
+            table: String,
+            filter: FilterDescriptor? = null,
+            base: MutationBase? = null,
+        ): MutationRow =
             insert(
                 table = table,
                 operation = MutationOperation.DELETE,
                 bodyJson = "{}",
                 filter = filter,
+                base = base,
             )
 
         /** Stores one pending mutation of [owner]'s, tells [table]'s readers, and returns it. */
@@ -210,6 +244,7 @@ internal class MutationQueue(
             defaultToNull: Boolean? = null,
             onConflict: String? = null,
             ignoreDuplicates: Boolean? = null,
+            base: MutationBase? = null,
         ): MutationRow {
             requireUserTable(table)
             val row =
@@ -224,12 +259,112 @@ internal class MutationQueue(
                     onConflict = onConflict,
                     ignoreDuplicates = ignoreDuplicates,
                     owner = owner,
+                    baseVersion = base?.version,
+                    baseJson = base?.json,
                 )
             val stored = row.copy(id = mutationDao.insert(row))
             noteMutationsChanged(table)
             return stored
         }
     }
+
+    /**
+     * The base of an UPDATE or DELETE of [table] by [filter] that sets [columns] (none for a
+     * DELETE), read from [identity]'s cache: the newest cached row with the key [filter] pins and
+     * the version column, or `null` to replay it unguarded. Read before the queue lock, so a
+     * forward can land between this read and the insert and leave an older base: its replay then
+     * meets a stale base when the overlapping send set none of this write's columns, and otherwise
+     * a conflict for the policy (whose default sends the write).
+     *
+     * @param identity the enqueuing identity's stored value, or `null` when there is none.
+     */
+    suspend fun baseFor(
+        table: String,
+        filter: FilterDescriptor?,
+        columns: Set<String>?,
+        identity: String?,
+    ): MutationBase? {
+        val versionColumn = versionColumns.of(table) ?: return null
+        val lookup = cachedRowLookup.load() ?: return null
+        if (filter == null || columns == null) return null
+        // A second top-level filter on the version column would be dropped on the wire
+        if (filter.conditions.any { condition -> condition.column == versionColumn }) return null
+        val keyColumns = primaryKeys.of(table)
+        val key = pinnedRowKeyOf(filter, keyColumns)?.let { pinned -> keyOf(pinned, keyColumns) }
+        if (key == null) return null
+        val row =
+            try {
+                lookup.cachedRowHolding(table, key, versionColumn, identity)
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (failure: Exception) {
+                engineLogger.warning {
+                    "Could not read the cached row of a queued write to $table " +
+                        "(${failure::class.simpleName}); it replays without a version check"
+                }
+                null
+            } ?: return null
+        val version = versionTextOf(row[versionColumn]) ?: return null
+        val baseColumns = (columns + versionColumn).filter { column -> column in row }
+        return MutationBase(
+            version = version,
+            json =
+                JsonObject(baseColumns.associateWith { column -> row.getValue(column) }).toString(),
+        )
+    }
+
+    /**
+     * Refreshes the base of every pending guarded mutation of [table] queued after [afterId] whose
+     * row is one of [rows], which the server returned: their version and their columns become the
+     * row's. Runs inside the caller's transaction, under the queue lock.
+     *
+     * @return Whether any base moved.
+     */
+    private suspend fun forwardBases(
+        table: String,
+        afterId: Long,
+        rows: List<JsonObject>,
+    ): Boolean {
+        val versionColumn = versionColumns.of(table) ?: return false
+        if (rows.isEmpty()) return false
+        val keyColumns = primaryKeys.of(table)
+        val returnedByKey = HashMap<List<String>, JsonObject>()
+        rows.forEach { row ->
+            if (versionTextOf(row[versionColumn]) == null) return@forEach
+            keyOf(row, keyColumns)?.let { key -> returnedByKey[key] = row }
+        }
+        if (returnedByKey.isEmpty()) return false
+        var forwarded = false
+        mutationDao.pendingForTable(table).forEach { pending ->
+            if (pending.id <= afterId || pending.baseVersion == null) return@forEach
+            val filter = decodeFilterOrNull(pending.filterJson, json) ?: return@forEach
+            val key =
+                pinnedRowKeyOf(filter, keyColumns)?.let { pinned -> keyOf(pinned, keyColumns) }
+                    ?: return@forEach
+            val returned = returnedByKey[key] ?: return@forEach
+            val version = versionTextOf(returned[versionColumn]) ?: return@forEach
+            val earlier = parsedBaseOf(pending)
+            val refreshed =
+                earlier.keys.associateWith { column ->
+                    returned[column] ?: earlier.getValue(column)
+                } + (versionColumn to returned.getValue(versionColumn))
+            mutationDao.updateBase(pending.id, version, JsonObject(refreshed).toString())
+            forwarded = true
+        }
+        return forwarded
+    }
+
+    /** [mutation]'s base row as stored; empty when it has none or it no longer parses. */
+    private fun parsedBaseOf(mutation: MutationRow): JsonObject =
+        mutation.baseJson?.let(::jsonObjectOrNull) ?: JsonObject(emptyMap())
+
+    /** [text] as a JSON object, or `null` when it is not one or does not parse. */
+    private fun jsonObjectOrNull(text: String): JsonObject? =
+        try {
+            json.parseToJsonElement(text) as? JsonObject
+        } catch (_: IllegalArgumentException) {
+            null
+        }
 
     /**
      * Runs [enqueue], which queues one write with [identity] as its owner: a replay pass sends only
@@ -438,8 +573,9 @@ internal class MutationQueue(
     suspend fun hasEarlierPendingMutation(id: Long, identity: String): Boolean =
         mutationDao.hasPendingOwnedBy(identity, mayAdoptOwnerlessMutations(identity), id)
 
-    /** Whether the mutation [id] is queued and not yet synced. */
-    suspend fun isPending(id: Long): Boolean = mutationDao.isPending(id)
+    /** The mutation [id] as stored now, when it is queued and not yet synced; `null` otherwise. */
+    suspend fun pendingMutation(id: Long): MutationRow? =
+        mutationDao.byId(id)?.takeIf { row -> row.syncedAtMs == null }
 
     /**
      * Removes a write sent at the head of the queue once the server accepted it: its mutation row,
@@ -449,6 +585,26 @@ internal class MutationQueue(
      * @param id The sent mutation's id.
      */
     suspend fun completeSentMutation(id: Long) {
+        removeMutations(listOf(id), clearRejections = true)
+    }
+
+    /**
+     * [completeSentMutation] for a write to [table] whose response carried [returnedRows]: in the
+     * same transaction, later guarded writes to those rows take them as their base.
+     */
+    suspend fun completeSentMutation(id: Long, table: String, returnedRows: List<JsonObject>) {
+        removeMutations(
+            listOf(id),
+            clearRejections = true,
+            forwarding = Forwarding(table, id, returnedRows),
+        )
+    }
+
+    /**
+     * Drops mutation [id], which a conflict decision let the server's row stand over, with any
+     * rejected entry a crash left for it.
+     */
+    suspend fun dropKeptServerMutation(id: Long) {
         removeMutations(listOf(id), clearRejections = true)
     }
 
@@ -499,6 +655,7 @@ internal class MutationQueue(
         ids: Collection<Long>,
         clearRejections: Boolean,
         tables: Collection<String>? = null,
+        forwarding: Forwarding? = null,
     ) {
         if (ids.isEmpty()) return
         mutationQueueMutex.withLock {
@@ -514,10 +671,12 @@ internal class MutationQueue(
                 }
             // Removed already, as an accepted head write is under its table's readers' lock
             if (touched.isEmpty() && rejected == null) return@withLock
-            mutationDao.runInTransaction {
+            val forwarded = mutationDao.inTransaction {
                 idSet.forEach { id -> mutationDao.deleteById(id) }
                 rejected?.let { (row, _) -> queryCacheDao.upsert(row) }
+                forwarding?.let { (table, afterId, rows) -> forwardBases(table, afterId, rows) }
             }
+            if (forwarded == true && forwarding != null) noteMutationsChanged(forwarding.table)
             unconfirmedSendIds.update { current -> current?.minus(idSet) }
             rejected?.let { (_, next) -> rejectedList.rejectedWritten(next) }
             loggedOverlaySkips.update { logged -> logged - idSet }
@@ -598,6 +757,163 @@ internal class MutationQueue(
             newId
         }
 
+    /**
+     * Moves [mutation] out of the queue and onto the conflicted list, in one transaction, as
+     * [rejectMutation] moves a refused write onto the rejected list.
+     *
+     * @param parked What the replay found, without the mutation's own fields.
+     * @return The persisted entry.
+     */
+    suspend fun parkConflictedMutation(
+        mutation: MutationRow,
+        parked: ParkedConflict,
+    ): StoredConflict = mutationQueueMutex.withLock {
+        val entry =
+            StoredConflict(
+                id = mutation.id,
+                table = mutation.table,
+                operation = mutation.operation,
+                bodyJson = mutation.bodyJson,
+                filterJson = mutation.filterJson,
+                createdAtMs = mutation.createdAtMs,
+                defaultToNull = mutation.defaultToNull,
+                onConflict = mutation.onConflict,
+                ignoreDuplicates = mutation.ignoreDuplicates,
+                owner = mutation.owner,
+                baseVersion = mutation.baseVersion,
+                baseJson = mutation.baseJson,
+                serverRowJson = parked.serverRow?.toString(),
+                serverVersion = parked.serverVersion,
+                changedOnServer = parked.changedOnServer.sorted(),
+                conflictingColumns = parked.conflictingColumns.sorted(),
+                message = parked.message,
+                conflictedAtMs = nowMillis(),
+            )
+        val (conflictedRow, list) = conflictedList.conflictedRowWith(add = entry)
+        // Loaded first, so the change below reaches it.
+        unconfirmedSends()
+        mutationDao.runInTransaction {
+            queryCacheDao.upsert(conflictedRow)
+            mutationDao.deleteById(mutation.id)
+        }
+        conflictedList.conflictWritten(list)
+        unconfirmedSendIds.update { current -> current?.minus(mutation.id) }
+        noteMutationsChanged(mutation.table)
+        list.entries.firstOrNull { stored -> stored.id == mutation.id } ?: entry
+    }
+
+    /**
+     * Puts the conflicted mutation [id] back at the tail of the queue under a new id, owned by
+     * [identity] and preconditioned on the server version the entry recorded, in one transaction
+     * with the entry's removal. [ConflictDecision.KeepServer] only removes the entry.
+     *
+     * @param decision [ConflictDecision.KeepLocal] (a row still on the server),
+     *   [ConflictDecision.Apply] (an UPDATE of one) or [ConflictDecision.KeepServer].
+     * @return What became of the entry.
+     */
+    suspend fun requeueConflict(
+        id: Long,
+        identity: String?,
+        decision: ConflictDecision,
+    ): ConflictRequeue = mutationQueueMutex.withLock {
+        val entry =
+            conflictedList.conflicts().firstOrNull { conflict -> conflict.id == id }
+                ?: return@withLock ConflictRequeue.NotFound
+        if (identity != null && !belongsTo(entry.owner, identity))
+            return@withLock ConflictRequeue.NotFound
+        if (decision == ConflictDecision.KeepServer) {
+            conflictedList.removeConflict(id)
+            return@withLock ConflictRequeue.Dropped
+        }
+        val row =
+            requeuedRowOf(entry, decision, owner = identity)
+                ?: return@withLock ConflictRequeue.Refused
+        val (conflictedRow, list) = conflictedList.conflictedRowWith(removeId = id)
+        val newId = mutationDao.inTransaction {
+            val inserted = mutationDao.insert(row)
+            queryCacheDao.upsert(conflictedRow)
+            inserted
+        }
+        conflictedList.conflictWritten(list)
+        noteMutationsChanged(row.table)
+        ConflictRequeue.Requeued(newId)
+    }
+
+    /**
+     * The row [entry] re-queues as under [decision], at the tail: its body, or for
+     * [ConflictDecision.Apply] the given columns, preconditioned on the server's version; `null`
+     * when the decision does not apply to it (a row gone from the server takes neither, since it
+     * would replay unguarded and change nothing) or its body was not kept.
+     */
+    private fun requeuedRowOf(
+        entry: StoredConflict,
+        decision: ConflictDecision,
+        owner: String?,
+    ): MutationRow? {
+        if (entry.bodyOmittedChars != null || entry.serverVersion == null) return null
+        val bodyJson =
+            when (decision) {
+                ConflictDecision.KeepLocal -> entry.bodyJson
+                is ConflictDecision.Apply ->
+                    if (
+                        entry.operation == MutationOperation.UPDATE.storedName &&
+                            entry.serverVersion != null
+                    )
+                        decision.columns.toString()
+                    else return null
+                ConflictDecision.KeepServer,
+                ConflictDecision.Hold -> return null
+            }
+        val versionColumn = versionColumns.of(entry.table)
+        val server = entry.serverRowJson?.let(::jsonObjectOrNull)
+        val columns =
+            (jsonObjectOrNull(bodyJson)?.keys.orEmpty() + listOfNotNull(versionColumn)).filter {
+                column ->
+                server != null && column in server
+            }
+        val baseJson =
+            if (entry.serverVersion == null || server == null) null
+            else JsonObject(columns.associateWith { column -> server.getValue(column) }).toString()
+        return MutationRow(
+            table = entry.table,
+            operation = entry.operation,
+            bodyJson = bodyJson,
+            filterJson = entry.filterJson,
+            createdAtMs = nowMillis(),
+            syncedAtMs = null,
+            defaultToNull = entry.defaultToNull,
+            onConflict = entry.onConflict,
+            ignoreDuplicates = entry.ignoreDuplicates,
+            owner = owner,
+            baseVersion = entry.serverVersion,
+            baseJson = baseJson,
+        )
+    }
+
+    /** The conflicted mutations the app is shown, oldest first, as they change. */
+    fun shownConflictsFlow(): Flow<List<StoredConflict>> =
+        combine(conflictedList.conflictsFlow(), identityChanges) { entries, _ ->
+                shownTo(identityProvider(), entries) { entry -> entry.owner }
+            }
+            .distinctUntilChanged()
+
+    /** The conflicted mutation [id] when the app is shown it, as [shownRejection] decides. */
+    suspend fun shownConflict(id: Long, identity: String): StoredConflict? =
+        conflictedList.conflicts().firstOrNull { entry ->
+            entry.id == id && belongsTo(entry.owner, identity)
+        }
+
+    /**
+     * Removes the conflicted mutation [id] when it is [identity]'s to remove.
+     *
+     * @return `true` when an entry was removed.
+     */
+    suspend fun dismissConflictOf(id: Long, identity: String): Boolean =
+        mutationQueueMutex.withLock {
+            if (shownConflict(id, identity) == null) return@withLock false
+            conflictedList.removeConflict(id) != null
+        }
+
     /** [table]'s pending mutations, whatever their owner, in insertion order. */
     suspend fun pendingMutationsForTable(table: String): List<MutationRow> =
         mutationDao.pendingForTable(table)
@@ -639,13 +955,16 @@ internal class MutationQueue(
      * in exactly one of them, never both and never neither.
      */
     suspend fun shownQueueCounts(): ShownQueueCounts {
-        val identity = identityProvider() ?: return ShownQueueCounts(pending = 0, rejected = 0)
+        val identity =
+            identityProvider() ?: return ShownQueueCounts(pending = 0, rejected = 0, conflicted = 0)
         val adopts = mayAdoptOwnerlessMutations(identity)
         return mutationQueueMutex.withLock {
             ShownQueueCounts(
                 pending = mutationDao.countPendingOwnedBy(identity, adopts),
                 rejected =
                     shownTo(identity, rejectedList.rejections()) { entry -> entry.owner }.size,
+                conflicted =
+                    shownTo(identity, conflictedList.conflicts()) { entry -> entry.owner }.size,
             )
         }
     }
@@ -718,6 +1037,14 @@ internal class MutationQueue(
      * stale-refresh watermark, so a refresh that started before the replay cannot land after it.
      */
     suspend fun recordReplayed(id: Long, table: String) {
+        recordReplayed(id, table, returnedRows = emptyList())
+    }
+
+    /**
+     * [recordReplayed] for a replay whose response carried [returnedRows]: in the same transaction,
+     * later guarded writes to those rows take them as their base.
+     */
+    suspend fun recordReplayed(id: Long, table: String, returnedRows: List<JsonObject>) {
         freshness.advanceLocalWriteWatermark(table)
         mutationQueueMutex.withLock {
             val sequence = latestSyncSequence() + 1
@@ -730,6 +1057,7 @@ internal class MutationQueue(
             mutationDao.runInTransaction {
                 mutationDao.markSynced(id = id, syncedAtMs = nowMillis(), syncSequence = sequence)
                 rejected?.let { (row, _) -> queryCacheDao.upsert(row) }
+                forwardBases(table, afterId = id, rows = returnedRows)
             }
             latestSyncSequence = sequence
             unconfirmedSendIds.update { current -> current?.minus(id) }
@@ -881,12 +1209,13 @@ internal class MutationQueue(
     suspend fun mutationsOfTable(table: String): List<MutationRow> = mutationDao.allForTable(table)
 
     /**
-     * Forgets the records a clear deleted with the queue: the rejected list and the sends whose
-     * outcome is unknown. Caller holds the queue lock, and calls it inside the clear's owner
-     * change.
+     * Forgets the records a clear deleted with the queue: the rejected and conflicted lists and the
+     * sends whose outcome is unknown. Caller holds the queue lock, and calls it inside the clear's
+     * owner change.
      */
     fun forgetRecordsOfClearedQueue() {
         rejectedList.resetCaches()
+        conflictedList.resetCaches()
         unconfirmedSendIds.store(emptySet())
     }
 
@@ -907,4 +1236,67 @@ internal class MutationQueue(
          */
         const val MAX_RETAINED_SYNCED_PER_TABLE = 1_000
     }
+}
+
+/**
+ * A guarded write's base, as [MutationRow.baseVersion] and [MutationRow.baseJson] hold it.
+ *
+ * @property version The row's version as text.
+ * @property json The row's columns the write names, and the version column, as a JSON object.
+ */
+internal class MutationBase(val version: String, val json: String)
+
+/**
+ * Rows a sent write's response carried, which later guarded writes to [table] queued after
+ * [afterId] take as their base.
+ */
+private data class Forwarding(val table: String, val afterId: Long, val rows: List<JsonObject>)
+
+/**
+ * What a replay found when it parked a write, beside the write's own fields.
+ *
+ * @property serverRow The server's row; `null` when it was gone.
+ * @property serverVersion Its version; `null` when it was gone.
+ * @property changedOnServer The write's columns whose server value differs from the base.
+ * @property conflictingColumns Of those, the ones the write also sets to another value.
+ * @property message Why it was parked.
+ */
+internal class ParkedConflict(
+    val serverRow: JsonObject?,
+    val serverVersion: String?,
+    val changedOnServer: Set<String>,
+    val conflictingColumns: Set<String>,
+    val message: String,
+)
+
+/**
+ * Finds the cached row a guarded write's base is read from; see [MutationQueue.readBasesThrough].
+ */
+internal fun interface CachedRowLookup {
+
+    /**
+     * The newest row with [key] that holds [column] in [identity]'s cache of [table], or `null`.
+     */
+    suspend fun cachedRowHolding(
+        table: String,
+        key: List<String>,
+        column: String,
+        identity: String?,
+    ): JsonObject?
+}
+
+/** What [MutationQueue.requeueConflict] did with a conflicted entry. */
+internal sealed interface ConflictRequeue {
+
+    /** It is queued again, at the tail, as the pending mutation [id]. */
+    data class Requeued(val id: Long) : ConflictRequeue
+
+    /** It left the list, its change dropped: the server's row stands. */
+    data object Dropped : ConflictRequeue
+
+    /** There is no such entry the identity may settle. */
+    data object NotFound : ConflictRequeue
+
+    /** The decision does not apply to it, or its body was not kept; it stays on the list. */
+    data object Refused : ConflictRequeue
 }

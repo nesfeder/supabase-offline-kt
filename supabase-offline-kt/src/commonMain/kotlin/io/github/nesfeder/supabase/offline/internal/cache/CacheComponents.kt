@@ -8,8 +8,11 @@ import io.github.nesfeder.supabase.offline.internal.db.MutationDao
 import io.github.nesfeder.supabase.offline.internal.db.PayloadWriteCountingDao
 import io.github.nesfeder.supabase.offline.internal.db.QueryCacheDao
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.CachedRowLookup
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueue
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.NoVersionColumns
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.PrimaryKeys
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.VersionColumns
 import kotlinx.coroutines.flow.Flow
 
 /**
@@ -63,6 +66,7 @@ internal class CacheComponents(
  * @param allLiveCacheKeys the cache keys every live read holds, which eviction keeps.
  * @param onQueriesMarkedStale told the queries a write marked stale, so live ones fetch again.
  * @param onCacheNotServed told that a read or write found the caches another identity's.
+ * @param versionColumns each table's version column, which guards a queued write's replay.
  * @return the components, wired.
  */
 internal fun buildCacheComponents(
@@ -82,6 +86,7 @@ internal fun buildCacheComponents(
     allLiveCacheKeys: () -> Set<String>,
     onQueriesMarkedStale: (table: String, cacheKeys: Set<String>) -> Unit,
     onCacheNotServed: () -> Unit,
+    versionColumns: VersionColumns = NoVersionColumns,
 ): CacheComponents {
     val countingQueryCacheDao = PayloadWriteCountingDao(queryCacheDao)
     val freshness = CacheFreshness(monotonicTick)
@@ -110,6 +115,7 @@ internal fun buildCacheComponents(
             ownerlessMutationsAreAnonymous = ownerlessMutationsAreAnonymous,
             liveCacheKeysOf = liveCacheKeysOf,
             engineLogger = engineLogger,
+            versionColumns = versionColumns,
         )
     val queryCache =
         QueryCache(
@@ -135,6 +141,7 @@ internal fun buildCacheComponents(
             identityChanges = identityChanges,
             engineLogger = engineLogger,
         )
+    mutationQueue.readBasesThrough(CachedRowLookup(queryOverlay::cachedRowHolding))
     val cachePatcher =
         CachePatcher(
             queryCacheDao = countingQueryCacheDao,

@@ -5,8 +5,10 @@ package io.github.nesfeder.supabase.offline.internal.db
 import io.github.nesfeder.supabase.offline.MutationOperation
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.MAX_REJECTED_MUTATIONS
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentity
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.StoredConflict
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.StoredRejection
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.StoredServerError
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.VersionColumns
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 import io.github.nesfeder.supabase.offline.internal.postgrest.QueryShape
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
@@ -50,6 +52,7 @@ class PersistedNamesTest {
         // Postgres truncates identifiers to NAMEDATALEN - 1 = 63 bytes, so no table has this name.
         assertTrue(RESERVED_TABLE_NAME.encodeToByteArray().size > 63)
         assertEquals("rejected_mutations", REJECTED_MUTATIONS_CACHE_KEY)
+        assertEquals("conflicted_mutations", CONFLICTED_MUTATIONS_CACHE_KEY)
         assertEquals("cache_owner", CACHE_OWNER_CACHE_KEY)
     }
 
@@ -174,6 +177,86 @@ class PersistedNamesTest {
             assertNotNull(queryCacheDao.getRow(RESERVED_TABLE_NAME, REJECTED_MUTATIONS_CACHE_KEY))
                 .payload,
         )
+    }
+
+    @Test
+    fun a_conflicted_list_is_written_with_these_keys() = runTest {
+        // Given — an entry with every field set
+        val entry =
+            StoredConflict(
+                id = 7,
+                table = "todos",
+                operation = MutationOperation.UPDATE.storedName,
+                bodyJson = """{"title":"b"}""",
+                filterJson = "f",
+                createdAtMs = 1,
+                defaultToNull = false,
+                onConflict = "id",
+                ignoreDuplicates = true,
+                owner = "user:user-a",
+                baseVersion = "v1",
+                baseJson = """{"title":"a","updated_at":"v1"}""",
+                serverRowJson = """{"id":1,"title":"c","updated_at":"v2"}""",
+                serverVersion = "v2",
+                changedOnServer = listOf("title"),
+                conflictingColumns = listOf("title"),
+                message = "moved",
+                conflictedAtMs = 2,
+                bodyOmittedChars = 5,
+            )
+
+        // When
+        store.mutationQueue.holdingQueueLock {
+            val (row, list) = store.mutationQueue.conflictedList.conflictedRowWith(add = entry)
+            queryCacheDao.upsert(row)
+            store.mutationQueue.conflictedList.conflictWritten(list)
+        }
+
+        // Then
+        assertEquals(
+            """{"version":1,"entries":[{"id":7,"table":"todos","operation":"UPDATE",""" +
+                """"bodyJson":"{\"title\":\"b\"}","filterJson":"f","createdAtMs":1,""" +
+                """"defaultToNull":false,"onConflict":"id","ignoreDuplicates":true,""" +
+                """"owner":"user:user-a","baseVersion":"v1",""" +
+                """"baseJson":"{\"title\":\"a\",\"updated_at\":\"v1\"}",""" +
+                """"serverRowJson":"{\"id\":1,\"title\":\"c\",\"updated_at\":\"v2\"}",""" +
+                """"serverVersion":"v2","changedOnServer":["title"],"conflictingColumns":["title"],""" +
+                """"message":"moved","conflictedAtMs":2,"bodyOmittedChars":5}]}""",
+            assertNotNull(queryCacheDao.getRow(RESERVED_TABLE_NAME, CONFLICTED_MUTATIONS_CACHE_KEY))
+                .payload,
+        )
+    }
+
+    @Test
+    fun a_guarded_writes_base_is_stored_in_its_row() = runTest {
+        // Given — a cached row of a table with a version column
+        val versioned =
+            newTestStore(
+                queryCacheDao = queryCacheDao,
+                mutationDao = mutationDao,
+                versionColumns = VersionColumns { "updated_at" },
+            )
+        queryCacheDao.upsert(
+            CachedQueryRow(
+                table = "todos",
+                cacheKey = "todos?select=*",
+                payload = """[{"id":1,"title":"a","done":false,"updated_at":"v1"}]""",
+                updatedAt = NOW,
+            )
+        )
+
+        // When
+        versioned.mutationQueue.enqueueUpdate(
+            table = "todos",
+            body = Json.parseToJsonElement("""{"title":"b"}"""),
+            filter =
+                FilterDescriptor(conditions = listOf(FilterDescriptor.Condition("id", "eq", "1"))),
+        )
+
+        // Then — the version as text, and the row's written columns with the version column
+        val stored = mutationDao.inserted.single()
+        assertEquals("v1", stored.baseVersion)
+        assertEquals("""{"title":"a","updated_at":"v1"}""", stored.baseJson)
     }
 
     @Test

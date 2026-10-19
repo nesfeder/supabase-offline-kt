@@ -5,10 +5,11 @@ package io.github.nesfeder.supabase.offline.internal.cache
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueue
 
 /**
- * The app's pending mutations and rejected entries, counted together; see
+ * The app's pending mutations, rejected and conflicted entries, counted together; see
  * [MutationQueue.shownQueueCounts].
  *
  * @property pending the pending mutations the app is shown.
  * @property rejected the rejected entries the app is shown.
+ * @property conflicted the conflicted entries the app is shown.
  */
-internal data class ShownQueueCounts(val pending: Int, val rejected: Int)
+internal data class ShownQueueCounts(val pending: Int, val rejected: Int, val conflicted: Int = 0)
