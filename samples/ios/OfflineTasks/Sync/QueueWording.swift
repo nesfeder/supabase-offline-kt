@@ -109,9 +109,50 @@ nonisolated extension Wording {
             "still waiting \(report.remainingCount)",
             "already on the server \(report.alreadyOnServerCount)",
             "held behind other tables \(report.heldBehindOtherTablesCount)",
+            "conflicts settled \(report.conflictsResolvedCount)",
+            "kept the server’s \(report.conflictsKeptServerCount)",
+            "held for you \(report.conflicted.count)",
         ].joined(separator: " · ")
     }
     // --8<-- [end:sync-report]
+
+    // --8<-- [start:conflicted-list]
+    /// What a parked write is about: "“Buy milk” changed in two places".
+    static func conflictHeadline(_ conflict: ConflictedMutation) -> String {
+        "“\(title(conflict.taskTitle))” changed in two places"
+    }
+
+    /// Each column both sides changed, with both values: "title: “Buy oat milk” on the server,
+    /// “Buy milk” on this device". A delete changes no column, so it says so instead.
+    static func conflictingColumns(_ conflict: ConflictedMutation) -> [String] {
+        guard conflict.operation != .delete else { return ["Deleted on this device, changed on the server"] }
+        var mine: [String: OfflineJSON] = [:]
+        if case .object(let values)? = conflict.body { mine = values }
+        return conflict.conflictingColumns.sorted().map { column in
+            "\(column): “\(text(conflict.server?[column]))” on the server, “\(text(mine[column]))” on this device"
+        }
+    }
+
+    /// When a parked write was made and held: "made 10:41 · held 10:42".
+    static func conflictTimes(_ conflict: ConflictedMutation) -> String {
+        let made = conflict.createdAt.formatted(date: .omitted, time: .shortened)
+        let held = conflict.conflictedAt.formatted(date: .omitted, time: .shortened)
+        return "made \(made) · held \(held)"
+    }
+    // --8<-- [end:conflicted-list]
+
+    /// A column's value as the Sync tab shows it: a string's text, a number's or a flag's, "empty"
+    /// for null or a value not there.
+    static func text(_ value: OfflineJSON?) -> String {
+        switch value {
+        case .string(let string)?: string
+        case .int(let int)?: String(int)
+        case .double(let double)?: String(double)
+        case .bool(let bool)?: bool ? "true" : "false"
+        case .array?, .object?: "…"
+        case .null?, nil: "empty"
+        }
+    }
 
     // --8<-- [start:provenance-caption]
     /// The caption under the Tasks title: where the list shown came from, and how old it is.
@@ -139,5 +180,21 @@ nonisolated extension Wording {
         case ..<86_400: return "\(Int(seconds / 3_600)) h ago"
         default: return date.formatted(date: .abbreviated, time: .omitted)
         }
+    }
+}
+
+nonisolated extension ConflictedMutation {
+
+    /// The title the parked write sets, or else the server's, so the app can say which task it was.
+    var taskTitle: String? {
+        if let title = Wording.titles(in: body).first { return title }
+        guard case .string(let title)? = server?["title"] else { return nil }
+        return title
+    }
+
+    /// Whether Keep mine can send it again: the server still has the row, and an update's columns
+    /// were kept in full.
+    var canKeepMine: Bool {
+        serverVersion != nil && (operation == .delete || body != nil)
     }
 }
