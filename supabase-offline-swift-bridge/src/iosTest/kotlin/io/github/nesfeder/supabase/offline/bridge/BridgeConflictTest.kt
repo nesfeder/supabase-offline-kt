@@ -161,7 +161,9 @@ class BridgeConflictTest {
         client.closeAndWait()
     }
 
-    /** Syncs a conflict [answerWith] settles, and checks it parked the write with a bare warning. */
+    /**
+     * Syncs a conflict [answerWith] settles, and checks it parked the write with a bare warning.
+     */
     private suspend fun assertHeldAndLoggedWithoutDetail(
         answerWith: (BridgeConflict, BridgeConflictAnswer) -> Unit
     ) {
@@ -206,14 +208,14 @@ class BridgeConflictTest {
         return assertNotNull(synced.awaitValue())
     }
 
-    private fun RecordingServer.patches(): List<RecordedRequest> =
-        requests.filter { it.method == "PATCH" }
+    private fun RecordingServer.patches(): List<RecordedRequest> = requests.filter {
+        it.method == "PATCH"
+    }
 
     private fun RecordedRequest.parameter(name: String): String =
         queryParameters.firstOrNull { it.first == name }?.second.orEmpty()
 
-    private fun JsonElement.field(name: String): String? =
-        jsonObject[name]?.toString()?.trim('"')
+    private fun JsonElement.field(name: String): String? = jsonObject[name]?.toString()?.trim('"')
 
     private companion object {
         const val BASE = "2026-10-18T13:00:27.486123+00:00"

@@ -24,7 +24,8 @@ public interface BridgeConflictResolver {
  * @property mutationId the write's id in the queue.
  * @property table the table the write targets.
  * @property operation [BridgeMutationOperation.UPDATE] or [BridgeMutationOperation.DELETE].
- * @property rowKeyJson the row's key values as the write's filter pins them, as text, a JSON object.
+ * @property rowKeyJson the row's key values as the write's filter pins them, as text, a JSON
+ *   object.
  * @property baseJson the columns the write sets and the version column, as the device last saw the
  *   row, a JSON object.
  * @property localJson the columns the write sets, a JSON object; `null` for a DELETE.
@@ -46,7 +47,8 @@ internal constructor(
 )
 
 /** The one-time answer to a [BridgeConflictResolver.resolve] call; later answers are ignored. */
-public class BridgeConflictAnswer internal constructor(private val answer: (ConflictReply) -> Unit) {
+public class BridgeConflictAnswer
+internal constructor(private val answer: (ConflictReply) -> Unit) {
 
     /** Sends the write again, preconditioned on the server's row as it is now. */
     public fun keepLocal() {

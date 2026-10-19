@@ -309,8 +309,8 @@ const val INSERT_TODO = """{"v":1,"operation":"insert","table":"todos"}"""
 const val INSERT_PROJECT = """{"v":1,"operation":"insert","table":"projects"}"""
 
 /**
- * A conflict resolver that records every conflict it is shown and answers each through [answerWith],
- * on the calling thread.
+ * A conflict resolver that records every conflict it is shown and answers each through
+ * [answerWith], on the calling thread.
  */
 class RecordingConflictResolver(
     private val answerWith: (BridgeConflict, BridgeConflictAnswer) -> Unit

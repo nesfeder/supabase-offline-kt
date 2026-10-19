@@ -94,7 +94,10 @@ private fun appliedColumnsOrNull(text: String): JsonObject? =
  *   object.
  * @throws IllegalArgumentException when the object is empty, as the library refuses it.
  */
-internal fun resolutionOf(decision: BridgeConflictDecision, columnsJson: String?): ConflictResolution =
+internal fun resolutionOf(
+    decision: BridgeConflictDecision,
+    columnsJson: String?,
+): ConflictResolution =
     when (decision) {
         BridgeConflictDecision.KEEP_LOCAL -> ConflictResolution.KeepLocal
         BridgeConflictDecision.KEEP_SERVER -> ConflictResolution.KeepServer
