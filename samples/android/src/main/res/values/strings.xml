@@ -243,6 +243,8 @@
     <string name="sync_conflicted_item">“%1$s” changed in two places</string>
     <string name="sync_conflicted_column">%1$s: “%2$s” on the server, “%3$s” on this device</string>
     <string name="sync_conflicted_empty">empty</string>
+    <string name="column_title">Title</string>
+    <string name="column_notes">Notes</string>
     <string name="sync_conflicted_delete">Deleted on this device, changed on the server.</string>
     <string name="sync_conflicted_times">Made %1$s · held %2$s</string>
     <string name="sync_conflicted_cannot_keep_mine">The task is gone from the server, or the change was too long to keep, so only the server’s side can be kept.</string>

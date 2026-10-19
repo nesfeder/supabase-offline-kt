@@ -31,14 +31,6 @@ nonisolated enum ClientSettings {
     static let primaryKeys = [Tables.tasks: ["id"], Tables.taskPhotos: ["id"]]
     // --8<-- [end:primary-keys]
 
-    // --8<-- [start:version-column]
-    /// Each table's version column: `updated_at`, which the schema's `moddatetime` trigger moves
-    /// on every change. A queued update or delete of a row is sent only while the server's row
-    /// still has the version this device saw, so a change made elsewhere meanwhile is found, not
-    /// overwritten. None, the default, lets the last write win.
-    static let versionColumns = [Tables.tasks: "updated_at", Tables.taskPhotos: "updated_at"]
-    // --8<-- [end:version-column]
-
     // --8<-- [start:conflict-resolver]
     /// Holds a conflict on a task's title for the user to settle on the Sync tab, and settles every
     /// other one as the library would without a resolver: this device's change wins a row that
@@ -105,9 +97,15 @@ nonisolated enum ClientSettings {
             // default, opens no channel.
             realtimeTables: [RealtimeTable(Tables.tasks), RealtimeTable(Tables.taskPhotos)],
             // --8<-- [end:realtime-tables]
-            // Each table's version column, and what settles a row that moved meanwhile.
-            versionColumns: versionColumns,
+            // --8<-- [start:version-column]
+            // The column the server moves on every change (moddatetime): a queued update or delete
+            // of a row is sent only while the server's row still has the version this device saw,
+            // so a change made elsewhere meanwhile is found, not overwritten. None is the default:
+            // the last write wins.
+            versionColumns: [Tables.tasks: "updated_at", Tables.taskPhotos: "updated_at"],
+            // Settles what it finds; nil, the default, keeps this device's change of a row that moved.
             conflictResolver: holdTitleConflicts,
+            // --8<-- [end:version-column]
             // What the library logs: more in a debug build than .warning, the default.
             logLevel: logLevel
         )

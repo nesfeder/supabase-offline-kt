@@ -68,7 +68,8 @@ struct ConflictTests {
         let conflict = try #require(test.app.sync.conflicted.first)
         #expect(conflict.conflictingColumns == ["title"])
         #expect(conflict.taskTitle == "Milk (this device)")
-        #expect(Wording.conflictingColumns(conflict) == ["title: “Milk (elsewhere)” on the server, “Milk (this device)” on this device"])
+        #expect(Wording.conflictingColumns(conflict) == ["Title: “Milk (elsewhere)” on the server, “Milk (this device)” on this device"])
+        #expect(Wording.conflictTimes(conflict).hasPrefix("Made "))
         #expect(conflict.canKeepMine)
         try await eventually("the status counts it") { test.app.syncStatus.conflictedMutationCount == 1 }
         #expect(test.app.syncBadge == 1)
@@ -108,6 +109,79 @@ struct ConflictTests {
         _ = try await test.task(titled: "Milk (elsewhere)")
         #expect(await serverRow(task.id, test.server)["title"] == .string("Milk (elsewhere)"))
         #expect(test.app.syncStatus.pendingMutationCount == 0)
+        try await test.stop()
+    }
+
+    @Test("Make a conflict run twice conflicts again without growing the title")
+    func makeConflictTwice() async throws {
+        // Given: one conflict made and kept as the server's
+        let test = TestApp()
+        try await test.start()
+        try await test.addTask("Milk")
+        let task = try await test.task(titled: "Milk")
+        try await eventually("the queue is empty") { test.app.syncStatus.pendingMutationCount == 0 }
+        test.app.sync.run(.makeConflict, newestTaskID: task.id)
+        try await eventually("the conflict is listed") { test.app.sync.conflicted.count == 1 }
+        test.app.sync.keepTheirs(try #require(test.app.sync.conflicted.first))
+        try await eventually("the list is empty") { test.app.sync.conflicted.isEmpty }
+        _ = try await test.task(titled: "Milk (elsewhere)")
+
+        // When: run again
+        test.app.sync.run(.makeConflict, newestTaskID: task.id)
+
+        // Then: a conflict again, and the suffixes replace each other rather than pile up
+        try await eventually("the conflict is listed") { test.app.sync.conflicted.count == 1 }
+        #expect(test.app.sync.conflicted.first?.taskTitle == "Milk (this device)")
+        #expect(await serverRow(task.id, test.server)["title"] == .string("Milk (elsewhere again)"))
+        try await test.stop()
+    }
+
+    @Test("An edit of a task moved on another column is sent again without asking")
+    func movedOnAnotherColumn() async throws {
+        // Given: a title edit queued offline while another writer ticked the task done
+        let test = TestApp()
+        try await test.start()
+        try await test.addTask("Milk")
+        let task = try await test.task(titled: "Milk")
+        try await eventually("the queue is empty") { test.app.syncStatus.pendingMutationCount == 0 }
+        try await test.setOffline(true)
+        _ = try await test.repository.updateTaskText(id: task.id, title: "Buy milk", notes: nil)
+        await test.server.changeElsewhere(task: task.id, ["done": .bool(true)])
+
+        // When
+        try await test.setOffline(false)
+
+        // Then: both changes on the server, and nothing waits for the user
+        try await eventually("the server has the title") { await serverRow(task.id, test.server)["title"] == .string("Buy milk") }
+        #expect(await serverRow(task.id, test.server)["done"] == .bool(true))
+        try await eventually("the queue is empty") { test.app.syncStatus.pendingMutationCount == 0 }
+        #expect(test.app.sync.conflicted.isEmpty)
+        #expect(test.app.syncStatus.conflictedMutationCount == 0)
+        try await test.stop()
+    }
+
+    @Test("An edit of a task deleted on the server is dropped, with nothing held or refused")
+    func deletedOnTheServer() async throws {
+        // Given: a title edit queued offline while another writer deleted the task
+        let test = TestApp()
+        try await test.start()
+        try await test.addTask("Milk")
+        let task = try await test.task(titled: "Milk")
+        try await eventually("the queue is empty") { test.app.syncStatus.pendingMutationCount == 0 }
+        try await test.setOffline(true)
+        _ = try await test.repository.updateTaskText(id: task.id, title: "Buy milk", notes: nil)
+        await test.server.deleteElsewhere(task: task.id)
+
+        // When
+        try await test.setOffline(false)
+
+        // Then: the server's side kept: the task stays deleted, on the server and the device
+        try await eventually("the queue is empty") { test.app.syncStatus.pendingMutationCount == 0 }
+        try await eventually("the task is gone from the list") { test.app.tasks.tasks?.isEmpty == true }
+        #expect(await test.server.rows(of: Tables.tasks).isEmpty)
+        #expect(test.app.sync.conflicted.isEmpty)
+        #expect(test.app.syncStatus.conflictedMutationCount == 0)
+        #expect(test.app.syncStatus.rejectedMutationCount == 0)
         try await test.stop()
     }
 

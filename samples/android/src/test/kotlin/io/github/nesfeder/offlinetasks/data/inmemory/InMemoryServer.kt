@@ -8,6 +8,7 @@ import io.github.nesfeder.offlinetasks.data.TaskServerError
 import io.github.nesfeder.offlinetasks.data.areNotesRefusedByServer
 import io.github.nesfeder.offlinetasks.data.isTitleRefusedByServer
 import io.github.nesfeder.offlinetasks.data.photoObjectPath
+import kotlin.time.Duration.Companion.microseconds
 import kotlin.time.Instant
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -23,6 +24,9 @@ internal class InMemoryServer(initialTasks: List<Task> = emptyList()) {
     private var tasks: Map<String, Task> = initialTasks.associateBy { it.id }
     private var photos: Map<String, TaskPhoto> = emptyMap()
     private val files: MutableMap<String, ByteArray> = mutableMapOf()
+
+    /** The last `updated_at` stamped, so every version is later than the one before. */
+    private var lastStamp: Instant = Instant.DISTANT_PAST
 
     /** The rows [userId] may read, as a select of each whole table returns them. */
     suspend fun rowsOf(userId: String): DeviceRows = lock.withLock {
@@ -80,15 +84,25 @@ internal class InMemoryServer(initialTasks: List<Task> = emptyList()) {
         }
 
     /**
-     * Sets the title of task [taskId] as another device's edit would, with a new `updated_at`;
+     * Applies [change] to task [taskId] as another device's update would, with a new `updated_at`;
      * false when there is no such task.
      */
-    suspend fun changeTitleElsewhere(taskId: String, title: String, now: Instant): Boolean =
+    suspend fun changeElsewhere(taskId: String, now: Instant, change: (Task) -> Task): Boolean =
         lock.withLock {
             val task = tasks[taskId] ?: return@withLock false
-            tasks = tasks + (taskId to task.copy(title = title, updatedAt = now))
+            tasks = tasks + (taskId to change(task).copy(updatedAt = stamp(now)))
             true
         }
+
+    /**
+     * Deletes task [taskId] and its photo rows as another device would; false when there is none.
+     */
+    suspend fun deleteElsewhere(taskId: String): Boolean = lock.withLock {
+        if (taskId !in tasks) return@withLock false
+        tasks = tasks - taskId
+        photos = photos.filterValues { it.taskId != taskId }
+        true
+    }
 
     /** The task with [taskId] as the server holds it, or null. */
     suspend fun task(taskId: String): Task? = lock.withLock { tasks[taskId] }
@@ -127,7 +141,7 @@ internal class InMemoryServer(initialTasks: List<Task> = emptyList()) {
     /** Marks every open task of [userId] done, as `complete_all_tasks` does; returns how many. */
     suspend fun completeAllTasks(userId: String, now: Instant): Int = lock.withLock {
         val open = tasks.values.filter { it.userId == userId && !it.isDone }
-        open.forEach { tasks = tasks + (it.id to it.copy(isDone = true, updatedAt = now)) }
+        open.forEach { tasks = tasks + (it.id to it.copy(isDone = true, updatedAt = stamp(now))) }
         open.size
     }
 
@@ -181,7 +195,7 @@ internal class InMemoryServer(initialTasks: List<Task> = emptyList()) {
                 )
             )
         }
-        val stored = task.copy(updatedAt = now, hasPendingMutations = false)
+        val stored = task.copy(updatedAt = stamp(now), hasPendingMutations = false)
         tasks = tasks + (task.id to stored)
         return ServerAnswer.Accepted(row = stored)
     }
@@ -196,7 +210,7 @@ internal class InMemoryServer(initialTasks: List<Task> = emptyList()) {
         val current = tasks[taskId]?.takeIf { it.userId == userId }
         // An update that matches no row is not an error in PostgREST: it changes nothing.
         current ?: return ServerAnswer.Accepted(row = null)
-        val updated = change(current).copy(updatedAt = now)
+        val updated = change(current).copy(updatedAt = stamp(now))
         refusalOf(title ?: updated.title, updated.notes)?.let {
             return it
         }
@@ -233,6 +247,15 @@ internal class InMemoryServer(initialTasks: List<Task> = emptyList()) {
         }
         photos = photos + (photo.id to photo.copy(hasPendingMutations = false))
         return ServerAnswer.Accepted(row = null)
+    }
+
+    /**
+     * A new `updated_at` at [now], or just after the last one when the clock has not moved past it:
+     * two changes in one tick of the test's clock would otherwise share a version.
+     */
+    private fun stamp(now: Instant): Instant {
+        lastStamp = if (now > lastStamp) now else lastStamp + 1.microseconds
+        return lastStamp
     }
 
     private fun refusalOf(title: String, notes: String?): ServerAnswer.Refused? =

@@ -122,24 +122,30 @@ nonisolated extension Wording {
         "“\(title(conflict.taskTitle))” changed in two places"
     }
 
-    /// Each column both sides changed, with both values: "title: “Buy oat milk” on the server,
+    /// Each column both sides changed, with both values: "Title: “Buy oat milk” on the server,
     /// “Buy milk” on this device". A delete changes no column, so it says so instead.
     static func conflictingColumns(_ conflict: ConflictedMutation) -> [String] {
         guard conflict.operation != .delete else { return ["Deleted on this device, changed on the server"] }
         var mine: [String: OfflineJSON] = [:]
         if case .object(let values)? = conflict.body { mine = values }
         return conflict.conflictingColumns.sorted().map { column in
-            "\(column): “\(text(conflict.server?[column]))” on the server, “\(text(mine[column]))” on this device"
+            "\(columnLabel(column)): “\(text(conflict.server?[column]))” on the server, “\(text(mine[column]))” on this device"
         }
     }
 
-    /// When a parked write was made and held: "made 10:41 · held 10:42".
+    /// When a parked write was made and held: "Made 10:41 · held 10:42".
     static func conflictTimes(_ conflict: ConflictedMutation) -> String {
         let made = conflict.createdAt.formatted(date: .omitted, time: .shortened)
         let held = conflict.conflictedAt.formatted(date: .omitted, time: .shortened)
-        return "made \(made) · held \(held)"
+        return "Made \(made) · held \(held)"
     }
     // --8<-- [end:conflicted-list]
+
+    /// A column as the user reads it: "Title", "Notes", or the column's own words, capitalized.
+    static func columnLabel(_ column: String) -> String {
+        let words = column.replacingOccurrences(of: "_", with: " ")
+        return words.prefix(1).uppercased() + words.dropFirst()
+    }
 
     /// A column's value as the Sync tab shows it: a string's text, a number's or a flag's, "empty"
     /// for null or a value not there.

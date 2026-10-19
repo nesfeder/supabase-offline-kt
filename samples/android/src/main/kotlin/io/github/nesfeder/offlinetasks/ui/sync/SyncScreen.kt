@@ -510,17 +510,28 @@ private fun ConflictedRow(
     }
 }
 
-/** One column both sides changed: "Title: “Buy oat milk” on the server, “Buy milk” here". */
+/**
+ * One column both sides changed: "Title: “Buy oat milk” on the server, “Buy milk” on this device".
+ */
 @Composable
 private fun columnConflictText(column: ColumnConflict): String {
     val none = stringResource(R.string.sync_conflicted_empty)
     return stringResource(
         R.string.sync_conflicted_column,
-        column.column,
+        columnLabel(column.column),
         column.theirs ?: none,
         column.mine ?: none,
     )
 }
+
+/** A column as the user reads it: "Title", "Notes", or the column's own words, capitalized. */
+@Composable
+private fun columnLabel(column: String): String =
+    when (column) {
+        "title" -> stringResource(R.string.column_title)
+        "notes" -> stringResource(R.string.column_notes)
+        else -> column.replace('_', ' ').replaceFirstChar { it.uppercaseChar() }
+    }
 
 private fun LazyListScope.serverGroup(state: SyncUiState.Ready, actions: SyncActions) {
     groupTitle("server", R.string.sync_server)

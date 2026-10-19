@@ -239,15 +239,36 @@ final class SyncModel {
         else { return "Add a task and let it sync first: the conflict needs a row the server has." }
         var notes: String?
         if case .string(let text)? = row["notes"] { notes = text }
+        // The same few suffixes every run, so running it again does not grow the title; the other
+        // writer's alternates, so its title always differs from the one the device last saw.
+        let original = [Self.deviceSuffix, Self.elsewhereSuffix, Self.elsewhereAgainSuffix]
+            .reduce(title) { $0.replacing($1, with: "") }
+        let elsewhere = original + (title == original + Self.elsewhereSuffix ? Self.elsewhereAgainSuffix : Self.elsewhereSuffix)
         try await repository.setNetworkEnabled(false)
-        _ = try await repository.updateTaskText(id: taskID, title: "\(title) (this device)", notes: notes)
-        await server.changeElsewhere(task: taskID, ["title": .string("\(title) (elsewhere)")])
+        do {
+            _ = try await repository.updateTaskText(id: taskID, title: original + Self.deviceSuffix, notes: notes)
+            await server.changeElsewhere(task: taskID, ["title": .string(elsewhere)])
+        } catch {
+            try? await repository.setNetworkEnabled(true)  // never leave Simulate offline on
+            throw error
+        }
         try await repository.setNetworkEnabled(true)
         let report = try await repository.syncPendingMutations()
-        return report.conflicted.isEmpty && repository.syncStatus.value.conflictedMutationCount == 0
+        // The list, not the report: the automatic pass on reconnecting may have parked it first.
+        let held = try await repository.conflictedMutations().first()
+        return held.isEmpty
             ? "Synced, and no conflict was held: \(Wording.syncReport(report))."
             : "Both titles changed: it waits under Conflicting changes, for Keep mine or Keep theirs."
     }
+
+    /// What Make a conflict appends to the title it sets on this device.
+    static let deviceSuffix = " (this device)"
+
+    /// What Make a conflict appends to the title the stand-in server's other writer sets.
+    static let elsewhereSuffix = " (elsewhere)"
+
+    /// What the other writer appends instead when the title already carries ``elsewhereSuffix``.
+    static let elsewhereAgainSuffix = " (elsewhere again)"
     // --8<-- [end:make-conflict]
 
     // MARK: - Local data

@@ -147,6 +147,21 @@ actor DemoServer {
     }
     // --8<-- [end:stage-server-edit]
 
+    /// Deletes task `id` and its photo rows as another device would, and reports the deletes to
+    /// the client's channel; a write this device queued for the row finds it gone when it syncs.
+    func deleteElsewhere(task id: String) {
+        guard tables[Tables.tasks]?.contains(where: { $0.id == id }) == true else { return }
+        tables[Tables.tasks]?.removeAll { $0.id == id }
+        var cascaded: [String] = []
+        tables[Tables.taskPhotos]?.removeAll { photo in
+            guard photo.row["task_id"] == .string(id) else { return false }
+            cascaded.append(photo.id)
+            return true
+        }
+        report(deleted: ["id": .string(id)], in: Tables.tasks)
+        cascaded.forEach { report(deleted: ["id": .string($0)], in: Tables.taskPhotos) }
+    }
+
     /// A new `updated_at` as the schema's `moddatetime` trigger sets it, later than every earlier
     /// one even within a millisecond: a version that repeated would read as no change to the
     /// version precondition a queued write is sent with.
