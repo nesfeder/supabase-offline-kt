@@ -77,6 +77,11 @@ extension FakeServer.Request {
         }
     }
 
+    /// The first value of the query parameter `name`, decoded.
+    func parameter(_ name: String) -> String? {
+        queryParameters.first { $0.first == name }?.last
+    }
+
     /// The value of the header `name`, matched without regard to case.
     func header(_ name: String) -> String? {
         headers.first { $0.key.caseInsensitiveCompare(name) == .orderedSame }?.value

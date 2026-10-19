@@ -90,10 +90,10 @@ public final class SupabaseOfflineClient: Sendable {
         }
         for (table, column) in config.versionColumns {
             guard !column.allSatisfy(\.isWhitespace) else {
-                throw OfflineError(code: .configuration, message: "The version column of \(table) is blank")
+                throw OfflineError(code: .configuration, message: "Config.versionColumns names a blank column for \(table)")
             }
             guard !(config.primaryKeys[table] ?? ["id"]).contains(column) else {
-                throw OfflineError(code: .configuration, message: "The version column of \(table) is one of its key columns")
+                throw OfflineError(code: .configuration, message: "Config.versionColumns names one of the key columns of \(table)")
             }
         }
         let coreOptions = BridgeClientOptions(

@@ -105,6 +105,63 @@ struct ConflictTests {
         try await client.close()
     }
 
+    @MainActor
+    @Test func theResolverRunsOffTheMainActorEvenWhenTheSyncIsAskedFromIt() async throws {
+        // Given
+        let ranOnMain = RecordingList<Bool>()
+        let client = Self.client(server: Self.movingServer()) { _ in
+            ranOnMain.append(isOnMainThread())
+            return .keepLocal
+        }
+
+        // When
+        let report = try await Self.queueTitleChangeAndSync(on: client)
+
+        // Then
+        #expect(report.conflictsResolvedCount == 1)
+        #expect(ranOnMain.values == [false])
+        MainActor.assertIsolated()
+        try await client.close()
+    }
+
+    @Test func aResolverThatAppliesColumnsSendsThemAsTheBody() async throws {
+        // Given a resolver that merges the two changes
+        let server = Self.movingServer()
+        let client = Self.client(server: server) { _ in .apply(columns: ["title": "Merged", "done": true]) }
+
+        // When
+        let report = try await Self.queueTitleChangeAndSync(on: client)
+
+        // Then the resend carries the resolver's columns at the moved version
+        let resend = try #require(server.requests(withMethod: "PATCH").last)
+        #expect(try resend.jsonBody == ["title": "Merged", "done": true])
+        #expect(resend.parameter("updated_at") == "eq.\(Self.moved)")
+        #expect(report.conflictsResolvedCount == 1)
+        try await client.close()
+    }
+
+    @Test func aParkedWriteIsResolvedWithAppliedColumnsAndEmptyColumnsAreRefused() async throws {
+        // Given a parked write
+        let client = Self.client(server: Self.movingServer()) { _ in .hold }
+        _ = try await Self.queueTitleChangeAndSync(on: client)
+        let parked = try #require(try await client.conflictedMutations().first().first)
+
+        // When an apply with no column is tried, then one with columns
+        let refusal = await #expect(throws: OfflineError.self) {
+            try await client.resolveConflictedMutation(id: parked.id, resolution: .apply(columns: [:]))
+        }
+        try await client.disableNetwork()
+        try await client.resolveConflictedMutation(id: parked.id, resolution: .apply(columns: ["title": "Merged"]))
+
+        // Then the empty one is refused and the columns wait in the queue, against the recorded version
+        #expect(refusal?.code == .invalidRequest)
+        let pending = try await client.pendingMutations().first()
+        #expect(pending.map(\.body) == [["title": "Merged"]])
+        #expect(pending.map(\.baseVersion) == [Self.moved])
+        #expect(try await client.conflictedMutations().first().isEmpty)
+        try await client.close()
+    }
+
     @Test func aBlankOrKeyVersionColumnFailsTheOpen() async {
         for columns in [["todos": " "], ["todos": "id"]] {
             // Given
@@ -157,13 +214,5 @@ struct ConflictTests {
         #expect(pending.baseVersion == base)
         try await client.enableNetwork()
         return try await client.syncPendingMutations()
-    }
-}
-
-extension FakeServer.Request {
-
-    /// The first value of the query parameter `name`, decoded.
-    func parameter(_ name: String) -> String? {
-        queryParameters.first { $0.first == name }?.last
     }
 }
