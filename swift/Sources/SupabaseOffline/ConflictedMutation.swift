@@ -3,9 +3,12 @@
 public import Foundation
 import SupabaseOfflineCore
 
-/// A queued write parked because its row moved on the server and the conflict was not settled during the replay.
+/// A queued write parked because its row moved on the server and the conflict was not settled
+/// during the replay.
 ///
-/// It stays on the device, across restarts, until it is settled with ``SupabaseOfflineClient/resolveConflictedMutation(id:resolution:)`` or dismissed with ``SupabaseOfflineClient/dismissConflictedMutation(id:)``. The list keeps the newest 100 entries.
+/// It stays on the device, across restarts, until it is settled with
+/// ``SupabaseOfflineClient/resolveConflictedMutation(id:resolution:)`` or dismissed with
+/// ``SupabaseOfflineClient/dismissConflictedMutation(id:)``. The list keeps the newest 100 entries.
 public struct ConflictedMutation: Sendable, Hashable, Identifiable {
 
     /// The write's id, the ``PendingMutation/id`` it had while it waited.
@@ -20,19 +23,24 @@ public struct ConflictedMutation: Sendable, Hashable, Identifiable {
     /// When the write was made, by the device's clock.
     public let createdAt: Date
 
-    /// The row's primary-key values as the write's filter pins them, each as text, as ``PendingMutation/rowKeys`` gives them.
+    /// The row's primary-key values as the write's filter pins them, each as text, as
+    /// ``PendingMutation/rowKeys`` gives them.
     public let rowKeys: [[String: OfflineJSON]]
 
-    /// The body the write sends; `nil` for a delete, or one too large to keep (which ``ConflictResolution/keepLocal`` cannot resend).
+    /// The body the write sends; `nil` for a delete, or one too large to keep (which
+    /// ``ConflictResolution/keepLocal`` cannot resend).
     public let body: OfflineJSON?
 
-    /// The columns the write sets and the version column, as the device last saw the row; empty when they could not be kept.
+    /// The columns the write sets and the version column, as the device last saw the row; empty
+    /// when they could not be kept.
     public let base: [String: OfflineJSON]
 
-    /// The server's row when the replay read it, in part; `nil` when it was gone, or too large to keep.
+    /// The server's row when the replay read it, in part; `nil` when it was gone, or too large to
+    /// keep.
     public let server: [String: OfflineJSON]?
 
-    /// The server row's version then, as text, which a write resolved from the list is preconditioned on; `nil` when the row was gone.
+    /// The server row's version then, as text, which a write resolved from the list is
+    /// preconditioned on; `nil` when the row was gone.
     public let serverVersion: String?
 
     /// The columns the write sets whose server value differed from ``base``'s.

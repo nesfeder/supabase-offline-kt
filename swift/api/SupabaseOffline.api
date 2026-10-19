@@ -8,6 +8,31 @@ property CachedFile.fetchedAt | let fetchedAt: Date
 property CachedFile.path | let path: String
 property CachedFile.sizeBytes | let sizeBytes: Int
 property CachedFile.url | var url: URL { get }
+enum ConflictResolution | enum ConflictResolution
+enum.case ConflictResolution.apply(columns:) | case apply(columns: [String : OfflineJSON])
+enum.case ConflictResolution.hold | case hold
+enum.case ConflictResolution.keepLocal | case keepLocal
+enum.case ConflictResolution.keepServer | case keepServer
+struct ConflictedMutation | struct ConflictedMutation
+property ConflictedMutation.base | let base: [String : OfflineJSON]
+property ConflictedMutation.body | let body: OfflineJSON?
+property ConflictedMutation.changedOnServer | let changedOnServer: Set<String>
+property ConflictedMutation.conflictedAt | let conflictedAt: Date
+property ConflictedMutation.conflictingColumns | let conflictingColumns: Set<String>
+property ConflictedMutation.createdAt | let createdAt: Date
+property ConflictedMutation.id | let id: Int64
+property ConflictedMutation.message | let message: String
+property ConflictedMutation.operation | let operation: MutationOperation
+property ConflictedMutation.rowKeys | let rowKeys: [[String : OfflineJSON]]
+property ConflictedMutation.server | let server: [String : OfflineJSON]?
+property ConflictedMutation.serverVersion | let serverVersion: String?
+property ConflictedMutation.table | let table: String
+struct ConflictedMutationSequence | struct ConflictedMutationSequence
+typealias ConflictedMutationSequence.Element | typealias Element = [ConflictedMutation]
+struct ConflictedMutationSequence.Iterator | struct Iterator
+method ConflictedMutationSequence.Iterator.next() | mutating func next() async throws -> ConflictedMutationSequence.Element?
+method ConflictedMutationSequence.first() | func first() async throws -> ConflictedMutationSequence.Element
+method ConflictedMutationSequence.makeAsyncIterator() | func makeAsyncIterator() -> ConflictedMutationSequence.Iterator
 enum Count | enum Count
 enum.case Count.estimated | case estimated
 enum.case Count.exact | case exact
@@ -48,6 +73,16 @@ property Int16.offlineFilterText | var offlineFilterText: String { get }
 property Int32.offlineFilterText | var offlineFilterText: String { get }
 property Int64.offlineFilterText | var offlineFilterText: String { get }
 property Int8.offlineFilterText | var offlineFilterText: String { get }
+struct MutationConflict | struct MutationConflict
+property MutationConflict.base | let base: [String : OfflineJSON]
+property MutationConflict.changedOnServer | let changedOnServer: Set<String>
+property MutationConflict.conflictingColumns | let conflictingColumns: Set<String>
+property MutationConflict.local | let local: [String : OfflineJSON]?
+property MutationConflict.mutationId | let mutationId: Int64
+property MutationConflict.operation | let operation: MutationOperation
+property MutationConflict.rowKey | let rowKey: [String : OfflineJSON]
+property MutationConflict.server | let server: [String : OfflineJSON]?
+property MutationConflict.table | let table: String
 enum MutationOperation | enum MutationOperation
 enum.case MutationOperation.delete | case delete
 init MutationOperation.init(rawValue:) | init?(rawValue: String)
@@ -299,6 +334,7 @@ enum.case OfflineTextSearchType.plain | case plain
 enum.case OfflineTextSearchType.websearch | case websearch
 property Optional.offlineFilterText | var offlineFilterText: String { get } | where Wrapped: OfflineFilterValue
 struct PendingMutation | struct PendingMutation
+property PendingMutation.baseVersion | let baseVersion: String?
 property PendingMutation.body | let body: OfflineJSON?
 property PendingMutation.createdAt | let createdAt: Date
 property PendingMutation.id | let id: Int64
@@ -395,15 +431,18 @@ struct SupabaseOfflineClient.Config | struct Config
 property SupabaseOfflineClient.Config.accessToken | var accessToken: (@Sendable () async throws -> String?)?
 property SupabaseOfflineClient.Config.autoSync | var autoSync: Bool
 property SupabaseOfflineClient.Config.cacheSize | var cacheSize: SupabaseOfflineClient.CacheSize
+property SupabaseOfflineClient.Config.conflictResolver | var conflictResolver: (@Sendable (MutationConflict) async throws -> ConflictResolution)?
 property SupabaseOfflineClient.Config.dataDirectory | var dataDirectory: URL?
 property SupabaseOfflineClient.Config.defaultSchema | var defaultSchema: String
 property SupabaseOfflineClient.Config.fileCacheSize | var fileCacheSize: SupabaseOfflineClient.CacheSize
 init SupabaseOfflineClient.Config.init(defaultSchema:accessToken:dataDirectory:cacheSize:fileCacheSize:networkAvailability:autoSync:primaryKeys:logLevel:) | init(defaultSchema: String = "public", accessToken: (@Sendable () async throws -> String?)? = nil, dataDirectory: URL? = nil, cacheSize: SupabaseOfflineClient.CacheSize = .bytes(100 * 1_024 * 1_024), fileCacheSize: SupabaseOfflineClient.CacheSize = .bytes(256 * 1_024 * 1_024), networkAvailability: (@Sendable () -> AsyncStream<Bool>)? = nil, autoSync: Bool = true, primaryKeys: [String : [String]] = [:], logLevel: SupabaseOfflineClient.LogLevel = .warning)
 init SupabaseOfflineClient.Config.init(defaultSchema:accessToken:dataDirectory:cacheSize:fileCacheSize:networkAvailability:autoSync:primaryKeys:realtimeTables:logLevel:) | init(defaultSchema: String = "public", accessToken: (@Sendable () async throws -> String?)? = nil, dataDirectory: URL? = nil, cacheSize: SupabaseOfflineClient.CacheSize = .bytes(100 * 1_024 * 1_024), fileCacheSize: SupabaseOfflineClient.CacheSize = .bytes(256 * 1_024 * 1_024), networkAvailability: (@Sendable () -> AsyncStream<Bool>)? = nil, autoSync: Bool = true, primaryKeys: [String : [String]] = [:], realtimeTables: [RealtimeTable], logLevel: SupabaseOfflineClient.LogLevel = .warning)
+init SupabaseOfflineClient.Config.init(defaultSchema:accessToken:dataDirectory:cacheSize:fileCacheSize:networkAvailability:autoSync:primaryKeys:realtimeTables:versionColumns:conflictResolver:logLevel:) | init(defaultSchema: String = "public", accessToken: (@Sendable () async throws -> String?)? = nil, dataDirectory: URL? = nil, cacheSize: SupabaseOfflineClient.CacheSize = .bytes(100 * 1_024 * 1_024), fileCacheSize: SupabaseOfflineClient.CacheSize = .bytes(256 * 1_024 * 1_024), networkAvailability: (@Sendable () -> AsyncStream<Bool>)? = nil, autoSync: Bool = true, primaryKeys: [String : [String]] = [:], realtimeTables: [RealtimeTable] = [], versionColumns: [String : String], conflictResolver: (@Sendable (MutationConflict) async throws -> ConflictResolution)? = nil, logLevel: SupabaseOfflineClient.LogLevel = .warning)
 property SupabaseOfflineClient.Config.logLevel | var logLevel: SupabaseOfflineClient.LogLevel
 property SupabaseOfflineClient.Config.networkAvailability | var networkAvailability: (@Sendable () -> AsyncStream<Bool>)?
 property SupabaseOfflineClient.Config.primaryKeys | var primaryKeys: [String : [String]]
 property SupabaseOfflineClient.Config.realtimeTables | var realtimeTables: [RealtimeTable]
+property SupabaseOfflineClient.Config.versionColumns | var versionColumns: [String : String]
 enum SupabaseOfflineClient.LogLevel | enum LogLevel
 enum.case SupabaseOfflineClient.LogLevel.debug | case debug
 enum.case SupabaseOfflineClient.LogLevel.error | case error
@@ -416,9 +455,11 @@ method SupabaseOfflineClient.applyServerRecord(table:record:primaryKeys:schema:)
 method SupabaseOfflineClient.applyServerRecord(table:record:primaryKeys:schema:) | func applyServerRecord(table: String, record: some Encodable, primaryKeys: [String]? = nil, schema: String? = nil) async throws
 method SupabaseOfflineClient.clearLocalData() | func clearLocalData() async throws
 method SupabaseOfflineClient.close() | func close() async throws
+method SupabaseOfflineClient.conflictedMutations() | func conflictedMutations() -> ConflictedMutationSequence
 method SupabaseOfflineClient.disableNetwork() | func disableNetwork() async throws
 method SupabaseOfflineClient.disableRealtime() | func disableRealtime() async throws
 method SupabaseOfflineClient.discardPendingMutation(id:) | func discardPendingMutation(id: Int64) async throws
+method SupabaseOfflineClient.dismissConflictedMutation(id:) | func dismissConflictedMutation(id: Int64) async throws
 method SupabaseOfflineClient.dismissRejectedMutation(id:) | func dismissRejectedMutation(id: Int64) async throws
 method SupabaseOfflineClient.enableNetwork() | func enableNetwork() async throws
 method SupabaseOfflineClient.enableRealtime() | func enableRealtime() async throws
@@ -430,6 +471,7 @@ method SupabaseOfflineClient.pendingMutationCountSequence(table:) | func pending
 method SupabaseOfflineClient.pendingMutations(table:) | func pendingMutations(table: String? = nil) -> PendingMutationSequence
 property SupabaseOfflineClient.realtimeStatus | var realtimeStatus: RealtimeStatusSequence { get }
 method SupabaseOfflineClient.rejectedMutations() | func rejectedMutations() -> RejectedMutationSequence
+method SupabaseOfflineClient.resolveConflictedMutation(id:resolution:) | func resolveConflictedMutation(id: Int64, resolution: ConflictResolution) async throws
 method SupabaseOfflineClient.retryRejectedMutation(id:) | func retryRejectedMutation(id: Int64) async throws
 method SupabaseOfflineClient.rpc(_:head:get:count:schema:) | func rpc(_ function: String, head: Bool = false, get: Bool = false, count: Count? = nil, schema: String? = nil) -> OfflineRPCRequestBuilder
 method SupabaseOfflineClient.rpc(_:params:count:schema:) | func rpc(_ function: String, params: [String : OfflineJSON], count: Count? = nil, schema: String? = nil) -> OfflineRPCRequestBuilder
@@ -439,12 +481,16 @@ method SupabaseOfflineClient.syncPendingMutations(table:) | @discardableResult f
 property SupabaseOfflineClient.syncStatus | var syncStatus: SyncStatusSequence { get }
 struct SyncReport | struct SyncReport
 property SyncReport.alreadyOnServerCount | let alreadyOnServerCount: Int
+property SyncReport.conflicted | let conflicted: [ConflictedMutation]
+property SyncReport.conflictsKeptServerCount | let conflictsKeptServerCount: Int
+property SyncReport.conflictsResolvedCount | let conflictsResolvedCount: Int
 property SyncReport.heldBehindOtherTablesCount | let heldBehindOtherTablesCount: Int
 property SyncReport.rejected | let rejected: [RejectedMutation]
 property SyncReport.remainingCount | let remainingCount: Int
 property SyncReport.syncedCount | let syncedCount: Int
 struct SyncStatus | struct SyncStatus
 func.op SyncStatus.==(_:_:) | static func == (lhs: SyncStatus, rhs: SyncStatus) -> Bool
+property SyncStatus.conflictedMutationCount | let conflictedMutationCount: Int
 property SyncStatus.isSyncing | let isSyncing: Bool
 property SyncStatus.lastSyncError | let lastSyncError: OfflineError?
 property SyncStatus.lastSyncedAt | let lastSyncedAt: Date?
@@ -466,6 +512,16 @@ property UUID.offlineFilterText | var offlineFilterText: String { get }
 conformance CachedFile | Swift.Equatable
 conformance CachedFile | Swift.Hashable
 conformance CachedFile | Swift.Sendable
+conformance ConflictResolution | Swift.Equatable
+conformance ConflictResolution | Swift.Hashable
+conformance ConflictResolution | Swift.Sendable
+conformance ConflictedMutation | Swift.Equatable
+conformance ConflictedMutation | Swift.Hashable
+conformance ConflictedMutation | Swift.Identifiable
+conformance ConflictedMutation | Swift.Sendable
+conformance ConflictedMutationSequence | Swift.Sendable
+conformance ConflictedMutationSequence | _Concurrency.AsyncSequence
+conformance ConflictedMutationSequence.Iterator | _Concurrency.AsyncIteratorProtocol
 conformance Count | Swift.CaseIterable
 conformance Count | Swift.Equatable
 conformance Count | Swift.Hashable
@@ -479,6 +535,9 @@ conformance FilterOperator | Swift.Sendable
 conformance Foundation.Date | OfflineFilterValue
 conformance Foundation.Decimal | OfflineFilterValue
 conformance Foundation.UUID | OfflineFilterValue
+conformance MutationConflict | Swift.Equatable
+conformance MutationConflict | Swift.Hashable
+conformance MutationConflict | Swift.Sendable
 conformance MutationOperation | Swift.CaseIterable
 conformance MutationOperation | Swift.Equatable
 conformance MutationOperation | Swift.Hashable

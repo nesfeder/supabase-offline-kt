@@ -183,9 +183,9 @@ extension SupabaseOfflineClient {
     ///   for a keep-local of a row that was gone or a body too large to keep; `encoding` for
     ///   columns that cannot be encoded; `clientClosed` once the client is closed.
     public func resolveConflictedMutation(id: Int64, resolution: ConflictResolution) async throws {
-        let (decision, columnsJson) = try resolution.coreDecision()
+        let columnsJSON = try resolution.coreColumnsJSON()
         try await connection.call { core, complete in
-            core.resolveConflictedMutation(id: id, decision: decision, columnsJson: columnsJson) { failure in
+            core.resolveConflictedMutation(id: id, decision: resolution.coreDecision, columnsJson: columnsJSON) { failure in
                 complete(coreResult(failure))
             }
         }
