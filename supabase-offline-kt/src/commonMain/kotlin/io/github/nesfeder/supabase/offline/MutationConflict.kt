@@ -19,10 +19,12 @@ import kotlinx.serialization.json.JsonObject
  * @property server the server's row as it is now, in part: its key columns, the version column, the
  *   columns the write sets and the columns the write's filter names. `null` when it is gone, or
  *   hidden from this user by a row-level policy.
- * @property changedOnServer the columns the write sets whose server value differs from [base]'s:
- *   what changed elsewhere. Empty for a DELETE, and for a row that is gone.
- * @property conflictingColumns of [changedOnServer], the columns [local] sets to another value than
- *   the server's: where the two changes disagree.
+ * @property changedOnServer the columns the write sets whose server value differs from
+ *   [MutationConflict.base]'s: what changed elsewhere. Empty for a DELETE, and for a row that is
+ *   gone.
+ * @property conflictingColumns of [MutationConflict.changedOnServer], the columns
+ *   [MutationConflict.local] sets to another value than the server's: where the two changes
+ *   disagree.
  */
 @ConsistentCopyVisibility
 public data class MutationConflict

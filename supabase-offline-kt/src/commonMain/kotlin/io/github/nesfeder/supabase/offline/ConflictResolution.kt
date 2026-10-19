@@ -29,10 +29,10 @@ public sealed interface ConflictResolution {
     public data object KeepServer : ConflictResolution
 
     /**
-     * Sends [columns] as the UPDATE's body instead of the write's own, preconditioned on the
-     * server's row as it is now: for a merge the app works out. Only for an UPDATE of a row still
-     * on the server; for a DELETE, or a row that is gone, the write is parked instead. Build one
-     * with [ConflictResolution.apply].
+     * Sends [ConflictResolution.Apply.columns] as the UPDATE's body instead of the write's own,
+     * preconditioned on the server's row as it is now: for a merge the app works out. Only for an
+     * UPDATE of a row still on the server; for a DELETE, or a row that is gone, the write is parked
+     * instead. Build one with [ConflictResolution.apply].
      *
      * @property columns the columns to set, and their values.
      */

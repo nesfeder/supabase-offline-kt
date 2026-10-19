@@ -26,9 +26,10 @@ import kotlinx.serialization.json.JsonObject
  *   gone, or too large to keep.
  * @property serverVersion the server row's version then, as text; `null` when the row was gone. A
  *   write resolved from the list is sent preconditioned on it.
- * @property changedOnServer the columns the write sets whose server value differed from [base]'s.
- * @property conflictingColumns of [changedOnServer], those the write sets to another value than the
- *   server's.
+ * @property changedOnServer the columns the write sets whose server value differed from
+ *   [ConflictedMutation.base]'s.
+ * @property conflictingColumns of [ConflictedMutation.changedOnServer], those the write sets to
+ *   another value than the server's.
  * @property message why it was parked, in words.
  * @property conflictedAt when it was parked, by the device's clock.
  */
