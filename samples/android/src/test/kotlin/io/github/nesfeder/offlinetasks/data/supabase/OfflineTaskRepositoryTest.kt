@@ -4,6 +4,9 @@ package io.github.nesfeder.offlinetasks.data.supabase
 
 import io.github.jan.supabase.SupabaseClient
 import io.github.nesfeder.offlinetasks.data.AppNetworkStatus
+import io.github.nesfeder.offlinetasks.data.ColumnConflict
+import io.github.nesfeder.offlinetasks.data.ConflictChoice
+import io.github.nesfeder.offlinetasks.data.ConflictedTaskMutation
 import io.github.nesfeder.offlinetasks.data.EncodedPhoto
 import io.github.nesfeder.offlinetasks.data.InvalidRequestException
 import io.github.nesfeder.offlinetasks.data.LiveUpdatesStatus
@@ -822,6 +825,101 @@ class OfflineTaskRepositoryTest {
 
     /** Whether this photo is still waiting in the app's queue. */
     private fun TaskPhoto.hasPending(): Boolean = pendingUpload != null
+
+    // --8<-- [start:conflict-test]
+    @Test
+    fun a_title_changed_on_both_sides_waits_for_the_user_and_keep_mine_sends_it() = runTest {
+        // Given — a task the device has from the server, edited offline while another writer
+        // changed the same title on the server
+        val conflict = stageTitleConflict(mine = "Buy milk", theirs = "Buy oat milk")
+
+        // Then — held for the user, with both sides of the title, and counted in the status
+        assertEquals("Buy milk", conflict.taskTitle)
+        assertEquals(TaskMutationOperation.Update, conflict.operation)
+        assertEquals(
+            listOf(ColumnConflict("title", theirs = "Buy oat milk", mine = "Buy milk")),
+            conflict.columns,
+        )
+        assertTrue(conflict.canKeepMine)
+        repository.syncStatus.awaitState { it.conflictedMutationCount == 1 }
+        assertEquals("Buy oat milk", serverTitle())
+
+        // When — Keep mine
+        repository.resolveConflictedMutation(conflict.id, ConflictChoice.KeepMine)
+        repository.syncPendingMutations()
+
+        // Then — this device's title reaches the server, and nothing is left to settle
+        withTimeout(WAIT) { while (serverTitle() != "Buy milk") delay(POLL) }
+        repository.conflictedMutations().awaitState { it.isEmpty() }
+        repository.syncStatus.awaitState {
+            it.conflictedMutationCount == 0 && it.pendingMutationCount == 0
+        }
+    }
+
+    // --8<-- [end:conflict-test]
+
+    @Test
+    fun keep_theirs_drops_the_edit_and_the_list_shows_the_servers_title() = runTest {
+        // Given
+        val conflict = stageTitleConflict(mine = "Buy milk", theirs = "Buy oat milk")
+
+        // When
+        repository.resolveConflictedMutation(conflict.id, ConflictChoice.KeepTheirs)
+
+        // Then — nothing sent: the server's title stands, on the device too
+        repository.conflictedMutations().awaitState { it.isEmpty() }
+        repository.tasks().awaitValue { tasks ->
+            tasks.any { it.id == SERVER_TASK_ID && it.title == "Buy oat milk" }
+        }
+        assertEquals("Buy oat milk", serverTitle())
+        assertEquals(0, repository.syncStatus.value.pendingMutationCount)
+    }
+
+    @Test
+    fun an_edit_of_a_row_moved_on_another_column_is_sent_again_without_asking() = runTest {
+        // Given — the device's title edit queued while another writer ticked the task done
+        server.insertRow(Tables.TASKS, serverOnlyTask("Milk"))
+        repository.tasks().awaitValue { tasks -> tasks.any { it.id == SERVER_TASK_ID } }
+        repository.setNetworkEnabled(false)
+        repository.updateTask(SERVER_TASK_ID, "Buy milk", notes = null)
+        server.replaceRow(Tables.TASKS, SERVER_TASK_ID, buildJsonObject { put("done", true) })
+
+        // When
+        repository.setNetworkEnabled(true)
+        repository.syncPendingMutations()
+
+        // Then — both changes are on the server, and none waits for the user
+        withTimeout(WAIT) { while (serverTitle() != "Buy milk") delay(POLL) }
+        val row = server.rows(Tables.TASKS).single()
+        assertEquals("true", row["done"]?.jsonPrimitive?.content)
+        assertTrue(repository.conflictedMutations().first().isEmpty())
+    }
+
+    /**
+     * Stages the tour's conflict through the fake server: a task the list read from the server, its
+     * title edited to [mine] offline, then changed to [theirs] on the server, then the network back
+     * and the queue replayed. Returns the entry the app's resolver held.
+     */
+    private suspend fun stageTitleConflict(mine: String, theirs: String): ConflictedTaskMutation {
+        server.insertRow(Tables.TASKS, serverOnlyTask("Milk"))
+        repository.tasks().awaitValue { tasks -> tasks.any { it.id == SERVER_TASK_ID } }
+        repository.setNetworkEnabled(false)
+        assertIs<TaskMutationOutcome.Queued>(
+            repository.updateTask(SERVER_TASK_ID, mine, notes = null)
+        )
+        server.replaceRow(Tables.TASKS, SERVER_TASK_ID, buildJsonObject { put("title", theirs) })
+        repository.setNetworkEnabled(true)
+        repository.syncPendingMutations()
+        return repository.conflictedMutations().awaitState { it.isNotEmpty() }.single()
+    }
+
+    /** The title of the server-only task, as the server holds it. */
+    private fun serverTitle(): String? =
+        server
+            .rows(Tables.TASKS)
+            .single { it["id"]?.jsonPrimitive?.content == SERVER_TASK_ID }["title"]
+            ?.jsonPrimitive
+            ?.content
 
     /** Whether these photos are listed and every one has finished uploading. */
     private fun List<TaskPhoto>.isUploaded(): Boolean =

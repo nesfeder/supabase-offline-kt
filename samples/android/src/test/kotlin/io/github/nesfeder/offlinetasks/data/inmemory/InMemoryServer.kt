@@ -32,15 +32,25 @@ internal class InMemoryServer(initialTasks: List<Task> = emptyList()) {
         )
     }
 
-    /** Runs [mutation] as [userId] would through PostgREST, with the schema's checks. */
+    /**
+     * Runs [mutation] as [userId] would through PostgREST, with the schema's checks. An edit with a
+     * base is preconditioned on its version: when the row has moved since, it changes nothing and
+     * the answer is [ServerAnswer.Moved].
+     */
     suspend fun apply(userId: String, mutation: QueuedMutation, now: Instant): ServerAnswer =
         lock.withLock {
             when (mutation) {
                 is QueuedMutation.InsertTask -> insertTask(mutation.task, now)
-                is QueuedMutation.EditTask ->
+                is QueuedMutation.EditTask -> {
+                    val current = tasks[mutation.taskId]?.takeIf { it.userId == userId }
+                    val base = mutation.base
+                    if (base != null && current != null && current.updatedAt != base.updatedAt) {
+                        return@withLock ServerAnswer.Moved(current)
+                    }
                     updateTask(userId, mutation.taskId, mutation.title, now) {
                         it.copy(title = mutation.title, notes = mutation.notes)
                     }
+                }
                 is QueuedMutation.SetTaskDone ->
                     updateTask(userId, mutation.taskId, title = null, now) {
                         it.copy(isDone = mutation.isDone)
@@ -68,6 +78,20 @@ internal class InMemoryServer(initialTasks: List<Task> = emptyList()) {
                 }
             }
         }
+
+    /**
+     * Sets the title of task [taskId] as another device's edit would, with a new `updated_at`;
+     * false when there is no such task.
+     */
+    suspend fun changeTitleElsewhere(taskId: String, title: String, now: Instant): Boolean =
+        lock.withLock {
+            val task = tasks[taskId] ?: return@withLock false
+            tasks = tasks + (taskId to task.copy(title = title, updatedAt = now))
+            true
+        }
+
+    /** The task with [taskId] as the server holds it, or null. */
+    suspend fun task(taskId: String): Task? = lock.withLock { tasks[taskId] }
 
     /** Stores a photo file; refused when the path is taken, since the bucket has no upsert. */
     suspend fun upload(objectPath: String, bytes: ByteArray): Boolean = lock.withLock {
@@ -238,4 +262,7 @@ internal sealed interface ServerAnswer {
 
     /** Refused with [error]: nothing changed. */
     data class Refused(val error: TaskServerError) : ServerAnswer
+
+    /** The precondition failed: the row is at another version now, [current]. Nothing changed. */
+    data class Moved(val current: Task) : ServerAnswer
 }

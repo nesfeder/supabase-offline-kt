@@ -10,6 +10,8 @@ import io.github.jan.supabase.postgrest.query.filter.FilterOperator
 import io.github.nesfeder.offlinetasks.data.AppNetworkStatus
 import io.github.nesfeder.offlinetasks.data.AppSyncStatus
 import io.github.nesfeder.offlinetasks.data.BucketListing
+import io.github.nesfeder.offlinetasks.data.ConflictChoice
+import io.github.nesfeder.offlinetasks.data.ConflictedTaskMutation
 import io.github.nesfeder.offlinetasks.data.EncodedPhoto
 import io.github.nesfeder.offlinetasks.data.LiveUpdatesStatus
 import io.github.nesfeder.offlinetasks.data.NEWEST_FIRST
@@ -50,6 +52,7 @@ import io.github.nesfeder.offlinetasks.data.plusPendingPhotos
 import io.github.nesfeder.offlinetasks.data.takeCharacters
 import io.github.nesfeder.offlinetasks.data.toTaskPhoto
 import io.github.nesfeder.supabase.offline.CacheMissException
+import io.github.nesfeder.supabase.offline.ConflictResolution
 import io.github.nesfeder.supabase.offline.FlowReadStrategy
 import io.github.nesfeder.supabase.offline.MutationOutcome
 import io.github.nesfeder.supabase.offline.MutationStrategy
@@ -744,6 +747,35 @@ class OfflineTaskRepository(
     }
 
     // --8<-- [end:rejected-actions]
+
+    // --8<-- [start:resolve-conflict]
+    /**
+     * The writes parked because their task changed on the server meanwhile (the client's resolver
+     * holds a title both sides changed), newest first: the library lists the oldest first.
+     */
+    override fun conflictedMutations(): Flow<List<ConflictedTaskMutation>> =
+        offline.conflictedMutations().map { list ->
+            list.asReversed().map { it.toConflictedTaskMutation() }
+        }
+
+    /**
+     * Keep mine queues the write again, preconditioned on the server's row as the conflict saw it,
+     * and asks for a pass; Keep theirs drops it, and the server's row stands on the device too.
+     */
+    override suspend fun resolveConflictedMutation(id: Long, choice: ConflictChoice) {
+        val resolution =
+            when (choice) {
+                ConflictChoice.KeepMine -> ConflictResolution.KeepLocal
+                ConflictChoice.KeepTheirs -> ConflictResolution.KeepServer
+            }
+        try {
+            offline.resolveConflictedMutation(id, resolution)
+        } catch (cannotKeep: IllegalArgumentException) {
+            throw cannotKeep.toAppFailure(LibraryCall.Sync) // the row is gone, or too long to keep
+        }
+    }
+
+    // --8<-- [end:resolve-conflict]
 
     // --8<-- [start:sync-now]
     /** Sync now: sends what waits, in order, and reports every count of what happened. */

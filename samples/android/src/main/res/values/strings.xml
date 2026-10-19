@@ -10,6 +10,8 @@
     <string name="action_delete">Delete</string>
     <string name="action_discard">Discard</string>
     <string name="action_dismiss">Dismiss</string>
+    <string name="action_keep_mine">Keep mine</string>
+    <string name="action_keep_theirs">Keep theirs</string>
     <string name="action_more">More options</string>
     <string name="action_remove">Remove</string>
     <string name="action_retry">Retry</string>
@@ -209,7 +211,7 @@
     <string name="sync_last_stopped">The last sync stopped early; the rest waits for the server.</string>
     <string name="sync_last_stopped_network">The last sync stopped early: no connection. The rest waits.</string>
     <string name="sync_last_stopped_server">The last sync stopped early: the server answered HTTP %1$d %2$s. The rest waits.</string>
-    <string name="sync_last_report">Sent %1$d · refused %2$d · still waiting %3$d · already on the server %4$d · held behind other tables %5$d</string>
+    <string name="sync_last_report">Sent %1$d · refused %2$d · still waiting %3$d · already on the server %4$d · held behind other tables %5$d · conflicts settled %6$d · kept the server’s %7$d · held for you %8$d</string>
     <string name="waiting_task_added">Added “%1$s”</string>
     <string name="waiting_task_edited">Edited “%1$s”</string>
     <string name="waiting_task_changed">Changed a task</string>
@@ -235,6 +237,15 @@
     <string name="sync_rejected_times">Made %1$s · refused %2$s</string>
     <string name="sync_rejected_rows">Rows: %1$s</string>
     <string name="sync_rejected_not_retryable">Too long to keep in full, so it can’t be sent again.</string>
+    <string name="sync_conflicted">Conflicting changes</string>
+    <string name="sync_conflicted_none">No conflicts</string>
+    <string name="sync_conflicted_none_body">If a title you changed offline was changed elsewhere too, it waits here for you to choose.</string>
+    <string name="sync_conflicted_item">“%1$s” changed in two places</string>
+    <string name="sync_conflicted_column">%1$s: “%2$s” on the server, “%3$s” on this device</string>
+    <string name="sync_conflicted_empty">empty</string>
+    <string name="sync_conflicted_delete">Deleted on this device, changed on the server.</string>
+    <string name="sync_conflicted_times">Made %1$s · held %2$s</string>
+    <string name="sync_conflicted_cannot_keep_mine">The task is gone from the server, or the change was too long to keep, so only the server’s side can be kept.</string>
     <string name="refused_title">The server refused it: a title can’t be blank or longer than 200 characters.</string>
     <string name="refused_notes">The server refused it: notes can’t be longer than 2,000 characters.</string>
     <string name="refused_missing_task">The server refused it: its task isn’t on the server.</string>
@@ -280,6 +291,8 @@
     <string name="try_done">Done.</string>
     <string name="try_signed_upload_done">Uploaded: the copy is in the task’s photos.</string>
     <string name="try_signed_upload_nothing">There’s no photo to copy yet.</string>
+    <string name="try_make_conflict">Make a conflict</string>
+    <string name="try_make_conflict_body">Needs a second writer. Go offline, change a task’s title here, change the same title in your project’s Table Editor, then come back online: the change waits under Conflicting changes.</string>
     <string name="sync_server">Server</string>
     <string name="sync_server_body">A count, and the database function tasks_done_count. Both always ask the server.</string>
     <string name="sync_server_ask">Ask the server</string>

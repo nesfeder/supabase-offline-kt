@@ -5,6 +5,8 @@ package io.github.nesfeder.offlinetasks.data.supabase
 import io.github.jan.supabase.postgrest.result.PostgrestResult
 import io.github.nesfeder.offlinetasks.data.AppNetworkStatus
 import io.github.nesfeder.offlinetasks.data.AppSyncStatus
+import io.github.nesfeder.offlinetasks.data.ColumnConflict
+import io.github.nesfeder.offlinetasks.data.ConflictedTaskMutation
 import io.github.nesfeder.offlinetasks.data.LiveUpdatesStatus
 import io.github.nesfeder.offlinetasks.data.PhotoFile
 import io.github.nesfeder.offlinetasks.data.ReadProvenance
@@ -17,6 +19,7 @@ import io.github.nesfeder.offlinetasks.data.TaskServerError
 import io.github.nesfeder.offlinetasks.data.TaskSyncReport
 import io.github.nesfeder.offlinetasks.data.WaitingChange
 import io.github.nesfeder.supabase.offline.CachedFile
+import io.github.nesfeder.supabase.offline.ConflictedMutation
 import io.github.nesfeder.supabase.offline.MutationOperation
 import io.github.nesfeder.supabase.offline.MutationOutcome
 import io.github.nesfeder.supabase.offline.NetworkStatus
@@ -33,7 +36,9 @@ import io.github.nesfeder.supabase.offline.hasPendingMutations
 import io.github.nesfeder.supabase.offline.isFromCache
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
 
@@ -102,6 +107,7 @@ internal fun SyncStatus.toAppSyncStatus(): AppSyncStatus =
             },
         pendingMutationCount = pendingMutationCount,
         rejectedMutationCount = rejectedMutationCount,
+        conflictedMutationCount = conflictedMutationCount, // parked until the user settles them
         isSyncing = isSyncing,
         lastSyncedAt = lastSyncedAt,
         lastSyncError = lastSyncError?.toAppFailure(LibraryCall.Sync),
@@ -118,6 +124,9 @@ internal fun SyncReport.toTaskSyncReport(): TaskSyncReport =
         remainingCount = remainingCount,
         alreadyOnServerCount = alreadyOnServerCount,
         heldBehindOtherTablesCount = heldBehindOtherTablesCount,
+        conflictsResolvedCount = conflictsResolvedCount, // moved rows settled and sent again
+        conflictsKeptServerCount = conflictsKeptServerCount, // dropped: the server's row stands
+        conflicted = conflicted.map { it.toConflictedTaskMutation() }, // parked for the user
     )
 
 // --8<-- [end:sync-report]
@@ -158,6 +167,46 @@ internal fun ServerError.toTaskServerError(): TaskServerError =
     TaskServerError(status = status, code = code, message = message, details = details, hint = hint)
 
 // --8<-- [end:rejected-row]
+
+// --8<-- [start:conflicted-list]
+/**
+ * A parked write as the Sync tab shows it: which task, and for each column both sides changed, the
+ * server's value beside this device's.
+ */
+internal fun ConflictedMutation.toConflictedTaskMutation(): ConflictedTaskMutation {
+    val mine = body as? JsonObject // the columns this device sets; null for a delete
+    return ConflictedTaskMutation(
+        id = id,
+        table = table,
+        operation = operation.toTaskMutationOperation(),
+        rowKeys = rowKeys.mapNotNull { it.idOrNull() },
+        taskTitle = body?.titleOrNull() ?: server?.titleOrNull(), // the server row's otherwise
+        columns =
+            conflictingColumns.sorted().map { column ->
+                ColumnConflict(
+                    column = column,
+                    theirs = server?.get(column)?.asText(),
+                    mine = mine?.get(column)?.asText(),
+                )
+            },
+        changedOnServer = changedOnServer,
+        createdAt = createdAt,
+        conflictedAt = conflictedAt,
+        // Keep mine needs the server's version, and the body for an update.
+        canKeepMine =
+            serverVersion != null && (operation == MutationOperation.DELETE || body != null),
+    )
+}
+
+// --8<-- [end:conflicted-list]
+
+/** A column's value as text: a string's content, a number's or a boolean's text; null for null. */
+private fun JsonElement.asText(): String? =
+    when (this) {
+        JsonNull -> null
+        is JsonPrimitive -> content
+        else -> toString()
+    }
 
 /** A write's outcome without the server's answer: applied, or queued under an id. */
 internal fun MutationOutcome.toTaskMutationOutcome(): TaskMutationOutcome =

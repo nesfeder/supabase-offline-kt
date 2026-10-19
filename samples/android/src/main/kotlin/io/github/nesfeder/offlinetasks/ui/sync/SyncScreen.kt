@@ -48,6 +48,9 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import io.github.nesfeder.offlinetasks.R
 import io.github.nesfeder.offlinetasks.data.AppNetworkStatus
 import io.github.nesfeder.offlinetasks.data.BucketListing
+import io.github.nesfeder.offlinetasks.data.ColumnConflict
+import io.github.nesfeder.offlinetasks.data.ConflictChoice
+import io.github.nesfeder.offlinetasks.data.ConflictedTaskMutation
 import io.github.nesfeder.offlinetasks.data.LiveUpdatesStatus
 import io.github.nesfeder.offlinetasks.data.RejectedTaskMutation
 import io.github.nesfeder.offlinetasks.data.ServerCounts
@@ -86,6 +89,7 @@ fun SyncRoute(viewModel: SyncViewModel = viewModel(factory = SyncViewModel.Facto
                 onAskServer = viewModel::askServer,
                 onListBucket = viewModel::listBucket,
                 onTryIt = viewModel::tryIt,
+                onResolve = viewModel::resolve,
             ),
     )
 }
@@ -104,6 +108,7 @@ class SyncActions(
     val onAskServer: () -> Unit = {},
     val onListBucket: (offset: Int) -> Unit = {},
     val onTryIt: (TryIt) -> Unit = {},
+    val onResolve: (ConflictedTaskMutation, ConflictChoice) -> Unit = { _, _ -> },
 )
 
 /** A step that throws away data, waiting for the user to confirm it. */
@@ -114,8 +119,9 @@ private enum class Confirmation {
 
 /**
  * The library's offline state made visible: the network with a switch to simulate losing it, the
- * two settings, the waiting writes with "Sync now", the list's refresh state, refused writes, what
- * the server says, the bucket, the Try it actions, and the two ways to start again.
+ * two settings, the waiting writes with "Sync now", the list's refresh state, refused writes,
+ * conflicting writes, what the server says, the bucket, the Try it actions, and the two ways to
+ * start again.
  */
 @Composable
 fun SyncScreen(state: SyncUiState, actions: SyncActions, modifier: Modifier = Modifier) {
@@ -145,6 +151,7 @@ fun SyncScreen(state: SyncUiState, actions: SyncActions, modifier: Modifier = Mo
             queueGroup(ready, actions)
             refreshGroup(ready)
             rejectedGroup(ready, actions)
+            conflictedGroup(ready, actions)
             serverGroup(ready, actions)
             storageGroup(ready, actions)
             developerGroup(ready, actions)
@@ -253,6 +260,9 @@ private fun LazyListScope.queueGroup(state: SyncUiState.Ready, actions: SyncActi
                                 report.remainingCount,
                                 report.alreadyOnServerCount,
                                 report.heldBehindOtherTablesCount,
+                                report.conflictsResolvedCount,
+                                report.conflictsKeptServerCount,
+                                report.conflicted.size,
                             )
                         )
                     }
@@ -417,6 +427,101 @@ private fun RejectedRow(
     }
 }
 
+private fun LazyListScope.conflictedGroup(state: SyncUiState.Ready, actions: SyncActions) {
+    groupTitle("conflicted", R.string.sync_conflicted)
+    if (state.conflicted.isEmpty()) {
+        item(key = "conflicted-none") {
+            InfoRow(
+                index = 0,
+                count = 1,
+                icon = R.drawable.ic_cloud_done,
+                headline = stringResource(R.string.sync_conflicted_none),
+                supporting = stringResource(R.string.sync_conflicted_none_body),
+            )
+        }
+        return
+    }
+    state.conflicted.forEachIndexed { index, conflict ->
+        item(key = "conflicted-${conflict.id}") {
+            ConflictedRow(conflict, index, state.conflicted.size, actions)
+        }
+    }
+}
+
+/**
+ * A write parked on a conflict: each column both sides changed, with the server's value and this
+ * device's, when it was made and held, Keep mine and Keep theirs.
+ */
+@Composable
+private fun ConflictedRow(
+    conflict: ConflictedTaskMutation,
+    index: Int,
+    count: Int,
+    actions: SyncActions,
+) {
+    SegmentedListItem(
+        shapes = ListItemDefaults.segmentedShapes(index, count),
+        leadingContent = {
+            Icon(
+                painterResource(R.drawable.ic_sync_problem),
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.error,
+            )
+        },
+        supportingContent = {
+            Column {
+                conflict.columns.forEach { column -> Text(columnConflictText(column)) }
+                if (conflict.operation == TaskMutationOperation.Delete) {
+                    Text(stringResource(R.string.sync_conflicted_delete))
+                }
+                SmallText(
+                    stringResource(
+                        R.string.sync_conflicted_times,
+                        relativeTime(conflict.createdAt),
+                        relativeTime(conflict.conflictedAt),
+                    )
+                )
+                if (!conflict.canKeepMine) {
+                    SmallText(stringResource(R.string.sync_conflicted_cannot_keep_mine))
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TextButton(
+                        onClick = { actions.onResolve(conflict, ConflictChoice.KeepMine) },
+                        enabled = conflict.canKeepMine,
+                    ) {
+                        Text(stringResource(R.string.action_keep_mine))
+                    }
+                    TextButton(
+                        onClick = { actions.onResolve(conflict, ConflictChoice.KeepTheirs) }
+                    ) {
+                        Text(stringResource(R.string.action_keep_theirs))
+                    }
+                }
+            }
+        },
+    ) {
+        Text(
+            stringResource(
+                R.string.sync_conflicted_item,
+                conflict.taskTitle?.takeIf { it.isNotBlank() }
+                    ?: stringResource(R.string.task_untitled),
+            )
+        )
+    }
+}
+
+/** One column both sides changed: "Title: “Buy oat milk” on the server, “Buy milk” here". */
+@Composable
+private fun columnConflictText(column: ColumnConflict): String {
+    val none = stringResource(R.string.sync_conflicted_empty)
+    return stringResource(
+        R.string.sync_conflicted_column,
+        column.column,
+        column.theirs ?: none,
+        column.mine ?: none,
+    )
+}
+
 private fun LazyListScope.serverGroup(state: SyncUiState.Ready, actions: SyncActions) {
     groupTitle("server", R.string.sync_server)
     item(key = "server-counts") {
@@ -522,16 +627,21 @@ private fun LazyListScope.developerGroup(state: SyncUiState.Ready, actions: Sync
             TryIt.TwoFilters,
             TryIt.CountOpen,
         )
+    val rows = items.size + 1
     items.forEachIndexed { index, action ->
         item(key = "try-${action.name}") {
-            TryItRow(
-                index = index,
-                count = items.size,
-                action = action,
-                state = state,
-                actions = actions,
-            )
+            TryItRow(index = index, count = rows, action = action, state = state, actions = actions)
         }
+    }
+    // No stand-in server ships in the app, so a conflict needs a second writer: the recipe.
+    item(key = "try-make-conflict") {
+        InfoRow(
+            index = items.size,
+            count = rows,
+            icon = R.drawable.ic_science,
+            headline = stringResource(R.string.try_make_conflict),
+            supporting = stringResource(R.string.try_make_conflict_body),
+        )
     }
 }
 

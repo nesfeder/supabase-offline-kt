@@ -35,12 +35,17 @@ internal sealed interface QueuedMutation {
             rows.copy(tasks = rows.tasks + (task.id to task))
     }
 
-    /** `update tasks set title, notes where id`: both fields are sent, a null notes included. */
+    /**
+     * `update tasks set title, notes where id`: both fields are sent, a null notes included. With a
+     * [base], a replay is sent only while the server's row is still at that version, as the
+     * library's guarded replay of a table with a version column is.
+     */
     data class EditTask(
         override val id: Long,
         val taskId: String,
         val title: String,
         val notes: String?,
+        val base: Task? = null,
     ) : QueuedMutation {
         override val table: String = Tables.TASKS
         override val operation: TaskMutationOperation = TaskMutationOperation.Update

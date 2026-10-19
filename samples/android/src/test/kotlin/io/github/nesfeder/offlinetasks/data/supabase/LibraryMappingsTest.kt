@@ -5,6 +5,7 @@ package io.github.nesfeder.offlinetasks.data.supabase
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.jan.supabase.postgrest.result.PostgrestResult
 import io.github.nesfeder.offlinetasks.data.AppNetworkStatus
+import io.github.nesfeder.offlinetasks.data.ColumnConflict
 import io.github.nesfeder.offlinetasks.data.LiveUpdatesStatus
 import io.github.nesfeder.offlinetasks.data.NetworkSwitchedOffException
 import io.github.nesfeder.offlinetasks.data.NotSavedOnDeviceException
@@ -22,6 +23,7 @@ import io.github.nesfeder.supabase.offline.RealtimeStatus
 import io.github.nesfeder.supabase.offline.testing.appliedOutcome
 import io.github.nesfeder.supabase.offline.testing.cacheMissException
 import io.github.nesfeder.supabase.offline.testing.cachedFile
+import io.github.nesfeder.supabase.offline.testing.conflictedMutation
 import io.github.nesfeder.supabase.offline.testing.mutationNotQueueableException
 import io.github.nesfeder.supabase.offline.testing.networkDisabledException
 import io.github.nesfeder.supabase.offline.testing.pendingMutation
@@ -44,6 +46,7 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Instant
 import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
@@ -222,6 +225,117 @@ class LibraryMappingsTest {
                 syncFailedException(isConnectivityFailure = true).toAppFailure(LibraryCall.Sync)
             )
         assertTrue(offline.isConnectivityFailure)
+    }
+
+    @Test
+    fun a_conflicting_write_shows_both_sides_of_each_column_it_conflicts_on() {
+        // Given — a title edit parked: the server changed the title and the notes meanwhile
+        val parked =
+            conflictedMutation(
+                id = 12,
+                table = Tables.TASKS,
+                operation = MutationOperation.UPDATE,
+                createdAt = MADE,
+                rowKeys = listOf(buildJsonObject { put("id", "task-1") }),
+                body = buildJsonObject { put("title", "Buy milk") },
+                base = buildJsonObject { put("title", "Milk") },
+                server =
+                    buildJsonObject {
+                        put("id", "task-1")
+                        put("title", "Buy oat milk")
+                        put("notes", JsonNull)
+                    },
+                serverVersion = "2026-10-01T09:04:00.000001+00:00",
+                changedOnServer = setOf("title", "notes"),
+                conflictingColumns = setOf("title"),
+                message = "moved",
+                conflictedAt = REFUSED,
+            )
+
+        // When
+        val shown = parked.toConflictedTaskMutation()
+
+        // Then — the device's title names it, and the one conflicting column has both values
+        assertEquals("Buy milk", shown.taskTitle)
+        assertEquals(listOf("task-1"), shown.rowKeys)
+        assertEquals(
+            listOf(ColumnConflict("title", theirs = "Buy oat milk", mine = "Buy milk")),
+            shown.columns,
+        )
+        assertEquals(setOf("title", "notes"), shown.changedOnServer)
+        assertEquals(MADE, shown.createdAt)
+        assertEquals(REFUSED, shown.conflictedAt)
+        assertTrue(shown.canKeepMine)
+    }
+
+    @Test
+    fun a_conflicting_write_whose_row_is_gone_can_only_keep_the_servers_side() {
+        // Given — an edit parked on a row gone from the server
+        val parked =
+            conflictedMutation(
+                id = 13,
+                table = Tables.TASKS,
+                operation = MutationOperation.UPDATE,
+                createdAt = MADE,
+                body = buildJsonObject { put("title", "Mine") },
+                server = null,
+                serverVersion = null,
+                message = "gone",
+                conflictedAt = REFUSED,
+            )
+
+        // When
+        val shown = parked.toConflictedTaskMutation()
+
+        // Then — named by its own title, with nothing on the server to show beside it
+        assertEquals(TaskMutationOperation.Update, shown.operation)
+        assertEquals("Mine", shown.taskTitle)
+        assertTrue(shown.columns.isEmpty())
+        assertFalse(shown.canKeepMine)
+    }
+
+    @Test
+    fun a_reports_conflict_counts_reach_the_app() {
+        // When
+        val report =
+            syncReport(
+                    syncedCount = 2,
+                    remainingCount = 0,
+                    conflictsResolvedCount = 1,
+                    conflictsKeptServerCount = 1,
+                    conflicted =
+                        listOf(
+                            conflictedMutation(
+                                id = 4,
+                                table = Tables.TASKS,
+                                operation = MutationOperation.UPDATE,
+                                createdAt = MADE,
+                                body = buildJsonObject { put("title", "Mine") },
+                                serverVersion = "v2",
+                                message = "held",
+                                conflictedAt = REFUSED,
+                            )
+                        ),
+                )
+                .toTaskSyncReport()
+
+        // Then
+        assertEquals(1, report.conflictsResolvedCount)
+        assertEquals(1, report.conflictsKeptServerCount)
+        assertEquals(listOf(4L), report.conflicted.map { it.id })
+        assertEquals("Mine", report.conflicted.single().taskTitle)
+    }
+
+    @Test
+    fun the_status_counts_the_conflicting_writes() {
+        // Given
+        val status = syncStatus(network = NetworkStatus.ONLINE, conflictedMutationCount = 2)
+
+        // When
+        val shown = status.toAppSyncStatus()
+
+        // Then
+        assertEquals(2, shown.conflictedMutationCount)
     }
 
     private companion object {

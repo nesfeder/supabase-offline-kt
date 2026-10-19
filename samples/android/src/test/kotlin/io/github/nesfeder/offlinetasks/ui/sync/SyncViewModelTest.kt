@@ -3,6 +3,7 @@
 package io.github.nesfeder.offlinetasks.ui.sync
 
 import io.github.nesfeder.offlinetasks.data.AppNetworkStatus
+import io.github.nesfeder.offlinetasks.data.ConflictChoice
 import io.github.nesfeder.offlinetasks.data.ServerCounts
 import io.github.nesfeder.offlinetasks.data.ServerUnreachableException
 import io.github.nesfeder.offlinetasks.data.TaskRepository
@@ -226,6 +227,60 @@ class SyncViewModelTest {
 
         // Then
         viewModel.ready { it.status.pendingMutationCount == 0 }
+    }
+
+    @Test
+    fun a_title_changed_on_both_sides_is_listed_and_keep_theirs_settles_it() = runTest {
+        // Given — a task from the server, its title edited offline and changed on the server too
+        val fixture = repositoryFixture()
+        val repository = fixture.repository
+        val viewModel = syncViewModel(repository)
+        repository.addTask("Milk", notes = null)
+        val task = repository.awaitServerTasks().single()
+        fixture.deviceOnline.value = false
+        repository.updateTask(task.id, "Buy milk", notes = null)
+        repository.changeTitleOnServer(task.id, "Buy oat milk")
+
+        // When — back online, the edit replays
+        fixture.goOnline()
+
+        // Then — it waits under Conflicting changes, with both titles, and the status counts it
+        val conflict = viewModel.ready { it.conflicted.isNotEmpty() }.conflicted.single()
+        assertEquals("Buy milk", conflict.taskTitle)
+        assertEquals("Buy oat milk", conflict.columns.single().theirs)
+        assertEquals(1, viewModel.ready().status.conflictedMutationCount)
+
+        // When — Keep theirs
+        viewModel.resolve(conflict, ConflictChoice.KeepTheirs)
+
+        // Then — gone from the tab, and the list shows the server's title
+        viewModel.ready { it.conflicted.isEmpty() && it.status.conflictedMutationCount == 0 }
+        repository.tasks().first { snapshot ->
+            snapshot.value.orEmpty().any { it.title == "Buy oat milk" }
+        }
+    }
+
+    @Test
+    fun keep_mine_sends_the_held_title_again() = runTest {
+        // Given
+        val fixture = repositoryFixture()
+        val repository = fixture.repository
+        val viewModel = syncViewModel(repository)
+        repository.addTask("Milk", notes = null)
+        val task = repository.awaitServerTasks().single()
+        fixture.deviceOnline.value = false
+        repository.updateTask(task.id, "Buy milk", notes = null)
+        repository.changeTitleOnServer(task.id, "Buy oat milk")
+        fixture.goOnline()
+        val conflict = viewModel.ready { it.conflicted.isNotEmpty() }.conflicted.single()
+
+        // When
+        viewModel.resolve(conflict, ConflictChoice.KeepMine)
+
+        // Then — the device's title is sent over the server's row
+        viewModel.ready { it.conflicted.isEmpty() && it.status.pendingMutationCount == 0 }
+        val settled = repository.awaitServerTasks().single()
+        assertEquals("Buy milk", settled.title)
     }
 
     private fun TestScope.syncViewModel(repository: TaskRepository) =
