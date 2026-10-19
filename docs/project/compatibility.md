@@ -117,7 +117,7 @@ different supabase-kt minor can fail at runtime even when your app compiles.
 
 | supabase-offline-kt | supabase-kt |
 | --- | --- |
-| Unreleased | 3.6.0 |
+| 0.2.0 | 3.6.0 |
 | 0.1.0 | 3.6.0 |
 
 Each release renames the `Unreleased` row to its version, and the release workflow refuses a
