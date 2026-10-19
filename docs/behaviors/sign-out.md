@@ -14,7 +14,8 @@ Signing out in supabase-kt alone clears the session, not the device.
 ## What `clearLocalData()` deletes
 
 The cached query results, the downloaded Storage files, every write still in the mutation queue
-(never sent), the rejected list and the conflicted list. It does not touch the server, and the client stays usable.
+(never sent), the rejected list and the conflicted list. It does not touch the server, and the
+client stays usable.
 
 - A replay pass running at that moment is canceled first, and nothing queued is sent once the
   clear has begun.

@@ -122,7 +122,7 @@ sends that token whoever is signed in, so the owner check of
 | `syncedCount` | The writes this call sent and the server accepted |
 | `rejected` | The `RejectedMutation`s refused during this call, now on `rejectedMutations()` |
 | `remainingCount` | The writes still queued when the call returned |
-| `alreadyOnServerCount` | Of `syncedCount`, the inserts whose rows the server already held, because an earlier send whose answer was lost had reached it; and on a table with a version column, the updates whose row already held their values and the deletes whose row was already gone |
+| `alreadyOnServerCount` | Of `syncedCount`, the inserts whose rows the server already held, because an earlier send whose answer was lost had reached it; and on a table with a version column, the updates whose row already held their values and the guarded deletes whose row was already gone |
 | `heldBehindOtherTablesCount` | Of `remainingCount`, the writes a call for one table held back behind an earlier write to another table; `0` for a call over every table |
 | `conflictsResolvedCount` | Of `syncedCount`, the conflicts settled with `KeepLocal` or `Apply`, by the resolver or the default, and sent |
 | `conflictsKeptServerCount` | The writes dropped for the server's row, with `KeepServer`: by default, an update whose row is gone |
@@ -137,7 +137,7 @@ data is cleared is canceled first, and its report counts what it sent before.
 A sync throws only `IllegalStateException`, when the client is closed or PostgREST is not
 installed. A failure that stops the pass is not thrown: `syncStatus.value.lastSyncError` holds it
 as a `SyncFailedException`, with the HTTP status and the PostgREST or Postgres code and nothing of
-the original message ([Conflicts and failures](failures.md) has the rejected list).
+the original message ([Failures and the rejected list](failures.md) has the rejected list).
 
 ## The status
 

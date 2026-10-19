@@ -164,7 +164,7 @@ nav:
       - Optimistic overlay: behaviors/overlay.md
       - Replaying the queue: behaviors/sync.md
       - Conflicts and merging: behaviors/conflicts.md
-      - Conflicts and failures: behaviors/failures.md
+      - Failures and the rejected list: behaviors/failures.md
       - Cache size and eviction: behaviors/eviction.md
       - Signing out and switching users: behaviors/sign-out.md
       - Storage caching: behaviors/storage.md

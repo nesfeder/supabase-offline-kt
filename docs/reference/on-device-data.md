@@ -92,8 +92,8 @@ It is indexed on (`owner`, `synced_at_ms`) and indexed on (`table_name`).
 The library's own records (the rejected list, the conflicted list, whose cache it is, and each
 cached list's query shape) are JSON text in reserved rows of `object_cache`, under a table name 94
 bytes long: Postgres cuts identifiers at 63 bytes, so no table of yours can have that name, and
-`from()` refuses it. A reserved row is never evicted, counted against `cacheSizeBytes`, read as a query or
-overlaid.
+`from()` refuses it. A reserved row is never evicted, counted against `cacheSizeBytes`, read as a
+query or overlaid.
 
 The conflicted list is one more such row, bounded as the
 rejected list is (its newest 100 entries, within 512 K characters). Each entry holds a held write's
@@ -109,7 +109,7 @@ filters on.
 | A user signs out, or another signs in (with Auth) | Once the session settles as someone else: the cached lists and the downloaded files | The mutation queue, the rejected list and the conflicted list: each user's writes wait for that user |
 | Sign-out without Auth, or with your own token provider | Nothing: there is one identity for the life of the install | Everything |
 | `close()` | Nothing | Everything, for the next client |
-| Eviction | Cached lists fetched longest ago, past `cacheSizeBytes`; files used least recently, past `fileCacheSizeBytes` | The queue, which is never evicted; the rejected list keeps its newest 100 entries (see [Conflicts and failures](../behaviors/failures.md#the-rejected-list)) |
+| Eviction | Cached lists fetched longest ago, past `cacheSizeBytes`; files used least recently, past `fileCacheSizeBytes` | The queue, which is never evicted; the rejected list keeps its newest 100 entries (see [Failures and the rejected list](../behaviors/failures.md#the-rejected-list)) |
 | Uninstalling the app | Everything: it is all in the app's private storage | |
 
 ## Schema versions

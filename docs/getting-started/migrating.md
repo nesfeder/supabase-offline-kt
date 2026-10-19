@@ -185,10 +185,10 @@ The full table is [Supported features](../reference/supported-features.md).
 ## Behavior to expect
 
 `select` falls back by default: `NetworkFirst` reads as supabase-kt does online and serves the
-cached rows offline instead of throwing. A write made while an earlier one of the same user waits
-is queued behind it, online too, returns `Queued`, and is sent a moment later. A queued write the
-server refuses on replay is not thrown but goes to the rejected list for your app to show
-([Conflicts and failures](../behaviors/failures.md)). The client holds a database: one client per
+cached rows offline instead of throwing. A write made while an earlier one of the same user waits is
+queued behind it, online too, returns `Queued`, and is sent a moment later. A queued write the
+server refuses on replay is not thrown but goes to the rejected list for your app to show ([Failures
+and the rejected list](../behaviors/failures.md)). The client holds a database: one client per
 process, and `clearLocalData()` on sign-out.
 
 supabase-kt sends a write when you call it, and the last write to reach the server wins. Here a

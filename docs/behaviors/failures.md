@@ -1,4 +1,4 @@
-# Conflicts and failures
+# Failures and the rejected list
 
 A failure is either the network's or the server's. On the network's, the library serves the cache
 or keeps the write queued; on the server's, it hands you supabase-kt's own exception, unchanged. A
@@ -107,24 +107,26 @@ full the oldest entries go, and their writes are lost: nothing reports the loss 
 
 ## Conflicts
 
-A table whose version column you name ([Configuration](../reference/configuration.md#versioncolumns))
-has its queued updates and deletes of one cached row checked when they replay: each is sent only
-while the server's row still has the version the device saw, and a row that moved meanwhile is a
-conflict your resolver settles. [Conflicts and merging](conflicts.md) walks through it, with a
-running example.
+A table whose version column you name
+([Configuration](../reference/configuration.md#versioncolumns)) has its queued updates and deletes
+of one cached row checked when they replay: each is sent only while the server's row still has the
+version the device saw, and a row that moved meanwhile is a conflict your resolver settles.
+[Conflicts and merging](conflicts.md) walks through it, with a running example.
 
 | The replay finds | An UPDATE | A DELETE |
 | --- | --- | --- |
 | The row at the version the device saw | Applied; the server's row is cached | Applied |
 | No row | Gone: the resolver is asked with `server = null`; by default the write is dropped (`conflictsKeptServerCount`) | Already gone: synced (`alreadyOnServerCount`) |
+| A row the rest of the write's filter no longer reaches | Synced, as the unguarded replay's empty answer was | The same |
 | The row at that version, still meeting the filter, unchanged | A policy denies it: the rejected list | The same |
 | The row moved, already holding the write's values | An earlier send landed: synced (`alreadyOnServerCount`) | — |
-| The row moved on other columns only | Resent at the new version, without asking | — |
-| The row moved on the write's columns | A conflict: the resolver, by default `KeepLocal` (resent at the new version) | A conflict: by default `KeepLocal` (deleted) |
+| The row moved on other columns only | Resent at the new version, without asking | Any move: a conflict, by default `KeepLocal` (deleted) |
+| The row moved, otherwise | A conflict: the resolver, by default `KeepLocal` (resent at the new version) | The same as any move |
 | No connection | The pass stops; the write stays queued | The same |
 
 A resolver that answers `Hold`, throws or takes 30 seconds parks the write on
-`conflictedMutations()`, for the app to resolve or dismiss.
+`conflictedMutations()`, for the app to resolve or dismiss; so does a third send that still finds
+the row moved.
 
 Everything else keeps the last write wins:
 

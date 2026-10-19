@@ -8,19 +8,20 @@ conflict, or holds the write for the user. A table without a version column keep
 the last write wins.
 
 This page follows one write through each step, from the moment it is queued to the moment the
-server takes it, then plays one conflict through from two phones.
+server takes it, then plays one conflict through from two phones. The short reference, and the
+other ways a replay can fail, are on [Failures and the rejected list](failures.md#conflicts).
 
 ## Opting in
 
-The configuration names the column, the server's trigger moves it, and every read carries it into
-the cache, where the queue finds it:
+The configuration names the column, the server's trigger moves it, and every read that selects it
+carries it into the cache, where the queue finds it:
 
 ```mermaid
 flowchart LR
     C["versionColumn: tasks, updated_at"] --> Q[("Mutation queue")]
     U["Any update of a row"] --> T["The table's trigger"]
     T --> V["updated_at moves"]
-    V -- "every read brings it" --> K[("Query cache")]
+    V -- "a read that selects it brings it" --> K[("Query cache")]
     K -- "the version this device saw" --> Q
 ```
 
@@ -71,16 +72,17 @@ On the server, either kind of column works, as long as every update changes it:
       for each row execute function public.tasks_bump_version();
     ```
 
-The column is the server's. The library never writes it and compares it for equality only, as
-text: it sends back exactly the string the server sent, whatever its offset or precision. A
-trigger is what makes it a version, since a value the app sends in an update is overwritten.
-Without one, a row that moved cannot be told from one that did not, and every replay goes through
-as before. `versionColumn(table, column)` and the `versionColumns` map are keyed as `primaryKeys`
-is (`tasks`, or `schema.table` in another schema); a blank column, or one of the table's key
-columns, fails `createSupabaseClient` with `IllegalArgumentException`. `moddatetime` stamps the
-transaction's start time, so a row updated twice in one server-side transaction keeps one version: use the integer there
-([Project setup](../getting-started/setup.md#a-server-side-version-column)). The samples' schema
-already has the trigger on both tables ([Set up Supabase](../samples/supabase-setup.md#what-it-creates)).
+The column is the server's. The library never writes it and compares it for equality only, as text:
+it sends back exactly the string the server sent, whatever its offset or precision. A trigger is
+what makes it a version, since a value the app sends in an update is overwritten. Without one, a row
+that moved cannot be told from one that did not, and every replay goes through as before.
+`versionColumn(table, column)` and the `versionColumns` map are keyed as `primaryKeys` is (`tasks`,
+or `schema.table` in another schema); a blank column, or one of the table's key columns, fails
+`createSupabaseClient` with `IllegalArgumentException` (Swift: `OfflineError` with
+`.configuration`). `moddatetime` stamps the transaction's start time, so a row updated twice in one
+server-side transaction keeps one version: use the integer there ([Project
+setup](../getting-started/setup.md#a-server-side-version-column)). The samples' schema already has
+the trigger on both tables ([Set up Supabase](../samples/supabase-setup.md#what-it-creates)).
 
 ## What the queue records
 
@@ -95,37 +97,48 @@ flowchart LR
     K -- no --> N
     K -- yes --> F{"Names the version?"}
     F -- yes --> N
-    F -- no --> C{"Row cached?"}
+    F -- no --> C{"Row cached with the column?"}
     C -- no --> N
     C -- yes --> B["Guarded: base version and base columns kept"]
 ```
 
 | Kept with the write | What it holds |
 | --- | --- |
-| The base version | The version column's value in the newest cached copy of the row, as text. `PendingMutation.baseVersion` shows it; `null` means the write is not guarded |
+| The base version | The version column's value in a cached copy of the row that holds the column, as text. `PendingMutation.baseVersion` shows it; `null` means the write is not guarded |
 | The base columns | That copy's values of the columns the write sets, and its version; for a DELETE, the version alone |
 
 A filter pins one row when it names every key column with `eq` (`filter { eq("id", 42) }` for a
-table keyed on `id`); other conditions may sit beside the key. A write that updates every done
-task, one whose row no cached list holds, and one queued before the app named the column are not
-guarded, and replay as they always did. So are the writes this page never reaches: an insert, an
-upsert, an `OnlineOnly` write, and a write the queue cannot hold
-([Writes the queue cannot hold](mutations.md#writes-the-queue-cannot-hold)).
+table keyed on `id`); other conditions may sit beside the key. **The cached list must include the
+version column**: a list read with `select(Columns.list("id", "title"))` holds the row without it,
+and a write to that row records no base. Read the column in the lists your screens show (the default
+`select()` reads every column). Not guarded, and replayed as they always were: a write that updates
+every done task; one whose row no cached list holds, or holds only without the version column; one
+to a table with more than 100,000 cached rows, past which the cache keeps no key index to find the
+row by; and one queued before the app named the column. So are the writes this page never reaches:
+an insert, an upsert, an `OnlineOnly` write, and a write the queue cannot hold ([Writes the queue
+cannot hold](mutations.md#writes-the-queue-cannot-hold)).
 
 A queued write is first tried at once, when nothing of its user waits ahead of it, and that first
 send is the request you built, unchanged. The base matters when the write waits: offline, behind
 another write, or when that send may not have run.
 
-**Your own writes never conflict with each other.** When a guarded write, or a write sent at once
-that asked for its rows back, returns the row, every later queued write to that row takes the
-returned version and columns as its base. A write sent at once without `select()` returns no row
-to forward, so the next write meets an old base; it is resent at the new version without asking
-anyone ([below](#the-five-outcomes)). A Realtime event or `applyServerRecord` never moves a base:
-a base is what this device's user saw, and a change made elsewhere has to show as a conflict.
+**Writes queued one after another do not conflict with each other.** When a guarded write, or a
+write sent at once that asked for its rows back, returns the row, every later queued write to that
+row takes the returned version and columns as its base. A write sent at once without `select()`
+returns no row to forward, so the next write meets an old version; once the first write's answer
+has been patched into the cache, the next write's base holds its values, and it is resent at the
+new version without asking anyone ([below](#the-five-outcomes)). **The exception is a write queued
+while an earlier write to the same row is still on the wire** without `select()`: its base is the
+row from before that write, so if both set one column to different values, the replay meets the
+earlier write as a change made elsewhere, and your resolver is asked. Call `select()` on such
+writes: the returned row then forwards its version to the writes behind it. A Realtime event or
+`applyServerRecord` never moves a base: a base is what this device's user saw, and a change made
+elsewhere has to show as a conflict.
 
 ## What a replay sends
 
-A guarded write carries its base as one more filter and asks for its row back:
+When a [sync pass](sync.md) replays a guarded write, the write carries its base as one more filter
+and asks for its row back:
 
 ```mermaid
 flowchart LR
@@ -138,17 +151,18 @@ flowchart LR
 The update of task 42, made when the device had version `2026-10-18T13:00:27.486123+00:00`:
 
 ```http
-PATCH /rest/v1/tasks?id=eq.42&updated_at=eq.2026-10-18T13:00:27.486123%2B00:00&select=id,updated_at,title,done
+PATCH /rest/v1/tasks?id=eq.42&updated_at=eq.2026-10-18T13:00:27.486123+00:00&select=id,updated_at,title,done
 Prefer: return=representation
 
 {"title":"Buy oat milk","done":true}
 ```
 
-It asks back for the key, the version and the columns it sets, never `*`, so a column the user
-cannot read elsewhere in the row cannot turn it into a refusal; the row it returns must still pass
-the table's SELECT policy, as for any write with `select()`. The version travels percent-encoded
-(`+` as `%2B`, which a URL would otherwise read as a space), and the server reads back exactly the
-string it sent. Its answer is one of two, both `200`:
+The request lines on this page are shown decoded; on the wire Ktor percent-encodes the colons, the
+plus and the commas (`%3A`, `%2B`, `%2C`), and PostgREST decodes them, so the server reads back
+exactly the string it sent. It asks back for the key, the version and the columns it sets, never
+`*`, so a column the user cannot read elsewhere in the row cannot turn it into a refusal; the row it
+returns must still pass the table's SELECT policy, as for any write with `select()`. Its answer is
+one of two, both `200`:
 
 - **The row**, with the trigger's new version: the write applied. The row is written into every
   cached list that holds it, so a read after the replay shows it once, at the server's version, and
@@ -158,7 +172,7 @@ string it sent. Its answer is one of two, both `200`:
   network only:
 
 ```http
-GET /rest/v1/tasks?select=id,updated_at,title,done&id=eq.42&limit=1
+GET /rest/v1/tasks?id=eq.42&limit=1&select=id,updated_at,title,done
 ```
 
 A guarded DELETE asks back for the key and the version only, and its returned row is not written
@@ -166,7 +180,12 @@ into the cache, which already hides the deleted row.
 
 ## The five outcomes
 
-What the read by key finds decides what happens to the write:
+What the read by key finds decides what happens to the write. Two of its questions need a word
+first. A write's filter can hold conditions beyond the key (`eq("id", 42)` and `eq("done", false)`),
+so the row may no longer meet the rest of it. And PostgREST answers an empty list, never an error,
+when row-level security hides a row from an update. So an empty answer while the row is still at
+the base version and still meets the filter can only mean a policy refused the write, which goes to
+the [rejected list](failures.md#the-rejected-list).
 
 ```mermaid
 flowchart TD
@@ -176,7 +195,7 @@ flowchart TD
     R -- "a row" --> F{"Meets the filter?"}
     F -- no --> M["Synced: nothing to change"]
     F -- yes --> V{"At the base?"}
-    V -- yes --> D["A policy denies it: rejected list"]
+    V -- yes --> D["A policy denies it: the rejected list"]
     V -- no --> L{"Values already there?"}
     L -- yes --> A["Already on the server"]
     L -- no --> C{"Its columns moved?"}
@@ -186,10 +205,10 @@ flowchart TD
 
 | The read finds | An UPDATE | A DELETE |
 | --- | --- | --- |
-| No connection, or the session changed | The pass stops and the write stays queued, as on any connectivity failure | The same |
+| No connection, or the session changed | The [pass](sync.md) stops and the write stays queued, as on any connectivity failure | The same |
 | No row: deleted, or hidden from the user by a policy | **Gone**: a conflict with `server = null`. The default, `KeepServer`, drops the write and counts it in `conflictsKeptServerCount`; nothing is recreated | **Already gone**: synced, counted in `alreadyOnServerCount` |
 | A row the rest of the write's filter no longer reaches | Synced, as the unguarded replay's empty answer was | The same |
-| The row at the base version, still meeting the filter | **A policy denies it**: the write moves to the rejected list, with no `serverError` and nothing resent | The same |
+| The row at the base version, still meeting the filter | **A policy denies it**: the write moves to the [rejected list](failures.md#the-rejected-list), with no `serverError` and nothing resent | The same |
 | Another version, already holding every value the write sets | **Already applied**: an earlier send landed and its answer was lost. Synced, counted in `alreadyOnServerCount`, the row cached and forwarded | — |
 | Another version, none of the write's columns changed since the base | **A stale base**, typically your own earlier write: resent at the new version without the resolver, and not counted as a conflict | — |
 | Another version, otherwise | **Moved**: a conflict, settled as the next section says | **Moved**: always a conflict, with `local = null` and both column sets empty, so an app can hold a delete of a row someone edited. The default, `KeepLocal`, deletes it |
@@ -236,15 +255,16 @@ flowchart TD
 | `KeepServer` | The write leaves the queue unsent, and the server's row, or its deletion, is laid into the cache |
 | `Hold` | The write is parked on the conflicted list for later, and the pass goes on with the next write |
 
-A resend that finds the row moved again is a new conflict, and the resolver is asked again; a
-write is sent at most three times in one pass, and after the third send the write is parked
-without asking. The resolver is called during the pass, outside every database transaction, on the
-library's own dispatcher, never the one your `syncPendingMutations()` call runs on, while the pass
-waits for it: answer promptly, and never wait for a sync from inside it. Anything it throws but a
-cancellation, and 30 seconds without an answer, read as `Hold`, logged at `WARNING` with the table
-and the failure's type only. In Swift the resolver is an `async throws` closure run in a task of
-its own, off the caller's actor; one that runs past the 30 seconds keeps running, and its late
-answer is dropped.
+A resend that finds the row moved again is a new conflict, and the resolver is asked again; a write
+is sent at most three times in one pass, and if the third send still finds the row moved, or an
+update's row gone, the write is parked without asking. Any other ending of the third send (the row
+applied, a lost answer, a policy denial) is the usual one. The resolver is called during the pass,
+outside every database transaction, on the library's own dispatcher, never the one your
+`syncPendingMutations()` call runs on, while the pass waits for it: answer promptly, and never wait
+for a sync from inside it. Anything it throws but a cancellation, and 30 seconds without an answer,
+read as `Hold`, logged at `WARNING` with the table and the failure's type only. In Swift the
+resolver is an `async throws` closure run in a task of its own, off the caller's actor; one that
+runs past the 30 seconds keeps running, and its late answer is dropped.
 
 **Without a resolver**, every conflict is settled as `KeepLocal`, but for an UPDATE of a row that
 is gone, which is settled as `KeepServer`. An UPDATE sends only the columns it sets, so the default
@@ -273,7 +293,7 @@ A parked write waits on the conflicted list until the app settles it:
 ```mermaid
 stateDiagram-v2
     [*] --> Queued
-    Queued --> Parked: Hold, a throw, 30 s, or a third move
+    Queued --> Parked: Hold, a throw, 30 s, a third move, or no version
     Parked --> Queued: resolved with KeepLocal or Apply, under a new id
     Parked --> [*]: resolved with KeepServer, or dismissed
     Queued --> [*]: sent and applied
@@ -283,12 +303,16 @@ stateDiagram-v2
 (Swift: a `ConflictedMutationSequence`), oldest first, kept on the device across restarts. Each
 entry holds the write's `id`, `table`, `operation`, `createdAt`, `rowKeys` and `body`; the `base`;
 the `server` row and its `serverVersion` when the replay read it; `changedOnServer` and
-`conflictingColumns`; a `message` saying why it was parked; and `conflictedAt`.
+`conflictingColumns`; a `message` saying why it was parked; and `conflictedAt`. Besides the
+resolver's `Hold`, a write is parked when the resolver throws or takes 30 seconds, when its third
+send still finds the row moved, and when the server's row comes back without a version to
+precondition the resend on.
 
-- `resolveConflictedMutation(id, KeepLocal)`, or with `ConflictResolution.apply(columns)`, queues the write again at the end of the user's queue, under a new id, preconditioned on the
-  entry's `serverVersion`, and asks for a pass. Its replay is an ordinary guarded replay: when the
-  row comes back, the write counts in `syncedCount` alone; when the row has moved again since, the
-  resolver is asked, as for any conflict.
+- `resolveConflictedMutation(id, KeepLocal)`, or with `ConflictResolution.apply(columns)`, queues
+  the write again at the end of the user's queue, under a new id, preconditioned on the entry's
+  `serverVersion`, and asks for a pass. Its replay is an ordinary guarded replay: when the row comes
+  back, the write counts in `syncedCount` alone; when the row has moved again since, the resolver is
+  asked, as for any conflict.
 - `resolveConflictedMutation(id, KeepServer)` and `dismissConflictedMutation(id)` drop it.
 - `Hold` is refused with `IllegalArgumentException`, as are `Apply` on anything but an UPDATE of a
   row that was there, and `KeepLocal` on a row that was gone or on an entry whose body was too
@@ -329,7 +353,7 @@ From the samples: [LibraryMappings.kt](https://github.com/nesfeder/supabase-offl
 | `SyncReport` | `conflictsResolvedCount` | Conflicts this call settled with `KeepLocal` or `Apply`, from the resolver or the default, and sent; counted in `syncedCount` too |
 | `SyncReport` | `conflictsKeptServerCount` | Writes this call dropped for the server's row, with `KeepServer` |
 | `SyncReport` | `conflicted` | The `ConflictedMutation`s this call parked, now on `conflictedMutations()` |
-| `SyncReport` | `alreadyOnServerCount` | Of `syncedCount`, also the guarded writes whose earlier send had landed, and the DELETEs whose row was already gone |
+| `SyncReport` | `alreadyOnServerCount` | Of `syncedCount`, also the guarded writes whose earlier send had landed, and the guarded DELETEs whose row was already gone |
 | `SyncStatus` | `conflictedMutationCount` | The current user's entries on the conflicted list, read with the pending and rejected counts, so a write moving between the queue and either list is counted in exactly one |
 | `PendingMutation` | `baseVersion` | The version a queued write replays against; `null` when it is not guarded |
 
@@ -368,7 +392,7 @@ sequenceDiagram
     A->>P: GET tasks
     P-->>A: Buy milk, version T1
     Note over A: Offline. Renamed to Buy oat milk and ticked done. Queued with base T1
-    B->>P: PATCH task 42: Buy almond milk
+    B->>P: PATCH task 42: Buy almond milk, done
     P->>T: before update
     T-->>P: updated_at is T2
     Note over A: Online again. The pass replays the write
@@ -385,7 +409,8 @@ sequenceDiagram
 ```
 
 **1. Phone A reads the task.** The cached list holds it at `T1`. Offline, the user renames it to
-"Buy oat milk" and ticks it done; the update is queued with its base:
+"Buy oat milk" and ticks it done; the update is queued with its base. `PendingMutation.baseVersion`
+shows the version; the columns the queue keeps beside it are not public:
 
 ```json
 {"baseVersion": "2026-10-18T13:00:27.486123+00:00",
@@ -399,7 +424,7 @@ sequenceDiagram
 answers an empty list:
 
 ```http
-PATCH /rest/v1/tasks?id=eq.42&updated_at=eq.2026-10-18T13:00:27.486123%2B00:00&select=id,updated_at,title,done
+PATCH /rest/v1/tasks?id=eq.42&updated_at=eq.2026-10-18T13:00:27.486123+00:00&select=id,updated_at,title,done
 Prefer: return=representation
 
 {"title":"Buy oat milk","done":true}
@@ -412,7 +437,7 @@ HTTP/1.1 200 OK
 **4. The read by key** finds the row at `T2`:
 
 ```http
-GET /rest/v1/tasks?select=id,updated_at,title,done&id=eq.42&limit=1
+GET /rest/v1/tasks?id=eq.42&limit=1&select=id,updated_at,title,done
 
 HTTP/1.1 200 OK
 
@@ -456,7 +481,7 @@ resolve call are under [The conflicted list](#the-conflicted-list)).
 under a new id, with `T2` as its base, and the pass sends it:
 
 ```http
-PATCH /rest/v1/tasks?id=eq.42&updated_at=eq.2026-10-18T13:04:00.000001%2B00:00&select=id,updated_at,title,done
+PATCH /rest/v1/tasks?id=eq.42&updated_at=eq.2026-10-18T13:04:00.000001+00:00&select=id,updated_at,title,done
 Prefer: return=representation
 
 {"title":"Buy oat milk","done":true}
@@ -467,8 +492,8 @@ HTTP/1.1 200 OK
 ```
 
 The row comes back at `T3`, and the cached list shows it at once. That pass's report counts the
-write in `syncedCount` alone: the conflict was settled by the user, not during the pass. Keep theirs would have dropped
-the write and left "Buy almond milk" on both phones.
+write in `syncedCount` alone: the conflict was settled by the user, not during the pass. Keep
+theirs would have dropped the write and left "Buy almond milk" on both phones.
 
 ### Three quiet cases
 
@@ -538,7 +563,10 @@ From the samples: [OfflineTaskRepositoryTest.kt](https://github.com/nesfeder/sup
 - A write sent at once, an insert, an upsert, and a write that pins no single cached row are not
   guarded: the last write wins.
 - A guarded replay asks for its row back; the row, at its new version, is cached and forwarded to
-  the writes queued behind it, so your own edits never conflict with each other.
+  the writes queued behind it, so edits queued one after another do not conflict with each other.
+  An edit queued while an earlier one to the row is on the wire can, unless that one asks for its
+  row back with `select()`.
+- A list read without the version column leaves the writes to its rows unguarded.
 - An empty answer is followed by one read by key, which tells a gone row, a policy denial, a lost
   answer, a stale base and a moved row apart.
 - A moved row is compared column by column: a change elsewhere to other columns is resent without
@@ -546,7 +574,7 @@ From the samples: [OfflineTaskRepositoryTest.kt](https://github.com/nesfeder/sup
 - Without a resolver, this device's change wins a moved row column by column, and an update of a
   gone row is dropped; nothing is recreated.
 - A resolver that throws or takes 30 seconds holds the write; a write is sent at most three times
-  in one pass.
+  in one pass, and parked if its row is still moving.
 - A held write waits on `conflictedMutations()` until the app keeps one side or dismisses it; Keep
   mine sends it against the server's version as the entry saw it.
 - `SyncReport` counts what a sync settled, dropped and parked, and `SyncStatus` counts what waits.

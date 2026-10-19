@@ -54,8 +54,9 @@ All notable changes to this project are recorded in this file. The format follow
   tells a gone row, a policy denial (the rejected list), a lost answer whose write had landed
   (already on the server), a change to other columns only (resent against the new version) and a
   conflict. Writes sent at once, inserts, upserts and writes the queue cannot pin to one cached row
-  replay as before. A blank version column, or one among the table's key columns, fails
-  `createConfig`. The documentation's new "Conflicts and merging" page walks through it.
+  replay as before. `versionColumn` throws `IllegalArgumentException` for a blank column, and a
+  column among the table's key columns fails `createSupabaseClient` with it. The documentation's
+  new "Conflicts and merging" page walks through it.
 - `Offline.Config.conflictResolver`, a `ConflictResolver` the app may implement, asked about a moved
   row whose written columns changed on the server too, a DELETE of a moved row, or an UPDATE of a
   gone one, with a `MutationConflict` (the row key, the base, the local columns, the server's row,

@@ -159,14 +159,16 @@ From the samples: [SampleSupabaseClient.kt](https://github.com/nesfeder/supabase
 Each table's version column, by table name, keyed as [`primaryKeys`](#primarykeys) is: the name
 alone in the client's default schema, `schema.table` in another. A version column is one a
 server-side trigger changes on every update of a row: a `timestamptz` kept by `moddatetime`, or an
-integer the trigger increments ([Project setup](../getting-started/setup.md#a-server-side-version-column)).
-Naming it guards the replay of a queued UPDATE or DELETE whose filter pins one row a cached list
-holds: the queue records the version the device saw, and a pass sends the write only while the
-server's row still has it. A row that moved meanwhile is a conflict, settled by
-[`conflictResolver`](#conflictresolver). Writes sent at once, inserts, upserts and writes that pin
-no single cached row are not checked. The value is compared as text, for equality only, exactly as
-the server sent it. `versionColumn` throws `IllegalArgumentException` for a blank column, and a
-column among the table's key columns fails `createSupabaseClient` with it. See
+integer the trigger increments ([Project
+setup](../getting-started/setup.md#a-server-side-version-column)). Naming it guards the replay of a
+queued UPDATE or DELETE whose filter pins one row a cached list holds: the queue records the version
+the device saw, and a pass sends the write only while the server's row still has it. A row that
+moved meanwhile is a conflict, settled by [`conflictResolver`](#conflictresolver). Writes sent at
+once, inserts, upserts and writes that pin no single cached row are not checked. The value is
+compared as text, for equality only, exactly as the server sent it. The cached list the row was read
+into must include the column: a list read with named columns that leave it out holds the row without
+it, and a write to that row records no base. `versionColumn` throws `IllegalArgumentException` for a
+blank column, and a column among the table's key columns fails `createSupabaseClient` with it. See
 [Conflicts and merging](../behaviors/conflicts.md).
 
 From the samples: [SampleSupabaseClient.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/platform/SampleSupabaseClient.kt) · [ClientSettings.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/App/ClientSettings.swift)

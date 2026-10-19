@@ -977,8 +977,8 @@ sends that token whoever is signed in, so it is not checked.
 **The rejected list.** It is one bounded value in a reserved row of `object_cache`, read once and
 written whole under the queue lock. Moving a write onto it, deleting its row and clearing its send
 record are one transaction. The conflicted list is a second such row, `conflicted_mutations`, with
-the same format versioning and bounds; parking a write on it is likewise one transaction. An unreadable list is kept aside under a new name, logged at `ERROR`,
-and started afresh.
+the same format versioning and bounds; parking a write on it is likewise one transaction. An
+unreadable list is kept aside under a new name, logged at `ERROR`, and started afresh.
 
 **Retirement.** A replayed write stays, marked with its sync sequence, for the queries fetched
 before it replayed. Each payload written from a response records the sync sequence it has seen
@@ -1153,13 +1153,13 @@ cached read is served back as a `PostgrestResult` of the same shape, and the ove
 per change. `body_json` and `filter_json` are the JSON a replay sends and the filter it rebuilds,
 kept as written so a replay sends exactly what the caller made. `operation` is the stored word
 (`INSERT`, `UPSERT`, `UPDATE`, `DELETE`), a format pinned by tests. The engine's own records (the
-rejected list, the conflicted list, the cache owner, each query's shape) are JSON text in reserved rows of
-`object_cache`, under a table name 94 bytes long: Postgres truncates identifiers at 63 bytes, so no
-table can be named that, and `from()` refuses it. A reserved row is never evicted, counted, read as
-a query or overlaid. `localPath` records where a file was written, but a file's place is always
-derived from its bucket and path; the recorded one is read only to clean up a file an older mapping
-left. Every schema change after 0.1.0, version 2 included, is a new version with a migration that
-keeps `mutation_cache`'s rows.
+rejected list, the conflicted list, the cache owner, each query's shape) are JSON text in reserved
+rows of `object_cache`, under a table name 94 bytes long: Postgres truncates identifiers at 63
+bytes, so no table can be named that, and `from()` refuses it. A reserved row is never evicted,
+counted, read as a query or overlaid. `localPath` records where a file was written, but a file's
+place is always derived from its bucket and path; the recorded one is read only to clean up a file
+an older mapping left. Every schema change after 0.1.0, version 2 included, is a new version with a
+migration that keeps `mutation_cache`'s rows.
 
 Every payload, overlay and stored filter is read and written with one `Json` instance,
 `EngineJson`, so the serializer cache is shared and the settings cannot drift between call sites.
