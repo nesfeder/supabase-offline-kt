@@ -828,14 +828,14 @@ internal class MutationQueue(
     /**
      * The row [entry] re-queues as under [decision], at the tail: its body, or for
      * [ConflictDecision.Apply] the given columns, preconditioned on the server's version; `null`
-     * when the decision does not apply to it or its body was not kept.
+     * when the decision does not apply to it, or it would resend a body that was not kept.
      */
     private fun requeuedRowOf(
         entry: StoredConflict,
         decision: ConflictDecision,
         owner: String?,
     ): MutationRow? {
-        if (entry.bodyOmittedChars != null) return null
+        if (entry.bodyOmittedChars != null && decision !is ConflictDecision.Apply) return null
         val bodyJson =
             when (decision) {
                 ConflictDecision.KeepLocal -> entry.bodyJson

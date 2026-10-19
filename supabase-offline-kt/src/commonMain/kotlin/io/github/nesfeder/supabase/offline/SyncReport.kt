@@ -26,6 +26,12 @@ package io.github.nesfeder.supabase.offline
  *   table held back because an earlier write of the user to another table is still queued: no write
  *   is sent ahead of an earlier one, so a call that syncs every table sends them in order. Always
  *   `0` for such a call.
+ * @property conflictsResolvedCount of [SyncReport.syncedCount], the guarded writes whose row had
+ *   moved on the server, settled by the [ConflictResolver] or the default and sent again.
+ * @property conflictsKeptServerCount the guarded writes dropped without being sent because the
+ *   server's row was let stand ([ConflictResolution.KeepServer]); counted in no other count.
+ * @property conflicted the guarded writes parked during this call, now on the conflicted list
+ *   ([Offline.conflictedMutations]) unless local data was cleared since.
  */
 @ConsistentCopyVisibility
 public data class SyncReport
@@ -35,4 +41,7 @@ internal constructor(
     public val remainingCount: Int,
     public val alreadyOnServerCount: Int,
     public val heldBehindOtherTablesCount: Int,
+    public val conflictsResolvedCount: Int,
+    public val conflictsKeptServerCount: Int,
+    public val conflicted: List<ConflictedMutation>,
 )

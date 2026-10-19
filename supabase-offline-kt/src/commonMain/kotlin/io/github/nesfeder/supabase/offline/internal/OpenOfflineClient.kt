@@ -22,6 +22,7 @@ import io.github.nesfeder.supabase.offline.internal.mutationqueue.DefaultPrimary
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.NoVersionColumns
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.PrimaryKeys
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.VersionColumns
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.conflictPolicyOf
 import io.github.nesfeder.supabase.offline.internal.postgrest.ResponseTrustPolicy
 import io.github.nesfeder.supabase.offline.internal.realtime.ServerChangeFeed
 import io.github.nesfeder.supabase.offline.internal.realtime.SupabaseRealtimeFeed
@@ -162,6 +163,7 @@ internal fun Offline.Config.buildOfflineClient(
         closeWait = closeWait,
         primaryKeys = primaryKeysByTable(),
         versionColumns = versionColumnsByTable(),
+        conflictPolicy = conflictPolicyOf(conflictResolver, primaryKeysByTable()),
         responseTrust = responseTrustPolicy(),
         config = this,
         fileSystem = fileSystem,
@@ -214,9 +216,9 @@ internal fun Offline.Config.primaryKeysByTable(): PrimaryKeys {
     else PrimaryKeys { table -> keys[table] ?: DEFAULT_PRIMARY_KEY }
 }
 
-/** Each table's version column as [Offline.Config.versionColumnSettings] names it; none else. */
+/** Each table's version column as [Offline.Config.versionColumns] names it; none else. */
 internal fun Offline.Config.versionColumnsByTable(): VersionColumns {
-    val columns = versionColumnSettings.toMap()
+    val columns = versionColumns.toMap()
     return if (columns.isEmpty()) NoVersionColumns else VersionColumns { table -> columns[table] }
 }
 

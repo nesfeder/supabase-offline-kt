@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.mutationqueue
 
+import io.github.nesfeder.supabase.offline.ConflictResolution
+import io.github.nesfeder.supabase.offline.ConflictedMutation
+import io.github.nesfeder.supabase.offline.MutationConflict
 import io.github.nesfeder.supabase.offline.MutationOperation
 import io.github.nesfeder.supabase.offline.PendingMutation
 import io.github.nesfeder.supabase.offline.internal.db.MutationRow
@@ -33,8 +36,82 @@ internal fun MutationRow.toPendingMutation(json: Json, primaryKeys: PrimaryKeys)
         createdAt = Instant.fromEpochMilliseconds(createdAtMs),
         rowKeys = rowKeysOf(body, filterJson, primaryKeys.of(table), json),
         body = body,
+        baseVersion = baseVersion,
     )
 }
+
+/**
+ * This persisted conflict as a [ConflictedMutation].
+ *
+ * @param json The engine's [Json].
+ * @param primaryKeys Where the table's key columns come from, for [ConflictedMutation.rowKeys].
+ * @return The conflicted mutation. A stored operation no build writes is reported as an update.
+ */
+internal fun StoredConflict.toConflictedMutation(
+    json: Json,
+    primaryKeys: PrimaryKeys,
+): ConflictedMutation {
+    val operation = mutationOperationStoredAs(operation) ?: MutationOperation.UPDATE
+    val body = bodyOf(operation, bodyJson, json)
+    return ConflictedMutation(
+        id = id,
+        table = table,
+        operation = operation,
+        createdAt = Instant.fromEpochMilliseconds(createdAtMs),
+        rowKeys = rowKeysOf(body, filterJson, primaryKeys.of(table), json),
+        body = body,
+        base = baseJson?.let { text -> jsonObjectOrNull(text, json) } ?: JsonObject(emptyMap()),
+        server = serverRowJson?.let { text -> jsonObjectOrNull(text, json) },
+        serverVersion = serverVersion,
+        changedOnServer = changedOnServer.toSet(),
+        conflictingColumns = conflictingColumns.toSet(),
+        message = message,
+        conflictedAt = Instant.fromEpochMilliseconds(conflictedAtMs),
+    )
+}
+
+/**
+ * This conflict as a [ConflictResolver] is asked about it.
+ *
+ * @param json The engine's [Json].
+ * @param primaryKeys Where the table's key columns come from, for [MutationConflict.rowKey].
+ */
+internal fun ConflictCase.toMutationConflict(
+    json: Json,
+    primaryKeys: PrimaryKeys,
+): MutationConflict {
+    val filter = decodeFilterOrNull(mutation.filterJson, json)
+    return MutationConflict(
+        mutationId = mutation.id,
+        table = mutation.table,
+        operation = mutation.knownOperation ?: MutationOperation.UPDATE,
+        rowKey =
+            filter?.let { pinnedRowKeyOf(it, primaryKeys.of(mutation.table)) }
+                ?: JsonObject(emptyMap()),
+        base = base,
+        local = local,
+        server = (this as? ConflictCase.Moved)?.server,
+        changedOnServer = (this as? ConflictCase.Moved)?.changedOnServer.orEmpty(),
+        conflictingColumns = (this as? ConflictCase.Moved)?.conflictingColumns.orEmpty(),
+    )
+}
+
+/** [resolution] as the replay acts on it. */
+internal fun conflictDecisionOf(resolution: ConflictResolution): ConflictDecision =
+    when (resolution) {
+        ConflictResolution.KeepLocal -> ConflictDecision.KeepLocal
+        ConflictResolution.KeepServer -> ConflictDecision.KeepServer
+        is ConflictResolution.Apply -> ConflictDecision.Apply(resolution.columns)
+        ConflictResolution.Hold -> ConflictDecision.Hold
+    }
+
+/** [text] as a JSON object; `null` when it is not one. */
+private fun jsonObjectOrNull(text: String, json: Json): JsonObject? =
+    try {
+        json.parseToJsonElement(text) as? JsonObject
+    } catch (_: IllegalArgumentException) {
+        null
+    }
 
 /**
  * This persisted rejection as a [RejectedMutation].

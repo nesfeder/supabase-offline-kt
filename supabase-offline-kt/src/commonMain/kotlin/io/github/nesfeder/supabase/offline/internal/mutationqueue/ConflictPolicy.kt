@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.mutationqueue
 
+import io.github.nesfeder.supabase.offline.ConflictResolver
+import io.github.nesfeder.supabase.offline.internal.EngineJson
 import io.github.nesfeder.supabase.offline.internal.db.MutationRow
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
@@ -88,3 +90,19 @@ internal val DefaultConflictPolicy: ConflictPolicy = ConflictPolicy { case ->
         is ConflictCase.Gone -> ConflictDecision.KeepServer
     }
 }
+
+/**
+ * The policy that asks the app's [resolver], each case and answer mapped to the public types; the
+ * default policy when the app set none.
+ *
+ * @param primaryKeys Where each table's key columns come from, for the row key the resolver sees.
+ */
+internal fun conflictPolicyOf(
+    resolver: ConflictResolver?,
+    primaryKeys: PrimaryKeys,
+): ConflictPolicy =
+    if (resolver == null) DefaultConflictPolicy
+    else
+        ConflictPolicy { case ->
+            conflictDecisionOf(resolver.resolve(case.toMutationConflict(EngineJson, primaryKeys)))
+        }
