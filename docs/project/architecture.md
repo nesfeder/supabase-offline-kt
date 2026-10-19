@@ -97,6 +97,8 @@ The settings:
 | `networkAvailability: Flow<Boolean>?` | `null` | The app's own connectivity signal, `true` while online, in place of the platform's monitor. `null` uses the monitor. |
 | `autoSync: Boolean` | `true` | Whether the library sends queued writes by itself when the session settles and when the network comes back. |
 | `primaryKeys`, `primaryKey(table, vararg columns)` | `id` | Each table's key columns, by its name in the default schema and as `schema.table` in another: how the cache recognizes a row. `primaryKey` throws `IllegalArgumentException` for no column. |
+| `versionColumns: MutableMap<String, String>`, `versionColumn(table, column)` | none | Each table's version column, keyed as `primaryKeys` is: a column a server-side trigger changes on every update. A queued UPDATE or DELETE that pins one cached row of such a table records the version the device saw, and replays only while the server's row still has it. `versionColumn` throws `IllegalArgumentException` for a blank column; `createConfig` throws it for a column among the table's key columns. |
+| `conflictResolver: ConflictResolver?` | `null` | Settles a conflict a guarded replay finds; `null` settles a moved row with `KeepLocal` and an UPDATE of a gone row with `KeepServer`. |
 | `realtime { table(name, schema, filter) }`, `realtimeTables: List<RealtimeTable>` | none | The tables the plugin keeps current through supabase-kt's Realtime plugin: one channel, joined while a user is signed in (or Auth is absent) and the network is not known down, each change applied as `applyServerRecord` and `applyServerDelete` do, the named tables read again on every join. A blank table, one named twice for one schema, or a `RealtimeFilter` with an operator Realtime does not evaluate throws `IllegalArgumentException` when named; a table named without `install(Realtime)` fails `createSupabaseClient` with `IllegalStateException`. |
 | `responseTrust: ResponseTrust` | `SettledSession` | Which server responses may replace what the cache holds. |
 | `logLevel: LogLevel?` | `null` | The least severe level the plugin logs at; `null` takes the client's `defaultLogLevel`. |
@@ -289,17 +291,36 @@ so `isNetworkOrConnectivityFailure()` is `true` for it.
 | `rejectedMutations(): Flow<List<RejectedMutation>>` | The current user's writes the server refused for good on replay, and those the library could no longer replay exactly, oldest first, as the list changes. | Kept on the device across restarts until each entry is dismissed or retried. | — |
 | `dismissRejectedMutation(id: Long)` | Removes an entry for good. | Does nothing for an id that is not one of the current user's entries. | — |
 | `retryRejectedMutation(id: Long)` | Queues the write again, at the end of the user's queue under a new id, and asks for a pass; the entry leaves the list. | For when the cause has been fixed, such as a missing parent row or a policy. Does nothing for an id that is not the current user's. | `IllegalArgumentException` when the entry `isRetryable` is `false` |
+| `conflictedMutations(): Flow<List<ConflictedMutation>>` | The current user's writes parked after a conflict, oldest first, as the list changes. | Kept on the device across restarts, within the rejected list's bounds, until each is resolved or dismissed. Only a write to a table with a version column can reach it. | — |
+| `resolveConflictedMutation(id: Long, resolution: ConflictResolution)` | `KeepLocal` and `Apply` queue the write again at the end of the user's queue, under a new id, preconditioned on the entry's `serverVersion`, and ask for a pass; `KeepServer` drops it. The entry leaves the list. | Does nothing for an id that is not the current user's. | `IllegalArgumentException` for `Hold`, for `Apply` on anything but an UPDATE of a row the server still held, and for `KeepLocal` on a row that was gone or a body too large to keep |
+| `dismissConflictedMutation(id: Long)` | Removes an entry for good: the write is dropped. | As for the rejected list. | — |
 
 `PendingMutation`: `id: Long`, `table`, `operation: MutationOperation`, `createdAt: Instant`,
 `rowKeys: List<JsonObject>` (the key values of the rows it touches, from body rows that carry the
 whole key or from the key's equality conditions in the filter; empty when unknown) and
-`body: JsonElement?` (`null` for a DELETE, or a stored body that no longer parses).
+`body: JsonElement?` (`null` for a DELETE, or a stored body that no longer parses) and
+`baseVersion: String?` (the version a guarded write replays against; `null` when it is not
+guarded).
 
 `RejectedMutation`: the same six fields, then `serverError: ServerError?` (`null` when the library
 refused the write itself, because it could no longer be replayed exactly as it was made),
 `message`, `rejectedAt: Instant` and `isRetryable`. `ServerError` is PostgREST's error kept as data
 so it survives a restart: `status`, `code` (the SQLSTATE or PostgREST code), `message`, `details`
 and `hint`.
+
+**Conflicts.** `ConflictResolver` is a `fun interface` an app may implement:
+`suspend fun resolve(conflict: MutationConflict): ConflictResolution`. `MutationConflict` carries
+`mutationId`, `table`, `operation`, `rowKey`, `base` (the columns the write sets and the version, as
+the device saw them), `local` (`null` for a DELETE), `server` (the key, the version, the write's
+and the filter's columns; `null` when gone), `changedOnServer` and `conflictingColumns`.
+`ConflictResolution` is a sealed interface the app only passes in, so a case can be added in a
+minor release: `KeepLocal`, `KeepServer`, `Apply(columns)` (built with
+`ConflictResolution.apply(columns)`, which refuses an empty object) and `Hold`.
+`ConflictedMutation` is the list's entry: the write's `id`, `table`, `operation`, `createdAt`,
+`rowKeys` and `body`, then `base`, `server`, `serverVersion`, `changedOnServer`,
+`conflictingColumns`, `message` and `conflictedAt`. The resolver runs on the client's own
+dispatcher, outside every transaction; anything it throws but a cancellation, and 30 seconds
+without an answer, read as `Hold`.
 
 **Whose writes these are.** Each queued write records its owner, the user at the time it was made.
 The current user's writes are the ones made under that user's session, and those queued with no
@@ -328,7 +349,11 @@ app lets its user dismiss or retry each entry.
 `syncedCount`, the inserts whose rows the server already held because an earlier send whose answer
 was lost had reached it) and `heldBehindOtherTablesCount` (of `remainingCount`, the writes a call
 for one table held back behind an earlier write of the user to another table; `0` for a call over
-every table). Its counts are the call's own: a pass the library ran by itself just before is counted
+every table), `conflictsResolvedCount` (of `syncedCount`, the conflicts settled with `KeepLocal` or
+`Apply` and sent), `conflictsKeptServerCount` (the writes dropped with `KeepServer`) and
+`conflicted` (the entries parked during the call); `alreadyOnServerCount` also counts a guarded
+write whose earlier send had landed and a guarded DELETE whose row was already gone. Its counts are
+the call's own: a pass the library ran by itself just before is counted
 nowhere in it, and a refusal it made is found on the rejected list.
 
 `SyncFailedException`, with `httpStatus: Int?` and `code: String?`: why a pass stopped with writes
@@ -392,7 +417,7 @@ one failed read never turns a trigger off.
 | Field | Meaning |
 | --- | --- |
 | `network: NetworkStatus` | Whether the library believes it can reach the network. Current as soon as `disableNetwork()` or `enableNetwork()` returns. |
-| `pendingMutationCount`, `rejectedMutationCount` | The current user's queued writes and rejected entries. They follow each change to the queue shortly after it, read together, so a write moving between the queue and the rejected list is counted in exactly one. A failed read of either is logged, and they follow the queue again after a wait that doubles up to about a minute. |
+| `pendingMutationCount`, `rejectedMutationCount`, `conflictedMutationCount` | The current user's queued writes, rejected entries and conflicted entries. They follow each change to the queue shortly after it, read together, so a write moving between the queue and either list is counted in exactly one. A failed read of either is logged, and they follow the queue again after a wait that doubles up to about a minute. |
 | `isSyncing` | Whether a pass is sending, started by the app or by the library; `false` while a pass waits for the session to settle. |
 | `lastSyncedAt: Instant?` | When a pass, or a write sent at once, last left the current user's queue empty, a pass over an already empty queue included. In memory only. |
 | `lastSyncError: SyncFailedException?` | Why the last pass stopped with writes queued: the server's `httpStatus` and `code`, or a failure the network caused. Cleared when a later pass runs to the end, when sending empties the queue, and when local data is cleared. |
@@ -544,7 +569,7 @@ val supabase = createSupabaseClient(url, key) {
 | Member | What it does | Rule |
 | --- | --- | --- |
 | `Offline.Config.inMemory(clock: Clock = Clock.System)` | Keeps the cache, the mutation queue and the Storage file cache in the client's memory; nothing is written to disk. `clock` is the time the client sees: fetch, queue and rejection times, and so how old a cached read is against a `maxAge`. | Every other setting applies as in an app but `dataDirectory`, which has no effect, and each client starts empty. It watches no monitor: `syncStatus.network` stays `UNKNOWN`, which counts as online, until the test sets `networkAvailability` or calls `disableNetwork()`, the way to take it offline. The client's work runs in the library's scope, so a background failure is logged, never thrown into the test. supabase-kt's own plugins keep their own state: give Storage a `MemoryResumableCache` and Auth a session manager that keeps the session in memory. The client runs on real time: install `Postgrest { maxRetries = 0 }`, or a read the cache cannot answer waits out supabase-kt's transport retries. Use it under Robolectric too. |
-| `appliedOutcome`, `queuedOutcome`, `pendingMutation`, `rejectedMutation`, `serverError`, `querySnapshot`, `stalledRefresh`, `syncReport`, `syncStatus`, `cachedFile` | Build the value types, for an app's own test doubles. | Every field is a parameter; the ones a test rarely sets have defaults. |
+| `appliedOutcome`, `queuedOutcome`, `pendingMutation`, `rejectedMutation`, `serverError`, `mutationConflict`, `conflictedMutation`, `querySnapshot`, `stalledRefresh`, `syncReport`, `syncStatus`, `cachedFile` (with overloads of `pendingMutation`, `syncReport` and `syncStatus` for the conflict fields) | Build the value types, for an app's own test doubles. | Every field is a parameter; the ones a test rarely sets have defaults. |
 | `cacheMissException`, `mutationNotQueueableException`, `networkDisabledException`, `syncFailedException` | Build the exceptions. | `syncFailedException(isConnectivityFailure = true)` is one `isNetworkOrConnectivityFailure()` accepts. |
 
 **The version rule.** Use the testing artifact at exactly the library's version. It calls hooks
@@ -669,7 +694,7 @@ The client's parts:
 | `ClientOperationGate` | Counts every public call and every flow while it is collected, whoever's coroutine runs it, so `close()` never closes the database under one. |
 | `OfflineTable` | One table behind the builder: reads through `QueryReader`, writes through the mutation queue or sent directly, and the cache patched with what the server applied. |
 | `QueryReader` | Answers reads from the network, the cache or both, as the strategy says; `LiveQueries` shares one upstream and one refresh loop among the collectors of one `CacheFirstThenNetwork` query. |
-| `MutationQueueReplayer` | Sends the queue: the immediate send of a write at the head, and replay passes. `AutomaticReplay` starts passes, coalesced and backed off. |
+| `MutationQueueReplayer` | Sends the queue: the immediate send of a write at the head, and replay passes, a guarded write with its version precondition and its read by key. It hands a conflict to a `ConflictPolicy`, the seam the client builds from the app's resolver or the defaults. `AutomaticReplay` starts passes, coalesced and backed off. |
 | `NetworkAccess` | The connectivity signal and the app's switch. |
 | `StorageFileCache` | The Storage files, shared by every bucket the client hands out (`CachingBucketApi`). |
 
@@ -680,7 +705,7 @@ own locks.
 | --- | --- | --- |
 | `CacheFreshness` | The watermarks that say whether a response or a cache write is still current: each table's last write that changed the cache, and when local data was last cleared or the cache dropped. | The clear lock |
 | `CacheOwnership` | Whose the query cache and the file cache are, and whether the current identity may read or write them; asked on every cache read and write. | The owner record's, always last |
-| `MutationQueue` | The queue's rows and the records beside them: enqueue, the head checks, a send's outcome, rejection, retry, discard, the counts and lists the app is shown, the send record, the sync sequence, the rejected list, and retiring replayed writes. | The queue lock, and a read lock per table that its readers share |
+| `MutationQueue` | The queue's rows and the records beside them: enqueue, the head checks, a send's outcome, rejection, retry, discard, the counts and lists the app is shown, the send record, the sync sequence, the base a guarded write records and its forwarding, the rejected list, the conflicted list, and retiring replayed writes. | The queue lock, and a read lock per table that its readers share |
 | `QueryCache` | The cached queries: writing a response behind its guards, reading payloads, size eviction, and each query's shape record. | The per-table write locks, the eviction lock, and the query-shape records' own |
 | `QueryOverlay` | Every read served with the writes its payload does not hold laid over it, and the key indexes that find rows other queries hold. | A snapshot lock per table, between its readers and a change to both its payloads and its queue |
 | `CachePatcher` | Patching an online write into its table's cached queries, and marking stale the queries a write may have changed but cannot be patched into. | None of its own |
@@ -859,7 +884,10 @@ operation, the body, the encoded filter, the insert and upsert options, the owne
 made and when it was replayed (`created_at_ms`, `synced_at_ms`), and three more pieces of
 bookkeeping. `send_unconfirmed` says a send may have reached the server; `sync_sequence` orders
 replayed writes against cached payloads; `schema_cache_misses` counts PostgREST's schema-cache
-refusals. The order is the row's autoincrement id.
+refusals. On a table with a version column, `base_version` and `base_json` hold the version and the
+written columns of the row as the newest cached copy had them, found through the overlay's key
+index before the queue lock is taken; a filter that pins no single key, or names the version
+column, records none. The order is the row's autoincrement id.
 
 **The head send.** Before a keyed INSERT (one whose rows all carry the table's primary key) goes
 out, its send is recorded as possibly delivered. The request runs carrying its owner, which the
@@ -904,10 +932,24 @@ recorded, because a write the server applied but the queue kept would be sent ag
   the table has no unique key to match (`42P10`) it is sent again as the plain INSERT.
 - **Every other INSERT** replays as it was sent, so a genuine duplicate id is refused with `23505`
   and reaches the rejected list with the server's own error.
-- **An UPSERT, an UPDATE and a DELETE** replay as sent; they are idempotent, and a replay after a
-  lost response overwrites a change another writer made in between. A stored filter that can no
-  longer be read, or would not replay in full, is never sent: the write is rejected by the library
-  itself.
+- **An UPSERT, and an unguarded UPDATE or DELETE**, replay as sent; they are idempotent, and a
+  replay after a lost response overwrites a change another writer made in between. A stored filter
+  that can no longer be read, or would not replay in full, is never sent: the write is rejected by
+  the library itself.
+- **A guarded UPDATE or DELETE** (one with a `base_version`) replays with the stored filter, a
+  top-level `eq` on the version column at the base, and a `select` of the key, the version and the
+  written columns. Rows back mean it applied: an UPDATE's rows are patched into the cache with
+  `CachePatcher.patchReturnedRows`, and every later guarded write to the row takes the returned
+  version and columns as its base, in the transaction that marks the write replayed. No rows back
+  is followed by one network-only read by key, which tells a gone row, a filter the row no longer
+  meets, a policy denial (the row at the base, meeting the filter: the rejected list), a lost answer
+  (the row already holds the written values), a stale base (none of the written columns moved:
+  resent at the new version without the policy) and a moved row, classified per column and handed
+  to the `ConflictPolicy`. `KeepLocal` and `Apply` resend at the server's version, at most three
+  sends in a pass; `KeepServer` removes the write and lays the server's row, or its deletion, into
+  the cache; `Hold`, a throw, the 30-second bound or a third move park it on the conflicted list.
+  The policy is called outside every transaction and lock but the pass's send lock, in the pass's
+  job, so a clear or a close cuts its wait short and leaves the write queued.
 - **Accepted**, a write's table watermark advances, then, in one transaction, the write is marked
   replayed with the next sync sequence, its send record cleared and any stale rejected entry
   removed.
@@ -934,8 +976,9 @@ sends that token whoever is signed in, so it is not checked.
 
 **The rejected list.** It is one bounded value in a reserved row of `object_cache`, read once and
 written whole under the queue lock. Moving a write onto it, deleting its row and clearing its send
-record are one transaction. An unreadable list is kept aside under a new name, logged at `ERROR`,
-and started afresh.
+record are one transaction. The conflicted list is a second such row, `conflicted_mutations`, with
+the same format versioning and bounds; parking a write on it is likewise one transaction. An
+unreadable list is kept aside under a new name, logged at `ERROR`, and started afresh.
 
 **Retirement.** A replayed write stays, marked with its sync sequence, for the queries fetched
 before it replayed. Each payload written from a response records the sync sequence it has seen
@@ -1095,13 +1138,14 @@ writes nothing to the console on any platform, which a check in CI enforces.
 
 ### The schema
 
-The database is Room schema version 1, the one 0.1.0 ships, identity hash
-`d82a2435c50b4595368573f8728a370b`. Three tables:
+The database is Room schema version 2, identity hash `5f1a878933e35eebaa2b64aac7fccab0`. Version
+1, the one 0.1.0 ships, migrates to it by adding two columns to `mutation_cache`; a write queued
+under version 1 has no base and replays unguarded. Three tables:
 
 | Table | Key | Columns |
 | --- | --- | --- |
 | `object_cache` | `(table_name, signature)` | `table_name`, `signature` (the cache key), `payload`, `updated_at` (the fetch time, negated when stale), `synced_through` (the sync sequence the payload has seen) |
-| `mutation_cache` | `id`, autoincrement | `table_name`, `operation`, `body_json`, `filter_json`, `created_at_ms`, `synced_at_ms`, `default_to_null`, `on_conflict`, `ignore_duplicates`, `owner`, `sync_sequence`, `schema_cache_misses`, `send_unconfirmed`; indexed on `(owner, synced_at_ms)` and `table_name` |
+| `mutation_cache` | `id`, autoincrement | `table_name`, `operation`, `body_json`, `filter_json`, `created_at_ms`, `synced_at_ms`, `default_to_null`, `on_conflict`, `ignore_duplicates`, `owner`, `sync_sequence`, `schema_cache_misses`, `send_unconfirmed`, `base_version`, `base_json`; indexed on `(owner, synced_at_ms)` and `table_name` |
 | `storage_objects` | `key`, `"<bucket>::<path>"` | `bucketId`, `path`, `localPath`, `sizeBytes`, `eTag`, `lastFetchedEpochMs`; unique on `(bucketId, path)` |
 
 **What is `TEXT`, and why.** `payload` is the JSON array PostgREST answered, kept as text because a
@@ -1109,13 +1153,13 @@ cached read is served back as a `PostgrestResult` of the same shape, and the ove
 per change. `body_json` and `filter_json` are the JSON a replay sends and the filter it rebuilds,
 kept as written so a replay sends exactly what the caller made. `operation` is the stored word
 (`INSERT`, `UPSERT`, `UPDATE`, `DELETE`), a format pinned by tests. The engine's own records (the
-rejected list, the cache owner, each query's shape) are JSON text in reserved rows of
-`object_cache`, under a table name 94 bytes long: Postgres truncates identifiers at 63 bytes, so no
-table can be named that, and `from()` refuses it. A reserved row is never evicted, counted, read as
-a query or overlaid. `localPath` records where a file was written, but a file's place is always
-derived from its bucket and path; the recorded one is read only to clean up a file an older mapping
-left. A schema change after 0.1.0 is a new version with a migration that keeps `mutation_cache`'s
-rows.
+rejected list, the conflicted list, the cache owner, each query's shape) are JSON text in reserved
+rows of `object_cache`, under a table name 94 bytes long: Postgres truncates identifiers at 63
+bytes, so no table can be named that, and `from()` refuses it. A reserved row is never evicted,
+counted, read as a query or overlaid. `localPath` records where a file was written, but a file's
+place is always derived from its bucket and path; the recorded one is read only to clean up a file
+an older mapping left. Every schema change after 0.1.0, version 2 included, is a new version with a
+migration that keeps `mutation_cache`'s rows.
 
 Every payload, overlay and stored filter is read and written with one `Json` instance,
 `EngineJson`, so the serializer cache is shared and the settings cannot drift between call sites.
@@ -1172,6 +1216,7 @@ The decisions that shaped the API and the engine, with the date each was settled
 | 2026-10-04 | On iOS the data lives in `Library/Application Support`; a database found in `Documents` moves there. | `Documents` is the user's own files: with file sharing on, the Files app shows the queue of unsent writes, and the user can delete it. |
 | 2026-10-04 | The testing artifact's published metadata pins the library to its own version. | It calls into the library outside the API records; a mismatch should fail resolution, not a test with a missing method. |
 | 2026-10-04 | The platform file helpers extend `OfflineBucketApi` and return non-null. | On the offline bucket they needed a `!!`, and on supabase-kt's own they compiled and silently returned `null`. |
+| 2026-10-18 | Conflicts are detected on replay, per table, when the app names a version column, and settled by the app's resolver or the defaults; what is not settled is parked on a conflicted list. | A replay after a lost answer, or after another device's edit, overwrote that edit out of sight. A precondition on a column the server's trigger moves is the one check PostgREST evaluates atomically; the per-column classification keeps a change to other columns from reading as a conflict, and the defaults keep the last write winning column by column, so an app that sets nothing loses nothing it had. |
 | 2026-10-05 | A pattern list the server would read as another list (empty, or a pattern that is empty, `NULL`, edged with white space or holding a brace) is refused, before anything is sent or queued. | supabase-kt quotes a pattern only when it holds one of `,.:()`, and `LIKE ALL` over no pattern matches every row, so a queued delete with `likeAll(column, listOf(""))` reached every row the user's policies admit. As with two filters on one column, the request is refused rather than rewritten, so it stays supabase-kt's own; a test pins what supabase-kt sends, so the canary shows the day it quotes these. |
 
 ### What it deliberately does not do
@@ -1183,7 +1228,7 @@ The decisions that shaped the API and the engine, with the date each was settled
 | 2026-10-04 | Answer a read never fetched from another cached query's rows, such as one row by its key from a cached list. | A serving path of its own, with its own rules (the same select list, the key compared as the overlay compares it, and a row missing from a list meaning nothing known, since the list may hold a window); it can be added later without a break. Read the row from the list instead. |
 | 2026-09-30 | Evaluate conditions beyond `eq`, `neq`, `in` and `is`. | Each needs Postgres's collation and type rules to be right; unknown is always safe. |
 | 2026-09-30 | Cache `single()`, counts and the other shapes. | Stored over the list with the same filters, they were served in its place. |
-| 2026-09-30 | Resolve conflicts. | The last write wins; a value several writers change belongs in a server-side computation. |
+| 2026-10-18 | Check an upsert, a write sent at once, or a write that pins no single cached row for conflicts. | PostgREST has no precondition for an upsert; a write sent at once is the caller's own request, sent while nothing waits ahead of it; and a base needs one row the device saw. Those keep the last write wins, and a value several writers change still belongs in a server-side computation. |
 | 2026-10-13 | Catch up with what a Realtime channel missed by replaying it. | Realtime replays nothing, so the plugin reads the named tables again on every join instead; a channel the app wires itself reads again on its own terms. |
 
 The cache also does not follow the server's cascades and triggers. A write patches only its own
@@ -1199,9 +1244,10 @@ What the library promises, each with the tests that pin it:
 | --- | --- |
 | A user's queued writes are sent in the order they were made, across tables, and none overtakes an earlier one of the same user, in any pass: a pass for one table stops at a write with an earlier one queued in another table. `OnlineOnly` writes, writes the queue cannot hold, `rpc` and Storage writes are never queued, so they go around the queue. | `WriteAheadOrderTest`, `MutationQueueReplayOrderTest`, `OnlineWriteJoinsQueueTest`, `HeadSendTest`, `SyncReportTest` |
 | With Auth installed, a queued write is sent with its owner's token or not at all. A PostgREST configured with its own `jwtToken` is not checked. | `ReplayTokenBindingTest`, `ReplayOwnerCheckTest`, `PerIdentityQueueTest` |
-| No write leaves the queue silently. It leaves when the server accepts it; when the server refuses it for good on replay, or its schema-cache refusals reach the bound (it goes to the rejected list); when the library can no longer replay it exactly as it was made (the rejected list too); when, sent at once, it fails with any status but `503` or `520` (the error is thrown to its caller); or when the app discards it or clears local data. A failure that may pass leaves it queued. | `MutationQueueTransientFailureTest`, `SchemaCacheMissTest`, `HeadSendTest`, `DiscardPendingMutationTest`, `RejectedMutationListTest`, `UnknownOperationRowAndroidTest`, `UnknownOperationRowIosTest` |
+| No write leaves the queue silently. It leaves when the server accepts it; when the server refuses it for good on replay, or its schema-cache refusals reach the bound (it goes to the rejected list); when the library can no longer replay it exactly as it was made (the rejected list too); when, sent at once, it fails with any status but `503` or `520` (the error is thrown to its caller); when a conflict is settled with `KeepServer` (counted in `conflictsKeptServerCount`) or parked (the conflicted list); or when the app discards it or clears local data. A failure that may pass leaves it queued. | `MutationQueueTransientFailureTest`, `SchemaCacheMissTest`, `HeadSendTest`, `DiscardPendingMutationTest`, `RejectedMutationListTest`, `GuardedReplayOutcomesTest`, `ConflictedListTest`, `UnknownOperationRowAndroidTest`, `UnknownOperationRowIosTest` |
 | On a table whose configured key matches a unique key on the server, a keyed INSERT whose send may have reached the server is never inserted twice. | `MutationQueueIdempotentReplayTest`, `UnconfirmedSendProofTest`, `UndeliveredRequestsAndroidTest`, `UndeliveredRequestsIosTest` |
 | Answering a read from the cache sends no request. | `CachedReadsSendNothingTest` |
+| On a table with a version column, a queued UPDATE or DELETE that pins one cached row is applied only while the server's row has the version the device saw; a row that moved is never overwritten without the resolver or the defaults deciding, and the device's own earlier writes never read as a conflict. | `MutationBaseCaptureTest`, `GuardedReplayRequestTest`, `GuardedReplayOutcomesTest`, `BaseForwardingTest`, `ConflictPolicyTest`, `ConflictResolverTest` |
 | A read, an update or a delete with two top-level filters on one column is refused before anything is sent or queued, under every strategy, online and offline. | `SameColumnFiltersTest`, `UpstreamRepeatedParameterTest` |
 | A read, an update or a delete with a pattern list the server would read as another list (empty, or a pattern that is empty, `NULL`, edged with white space or holding a brace) is refused before anything is sent or queued, at the top level and in a group, online and offline. | `PatternListsTest`, `UpstreamPatternListTest` |
 | Each emission of a live read is one view of the cache, the queue and its refresh: no write shows both patched into the cache and still queued, a replayed write never drops out of a list that holds it, and `Idle` comes with the rows its refresh fetched. | `LiveReadConsistencyTest`, `LiveReadSourceOrderTest`, `LiveReadConsistencyAndroidTest`, `LiveReadConsistencyIosTest` |
@@ -1226,7 +1272,7 @@ What it does not do yet, or does only so far:
 | On a hosted project a dry run commits, unless the project lets a request choose the rollback. | No change planned |
 | An upload does not seed the file cache, so a file uploaded just before going offline is not available offline: the bytes are the caller's, and caching them needs a size and ownership policy. | 0.2.0 |
 | An INSERT whose key the server makes is inserted twice when its response is lost and it replays, and shows twice in a read of its table answered while it is on the wire and, unless the INSERT asks for its rows back (`select()`), in that query's cached rows, across restarts, until they are fetched again. Give rows their ids on the device. | No change planned |
-| A replayed UPSERT, UPDATE or DELETE overwrites a change another writer made between the lost response and the replay. | No change planned |
+| A replayed UPSERT, and an UPDATE or DELETE of a table without a version column (or one that pins no single cached row), overwrites a change another writer made between the lost response and the replay. A guarded UPDATE or DELETE does not: the change is found and settled. | No change planned |
 | A queued UPDATE or DELETE whose filter the engine cannot evaluate changes nothing on screen until it is sent and the list fetched again. | No change planned |
 | A queued row is appended past a list's order and limit, on every page it matches. | 0.2.0 |
 | A JSON `null` reads as SQL `NULL` for `is`, which is wrong for a `jsonb` column holding the JSON value `null`. | No change planned |

@@ -35,7 +35,12 @@ internal class CacheOwnership(
      * identity's yet and the identity is a user, who adopts it. Without the Auth plugin there is
      * one identity, and it always may.
      */
-    suspend fun cacheServesCurrentIdentity(): Boolean = cacheIsCurrentIdentitys(forWrite = false)
+    suspend fun cacheServesCurrentIdentity(): Boolean =
+        cacheIsIdentitys(identityProvider, forWrite = false)
+
+    /** [cacheServesCurrentIdentity] for [identity], already read; `null` is no identity. */
+    suspend fun cacheServes(identity: String?): Boolean =
+        cacheIsIdentitys({ identity }, forWrite = false)
 
     /**
      * Whether the cache may be written for the current identity, as [cacheServesCurrentIdentity]
@@ -43,15 +48,21 @@ internal class CacheOwnership(
      * it is never adopted by another.
      */
     suspend fun cacheTakesWritesOfCurrentIdentity(): Boolean =
-        cacheIsCurrentIdentitys(forWrite = true)
+        cacheIsIdentitys(identityProvider, forWrite = true)
 
-    /** [cacheServesCurrentIdentity], or with [forWrite] [cacheTakesWritesOfCurrentIdentity]. */
-    private suspend fun cacheIsCurrentIdentitys(forWrite: Boolean): Boolean {
+    /**
+     * [cacheServesCurrentIdentity] for the identity [identityOf] reads, only when it is needed, or
+     * with [forWrite] [cacheTakesWritesOfCurrentIdentity].
+     */
+    private suspend fun cacheIsIdentitys(
+        identityOf: suspend () -> String?,
+        forWrite: Boolean,
+    ): Boolean {
         if (!isCacheOwnedPerIdentity) {
-            if (forWrite) identityProvider()?.let { identity -> record.owner(claimant = identity) }
+            if (forWrite) identityOf()?.let { claimant -> record.owner(claimant = claimant) }
             return true
         }
-        val identity = identityProvider()
+        val identity = identityOf()
         val owner = identity?.let { cacheOwnerClaimingFor(it, claimsForUser = forWrite) }
         val mine =
             identity != null &&

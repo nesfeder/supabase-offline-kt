@@ -28,6 +28,7 @@ Reached through `supabase.offline.from(table)` or `from(schema, table)`.
 | `insert`, `upsert` (`QueueIfOffline`) | **Queued**, with `onConflict`, `ignoreDuplicates` and `defaultToNull` kept for the replay. `select()` brings the server's rows back when the write is sent at once |
 | `update`, `delete` (`QueueIfOffline`) with a filter the queue can record | **Queued**. The queue records filters on the table's own columns, joined as AND, with any of supabase-kt's operators |
 | `update`, `delete` with a filter the queue cannot record | **Sent directly**: no filter, an `or { }` or `and { }` group, a negated filter (`filterNot`), an embedded table's column, `limit`, `order` or `offset`. Offline, `MutationNotQueueableException` |
+| `update`, `delete` (`QueueIfOffline`) of one cached row, on a table with a version column | **Queued**, and replayed only while the server's row still has the version the device saw; a row that moved meanwhile is a conflict, settled by the app's resolver or held ([Conflicts and merging](../behaviors/conflicts.md)). Not checked: the send at once, inserts and upserts, which replay as made |
 | Two top-level filters on one column, in a read, an update or a delete | **Refused** with `IllegalArgumentException`: supabase-kt would send only the first. Use one `and { }` group |
 | A write carrying `Prefer: tx=rollback` (a dry run) | **Sent directly**, never queued. A rolled-back write is not patched into the cache |
 | A write to a schema other than the client's default | **Sent directly**: the queue replays to the default schema only |

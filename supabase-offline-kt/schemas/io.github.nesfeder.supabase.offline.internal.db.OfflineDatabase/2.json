@@ -1,0 +1,243 @@
+{
+  "formatVersion": 1,
+  "database": {
+    "version": 2,
+    "identityHash": "5f1a878933e35eebaa2b64aac7fccab0",
+    "entities": [
+      {
+        "tableName": "object_cache",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`table_name` TEXT NOT NULL, `signature` TEXT NOT NULL, `payload` TEXT NOT NULL, `updated_at` INTEGER NOT NULL, `synced_through` INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(`table_name`, `signature`))",
+        "fields": [
+          {
+            "fieldPath": "table",
+            "columnName": "table_name",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "cacheKey",
+            "columnName": "signature",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "payload",
+            "columnName": "payload",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAt",
+            "columnName": "updated_at",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "syncedThrough",
+            "columnName": "synced_through",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "0"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "table_name",
+            "signature"
+          ]
+        }
+      },
+      {
+        "tableName": "storage_objects",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`key` TEXT NOT NULL, `bucketId` TEXT NOT NULL, `path` TEXT NOT NULL, `localPath` TEXT NOT NULL, `sizeBytes` INTEGER, `eTag` TEXT, `lastFetchedEpochMs` INTEGER NOT NULL, PRIMARY KEY(`key`))",
+        "fields": [
+          {
+            "fieldPath": "key",
+            "columnName": "key",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "bucketId",
+            "columnName": "bucketId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "path",
+            "columnName": "path",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "localPath",
+            "columnName": "localPath",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sizeBytes",
+            "columnName": "sizeBytes",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "eTag",
+            "columnName": "eTag",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "lastFetchedEpochMs",
+            "columnName": "lastFetchedEpochMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "key"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_storage_objects_bucketId_path",
+            "unique": true,
+            "columnNames": [
+              "bucketId",
+              "path"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_storage_objects_bucketId_path` ON `${TABLE_NAME}` (`bucketId`, `path`)"
+          }
+        ]
+      },
+      {
+        "tableName": "mutation_cache",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `table_name` TEXT NOT NULL, `operation` TEXT NOT NULL, `body_json` TEXT NOT NULL, `filter_json` TEXT, `created_at_ms` INTEGER NOT NULL, `synced_at_ms` INTEGER, `default_to_null` INTEGER, `on_conflict` TEXT, `ignore_duplicates` INTEGER, `owner` TEXT, `sync_sequence` INTEGER, `schema_cache_misses` INTEGER NOT NULL DEFAULT 0, `send_unconfirmed` INTEGER NOT NULL DEFAULT 0, `base_version` TEXT, `base_json` TEXT)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "table",
+            "columnName": "table_name",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "operation",
+            "columnName": "operation",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "bodyJson",
+            "columnName": "body_json",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "filterJson",
+            "columnName": "filter_json",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "createdAtMs",
+            "columnName": "created_at_ms",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "syncedAtMs",
+            "columnName": "synced_at_ms",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "defaultToNull",
+            "columnName": "default_to_null",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "onConflict",
+            "columnName": "on_conflict",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "ignoreDuplicates",
+            "columnName": "ignore_duplicates",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "owner",
+            "columnName": "owner",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "syncSequence",
+            "columnName": "sync_sequence",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "schemaCacheMisses",
+            "columnName": "schema_cache_misses",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "0"
+          },
+          {
+            "fieldPath": "sendUnconfirmed",
+            "columnName": "send_unconfirmed",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "0"
+          },
+          {
+            "fieldPath": "baseVersion",
+            "columnName": "base_version",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "baseJson",
+            "columnName": "base_json",
+            "affinity": "TEXT"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_mutation_cache_owner_synced_at_ms",
+            "unique": false,
+            "columnNames": [
+              "owner",
+              "synced_at_ms"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_mutation_cache_owner_synced_at_ms` ON `${TABLE_NAME}` (`owner`, `synced_at_ms`)"
+          },
+          {
+            "name": "index_mutation_cache_table_name",
+            "unique": false,
+            "columnNames": [
+              "table_name"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_mutation_cache_table_name` ON `${TABLE_NAME}` (`table_name`)"
+          }
+        ]
+      }
+    ],
+    "setupQueries": [
+      "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '5f1a878933e35eebaa2b64aac7fccab0')"
+    ]
+  }
+}

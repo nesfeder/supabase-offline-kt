@@ -40,6 +40,10 @@ final enum class io.github.nesfeder.supabase.offline/NetworkStatus : kotlin/Enum
     final fun values(): kotlin/Array<io.github.nesfeder.supabase.offline/NetworkStatus> // io.github.nesfeder.supabase.offline/NetworkStatus.values|values#static(){}[0]
 }
 
+abstract fun interface io.github.nesfeder.supabase.offline/ConflictResolver { // io.github.nesfeder.supabase.offline/ConflictResolver|null[0]
+    abstract suspend fun resolve(io.github.nesfeder.supabase.offline/MutationConflict): io.github.nesfeder.supabase.offline/ConflictResolution // io.github.nesfeder.supabase.offline/ConflictResolver.resolve|resolve(io.github.nesfeder.supabase.offline.MutationConflict){}[0]
+}
+
 abstract interface io.github.nesfeder.supabase.offline/Offline : io.github.jan.supabase.plugins/SupabasePlugin<io.github.nesfeder.supabase.offline/Offline.Config> { // io.github.nesfeder.supabase.offline/Offline|null[0]
     abstract val realtimeStatus // io.github.nesfeder.supabase.offline/Offline.realtimeStatus|{}realtimeStatus[0]
         abstract fun <get-realtimeStatus>(): kotlinx.coroutines.flow/StateFlow<io.github.nesfeder.supabase.offline/RealtimeStatus> // io.github.nesfeder.supabase.offline/Offline.realtimeStatus.<get-realtimeStatus>|<get-realtimeStatus>(){}[0]
@@ -48,6 +52,7 @@ abstract interface io.github.nesfeder.supabase.offline/Offline : io.github.jan.s
     abstract val syncStatus // io.github.nesfeder.supabase.offline/Offline.syncStatus|{}syncStatus[0]
         abstract fun <get-syncStatus>(): kotlinx.coroutines.flow/StateFlow<io.github.nesfeder.supabase.offline/SyncStatus> // io.github.nesfeder.supabase.offline/Offline.syncStatus.<get-syncStatus>|<get-syncStatus>(){}[0]
 
+    abstract fun conflictedMutations(): kotlinx.coroutines.flow/Flow<kotlin.collections/List<io.github.nesfeder.supabase.offline/ConflictedMutation>> // io.github.nesfeder.supabase.offline/Offline.conflictedMutations|conflictedMutations(){}[0]
     abstract fun from(kotlin/String): io.github.nesfeder.supabase.offline/OfflinePostgrestQueryBuilder // io.github.nesfeder.supabase.offline/Offline.from|from(kotlin.String){}[0]
     abstract fun from(kotlin/String, kotlin/String): io.github.nesfeder.supabase.offline/OfflinePostgrestQueryBuilder // io.github.nesfeder.supabase.offline/Offline.from|from(kotlin.String;kotlin.String){}[0]
     abstract fun pendingMutationCountFlow(kotlin/String? = ...): kotlinx.coroutines.flow/Flow<kotlin/Int> // io.github.nesfeder.supabase.offline/Offline.pendingMutationCountFlow|pendingMutationCountFlow(kotlin.String?){}[0]
@@ -60,10 +65,12 @@ abstract interface io.github.nesfeder.supabase.offline/Offline : io.github.jan.s
     abstract suspend fun disableNetwork() // io.github.nesfeder.supabase.offline/Offline.disableNetwork|disableNetwork(){}[0]
     abstract suspend fun disableRealtime() // io.github.nesfeder.supabase.offline/Offline.disableRealtime|disableRealtime(){}[0]
     abstract suspend fun discardPendingMutation(kotlin/Long) // io.github.nesfeder.supabase.offline/Offline.discardPendingMutation|discardPendingMutation(kotlin.Long){}[0]
+    abstract suspend fun dismissConflictedMutation(kotlin/Long) // io.github.nesfeder.supabase.offline/Offline.dismissConflictedMutation|dismissConflictedMutation(kotlin.Long){}[0]
     abstract suspend fun dismissRejectedMutation(kotlin/Long) // io.github.nesfeder.supabase.offline/Offline.dismissRejectedMutation|dismissRejectedMutation(kotlin.Long){}[0]
     abstract suspend fun enableNetwork() // io.github.nesfeder.supabase.offline/Offline.enableNetwork|enableNetwork(){}[0]
     abstract suspend fun enableRealtime() // io.github.nesfeder.supabase.offline/Offline.enableRealtime|enableRealtime(){}[0]
     abstract suspend fun pendingMutationCount(kotlin/String? = ...): kotlin/Int // io.github.nesfeder.supabase.offline/Offline.pendingMutationCount|pendingMutationCount(kotlin.String?){}[0]
+    abstract suspend fun resolveConflictedMutation(kotlin/Long, io.github.nesfeder.supabase.offline/ConflictResolution) // io.github.nesfeder.supabase.offline/Offline.resolveConflictedMutation|resolveConflictedMutation(kotlin.Long;io.github.nesfeder.supabase.offline.ConflictResolution){}[0]
     abstract suspend fun retryRejectedMutation(kotlin/Long) // io.github.nesfeder.supabase.offline/Offline.retryRejectedMutation|retryRejectedMutation(kotlin.Long){}[0]
     abstract suspend fun rpc(kotlin/String, kotlin/Function1<io.github.jan.supabase.postgrest.query.request/RpcRequestBuilder, kotlin/Unit> = ...): io.github.jan.supabase.postgrest.result/PostgrestResult // io.github.nesfeder.supabase.offline/Offline.rpc|rpc(kotlin.String;kotlin.Function1<io.github.jan.supabase.postgrest.query.request.RpcRequestBuilder,kotlin.Unit>){}[0]
     abstract suspend fun rpc(kotlin/String, kotlinx.serialization.json/JsonObject, kotlin/Function1<io.github.jan.supabase.postgrest.query.request/RpcRequestBuilder, kotlin/Unit> = ...): io.github.jan.supabase.postgrest.result/PostgrestResult // io.github.nesfeder.supabase.offline/Offline.rpc|rpc(kotlin.String;kotlinx.serialization.json.JsonObject;kotlin.Function1<io.github.jan.supabase.postgrest.query.request.RpcRequestBuilder,kotlin.Unit>){}[0]
@@ -76,6 +83,8 @@ abstract interface io.github.nesfeder.supabase.offline/Offline : io.github.jan.s
             final fun <get-primaryKeys>(): kotlin.collections/MutableMap<kotlin/String, kotlin.collections/List<kotlin/String>> // io.github.nesfeder.supabase.offline/Offline.Config.primaryKeys.<get-primaryKeys>|<get-primaryKeys>(){}[0]
         final val realtimeTables // io.github.nesfeder.supabase.offline/Offline.Config.realtimeTables|{}realtimeTables[0]
             final fun <get-realtimeTables>(): kotlin.collections/List<io.github.nesfeder.supabase.offline/RealtimeTable> // io.github.nesfeder.supabase.offline/Offline.Config.realtimeTables.<get-realtimeTables>|<get-realtimeTables>(){}[0]
+        final val versionColumns // io.github.nesfeder.supabase.offline/Offline.Config.versionColumns|{}versionColumns[0]
+            final fun <get-versionColumns>(): kotlin.collections/MutableMap<kotlin/String, kotlin/String> // io.github.nesfeder.supabase.offline/Offline.Config.versionColumns.<get-versionColumns>|<get-versionColumns>(){}[0]
 
         final var autoSync // io.github.nesfeder.supabase.offline/Offline.Config.autoSync|{}autoSync[0]
             final fun <get-autoSync>(): kotlin/Boolean // io.github.nesfeder.supabase.offline/Offline.Config.autoSync.<get-autoSync>|<get-autoSync>(){}[0]
@@ -83,6 +92,9 @@ abstract interface io.github.nesfeder.supabase.offline/Offline : io.github.jan.s
         final var cacheSizeBytes // io.github.nesfeder.supabase.offline/Offline.Config.cacheSizeBytes|{}cacheSizeBytes[0]
             final fun <get-cacheSizeBytes>(): kotlin/Long // io.github.nesfeder.supabase.offline/Offline.Config.cacheSizeBytes.<get-cacheSizeBytes>|<get-cacheSizeBytes>(){}[0]
             final fun <set-cacheSizeBytes>(kotlin/Long) // io.github.nesfeder.supabase.offline/Offline.Config.cacheSizeBytes.<set-cacheSizeBytes>|<set-cacheSizeBytes>(kotlin.Long){}[0]
+        final var conflictResolver // io.github.nesfeder.supabase.offline/Offline.Config.conflictResolver|{}conflictResolver[0]
+            final fun <get-conflictResolver>(): io.github.nesfeder.supabase.offline/ConflictResolver? // io.github.nesfeder.supabase.offline/Offline.Config.conflictResolver.<get-conflictResolver>|<get-conflictResolver>(){}[0]
+            final fun <set-conflictResolver>(io.github.nesfeder.supabase.offline/ConflictResolver?) // io.github.nesfeder.supabase.offline/Offline.Config.conflictResolver.<set-conflictResolver>|<set-conflictResolver>(io.github.nesfeder.supabase.offline.ConflictResolver?){}[0]
         final var dataDirectory // io.github.nesfeder.supabase.offline/Offline.Config.dataDirectory|{}dataDirectory[0]
             final fun <get-dataDirectory>(): kotlin/String? // io.github.nesfeder.supabase.offline/Offline.Config.dataDirectory.<get-dataDirectory>|<get-dataDirectory>(){}[0]
             final fun <set-dataDirectory>(kotlin/String?) // io.github.nesfeder.supabase.offline/Offline.Config.dataDirectory.<set-dataDirectory>|<set-dataDirectory>(kotlin.String?){}[0]
@@ -101,6 +113,7 @@ abstract interface io.github.nesfeder.supabase.offline/Offline : io.github.jan.s
 
         final fun primaryKey(kotlin/String, kotlin/Array<out kotlin/String>...) // io.github.nesfeder.supabase.offline/Offline.Config.primaryKey|primaryKey(kotlin.String;kotlin.Array<out|kotlin.String>...){}[0]
         final fun realtime(kotlin/Function1<io.github.nesfeder.supabase.offline/RealtimeTables, kotlin/Unit>) // io.github.nesfeder.supabase.offline/Offline.Config.realtime|realtime(kotlin.Function1<io.github.nesfeder.supabase.offline.RealtimeTables,kotlin.Unit>){}[0]
+        final fun versionColumn(kotlin/String, kotlin/String) // io.github.nesfeder.supabase.offline/Offline.Config.versionColumn|versionColumn(kotlin.String;kotlin.String){}[0]
     }
 
     final object Companion : io.github.jan.supabase.plugins/SupabasePluginProvider<io.github.nesfeder.supabase.offline/Offline.Config, io.github.nesfeder.supabase.offline/Offline> { // io.github.nesfeder.supabase.offline/Offline.Companion|null[0]
@@ -119,6 +132,40 @@ abstract interface io.github.nesfeder.supabase.offline/OfflineBucketApi : io.git
     abstract fun setHeader(kotlin/String, kotlin/String): io.github.nesfeder.supabase.offline/OfflineBucketApi // io.github.nesfeder.supabase.offline/OfflineBucketApi.setHeader|setHeader(kotlin.String;kotlin.String){}[0]
     abstract suspend fun cachedFile(kotlin/String): io.github.nesfeder.supabase.offline/CachedFile? // io.github.nesfeder.supabase.offline/OfflineBucketApi.cachedFile|cachedFile(kotlin.String){}[0]
     abstract suspend fun ensureCachedFile(kotlin/String, kotlin/Boolean = ...): io.github.nesfeder.supabase.offline/CachedFile // io.github.nesfeder.supabase.offline/OfflineBucketApi.ensureCachedFile|ensureCachedFile(kotlin.String;kotlin.Boolean){}[0]
+}
+
+sealed interface io.github.nesfeder.supabase.offline/ConflictResolution { // io.github.nesfeder.supabase.offline/ConflictResolution|null[0]
+    final class Apply : io.github.nesfeder.supabase.offline/ConflictResolution { // io.github.nesfeder.supabase.offline/ConflictResolution.Apply|null[0]
+        final val columns // io.github.nesfeder.supabase.offline/ConflictResolution.Apply.columns|{}columns[0]
+            final fun <get-columns>(): kotlinx.serialization.json/JsonObject // io.github.nesfeder.supabase.offline/ConflictResolution.Apply.columns.<get-columns>|<get-columns>(){}[0]
+
+        final fun component1(): kotlinx.serialization.json/JsonObject // io.github.nesfeder.supabase.offline/ConflictResolution.Apply.component1|component1(){}[0]
+        final fun equals(kotlin/Any?): kotlin/Boolean // io.github.nesfeder.supabase.offline/ConflictResolution.Apply.equals|equals(kotlin.Any?){}[0]
+        final fun hashCode(): kotlin/Int // io.github.nesfeder.supabase.offline/ConflictResolution.Apply.hashCode|hashCode(){}[0]
+        final fun toString(): kotlin/String // io.github.nesfeder.supabase.offline/ConflictResolution.Apply.toString|toString(){}[0]
+    }
+
+    final object Companion { // io.github.nesfeder.supabase.offline/ConflictResolution.Companion|null[0]
+        final fun apply(kotlinx.serialization.json/JsonObject): io.github.nesfeder.supabase.offline/ConflictResolution.Apply // io.github.nesfeder.supabase.offline/ConflictResolution.Companion.apply|apply(kotlinx.serialization.json.JsonObject){}[0]
+    }
+
+    final object Hold : io.github.nesfeder.supabase.offline/ConflictResolution { // io.github.nesfeder.supabase.offline/ConflictResolution.Hold|null[0]
+        final fun equals(kotlin/Any?): kotlin/Boolean // io.github.nesfeder.supabase.offline/ConflictResolution.Hold.equals|equals(kotlin.Any?){}[0]
+        final fun hashCode(): kotlin/Int // io.github.nesfeder.supabase.offline/ConflictResolution.Hold.hashCode|hashCode(){}[0]
+        final fun toString(): kotlin/String // io.github.nesfeder.supabase.offline/ConflictResolution.Hold.toString|toString(){}[0]
+    }
+
+    final object KeepLocal : io.github.nesfeder.supabase.offline/ConflictResolution { // io.github.nesfeder.supabase.offline/ConflictResolution.KeepLocal|null[0]
+        final fun equals(kotlin/Any?): kotlin/Boolean // io.github.nesfeder.supabase.offline/ConflictResolution.KeepLocal.equals|equals(kotlin.Any?){}[0]
+        final fun hashCode(): kotlin/Int // io.github.nesfeder.supabase.offline/ConflictResolution.KeepLocal.hashCode|hashCode(){}[0]
+        final fun toString(): kotlin/String // io.github.nesfeder.supabase.offline/ConflictResolution.KeepLocal.toString|toString(){}[0]
+    }
+
+    final object KeepServer : io.github.nesfeder.supabase.offline/ConflictResolution { // io.github.nesfeder.supabase.offline/ConflictResolution.KeepServer|null[0]
+        final fun equals(kotlin/Any?): kotlin/Boolean // io.github.nesfeder.supabase.offline/ConflictResolution.KeepServer.equals|equals(kotlin.Any?){}[0]
+        final fun hashCode(): kotlin/Int // io.github.nesfeder.supabase.offline/ConflictResolution.KeepServer.hashCode|hashCode(){}[0]
+        final fun toString(): kotlin/String // io.github.nesfeder.supabase.offline/ConflictResolution.KeepServer.toString|toString(){}[0]
+    }
 }
 
 sealed interface io.github.nesfeder.supabase.offline/FlowReadStrategy { // io.github.nesfeder.supabase.offline/FlowReadStrategy|null[0]
@@ -323,6 +370,86 @@ final class io.github.nesfeder.supabase.offline/CachedFile { // io.github.nesfed
     final fun toString(): kotlin/String // io.github.nesfeder.supabase.offline/CachedFile.toString|toString(){}[0]
 }
 
+final class io.github.nesfeder.supabase.offline/ConflictedMutation { // io.github.nesfeder.supabase.offline/ConflictedMutation|null[0]
+    final val base // io.github.nesfeder.supabase.offline/ConflictedMutation.base|{}base[0]
+        final fun <get-base>(): kotlinx.serialization.json/JsonObject // io.github.nesfeder.supabase.offline/ConflictedMutation.base.<get-base>|<get-base>(){}[0]
+    final val body // io.github.nesfeder.supabase.offline/ConflictedMutation.body|{}body[0]
+        final fun <get-body>(): kotlinx.serialization.json/JsonElement? // io.github.nesfeder.supabase.offline/ConflictedMutation.body.<get-body>|<get-body>(){}[0]
+    final val changedOnServer // io.github.nesfeder.supabase.offline/ConflictedMutation.changedOnServer|{}changedOnServer[0]
+        final fun <get-changedOnServer>(): kotlin.collections/Set<kotlin/String> // io.github.nesfeder.supabase.offline/ConflictedMutation.changedOnServer.<get-changedOnServer>|<get-changedOnServer>(){}[0]
+    final val conflictedAt // io.github.nesfeder.supabase.offline/ConflictedMutation.conflictedAt|{}conflictedAt[0]
+        final fun <get-conflictedAt>(): kotlin.time/Instant // io.github.nesfeder.supabase.offline/ConflictedMutation.conflictedAt.<get-conflictedAt>|<get-conflictedAt>(){}[0]
+    final val conflictingColumns // io.github.nesfeder.supabase.offline/ConflictedMutation.conflictingColumns|{}conflictingColumns[0]
+        final fun <get-conflictingColumns>(): kotlin.collections/Set<kotlin/String> // io.github.nesfeder.supabase.offline/ConflictedMutation.conflictingColumns.<get-conflictingColumns>|<get-conflictingColumns>(){}[0]
+    final val createdAt // io.github.nesfeder.supabase.offline/ConflictedMutation.createdAt|{}createdAt[0]
+        final fun <get-createdAt>(): kotlin.time/Instant // io.github.nesfeder.supabase.offline/ConflictedMutation.createdAt.<get-createdAt>|<get-createdAt>(){}[0]
+    final val id // io.github.nesfeder.supabase.offline/ConflictedMutation.id|{}id[0]
+        final fun <get-id>(): kotlin/Long // io.github.nesfeder.supabase.offline/ConflictedMutation.id.<get-id>|<get-id>(){}[0]
+    final val message // io.github.nesfeder.supabase.offline/ConflictedMutation.message|{}message[0]
+        final fun <get-message>(): kotlin/String // io.github.nesfeder.supabase.offline/ConflictedMutation.message.<get-message>|<get-message>(){}[0]
+    final val operation // io.github.nesfeder.supabase.offline/ConflictedMutation.operation|{}operation[0]
+        final fun <get-operation>(): io.github.nesfeder.supabase.offline/MutationOperation // io.github.nesfeder.supabase.offline/ConflictedMutation.operation.<get-operation>|<get-operation>(){}[0]
+    final val rowKeys // io.github.nesfeder.supabase.offline/ConflictedMutation.rowKeys|{}rowKeys[0]
+        final fun <get-rowKeys>(): kotlin.collections/List<kotlinx.serialization.json/JsonObject> // io.github.nesfeder.supabase.offline/ConflictedMutation.rowKeys.<get-rowKeys>|<get-rowKeys>(){}[0]
+    final val server // io.github.nesfeder.supabase.offline/ConflictedMutation.server|{}server[0]
+        final fun <get-server>(): kotlinx.serialization.json/JsonObject? // io.github.nesfeder.supabase.offline/ConflictedMutation.server.<get-server>|<get-server>(){}[0]
+    final val serverVersion // io.github.nesfeder.supabase.offline/ConflictedMutation.serverVersion|{}serverVersion[0]
+        final fun <get-serverVersion>(): kotlin/String? // io.github.nesfeder.supabase.offline/ConflictedMutation.serverVersion.<get-serverVersion>|<get-serverVersion>(){}[0]
+    final val table // io.github.nesfeder.supabase.offline/ConflictedMutation.table|{}table[0]
+        final fun <get-table>(): kotlin/String // io.github.nesfeder.supabase.offline/ConflictedMutation.table.<get-table>|<get-table>(){}[0]
+
+    final fun component1(): kotlin/Long // io.github.nesfeder.supabase.offline/ConflictedMutation.component1|component1(){}[0]
+    final fun component10(): kotlin.collections/Set<kotlin/String> // io.github.nesfeder.supabase.offline/ConflictedMutation.component10|component10(){}[0]
+    final fun component11(): kotlin.collections/Set<kotlin/String> // io.github.nesfeder.supabase.offline/ConflictedMutation.component11|component11(){}[0]
+    final fun component12(): kotlin/String // io.github.nesfeder.supabase.offline/ConflictedMutation.component12|component12(){}[0]
+    final fun component13(): kotlin.time/Instant // io.github.nesfeder.supabase.offline/ConflictedMutation.component13|component13(){}[0]
+    final fun component2(): kotlin/String // io.github.nesfeder.supabase.offline/ConflictedMutation.component2|component2(){}[0]
+    final fun component3(): io.github.nesfeder.supabase.offline/MutationOperation // io.github.nesfeder.supabase.offline/ConflictedMutation.component3|component3(){}[0]
+    final fun component4(): kotlin.time/Instant // io.github.nesfeder.supabase.offline/ConflictedMutation.component4|component4(){}[0]
+    final fun component5(): kotlin.collections/List<kotlinx.serialization.json/JsonObject> // io.github.nesfeder.supabase.offline/ConflictedMutation.component5|component5(){}[0]
+    final fun component6(): kotlinx.serialization.json/JsonElement? // io.github.nesfeder.supabase.offline/ConflictedMutation.component6|component6(){}[0]
+    final fun component7(): kotlinx.serialization.json/JsonObject // io.github.nesfeder.supabase.offline/ConflictedMutation.component7|component7(){}[0]
+    final fun component8(): kotlinx.serialization.json/JsonObject? // io.github.nesfeder.supabase.offline/ConflictedMutation.component8|component8(){}[0]
+    final fun component9(): kotlin/String? // io.github.nesfeder.supabase.offline/ConflictedMutation.component9|component9(){}[0]
+    final fun equals(kotlin/Any?): kotlin/Boolean // io.github.nesfeder.supabase.offline/ConflictedMutation.equals|equals(kotlin.Any?){}[0]
+    final fun hashCode(): kotlin/Int // io.github.nesfeder.supabase.offline/ConflictedMutation.hashCode|hashCode(){}[0]
+    final fun toString(): kotlin/String // io.github.nesfeder.supabase.offline/ConflictedMutation.toString|toString(){}[0]
+}
+
+final class io.github.nesfeder.supabase.offline/MutationConflict { // io.github.nesfeder.supabase.offline/MutationConflict|null[0]
+    final val base // io.github.nesfeder.supabase.offline/MutationConflict.base|{}base[0]
+        final fun <get-base>(): kotlinx.serialization.json/JsonObject // io.github.nesfeder.supabase.offline/MutationConflict.base.<get-base>|<get-base>(){}[0]
+    final val changedOnServer // io.github.nesfeder.supabase.offline/MutationConflict.changedOnServer|{}changedOnServer[0]
+        final fun <get-changedOnServer>(): kotlin.collections/Set<kotlin/String> // io.github.nesfeder.supabase.offline/MutationConflict.changedOnServer.<get-changedOnServer>|<get-changedOnServer>(){}[0]
+    final val conflictingColumns // io.github.nesfeder.supabase.offline/MutationConflict.conflictingColumns|{}conflictingColumns[0]
+        final fun <get-conflictingColumns>(): kotlin.collections/Set<kotlin/String> // io.github.nesfeder.supabase.offline/MutationConflict.conflictingColumns.<get-conflictingColumns>|<get-conflictingColumns>(){}[0]
+    final val local // io.github.nesfeder.supabase.offline/MutationConflict.local|{}local[0]
+        final fun <get-local>(): kotlinx.serialization.json/JsonObject? // io.github.nesfeder.supabase.offline/MutationConflict.local.<get-local>|<get-local>(){}[0]
+    final val mutationId // io.github.nesfeder.supabase.offline/MutationConflict.mutationId|{}mutationId[0]
+        final fun <get-mutationId>(): kotlin/Long // io.github.nesfeder.supabase.offline/MutationConflict.mutationId.<get-mutationId>|<get-mutationId>(){}[0]
+    final val operation // io.github.nesfeder.supabase.offline/MutationConflict.operation|{}operation[0]
+        final fun <get-operation>(): io.github.nesfeder.supabase.offline/MutationOperation // io.github.nesfeder.supabase.offline/MutationConflict.operation.<get-operation>|<get-operation>(){}[0]
+    final val rowKey // io.github.nesfeder.supabase.offline/MutationConflict.rowKey|{}rowKey[0]
+        final fun <get-rowKey>(): kotlinx.serialization.json/JsonObject // io.github.nesfeder.supabase.offline/MutationConflict.rowKey.<get-rowKey>|<get-rowKey>(){}[0]
+    final val server // io.github.nesfeder.supabase.offline/MutationConflict.server|{}server[0]
+        final fun <get-server>(): kotlinx.serialization.json/JsonObject? // io.github.nesfeder.supabase.offline/MutationConflict.server.<get-server>|<get-server>(){}[0]
+    final val table // io.github.nesfeder.supabase.offline/MutationConflict.table|{}table[0]
+        final fun <get-table>(): kotlin/String // io.github.nesfeder.supabase.offline/MutationConflict.table.<get-table>|<get-table>(){}[0]
+
+    final fun component1(): kotlin/Long // io.github.nesfeder.supabase.offline/MutationConflict.component1|component1(){}[0]
+    final fun component2(): kotlin/String // io.github.nesfeder.supabase.offline/MutationConflict.component2|component2(){}[0]
+    final fun component3(): io.github.nesfeder.supabase.offline/MutationOperation // io.github.nesfeder.supabase.offline/MutationConflict.component3|component3(){}[0]
+    final fun component4(): kotlinx.serialization.json/JsonObject // io.github.nesfeder.supabase.offline/MutationConflict.component4|component4(){}[0]
+    final fun component5(): kotlinx.serialization.json/JsonObject // io.github.nesfeder.supabase.offline/MutationConflict.component5|component5(){}[0]
+    final fun component6(): kotlinx.serialization.json/JsonObject? // io.github.nesfeder.supabase.offline/MutationConflict.component6|component6(){}[0]
+    final fun component7(): kotlinx.serialization.json/JsonObject? // io.github.nesfeder.supabase.offline/MutationConflict.component7|component7(){}[0]
+    final fun component8(): kotlin.collections/Set<kotlin/String> // io.github.nesfeder.supabase.offline/MutationConflict.component8|component8(){}[0]
+    final fun component9(): kotlin.collections/Set<kotlin/String> // io.github.nesfeder.supabase.offline/MutationConflict.component9|component9(){}[0]
+    final fun equals(kotlin/Any?): kotlin/Boolean // io.github.nesfeder.supabase.offline/MutationConflict.equals|equals(kotlin.Any?){}[0]
+    final fun hashCode(): kotlin/Int // io.github.nesfeder.supabase.offline/MutationConflict.hashCode|hashCode(){}[0]
+    final fun toString(): kotlin/String // io.github.nesfeder.supabase.offline/MutationConflict.toString|toString(){}[0]
+}
+
 final class io.github.nesfeder.supabase.offline/MutationNotQueueableException : io.github.nesfeder.supabase.offline/OfflineException // io.github.nesfeder.supabase.offline/MutationNotQueueableException|null[0]
 
 final class io.github.nesfeder.supabase.offline/NetworkDisabledException : io.github.nesfeder.supabase.offline/OfflineException // io.github.nesfeder.supabase.offline/NetworkDisabledException|null[0]
@@ -355,6 +482,8 @@ final class io.github.nesfeder.supabase.offline/OfflineStorage { // io.github.ne
 }
 
 final class io.github.nesfeder.supabase.offline/PendingMutation { // io.github.nesfeder.supabase.offline/PendingMutation|null[0]
+    final val baseVersion // io.github.nesfeder.supabase.offline/PendingMutation.baseVersion|{}baseVersion[0]
+        final fun <get-baseVersion>(): kotlin/String? // io.github.nesfeder.supabase.offline/PendingMutation.baseVersion.<get-baseVersion>|<get-baseVersion>(){}[0]
     final val body // io.github.nesfeder.supabase.offline/PendingMutation.body|{}body[0]
         final fun <get-body>(): kotlinx.serialization.json/JsonElement? // io.github.nesfeder.supabase.offline/PendingMutation.body.<get-body>|<get-body>(){}[0]
     final val createdAt // io.github.nesfeder.supabase.offline/PendingMutation.createdAt|{}createdAt[0]
@@ -374,6 +503,7 @@ final class io.github.nesfeder.supabase.offline/PendingMutation { // io.github.n
     final fun component4(): kotlin.time/Instant // io.github.nesfeder.supabase.offline/PendingMutation.component4|component4(){}[0]
     final fun component5(): kotlin.collections/List<kotlinx.serialization.json/JsonObject> // io.github.nesfeder.supabase.offline/PendingMutation.component5|component5(){}[0]
     final fun component6(): kotlinx.serialization.json/JsonElement? // io.github.nesfeder.supabase.offline/PendingMutation.component6|component6(){}[0]
+    final fun component7(): kotlin/String? // io.github.nesfeder.supabase.offline/PendingMutation.component7|component7(){}[0]
     final fun equals(kotlin/Any?): kotlin/Boolean // io.github.nesfeder.supabase.offline/PendingMutation.equals|equals(kotlin.Any?){}[0]
     final fun hashCode(): kotlin/Int // io.github.nesfeder.supabase.offline/PendingMutation.hashCode|hashCode(){}[0]
     final fun toString(): kotlin/String // io.github.nesfeder.supabase.offline/PendingMutation.toString|toString(){}[0]
@@ -502,6 +632,12 @@ final class io.github.nesfeder.supabase.offline/SyncFailedException : io.github.
 final class io.github.nesfeder.supabase.offline/SyncReport { // io.github.nesfeder.supabase.offline/SyncReport|null[0]
     final val alreadyOnServerCount // io.github.nesfeder.supabase.offline/SyncReport.alreadyOnServerCount|{}alreadyOnServerCount[0]
         final fun <get-alreadyOnServerCount>(): kotlin/Int // io.github.nesfeder.supabase.offline/SyncReport.alreadyOnServerCount.<get-alreadyOnServerCount>|<get-alreadyOnServerCount>(){}[0]
+    final val conflicted // io.github.nesfeder.supabase.offline/SyncReport.conflicted|{}conflicted[0]
+        final fun <get-conflicted>(): kotlin.collections/List<io.github.nesfeder.supabase.offline/ConflictedMutation> // io.github.nesfeder.supabase.offline/SyncReport.conflicted.<get-conflicted>|<get-conflicted>(){}[0]
+    final val conflictsKeptServerCount // io.github.nesfeder.supabase.offline/SyncReport.conflictsKeptServerCount|{}conflictsKeptServerCount[0]
+        final fun <get-conflictsKeptServerCount>(): kotlin/Int // io.github.nesfeder.supabase.offline/SyncReport.conflictsKeptServerCount.<get-conflictsKeptServerCount>|<get-conflictsKeptServerCount>(){}[0]
+    final val conflictsResolvedCount // io.github.nesfeder.supabase.offline/SyncReport.conflictsResolvedCount|{}conflictsResolvedCount[0]
+        final fun <get-conflictsResolvedCount>(): kotlin/Int // io.github.nesfeder.supabase.offline/SyncReport.conflictsResolvedCount.<get-conflictsResolvedCount>|<get-conflictsResolvedCount>(){}[0]
     final val heldBehindOtherTablesCount // io.github.nesfeder.supabase.offline/SyncReport.heldBehindOtherTablesCount|{}heldBehindOtherTablesCount[0]
         final fun <get-heldBehindOtherTablesCount>(): kotlin/Int // io.github.nesfeder.supabase.offline/SyncReport.heldBehindOtherTablesCount.<get-heldBehindOtherTablesCount>|<get-heldBehindOtherTablesCount>(){}[0]
     final val rejected // io.github.nesfeder.supabase.offline/SyncReport.rejected|{}rejected[0]
@@ -516,12 +652,17 @@ final class io.github.nesfeder.supabase.offline/SyncReport { // io.github.nesfed
     final fun component3(): kotlin/Int // io.github.nesfeder.supabase.offline/SyncReport.component3|component3(){}[0]
     final fun component4(): kotlin/Int // io.github.nesfeder.supabase.offline/SyncReport.component4|component4(){}[0]
     final fun component5(): kotlin/Int // io.github.nesfeder.supabase.offline/SyncReport.component5|component5(){}[0]
+    final fun component6(): kotlin/Int // io.github.nesfeder.supabase.offline/SyncReport.component6|component6(){}[0]
+    final fun component7(): kotlin/Int // io.github.nesfeder.supabase.offline/SyncReport.component7|component7(){}[0]
+    final fun component8(): kotlin.collections/List<io.github.nesfeder.supabase.offline/ConflictedMutation> // io.github.nesfeder.supabase.offline/SyncReport.component8|component8(){}[0]
     final fun equals(kotlin/Any?): kotlin/Boolean // io.github.nesfeder.supabase.offline/SyncReport.equals|equals(kotlin.Any?){}[0]
     final fun hashCode(): kotlin/Int // io.github.nesfeder.supabase.offline/SyncReport.hashCode|hashCode(){}[0]
     final fun toString(): kotlin/String // io.github.nesfeder.supabase.offline/SyncReport.toString|toString(){}[0]
 }
 
 final class io.github.nesfeder.supabase.offline/SyncStatus { // io.github.nesfeder.supabase.offline/SyncStatus|null[0]
+    final val conflictedMutationCount // io.github.nesfeder.supabase.offline/SyncStatus.conflictedMutationCount|{}conflictedMutationCount[0]
+        final fun <get-conflictedMutationCount>(): kotlin/Int // io.github.nesfeder.supabase.offline/SyncStatus.conflictedMutationCount.<get-conflictedMutationCount>|<get-conflictedMutationCount>(){}[0]
     final val isSyncing // io.github.nesfeder.supabase.offline/SyncStatus.isSyncing|{}isSyncing[0]
         final fun <get-isSyncing>(): kotlin/Boolean // io.github.nesfeder.supabase.offline/SyncStatus.isSyncing.<get-isSyncing>|<get-isSyncing>(){}[0]
     final val lastSyncError // io.github.nesfeder.supabase.offline/SyncStatus.lastSyncError|{}lastSyncError[0]
@@ -541,6 +682,7 @@ final class io.github.nesfeder.supabase.offline/SyncStatus { // io.github.nesfed
     final fun component4(): kotlin/Boolean // io.github.nesfeder.supabase.offline/SyncStatus.component4|component4(){}[0]
     final fun component5(): kotlin.time/Instant? // io.github.nesfeder.supabase.offline/SyncStatus.component5|component5(){}[0]
     final fun component6(): io.github.nesfeder.supabase.offline/SyncFailedException? // io.github.nesfeder.supabase.offline/SyncStatus.component6|component6(){}[0]
+    final fun component7(): kotlin/Int // io.github.nesfeder.supabase.offline/SyncStatus.component7|component7(){}[0]
     final fun equals(kotlin/Any?): kotlin/Boolean // io.github.nesfeder.supabase.offline/SyncStatus.equals|equals(kotlin.Any?){}[0]
     final fun hashCode(): kotlin/Int // io.github.nesfeder.supabase.offline/SyncStatus.hashCode|hashCode(){}[0]
     final fun toString(): kotlin/String // io.github.nesfeder.supabase.offline/SyncStatus.toString|toString(){}[0]

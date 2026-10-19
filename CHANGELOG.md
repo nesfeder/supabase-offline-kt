@@ -44,8 +44,61 @@ All notable changes to this project are recorded in this file. The format follow
   refreshes its token before it expires through `Config.accessToken`; an app brackets a sign-in or
   sign-out with the switch, since the core sees no Auth session. `FakeRealtime` in
   `SupabaseOfflineTesting`, with `inMemory(…, realtime:)`, reports changes to an in-memory client.
+- Conflict detection for replayed writes, opt-in per table. `versionColumn("tasks", "updated_at")`
+  in `install(Offline)`, and the map `Offline.Config.versionColumns` behind it, keyed as
+  `primaryKeys` is, names the column a server-side trigger changes on every update of a row (a
+  `timestamptz` kept by `moddatetime`, or an integer). A queued UPDATE or DELETE whose filter pins
+  one cached row of such a table records the row's version, and a sync pass replays it only while
+  the server's row still has that version, asking for the row back; the returned row is cached and
+  its version forwarded to the writes queued behind it. When no row comes back, one read by key
+  tells a gone row, a policy denial (the rejected list), a lost answer whose write had landed
+  (already on the server), a change to other columns only (resent against the new version) and a
+  conflict. Writes sent at once, inserts, upserts and writes the queue cannot pin to one cached row
+  replay as before. `versionColumn` throws `IllegalArgumentException` for a blank column, and a
+  column among the table's key columns fails `createSupabaseClient` with it. The documentation's
+  new "Conflicts and merging" page walks through it.
+- `Offline.Config.conflictResolver`, a `ConflictResolver` the app may implement, asked about a moved
+  row whose written columns changed on the server too, a DELETE of a moved row, or an UPDATE of a
+  gone one, with a `MutationConflict` (the row key, the base, the local columns, the server's row,
+  `changedOnServer` and `conflictingColumns`) and answering a `ConflictResolution`: `KeepLocal`
+  (resend against the server's version; the default for a moved row), `KeepServer` (drop it; the
+  default for an UPDATE whose row is gone), `ConflictResolution.apply(columns)` (send other columns;
+  an UPDATE of a row still on the server), or `Hold`. A resolver that throws (anything but a
+  cancellation) or takes longer than 30 seconds holds the write; it runs on the library's own
+  dispatcher.
+- `Offline.conflictedMutations()`, the current user's held writes as `ConflictedMutation` entries,
+  kept across restarts within the rejected list's bounds, with
+  `resolveConflictedMutation(id, resolution)` (re-queues under a new id preconditioned on the
+  recorded server version, or drops it) and `dismissConflictedMutation(id)`. `clearLocalData()`
+  clears the list.
+- `SyncReport.conflictsResolvedCount`, `SyncReport.conflictsKeptServerCount` and
+  `SyncReport.conflicted`; `SyncStatus.conflictedMutationCount`, counted together with the pending
+  and rejected counts; and `PendingMutation.baseVersion`, the version a queued write replays
+  against.
+- `mutationConflict(…)` and `conflictedMutation(…)` in `supabase-offline-kt-testing`, which build
+  the two new value types for a test of the app's own resolver or conflicted-list screen, and
+  overloads of `pendingMutation` (with `baseVersion`), `syncReport` (with the conflict counts and
+  `conflicted`) and `syncStatus` (with `conflictedMutationCount`) beside the existing factories.
+  `ConflictStagingTest` shows how to stage a row moved on the server between enqueue and replay
+  with a Ktor `MockEngine` alone: answer the guarded write with `[]` and the read by key with the
+  moved row.
+- Swift: `Config.versionColumns` and `Config.conflictResolver`, an `async throws` closure from a
+  `MutationConflict` to a `ConflictResolution` (`keepLocal`, `keepServer`, `apply(columns:)`,
+  `hold`), with a `Config` initializer that takes them beside the existing ones;
+  `conflictedMutations()`, a `ConflictedMutationSequence` of `ConflictedMutation`, with
+  `resolveConflictedMutation(id:resolution:)` and `dismissConflictedMutation(id:)`; and
+  `SyncReport.conflictsResolvedCount`, `conflictsKeptServerCount` and `conflicted`,
+  `SyncStatus.conflictedMutationCount` and `PendingMutation.baseVersion`. The resolver runs in a
+  task of its own, off the caller's actor; a throw holds the write. `mutationConflict(…)`,
+  `conflictedMutation(…)` and overloads of `pendingMutation`, `syncReport` and `syncStatus` in
+  `SupabaseOfflineTesting` build the new values.
 
 ### Changed
+
+- The database moves to schema version 2, which adds `base_version` and `base_json` to the mutation
+  queue, with a migration that keeps every queued write; a write queued before the upgrade replays
+  unchecked, as it would have. Going back to 0.1.0 across it is not supported, and loses the writes
+  queued since.
 
 ### Deprecated
 

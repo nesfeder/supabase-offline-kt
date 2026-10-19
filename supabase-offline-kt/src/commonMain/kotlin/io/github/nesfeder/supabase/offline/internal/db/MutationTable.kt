@@ -88,6 +88,18 @@ internal data class MutationRow(
      * did not run, and when it replays.
      */
     @ColumnInfo(name = "send_unconfirmed", defaultValue = "0") val sendUnconfirmed: Boolean = false,
+
+    /**
+     * The row's version as the device last saw it, for an UPDATE or DELETE of one row of a table
+     * with a version column; `null` when the write replays unguarded.
+     */
+    @ColumnInfo(name = "base_version") val baseVersion: String? = null,
+
+    /**
+     * The row as the device last saw it, restricted to the write's columns and the version column,
+     * as a JSON object; `null` when [baseVersion] is.
+     */
+    @ColumnInfo(name = "base_json") val baseJson: String? = null,
 )
 
 @Dao
@@ -247,6 +259,12 @@ internal interface MutationDao {
      */
     @Query("UPDATE mutation_cache SET send_unconfirmed = 1 WHERE id = :id AND send_unconfirmed = 0")
     suspend fun markSendUnconfirmed(id: Long): Int
+
+    /** Sets mutation [id]'s [MutationRow.baseVersion] and [MutationRow.baseJson]. */
+    @Query(
+        "UPDATE mutation_cache SET base_version = :baseVersion, base_json = :baseJson WHERE id = :id"
+    )
+    suspend fun updateBase(id: Long, baseVersion: String?, baseJson: String?)
 
     /** Clears [MutationRow.sendUnconfirmed] of mutation [id]: its send never reached the server. */
     @Query("UPDATE mutation_cache SET send_unconfirmed = 0 WHERE id = :id")

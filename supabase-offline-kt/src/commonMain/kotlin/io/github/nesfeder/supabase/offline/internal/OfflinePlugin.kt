@@ -5,6 +5,8 @@ package io.github.nesfeder.supabase.offline.internal
 import io.github.jan.supabase.SupabaseClient
 import io.github.jan.supabase.postgrest.query.request.RpcRequestBuilder
 import io.github.jan.supabase.postgrest.result.PostgrestResult
+import io.github.nesfeder.supabase.offline.ConflictResolution
+import io.github.nesfeder.supabase.offline.ConflictedMutation
 import io.github.nesfeder.supabase.offline.Offline
 import io.github.nesfeder.supabase.offline.OfflineInternal
 import io.github.nesfeder.supabase.offline.OfflinePostgrestQueryBuilder
@@ -89,6 +91,15 @@ internal class OfflinePlugin(
         client.dismissRejectedMutation(id)
 
     override suspend fun retryRejectedMutation(id: Long): Unit = client.retryRejectedMutation(id)
+
+    override fun conflictedMutations(): Flow<List<ConflictedMutation>> =
+        client.conflictedMutations()
+
+    override suspend fun resolveConflictedMutation(id: Long, resolution: ConflictResolution): Unit =
+        client.resolveConflictedMutation(id, resolution)
+
+    override suspend fun dismissConflictedMutation(id: Long): Unit =
+        client.dismissConflictedMutation(id)
 
     override suspend fun syncPendingMutations(table: String?): SyncReport =
         client.syncPendingMutations(table)

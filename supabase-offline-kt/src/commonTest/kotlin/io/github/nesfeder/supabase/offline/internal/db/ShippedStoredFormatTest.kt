@@ -4,12 +4,14 @@ package io.github.nesfeder.supabase.offline.internal.db
 
 import io.github.nesfeder.supabase.offline.MutationOperation
 import io.github.nesfeder.supabase.offline.internal.EngineJson
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.StoredConflictList
 import io.github.nesfeder.supabase.offline.internal.postgrest.decodeFilterOrNull
 import io.github.nesfeder.supabase.offline.internal.postgrest.encodeFilter
 import io.github.nesfeder.supabase.offline.internal.postgrest.replaysFully
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
+import kotlinx.serialization.json.JsonPrimitive
 
 /**
  * The strings a queued write stores in `filter_json` are read back by the engine long after they
@@ -49,6 +51,31 @@ class ShippedStoredFormatTest {
         // Then
         assertEquals(ShippedDatabaseFixture.UPDATE_FILTER_JSON, encodedUpdateFilter)
         assertEquals(ShippedDatabaseFixture.DELETE_FILTER_JSON, encodedDeleteFilter)
+    }
+
+    @Test
+    fun a_stored_conflicted_list_decodes_to_the_entries_that_were_parked() {
+        // Given — a list as this build writes it
+        val payload =
+            """{"version":1,"entries":[{"id":3,"table":"todos","operation":"UPDATE",""" +
+                """"bodyJson":"{\"done\":true}","filterJson":${JsonPrimitive(ShippedDatabaseFixture.UPDATE_FILTER_JSON)},""" +
+                """"createdAtMs":1,"baseVersion":"2026-10-18T13:00:27.486123+00:00",""" +
+                """"serverVersion":"2026-10-18T13:05:00+00:00","changedOnServer":["done"],""" +
+                """"conflictingColumns":["done"],"message":"moved","conflictedAtMs":2}]}"""
+
+        // When
+        val list = EngineJson.decodeFromString(StoredConflictList.serializer(), payload)
+
+        // Then — the queued filter still decodes, and the versions read back verbatim
+        val entry = list.entries.single()
+        assertEquals(1, list.version)
+        assertEquals(
+            ShippedDatabaseFixture.UPDATE_FILTER,
+            decodeFilterOrNull(entry.filterJson, EngineJson),
+        )
+        assertEquals("2026-10-18T13:00:27.486123+00:00", entry.baseVersion)
+        assertEquals("2026-10-18T13:05:00+00:00", entry.serverVersion)
+        assertEquals(EngineJson.encodeToString(StoredConflictList.serializer(), list), payload)
     }
 
     @Test

@@ -4,7 +4,8 @@ import Foundation
 import SupabaseOffline
 
 /// The Sync screen: each change waiting, with Discard; Sync now and its report; refused writes
-/// with Dismiss and Retry; what the server says; Try it; and the two ways to start again. The
+/// with Dismiss and Retry; conflicting writes with Keep mine and Keep theirs; what the server
+/// says; Try it; and the two ways to start again. The
 /// network, Simulate offline and the Settings switches are the app model's.
 @Observable
 final class SyncModel {
@@ -20,6 +21,9 @@ final class SyncModel {
 
     /// The writes the server refused, newest first.
     private(set) var rejected: [RejectedMutation] = []
+
+    /// The writes parked because their task changed on the server meanwhile, newest first.
+    private(set) var conflicted: [ConflictedMutation] = []
 
     /// Whether a Sync now the user pressed is running.
     private(set) var isSyncNowRunning = false
@@ -45,10 +49,16 @@ final class SyncModel {
     /// Where a failure goes to be shown.
     @ObservationIgnored private let failures: FailureSink
 
-    /// A model over `repository`, reporting failures to `failures`.
-    init(repository: TaskRepository, failures: FailureSink) {
+    /// The stand-in server of demo mode, which Make a conflict edits as another writer would;
+    /// `nil` against a project, where a second writer is the tour's recipe.
+    @ObservationIgnored let demoServer: DemoServer?
+
+    /// A model over `repository`, reporting failures to `failures`, with demo mode's
+    /// `demoServer` when there is one.
+    init(repository: TaskRepository, failures: FailureSink, demoServer: DemoServer? = nil) {
         self.repository = repository
         self.failures = failures
+        self.demoServer = demoServer
     }
 
     // MARK: - Reading
@@ -61,6 +71,7 @@ final class SyncModel {
             group.addTask { await self.observeCount(of: Tables.tasks) }
             group.addTask { await self.observeCount(of: Tables.taskPhotos) }
             group.addTask { await self.observeRejected() }
+            group.addTask { await self.observeConflicted() }
         }
     }
 
@@ -103,6 +114,19 @@ final class SyncModel {
         }
     }
 
+    /// Follows the conflicting writes; the library lists them oldest first.
+    private func observeConflicted() async {
+        do {
+            for try await conflicts in repository.conflictedMutations() {
+                conflicted = conflicts.reversed()
+            }
+        } catch is CancellationError {
+            return
+        } catch {
+            failures.report(error)
+        }
+    }
+
     // MARK: - The queue
 
     /// Sends the queue now and keeps what it did for the screen.
@@ -129,6 +153,16 @@ final class SyncModel {
     /// Queues a refused write again.
     func retry(_ rejection: RejectedMutation) {
         Task { await failures.perform { try await repository.retryRejectedMutation(id: rejection.id) } }
+    }
+
+    /// Keep mine: the parked write is queued again over the server's row as it is now.
+    func keepMine(_ conflict: ConflictedMutation) {
+        Task { await failures.perform { try await repository.resolveConflictedMutation(id: conflict.id, keepMine: true) } }
+    }
+
+    /// Keep theirs: the parked write is dropped, and the server's row stands.
+    func keepTheirs(_ conflict: ConflictedMutation) {
+        Task { await failures.perform { try await repository.resolveConflictedMutation(id: conflict.id, keepMine: false) } }
     }
 
     // MARK: - The server
@@ -187,8 +221,55 @@ final class SyncModel {
             guard let taskID = newestTaskID else { return "Add a task first: the photo goes on your newest task." }
             try await repository.attachPhotoThroughSignedURL(taskID: taskID, photo: try await PhotoEncoder.encode(SamplePhoto.jpeg()))
             return "Uploaded through a signed URL, and added to your newest task."
+        case .makeConflict:
+            return try await makeConflict(taskID: newestTaskID)
         }
     }
+
+    // --8<-- [start:make-conflict]
+    /// Make a conflict, in demo mode: the newest task's title edited here offline, the same title
+    /// changed on the stand-in server meanwhile, then the network back and the queue sent. The
+    /// queued edit was preconditioned on the version this device saw, so it finds the row moved,
+    /// and the client's resolver holds it under Conflicting changes.
+    private func makeConflict(taskID: String?) async throws -> String {
+        guard let server = demoServer else { return TryItItem.makeConflict.call(isDemo: false) }
+        guard repository.canReachNetwork else { return "Go online first: the conflict is found when the edit syncs." }
+        guard let taskID, let row = await server.rows(of: Tables.tasks).first(where: { $0["id"] == .string(taskID) }),
+            case .string(let title)? = row["title"]
+        else { return "Add a task and let it sync first: the conflict needs a row the server has." }
+        var notes: String?
+        if case .string(let text)? = row["notes"] { notes = text }
+        // The same few suffixes every run, so running it again does not grow the title; the other
+        // writer's alternates, so its title always differs from the one the device last saw.
+        let original = [Self.deviceSuffix, Self.elsewhereSuffix, Self.elsewhereAgainSuffix]
+            .reduce(title) { $0.replacing($1, with: "") }
+        let elsewhere = original + (title == original + Self.elsewhereSuffix ? Self.elsewhereAgainSuffix : Self.elsewhereSuffix)
+        try await repository.setNetworkEnabled(false)
+        do {
+            _ = try await repository.updateTaskText(id: taskID, title: original + Self.deviceSuffix, notes: notes)
+            await server.changeElsewhere(task: taskID, ["title": .string(elsewhere)])
+        } catch {
+            try? await repository.setNetworkEnabled(true)  // never leave Simulate offline on
+            throw error
+        }
+        try await repository.setNetworkEnabled(true)
+        let report = try await repository.syncPendingMutations()
+        // The list, not the report: the automatic pass on reconnecting may have parked it first.
+        let held = try await repository.conflictedMutations().first()
+        return held.isEmpty
+            ? "Synced, and no conflict was held: \(Wording.syncReport(report))."
+            : "Both titles changed: it waits under Conflicting changes, for Keep mine or Keep theirs."
+    }
+
+    /// What Make a conflict appends to the title it sets on this device.
+    static let deviceSuffix = " (this device)"
+
+    /// What Make a conflict appends to the title the stand-in server's other writer sets.
+    static let elsewhereSuffix = " (elsewhere)"
+
+    /// What the other writer appends instead when the title already carries ``elsewhereSuffix``.
+    static let elsewhereAgainSuffix = " (elsewhere again)"
+    // --8<-- [end:make-conflict]
 
     // MARK: - Local data
 
@@ -229,4 +310,8 @@ enum TryItItem: CaseIterable, Hashable {
 
     /// Uploads a generated photo through a signed upload URL.
     case signedUpload
+
+    /// Changes the newest task's title here offline and on the stand-in server, then syncs: the
+    /// edit waits under Conflicting changes. Demo mode only; against a project, the recipe.
+    case makeConflict
 }

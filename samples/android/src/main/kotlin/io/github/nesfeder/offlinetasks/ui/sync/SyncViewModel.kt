@@ -9,6 +9,8 @@ import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import io.github.nesfeder.offlinetasks.data.AppSyncStatus
 import io.github.nesfeder.offlinetasks.data.BucketListing
+import io.github.nesfeder.offlinetasks.data.ConflictChoice
+import io.github.nesfeder.offlinetasks.data.ConflictedTaskMutation
 import io.github.nesfeder.offlinetasks.data.LiveUpdatesStatus
 import io.github.nesfeder.offlinetasks.data.RejectedTaskMutation
 import io.github.nesfeder.offlinetasks.data.ServerCounts
@@ -127,13 +129,16 @@ sealed interface SyncUiState {
         val bucket: ServerAnswer<BucketListing> = ServerAnswer.NotAsked,
         /** What each Try it action did last. */
         val tryIt: Map<TryIt, TryItResult> = emptyMap(),
+        /** The writes parked on a conflict, newest first. */
+        val conflicted: List<ConflictedTaskMutation> = emptyList(),
     ) : SyncUiState
 }
 
 /**
  * The Sync screen: the network and the simulate-offline switch, the two settings, the mutation
- * queue as rows, the refresh state, refused writes with dismiss and retry, the server's counts, the
- * bucket, the Try it actions, and the two ways to start again.
+ * queue as rows, the refresh state, refused writes with dismiss and retry, conflicting writes with
+ * Keep mine and Keep theirs, the server's counts, the bucket, the Try it actions, and the two ways
+ * to start again.
  *
  * @param writeScope where clearing and starting over run, so leaving the screen cannot cut them
  *   short.
@@ -160,6 +165,13 @@ class SyncViewModel(
 
     private val calls: Flow<OnDemand> = combine(serverCounts, bucket, tryIt, syncNow, ::OnDemand)
 
+    private val attention: Flow<Attention> =
+        combine(
+            repository.rejectedMutations().reportingFailures(failures),
+            repository.conflictedMutations().reportingFailures(failures),
+            ::Attention,
+        )
+
     private val switches: Flow<Switches> =
         combine(repository.settings, repository.liveUpdatesStatus, ::Switches)
 
@@ -177,17 +189,17 @@ class SyncViewModel(
                         },
                     ::Triple,
                 ),
-                repository.rejectedMutations().reportingFailures(failures),
+                attention,
                 sessionState,
                 calls,
                 switches,
-            ) { (status, counts, refresh), rejected, session, onDemand, switch ->
+            ) { (status, counts, refresh), needsUser, session, onDemand, switch ->
                 SyncUiState.Ready(
                     status = status,
                     pendingTasks = counts.tasks,
                     pendingPhotos = counts.photos,
                     refresh = refresh,
-                    rejected = rejected,
+                    rejected = needsUser.rejected,
                     session = session,
                     isSyncNowRunning = onDemand.syncNow.isRunning,
                     lastReport = onDemand.syncNow.report,
@@ -197,6 +209,7 @@ class SyncViewModel(
                     serverCounts = onDemand.serverCounts,
                     bucket = onDemand.bucket,
                     tryIt = onDemand.tryIt,
+                    conflicted = needsUser.conflicted,
                 )
             }
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), SyncUiState.Loading)
@@ -246,6 +259,13 @@ class SyncViewModel(
     /** Queues a refused write again. */
     fun retry(rejection: RejectedTaskMutation) {
         viewModelScope.launchReporting(failures) { repository.retryRejectedMutation(rejection.id) }
+    }
+
+    /** Settles a conflicting write: this device's change sent again, or the server's row kept. */
+    fun resolve(conflict: ConflictedTaskMutation, choice: ConflictChoice) {
+        viewModelScope.launchReporting(failures) {
+            repository.resolveConflictedMutation(conflict.id, choice)
+        }
     }
 
     /** Asks the server for the user's counts: a count and a database function. */
@@ -335,6 +355,12 @@ class SyncViewModel(
         val bucket: ServerAnswer<BucketListing>,
         val tryIt: Map<TryIt, TryItResult>,
         val syncNow: SyncNowRun,
+    )
+
+    /** The writes that need the user: refused, and parked on a conflict. */
+    private data class Attention(
+        val rejected: List<RejectedTaskMutation>,
+        val conflicted: List<ConflictedTaskMutation>,
     )
 
     /** The two settings, and where Live updates stands. */

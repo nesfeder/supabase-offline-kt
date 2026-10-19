@@ -60,9 +60,12 @@ internal class ReservedRowsDatabaseScenarios(
         assertEquals(ON_DISK_PENDING_OWNERS, owners)
         assertEquals(0, callback.creates)
         assertEquals(0, callback.destructiveMigrations)
-        assertEquals(ShippedDatabaseFixture.VERSION, ShippedDatabaseFixture.readUserVersion(path))
         assertEquals(
-            ShippedDatabaseFixture.IDENTITY_HASH,
+            ShippedDatabaseFixture.CURRENT_VERSION,
+            ShippedDatabaseFixture.readUserVersion(path),
+        )
+        assertEquals(
+            ShippedDatabaseFixture.CURRENT_IDENTITY_HASH,
             ShippedDatabaseFixture.readIdentityHash(path),
         )
     }

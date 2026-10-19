@@ -36,6 +36,7 @@ import io.github.nesfeder.supabase.offline.internal.isNetworkOrConnectivityFailu
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogLevel
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.EnqueueOutcome
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationBase
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueue
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueueReplayer
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.PrimaryKeys
@@ -54,6 +55,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
 
 /**
  * One table as the engine reads and writes it, behind the public builder: reads through the cache
@@ -275,7 +277,7 @@ internal class OfflineTable(
             captureForQueue = {
                 val insertBuilder = built.value
                 val descriptor = captureFilter(insertBuilder)
-                QueueCapture.Queueable {
+                QueueCapture.Queueable { _ ->
                     enqueueInsert(
                         table = table,
                         body = body,
@@ -329,7 +331,7 @@ internal class OfflineTable(
             captureForQueue = {
                 val upsertBuilder = built.value
                 val descriptor = captureFilter(upsertBuilder)
-                QueueCapture.Queueable {
+                QueueCapture.Queueable { _ ->
                     enqueueUpsert(
                         table = table,
                         bodyJson = body,
@@ -386,8 +388,10 @@ internal class OfflineTable(
                 cachePatcher.patchReturnedRows(table, body, result.data, startedAtTick)
             },
             captureForQueue = {
-                captureFilteredWrite(built.value) { descriptor ->
-                    enqueueUpdate(table = table, body = body, filter = descriptor)
+                captureFilteredWrite(built.value, columns = (body as? JsonObject)?.keys) {
+                    descriptor,
+                    base ->
+                    enqueueUpdate(table = table, body = body, filter = descriptor, base = base)
                 }
             },
         )
@@ -425,11 +429,8 @@ internal class OfflineTable(
                 )
             },
             captureForQueue = {
-                captureFilteredWrite(built.value) { descriptor ->
-                    enqueueDelete(
-                        table = table,
-                        filter = descriptor,
-                    )
+                captureFilteredWrite(built.value, columns = emptySet()) { descriptor, base ->
+                    enqueueDelete(table = table, filter = descriptor, base = base)
                 }
             },
         )
@@ -487,9 +488,14 @@ internal class OfflineTable(
      */
     private sealed interface QueueCapture {
 
-        /** The write can be queued; [enqueue] inserts its mutation row and returns the id. */
-        class Queueable(val enqueue: suspend MutationQueue.MutationWriter.() -> MutationRow) :
-            QueueCapture
+        /**
+         * The write can be queued: [baseFor] reads its base for an identity before the queue lock,
+         * and [enqueue] inserts its mutation row with that base under it, DAO calls only.
+         */
+        class Queueable(
+            val baseFor: suspend (identity: String) -> MutationBase? = { null },
+            val enqueue: suspend MutationQueue.MutationWriter.(MutationBase?) -> MutationRow,
+        ) : QueueCapture
 
         /**
          * The write cannot be queued faithfully. [reason] carries no filter value and may be logged
@@ -506,7 +512,9 @@ internal class OfflineTable(
      */
     private fun captureFilteredWrite(
         builder: PostgrestRequestBuilder,
-        enqueue: suspend MutationQueue.MutationWriter.(FilterDescriptor) -> MutationRow,
+        columns: Set<String>?,
+        enqueue:
+            suspend MutationQueue.MutationWriter.(FilterDescriptor, MutationBase?) -> MutationRow,
     ): QueueCapture {
         val descriptor =
             try {
@@ -522,7 +530,13 @@ internal class OfflineTable(
                 QueueCapture.Refused("a write without a filter would reach every row")
             !replaysFully(descriptor) ->
                 QueueCapture.Refused("its filter cannot be replayed in full")
-            else -> QueueCapture.Queueable { enqueue(descriptor) }
+            else ->
+                QueueCapture.Queueable(
+                    baseFor = { identity ->
+                        mutationQueue.baseFor(table, descriptor, columns, identity)
+                    },
+                    enqueue = { base -> enqueue(descriptor, base) },
+                )
         }
     }
 
@@ -641,8 +655,12 @@ internal class OfflineTable(
         val queued =
             when (
                 val enqueued =
-                    mutationQueue.enqueueOwnedBy(identity.storedValue, startedAtTick) {
-                        queueable.enqueue(this)
+                    // The base is read first: the lookup may rebuild a key index, never under the
+                    // lock
+                    queueable.baseFor(identity.storedValue).let { base ->
+                        mutationQueue.enqueueOwnedBy(identity.storedValue, startedAtTick) {
+                            queueable.enqueue(this, base)
+                        }
                     }
             ) {
                 is EnqueueOutcome.Queued -> enqueued
@@ -662,7 +680,11 @@ internal class OfflineTable(
                             try {
                                 direct.overlay(result)
                             } finally {
-                                mutationQueue.completeSentMutation(queued.id)
+                                // Rows it returned are the base of later guarded writes to them
+                                val returned =
+                                    if (mutationQueue.versionColumns.of(table) == null) emptyList()
+                                    else returnedRowsOf(json, result.data)
+                                mutationQueue.completeSentMutation(queued.id, table, returned)
                             }
                         }
                     }

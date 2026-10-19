@@ -6,14 +6,20 @@ import io.github.nesfeder.supabase.offline.internal.db.REJECTED_MUTATIONS_CACHE_
 import io.github.nesfeder.supabase.offline.internal.db.RESERVED_TABLE_NAME
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
+import io.github.nesfeder.supabase.offline.testdoubles.GUARDED_TABLE
+import io.github.nesfeder.supabase.offline.testdoubles.MOVED_VERSION
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingLogSink
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.postgrestError
+import io.github.nesfeder.supabase.offline.testdoubles.VERSION_COLUMN
 import io.github.nesfeder.supabase.offline.testdoubles.enqueueInsert
+import io.github.nesfeder.supabase.offline.testdoubles.newGuardedServer
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
 import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
+import io.github.nesfeder.supabase.offline.testdoubles.renameTask
+import io.github.nesfeder.supabase.offline.testdoubles.taskRow
 import io.ktor.http.HttpStatusCode
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -37,6 +43,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
@@ -132,6 +139,61 @@ class SyncStatusTest {
         // Then — every status counted the write in exactly one place, once it was counted at all
         val counted = seen.map { value -> value.pendingMutationCount + value.rejectedMutationCount }
         assertEquals(listOf(), counted.dropWhile { it == 0 }.filter { it != 1 }, "counts: $counted")
+        client.close()
+    }
+
+    @Test
+    fun a_write_moving_between_the_queue_and_the_conflicted_list_is_counted_once() = runTest {
+        // Given — a task renamed here while the server could not be reached, renamed elsewhere
+        // meanwhile, a resolver that holds the conflict, and a collector recording every status
+        val server = newGuardedServer()
+        val client =
+            newTestOfflineClient(
+                supabase = server.supabaseClient(),
+                config =
+                    Offline.createConfig {
+                        versionColumn(GUARDED_TABLE, VERSION_COLUMN)
+                        conflictResolver = ConflictResolver { ConflictResolution.Hold }
+                    },
+            )
+        val status = client.syncStatus
+        val seen = mutableListOf<SyncStatus>()
+        val recorder = launch(Dispatchers.Default) { status.collect { value -> seen += value } }
+        server.seed(GUARDED_TABLE, taskRow(1, "theirs"))
+        client.from(GUARDED_TABLE).select()
+        server.failsRequest = { true }
+        client.renameTask(1, "mine")
+        server.replaceRow(GUARDED_TABLE, taskRow(1, "elsewhere", version = MOVED_VERSION))
+        server.failsRequest = null
+
+        // When — the replay parks it, and the app keeps its change while the network is off, so
+        // the pass the resolution asks for cannot send it until the recorder has stopped
+        client.syncPendingMutations()
+        val parked = status.awaiting { it.conflictedMutationCount == 1 }
+        client.disableNetwork()
+        client.resolveConflictedMutation(
+            client.conflictedMutations().first().single().id,
+            ConflictResolution.KeepLocal,
+        )
+        val requeued = status.awaiting {
+            it.conflictedMutationCount == 0 && it.pendingMutationCount == 1
+        }
+        recorder.cancelAndJoin()
+        client.enableNetwork()
+        withContext(Dispatchers.Default) {
+            withTimeout(10.seconds) { client.pendingMutationCountFlow().first { it == 0 } }
+        }
+
+        // Then — once counted, every status counted the write in exactly one place, and it was
+        // sent once the network was back
+        assertEquals(0, parked.pendingMutationCount)
+        assertEquals(0, requeued.rejectedMutationCount)
+        val counted = seen.map { value ->
+            value.pendingMutationCount + value.conflictedMutationCount
+        }
+        assertEquals(listOf(), counted.dropWhile { it == 0 }.filter { it != 1 }, "counts: $counted")
+        assertTrue(seen.any { it.conflictedMutationCount == 1 }, "counts: $counted")
+        assertEquals(JsonPrimitive("mine"), server.rows(GUARDED_TABLE).single()["title"])
         client.close()
     }
 

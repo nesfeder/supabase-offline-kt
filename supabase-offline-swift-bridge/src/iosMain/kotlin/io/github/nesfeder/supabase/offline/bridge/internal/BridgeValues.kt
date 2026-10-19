@@ -4,6 +4,7 @@ package io.github.nesfeder.supabase.offline.bridge.internal
 
 import io.github.jan.supabase.postgrest.result.PostgrestResult
 import io.github.nesfeder.supabase.offline.CachedFile
+import io.github.nesfeder.supabase.offline.ConflictedMutation
 import io.github.nesfeder.supabase.offline.MutationOperation
 import io.github.nesfeder.supabase.offline.MutationOutcome
 import io.github.nesfeder.supabase.offline.NetworkStatus
@@ -16,6 +17,7 @@ import io.github.nesfeder.supabase.offline.SyncFailedException
 import io.github.nesfeder.supabase.offline.SyncReport
 import io.github.nesfeder.supabase.offline.SyncStatus
 import io.github.nesfeder.supabase.offline.bridge.BridgeCachedFile
+import io.github.nesfeder.supabase.offline.bridge.BridgeConflictedMutation
 import io.github.nesfeder.supabase.offline.bridge.BridgeErrorKind
 import io.github.nesfeder.supabase.offline.bridge.BridgeMutationOperation
 import io.github.nesfeder.supabase.offline.bridge.BridgeMutationResult
@@ -91,6 +93,7 @@ internal fun PendingMutation.toBridge(): BridgePendingMutation =
         createdAtEpochMillis = createdAt.toEpochMilliseconds(),
         rowKeysJson = JsonArray(rowKeys).toString(),
         bodyJson = body?.toString(),
+        baseVersion = baseVersion,
     )
 
 /** A rejected write. */
@@ -108,6 +111,24 @@ internal fun RejectedMutation.toBridge(): BridgeRejectedMutation =
         isRetryable = isRetryable,
     )
 
+/** A write parked on the conflicted list. */
+internal fun ConflictedMutation.toBridge(): BridgeConflictedMutation =
+    BridgeConflictedMutation(
+        id = id,
+        table = table,
+        operation = operation.toBridge(),
+        createdAtEpochMillis = createdAt.toEpochMilliseconds(),
+        rowKeysJson = JsonArray(rowKeys).toString(),
+        bodyJson = body?.toString(),
+        baseJson = base.toString(),
+        serverJson = server?.toString(),
+        serverVersion = serverVersion,
+        changedOnServer = changedOnServer.toList(),
+        conflictingColumns = conflictingColumns.toList(),
+        message = message,
+        conflictedAtEpochMillis = conflictedAt.toEpochMilliseconds(),
+    )
+
 /** The server's answer to a rejected write. */
 private fun ServerError.toBridge(): BridgeServerError =
     BridgeServerError(
@@ -119,7 +140,7 @@ private fun ServerError.toBridge(): BridgeServerError =
     )
 
 /** A write's operation. */
-private fun MutationOperation.toBridge(): BridgeMutationOperation =
+internal fun MutationOperation.toBridge(): BridgeMutationOperation =
     when (this) {
         MutationOperation.INSERT -> BridgeMutationOperation.INSERT
         MutationOperation.UPSERT -> BridgeMutationOperation.UPSERT
@@ -135,6 +156,9 @@ internal fun SyncReport.toBridge(): BridgeSyncReport =
         remainingCount = remainingCount,
         alreadyOnServerCount = alreadyOnServerCount,
         heldBehindOtherTablesCount = heldBehindOtherTablesCount,
+        conflictsResolvedCount = conflictsResolvedCount,
+        conflictsKeptServerCount = conflictsKeptServerCount,
+        conflicted = conflicted.map { it.toBridge() },
     )
 
 /** The sync status; the last sync error is the one [BridgeErrorKind.SYNC_FAILED] value. */
@@ -146,6 +170,7 @@ internal fun SyncStatus.toBridge(): BridgeSyncStatus =
         isSyncing = isSyncing,
         lastSyncedAtEpochMillis = lastSyncedAt?.toEpochMilliseconds(),
         lastSyncError = lastSyncError?.let(::lastSyncErrorOf),
+        conflictedMutationCount = conflictedMutationCount,
     )
 
 /** [SyncStatus.lastSyncError] as a value: a [SyncFailedException], or, defensively, anything. */

@@ -13,6 +13,79 @@ public final class io/github/nesfeder/supabase/offline/CachedFile {
 	public fun toString ()Ljava/lang/String;
 }
 
+public abstract interface class io/github/nesfeder/supabase/offline/ConflictResolution {
+	public static final field Companion Lio/github/nesfeder/supabase/offline/ConflictResolution$Companion;
+}
+
+public final class io/github/nesfeder/supabase/offline/ConflictResolution$Apply : io/github/nesfeder/supabase/offline/ConflictResolution {
+	public final fun component1 ()Lkotlinx/serialization/json/JsonObject;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getColumns ()Lkotlinx/serialization/json/JsonObject;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/github/nesfeder/supabase/offline/ConflictResolution$Companion {
+	public final fun apply (Lkotlinx/serialization/json/JsonObject;)Lio/github/nesfeder/supabase/offline/ConflictResolution$Apply;
+}
+
+public final class io/github/nesfeder/supabase/offline/ConflictResolution$Hold : io/github/nesfeder/supabase/offline/ConflictResolution {
+	public static final field INSTANCE Lio/github/nesfeder/supabase/offline/ConflictResolution$Hold;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/github/nesfeder/supabase/offline/ConflictResolution$KeepLocal : io/github/nesfeder/supabase/offline/ConflictResolution {
+	public static final field INSTANCE Lio/github/nesfeder/supabase/offline/ConflictResolution$KeepLocal;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/github/nesfeder/supabase/offline/ConflictResolution$KeepServer : io/github/nesfeder/supabase/offline/ConflictResolution {
+	public static final field INSTANCE Lio/github/nesfeder/supabase/offline/ConflictResolution$KeepServer;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public abstract interface class io/github/nesfeder/supabase/offline/ConflictResolver {
+	public abstract fun resolve (Lio/github/nesfeder/supabase/offline/MutationConflict;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+}
+
+public final class io/github/nesfeder/supabase/offline/ConflictedMutation {
+	public final fun component1 ()J
+	public final fun component10 ()Ljava/util/Set;
+	public final fun component11 ()Ljava/util/Set;
+	public final fun component12 ()Ljava/lang/String;
+	public final fun component13 ()Lkotlin/time/Instant;
+	public final fun component2 ()Ljava/lang/String;
+	public final fun component3 ()Lio/github/nesfeder/supabase/offline/MutationOperation;
+	public final fun component4 ()Lkotlin/time/Instant;
+	public final fun component5 ()Ljava/util/List;
+	public final fun component6 ()Lkotlinx/serialization/json/JsonElement;
+	public final fun component7 ()Lkotlinx/serialization/json/JsonObject;
+	public final fun component8 ()Lkotlinx/serialization/json/JsonObject;
+	public final fun component9 ()Ljava/lang/String;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getBase ()Lkotlinx/serialization/json/JsonObject;
+	public final fun getBody ()Lkotlinx/serialization/json/JsonElement;
+	public final fun getChangedOnServer ()Ljava/util/Set;
+	public final fun getConflictedAt ()Lkotlin/time/Instant;
+	public final fun getConflictingColumns ()Ljava/util/Set;
+	public final fun getCreatedAt ()Lkotlin/time/Instant;
+	public final fun getId ()J
+	public final fun getMessage ()Ljava/lang/String;
+	public final fun getOperation ()Lio/github/nesfeder/supabase/offline/MutationOperation;
+	public final fun getRowKeys ()Ljava/util/List;
+	public final fun getServer ()Lkotlinx/serialization/json/JsonObject;
+	public final fun getServerVersion ()Ljava/lang/String;
+	public final fun getTable ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
 public final class io/github/nesfeder/supabase/offline/FailureClassificationKt {
 	public static final fun httpStatusOrNull (Ljava/lang/Throwable;)Ljava/lang/Integer;
 	public static final fun isNetworkOrConnectivityFailure (Ljava/lang/Throwable;)Z
@@ -38,6 +111,30 @@ public final class io/github/nesfeder/supabase/offline/FlowReadStrategy$CacheOnl
 public final class io/github/nesfeder/supabase/offline/FlowReadStrategy$NetworkFirstThenCache : io/github/nesfeder/supabase/offline/FlowReadStrategy {
 	public static final field INSTANCE Lio/github/nesfeder/supabase/offline/FlowReadStrategy$NetworkFirstThenCache;
 	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/github/nesfeder/supabase/offline/MutationConflict {
+	public final fun component1 ()J
+	public final fun component2 ()Ljava/lang/String;
+	public final fun component3 ()Lio/github/nesfeder/supabase/offline/MutationOperation;
+	public final fun component4 ()Lkotlinx/serialization/json/JsonObject;
+	public final fun component5 ()Lkotlinx/serialization/json/JsonObject;
+	public final fun component6 ()Lkotlinx/serialization/json/JsonObject;
+	public final fun component7 ()Lkotlinx/serialization/json/JsonObject;
+	public final fun component8 ()Ljava/util/Set;
+	public final fun component9 ()Ljava/util/Set;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getBase ()Lkotlinx/serialization/json/JsonObject;
+	public final fun getChangedOnServer ()Ljava/util/Set;
+	public final fun getConflictingColumns ()Ljava/util/Set;
+	public final fun getLocal ()Lkotlinx/serialization/json/JsonObject;
+	public final fun getMutationId ()J
+	public final fun getOperation ()Lio/github/nesfeder/supabase/offline/MutationOperation;
+	public final fun getRowKey ()Lkotlinx/serialization/json/JsonObject;
+	public final fun getServer ()Lkotlinx/serialization/json/JsonObject;
+	public final fun getTable ()Ljava/lang/String;
 	public fun hashCode ()I
 	public fun toString ()Ljava/lang/String;
 }
@@ -115,9 +212,11 @@ public abstract interface class io/github/nesfeder/supabase/offline/Offline : io
 	public static synthetic fun applyServerRecord$default (Lio/github/nesfeder/supabase/offline/Offline;Ljava/lang/String;Lkotlinx/serialization/json/JsonObject;Ljava/util/List;Ljava/lang/String;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
 	public abstract fun clearLocalData (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun close (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public abstract fun conflictedMutations ()Lkotlinx/coroutines/flow/Flow;
 	public abstract fun disableNetwork (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun disableRealtime (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun discardPendingMutation (JLkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public abstract fun dismissConflictedMutation (JLkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun dismissRejectedMutation (JLkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun enableNetwork (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun enableRealtime (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
@@ -135,6 +234,7 @@ public abstract interface class io/github/nesfeder/supabase/offline/Offline : io
 	public abstract fun pendingMutations (Ljava/lang/String;)Lkotlinx/coroutines/flow/Flow;
 	public static synthetic fun pendingMutations$default (Lio/github/nesfeder/supabase/offline/Offline;Ljava/lang/String;ILjava/lang/Object;)Lkotlinx/coroutines/flow/Flow;
 	public abstract fun rejectedMutations ()Lkotlinx/coroutines/flow/Flow;
+	public abstract fun resolveConflictedMutation (JLio/github/nesfeder/supabase/offline/ConflictResolution;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun retryRejectedMutation (JLkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun rpc (Ljava/lang/String;Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun rpc (Ljava/lang/String;Lkotlinx/serialization/json/JsonObject;Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
@@ -156,6 +256,7 @@ public final class io/github/nesfeder/supabase/offline/Offline$Companion : io/gi
 public final class io/github/nesfeder/supabase/offline/Offline$Config {
 	public final fun getAutoSync ()Z
 	public final fun getCacheSizeBytes ()J
+	public final fun getConflictResolver ()Lio/github/nesfeder/supabase/offline/ConflictResolver;
 	public final fun getDataDirectory ()Ljava/lang/String;
 	public final fun getFileCacheSizeBytes ()J
 	public final fun getLogLevel ()Lio/github/jan/supabase/logging/LogLevel;
@@ -163,15 +264,18 @@ public final class io/github/nesfeder/supabase/offline/Offline$Config {
 	public final fun getPrimaryKeys ()Ljava/util/Map;
 	public final fun getRealtimeTables ()Ljava/util/List;
 	public final fun getResponseTrust ()Lio/github/nesfeder/supabase/offline/ResponseTrust;
+	public final fun getVersionColumns ()Ljava/util/Map;
 	public final fun primaryKey (Ljava/lang/String;[Ljava/lang/String;)V
 	public final fun realtime (Lkotlin/jvm/functions/Function1;)V
 	public final fun setAutoSync (Z)V
 	public final fun setCacheSizeBytes (J)V
+	public final fun setConflictResolver (Lio/github/nesfeder/supabase/offline/ConflictResolver;)V
 	public final fun setDataDirectory (Ljava/lang/String;)V
 	public final fun setFileCacheSizeBytes (J)V
 	public final fun setLogLevel (Lio/github/jan/supabase/logging/LogLevel;)V
 	public final fun setNetworkAvailability (Lkotlinx/coroutines/flow/Flow;)V
 	public final fun setResponseTrust (Lio/github/nesfeder/supabase/offline/ResponseTrust;)V
+	public final fun versionColumn (Ljava/lang/String;Ljava/lang/String;)V
 }
 
 public abstract interface class io/github/nesfeder/supabase/offline/OfflineBucketApi : io/github/jan/supabase/storage/BucketApi {
@@ -235,7 +339,9 @@ public final class io/github/nesfeder/supabase/offline/PendingMutation {
 	public final fun component4 ()Lkotlin/time/Instant;
 	public final fun component5 ()Ljava/util/List;
 	public final fun component6 ()Lkotlinx/serialization/json/JsonElement;
+	public final fun component7 ()Ljava/lang/String;
 	public fun equals (Ljava/lang/Object;)Z
+	public final fun getBaseVersion ()Ljava/lang/String;
 	public final fun getBody ()Lkotlinx/serialization/json/JsonElement;
 	public final fun getCreatedAt ()Lkotlin/time/Instant;
 	public final fun getId ()J
@@ -473,8 +579,14 @@ public final class io/github/nesfeder/supabase/offline/SyncReport {
 	public final fun component3 ()I
 	public final fun component4 ()I
 	public final fun component5 ()I
+	public final fun component6 ()I
+	public final fun component7 ()I
+	public final fun component8 ()Ljava/util/List;
 	public fun equals (Ljava/lang/Object;)Z
 	public final fun getAlreadyOnServerCount ()I
+	public final fun getConflicted ()Ljava/util/List;
+	public final fun getConflictsKeptServerCount ()I
+	public final fun getConflictsResolvedCount ()I
 	public final fun getHeldBehindOtherTablesCount ()I
 	public final fun getRejected ()Ljava/util/List;
 	public final fun getRemainingCount ()I
@@ -490,7 +602,9 @@ public final class io/github/nesfeder/supabase/offline/SyncStatus {
 	public final fun component4 ()Z
 	public final fun component5 ()Lkotlin/time/Instant;
 	public final fun component6 ()Lio/github/nesfeder/supabase/offline/SyncFailedException;
+	public final fun component7 ()I
 	public fun equals (Ljava/lang/Object;)Z
+	public final fun getConflictedMutationCount ()I
 	public final fun getLastSyncError ()Lio/github/nesfeder/supabase/offline/SyncFailedException;
 	public final fun getLastSyncedAt ()Lkotlin/time/Instant;
 	public final fun getNetwork ()Lio/github/nesfeder/supabase/offline/NetworkStatus;

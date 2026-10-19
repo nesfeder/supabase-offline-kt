@@ -24,6 +24,7 @@ your test scripts: see <doc:TestingYourApp>.
 - <doc:GettingStarted>
 - <doc:ComingFromSupabaseSwift>
 - <doc:OfflineBehavior>
+- <doc:ResolvingConflicts>
 - <doc:HandlingErrors>
 - <doc:TestingYourApp>
 
@@ -83,6 +84,13 @@ your test scripts: see <doc:TestingYourApp>.
 - ``RejectedMutation``
 - ``RejectedMutationSequence``
 - ``SyncReport``
+
+### Conflicts
+
+- ``MutationConflict``
+- ``ConflictResolution``
+- ``ConflictedMutation``
+- ``ConflictedMutationSequence``
 
 ### Status and the network
 

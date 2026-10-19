@@ -30,6 +30,8 @@ class OfflineConfigMappingTest {
         assertTrue(config.primaryKeys.isEmpty())
         assertEquals(ResponseTrust.SettledSession, config.responseTrust)
         assertNull(config.logLevel)
+        assertTrue(config.versionColumns.isEmpty())
+        assertNull(config.conflictResolver)
     }
 
     @Test
@@ -60,6 +62,21 @@ class OfflineConfigMappingTest {
         assertEquals(listOf("team_id", "user_id"), keys.of("memberships"))
         assertEquals(listOf("id"), keys.of("todos"))
         assertEquals(listOf("id"), Offline.createConfig {}.primaryKeysByTable().of("todos"))
+    }
+
+    @Test
+    fun the_version_column_setting_names_each_tables_column_and_no_other() {
+        // Given
+        val config = Offline.createConfig { versionColumn("tasks", "updated_at") }
+
+        // When
+        val columns = config.versionColumnsByTable()
+
+        // Then
+        assertEquals("updated_at", columns.of("tasks"))
+        assertNull(columns.of("notes"))
+        assertTrue(Offline.createConfig {}.versionColumns.isEmpty())
+        assertNull(Offline.createConfig {}.versionColumnsByTable().of("tasks"))
     }
 
     @Test

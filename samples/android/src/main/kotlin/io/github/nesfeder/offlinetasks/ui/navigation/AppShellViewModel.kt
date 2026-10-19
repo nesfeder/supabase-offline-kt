@@ -34,7 +34,13 @@ data class AppShellUiState(
     val pendingCount: Int = 0,
     /** Writes the server refused and the user has not dismissed: the badge on Sync turns red. */
     val rejectedCount: Int = 0,
-)
+    /** Writes parked on a conflict, waiting for the user to keep one side: red on Sync too. */
+    val conflictedCount: Int = 0,
+) {
+    /** The writes that need the user: refused, or parked on a conflict. */
+    val needsAttentionCount: Int
+        get() = rejectedCount + conflictedCount
+}
 
 /** The badges of the navigation suite, and the failures and notices the app shows. */
 class AppShellViewModel(
@@ -77,7 +83,12 @@ class AppShellViewModel(
     /** The badge counts. */
     val uiState: StateFlow<AppShellUiState> =
         combine(openTaskCount, pendingCount, repository.syncStatus) { open, pending, status ->
-                AppShellUiState(open, pending, status.rejectedMutationCount)
+                AppShellUiState(
+                    openTaskCount = open,
+                    pendingCount = pending,
+                    rejectedCount = status.rejectedMutationCount,
+                    conflictedCount = status.conflictedMutationCount,
+                )
             }
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), AppShellUiState())
 

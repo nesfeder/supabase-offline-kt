@@ -11,8 +11,8 @@ public struct SyncStatus: Sendable {
     /// ``SupabaseOfflineClient/disableNetwork()`` or ``SupabaseOfflineClient/enableNetwork()`` returns.
     public let network: NetworkStatus
 
-    /// The current user's queued writes. The two counts are read together, so a write moving from the
-    /// queue to the rejected list is counted in exactly one.
+    /// The current user's queued writes. The three counts are read together, so a write moving from
+    /// the queue to the rejected or conflicted list is counted in exactly one.
     public let pendingMutationCount: Int
 
     /// The current user's entries on the rejected list.
@@ -30,6 +30,9 @@ public struct SyncStatus: Sendable {
     /// the end, sending empties the queue, or local data is cleared.
     public let lastSyncError: OfflineError?
 
+    /// The current user's entries on ``SupabaseOfflineClient/conflictedMutations()``.
+    public let conflictedMutationCount: Int
+
     /// Built by the package, and by the testing product's factories.
     package init(
         network: NetworkStatus,
@@ -37,7 +40,8 @@ public struct SyncStatus: Sendable {
         rejectedMutationCount: Int,
         isSyncing: Bool,
         lastSyncedAt: Date?,
-        lastSyncError: OfflineError?
+        lastSyncError: OfflineError?,
+        conflictedMutationCount: Int = 0
     ) {
         self.network = network
         self.pendingMutationCount = pendingMutationCount
@@ -45,6 +49,7 @@ public struct SyncStatus: Sendable {
         self.isSyncing = isSyncing
         self.lastSyncedAt = lastSyncedAt
         self.lastSyncError = lastSyncError
+        self.conflictedMutationCount = conflictedMutationCount
     }
 }
 
@@ -62,6 +67,7 @@ extension SyncStatus: Equatable {
             && lhs.lastSyncError?.message == rhs.lastSyncError?.message
             && lhs.lastSyncError?.serverError == rhs.lastSyncError?.serverError
             && lhs.lastSyncError?.isNetworkOrConnectivityFailure == rhs.lastSyncError?.isNetworkOrConnectivityFailure
+            && lhs.conflictedMutationCount == rhs.conflictedMutationCount
     }
 }
 
@@ -85,7 +91,8 @@ extension SyncStatus {
             rejectedMutationCount: Int(status.rejectedMutationCount),
             isSyncing: status.isSyncing,
             lastSyncedAt: status.lastSyncedAtEpochMillis.map { Date(epochMilliseconds: $0.int64Value) },
-            lastSyncError: status.lastSyncError.flatMap { OfflineError.thrown(for: $0) as? OfflineError }
+            lastSyncError: status.lastSyncError.flatMap { OfflineError.thrown(for: $0) as? OfflineError },
+            conflictedMutationCount: Int(status.conflictedMutationCount)
         )
     }
 }

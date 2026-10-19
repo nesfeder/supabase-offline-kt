@@ -2,7 +2,8 @@
 
 The plugin's settings go in the `install(Offline) { … }` block, an `Offline.Config`, read once when
 the client is created. Every setting has a default that suits most apps. The samples write every
-setting out, each at its default but their own connectivity signal and a debug build's log level:
+setting out, each at its default but those they supply: their own connectivity signal, the Realtime
+tables, the version columns and the resolver, and a debug build's log level:
 
 From the samples: [SampleSupabaseClient.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/platform/SampleSupabaseClient.kt) · [ClientSettings.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/App/ClientSettings.swift)
 
@@ -28,6 +29,8 @@ From the samples: [SampleSupabaseClient.kt](https://github.com/nesfeder/supabase
 | [`networkAvailability`](#networkavailability) | `Flow<Boolean>?` | `null`: the platform's monitor | The connectivity signal |
 | [`autoSync`](#autosync) | `Boolean` | `true` | Whether queued writes are sent without the app asking |
 | [`primaryKeys`](#primarykeys), `primaryKey(table, vararg columns)` | `MutableMap<String, List<String>>` | `id` for every table | Each table's key columns |
+| [`versionColumns`](#versioncolumns), `versionColumn(table, column)` | `MutableMap<String, String>` | none: every write replays unchecked | Each table's version column, which guards the replay of a queued update or delete |
+| [`conflictResolver`](#conflictresolver) | `ConflictResolver?` | `null`: the defaults | Settles a conflict a replay finds |
 | [`realtime { table(…) }`](#realtime), `realtimeTables` | `List<RealtimeTable>` | none: no channel is opened | The tables kept current through Realtime |
 | [`responseTrust`](#responsetrust) | `ResponseTrust` | `SettledSession` | Which server answers may replace what the cache holds |
 | [`logLevel`](#loglevel) | `LogLevel?` | `null`: the client's `defaultLogLevel` | The least severe level the plugin logs at |
@@ -149,6 +152,63 @@ From the samples: [SampleSupabaseClient.kt](https://github.com/nesfeder/supabase
 
     ```swift
     --8<-- "App/ClientSettings.swift:primary-keys"
+    ```
+
+### `versionColumns`
+
+Each table's version column, by table name, keyed as [`primaryKeys`](#primarykeys) is: the name
+alone in the client's default schema, `schema.table` in another. A version column is one a
+server-side trigger changes on every update of a row: a `timestamptz` kept by `moddatetime`, or an
+integer the trigger increments ([Project
+setup](../getting-started/setup.md#a-server-side-version-column)). Naming it guards the replay of a
+queued UPDATE or DELETE whose filter pins one row a cached list holds: the queue records the version
+the device saw, and a pass sends the write only while the server's row still has it. A row that
+moved meanwhile is a conflict, settled by [`conflictResolver`](#conflictresolver). Writes sent at
+once, inserts, upserts and writes that pin no single cached row are not checked. The value is
+compared as text, for equality only, exactly as the server sent it. The cached list the row was read
+into must include the column: a list read with named columns that leave it out holds the row without
+it, and a write to that row records no base. `versionColumn` throws `IllegalArgumentException` for a
+blank column, and a column among the table's key columns fails `createSupabaseClient` with it. See
+[Conflicts and merging](../behaviors/conflicts.md).
+
+From the samples: [SampleSupabaseClient.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/platform/SampleSupabaseClient.kt) · [ClientSettings.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/App/ClientSettings.swift)
+
+=== "Android"
+
+    ```kotlin
+    --8<-- "platform/SampleSupabaseClient.kt:version-column"
+    ```
+
+=== "iOS"
+
+    ```swift
+    --8<-- "App/ClientSettings.swift:version-column"
+    ```
+
+### `conflictResolver`
+
+A `ConflictResolver`, a `fun interface` whose `suspend fun resolve(conflict: MutationConflict)`
+answers a `ConflictResolution`: `KeepLocal`, `KeepServer`, `ConflictResolution.apply(columns)` or
+`Hold`. A pass asks it about an UPDATE whose row moved with one of the write's columns changed on
+the server, a DELETE of a row that moved, and an UPDATE whose row is gone. It runs on the
+library's own dispatcher, outside every database transaction, while the pass waits; anything it
+throws but a cancellation, and 30 seconds without an answer, hold the write on
+`conflictedMutations()`. `null`, the default, settles a moved row with `KeepLocal` and an UPDATE of
+a gone row with `KeepServer`. In Swift it is `Config.conflictResolver`, an `async throws` closure.
+See [The resolver](../behaviors/conflicts.md#the-resolver).
+
+From the samples: [SampleSupabaseClient.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/platform/SampleSupabaseClient.kt) · [ClientSettings.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/App/ClientSettings.swift)
+
+=== "Android"
+
+    ```kotlin
+    --8<-- "platform/SampleSupabaseClient.kt:conflict-resolver"
+    ```
+
+=== "iOS"
+
+    ```swift
+    --8<-- "App/ClientSettings.swift:conflict-resolver"
     ```
 
 ### `realtime`

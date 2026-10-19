@@ -11,10 +11,13 @@ import io.github.jan.supabase.postgrest.Postgrest
 import io.github.jan.supabase.realtime.Realtime
 import io.github.jan.supabase.storage.Storage
 import io.github.jan.supabase.storage.resumable.MemoryResumableCache
+import io.github.nesfeder.supabase.offline.ConflictResolver
 import io.github.nesfeder.supabase.offline.Offline
 import io.github.nesfeder.supabase.offline.bridge.BridgeAccessTokenCallback
 import io.github.nesfeder.supabase.offline.bridge.BridgeAccessTokenProvider
 import io.github.nesfeder.supabase.offline.bridge.BridgeClientOptions
+import io.github.nesfeder.supabase.offline.bridge.BridgeConflictAnswer
+import io.github.nesfeder.supabase.offline.bridge.BridgeConflictResolver
 import io.github.nesfeder.supabase.offline.bridge.BridgeLogLevel
 import io.ktor.client.engine.HttpClientEngine
 import kotlin.concurrent.atomics.AtomicBoolean
@@ -66,6 +69,8 @@ internal fun assembleSupabaseClient(
             this.networkAvailability = networkAvailability
             primaryKeys.putAll(options.primaryKeys)
             realtime { name(options.realtimeTables) }
+            options.versionColumns.forEach { (table, column) -> versionColumn(table, column) }
+            conflictResolver = options.conflictResolver?.let { conflictResolverFrom(it, options) }
             configureOffline()
         }
     }
@@ -97,4 +102,34 @@ private fun accessTokenFrom(
         }
         provider.fetchAccessToken(callback)
     }
+}
+
+/**
+ * The library's resolver over the app's callback: each conflict waits for one answer. A second
+ * answer, or one after the wait ended, is dropped; a failure holds the write.
+ */
+private fun conflictResolverFrom(
+    resolver: BridgeConflictResolver,
+    options: BridgeClientOptions,
+): ConflictResolver = ConflictResolver { conflict ->
+    val reply =
+        suspendCancellableCoroutine<ConflictReply> { continuation ->
+            val answered = AtomicBoolean(false)
+            val answer = BridgeConflictAnswer { reply ->
+                try {
+                    if (answered.compareAndSet(expectedValue = false, newValue = true)) {
+                        continuation.resume(reply)
+                    }
+                } catch (unexpected: Throwable) {
+                    logSafely(
+                        options.logSink,
+                        BridgeLogLevel.ERROR,
+                        BRIDGE_LOG_TAG,
+                        "A conflict answer failed (${unexpected::class.simpleName})",
+                    )
+                }
+            }
+            resolver.resolve(conflict.toBridge(), answer)
+        }
+    resolutionOf(reply, conflict.table, options.logSink)
 }

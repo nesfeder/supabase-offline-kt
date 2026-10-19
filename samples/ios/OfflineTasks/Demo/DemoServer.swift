@@ -10,6 +10,10 @@ import SupabaseOfflineTesting
 /// as Realtime would, for demo mode, previews and tests. It is not part of what an app built on the
 /// library needs.
 ///
+/// Like the schema's trigger it stamps a new `updated_at` on every change, and a write's filters,
+/// the version precondition a queued update or delete is sent with among them, pick the rows it
+/// changes; a write that asks for its rows gets them back, `[]` for none.
+///
 /// It keeps the schema's rules: a request without a user's token reaches nothing, each user reaches
 /// only their own rows and files, a blank or over-long title and over-long notes are refused (HTTP
 /// 400, 23514), a photo needs its owner's task (23503), an id already taken is refused (23505), and
@@ -63,6 +67,9 @@ actor DemoServer {
 
     /// Every request so far, in order.
     private(set) var requests: [RecordedRequest] = []
+
+    /// The last time stamped on a row, so each stamp is later than the one before.
+    private var lastStamp = Date.distantPast
 
     /// A server holding `tasks`, for previews.
     init(tasks: [TaskRow] = []) {
@@ -128,13 +135,39 @@ actor DemoServer {
         files[objectPath]?.data
     }
 
-    /// Changes task `id` as another device would: `values` set on the server, and the change
-    /// reported to the client's channel, never through this client.
+    // --8<-- [start:stage-server-edit]
+    /// Changes task `id` as another device would: `values` set on the server with a new
+    /// `updated_at`, and the change reported to the client's channel, never through this client.
+    /// A write this device queued for the row before finds it moved when it syncs.
     func changeElsewhere(task id: String, _ values: [String: OfflineJSON]) {
         guard let index = tables[Tables.tasks]?.firstIndex(where: { $0.id == id }) else { return }
         tables[Tables.tasks]?[index].row.merge(values) { _, given in given }
-        tables[Tables.tasks]?[index].row["updated_at"] = .string(Self.timestamp(.now))
+        tables[Tables.tasks]?[index].row["updated_at"] = .string(stamp())
         if let row = tables[Tables.tasks]?[index].row { report(saved: row, in: Tables.tasks) }
+    }
+    // --8<-- [end:stage-server-edit]
+
+    /// Deletes task `id` and its photo rows as another device would, and reports the deletes to
+    /// the client's channel; a write this device queued for the row finds it gone when it syncs.
+    func deleteElsewhere(task id: String) {
+        guard tables[Tables.tasks]?.contains(where: { $0.id == id }) == true else { return }
+        tables[Tables.tasks]?.removeAll { $0.id == id }
+        var cascaded: [String] = []
+        tables[Tables.taskPhotos]?.removeAll { photo in
+            guard photo.row["task_id"] == .string(id) else { return false }
+            cascaded.append(photo.id)
+            return true
+        }
+        report(deleted: ["id": .string(id)], in: Tables.tasks)
+        cascaded.forEach { report(deleted: ["id": .string($0)], in: Tables.taskPhotos) }
+    }
+
+    /// A new `updated_at` as the schema's `moddatetime` trigger sets it, later than every earlier
+    /// one even within a millisecond: a version that repeated would read as no change to the
+    /// version precondition a queued write is sent with.
+    private func stamp() -> String {
+        lastStamp = max(Date.now, lastStamp.addingTimeInterval(0.001))
+        return Self.timestamp(lastStamp)
     }
 
     // MARK: - Realtime
@@ -215,7 +248,7 @@ actor DemoServer {
             for index in tables[Tables.tasks, default: []].indices where tables[Tables.tasks]?[index].row["user_id"] == .string(userID) {
                 guard tables[Tables.tasks]?[index].row["done"] != .bool(true) else { continue }
                 tables[Tables.tasks]?[index].row["done"] = .bool(true)
-                tables[Tables.tasks]?[index].row["updated_at"] = .string(Self.timestamp(.now))
+                tables[Tables.tasks]?[index].row["updated_at"] = .string(stamp())
                 if let row = tables[Tables.tasks]?[index].row { report(saved: row, in: Tables.tasks) }
             }
             return .status(204)
@@ -285,7 +318,7 @@ actor DemoServer {
         var written: [[String: OfflineJSON]] = []
         for object in objects {
             var row = Self.defaults(for: table).merging(object) { _, given in given }
-            row["updated_at"] = .string(Self.timestamp(.now))
+            row["updated_at"] = .string(stamp())
             if case .string? = row["created_at"] {} else { row["created_at"] = .string(Self.timestamp(.now)) }
             guard case .string(let id)? = row["id"] else {
                 return Self.postgrestError(
@@ -332,7 +365,7 @@ actor DemoServer {
             var row = rows[index].row
             guard row["user_id"] == .string(userID), query.matches(row) else { continue }
             row.merge(values) { _, given in given }
-            row["updated_at"] = .string(Self.timestamp(.now))
+            row["updated_at"] = .string(stamp())
             if let refusal = checkConstraints(of: row, in: table) { return refusal }
             rows[index].row = row
             updated.append(row)

@@ -84,6 +84,19 @@ conflict columns, or a queued upsert shows as a second row until the list is fet
 upsert that ignores duplicates shows as though it landed, since offline the library cannot tell
 whether the server holds the row already. See [Optimistic overlay](../behaviors/overlay.md#limits).
 
+## Two devices edited the same row
+
+By default the last write to reach the server wins, and a write made offline reaches it last: it
+overwrites what the other device changed meanwhile, in the columns it sets. Give the table a
+version column the server's trigger moves on every update, and name it with
+`versionColumn(table, column)`: a queued update or delete of one cached row is then sent only while
+the server's row still has the version the device saw. A change to other columns is merged by
+itself; a change to the same column goes to your `conflictResolver`, which can keep either side,
+send columns of its own, or hold the write on `conflictedMutations()` for the user. Without a
+resolver, the device's change wins the columns it sets, and an update of a row deleted elsewhere is
+dropped. Upserts and writes sent at once are not checked. See
+[Conflicts and merging](../behaviors/conflicts.md).
+
 ## A change made in the dashboard does not show
 
 The library does not poll. A cached list changes when your app writes through the library, when

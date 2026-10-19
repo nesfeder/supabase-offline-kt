@@ -360,6 +360,14 @@ internal open class InMemoryMutationDao : MutationDao {
         return marked
     }
 
+    override suspend fun updateBase(id: Long, baseVersion: String?, baseJson: String?) {
+        mutations.update { current ->
+            current.map {
+                if (it.id == id) it.copy(baseVersion = baseVersion, baseJson = baseJson) else it
+            }
+        }
+    }
+
     override suspend fun clearSendUnconfirmed(id: Long) {
         mutations.update { current ->
             current.map { if (it.id == id) it.copy(sendUnconfirmed = false) else it }

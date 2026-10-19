@@ -154,6 +154,21 @@ and the screen's model iterates it, keeping each snapshot's rows:
 --8<-- "samples/ios/OfflineTasks/Tasks/TasksModel.swift:live-read"
 ```
 
+## Conflicts
+
+By default the last write to reach the server wins. Name a table's version column in
+`Config.versionColumns`, optionally set `Config.conflictResolver`, an `async throws` closure from a
+`MutationConflict` to a `ConflictResolution` (`.keepLocal`, `.keepServer`, `.apply(columns:)`,
+`.hold`), and a queued update or delete of one cached row is checked when it replays. What the
+closure holds waits on `conflictedMutations()`, a `ConflictedMutationSequence`, for
+`resolveConflictedMutation(id:resolution:)` or `dismissConflictedMutation(id:)`; `SyncReport` and
+`SyncStatus` count it. The sample's version columns and closure are on
+[Configuration](../reference/configuration.md#versioncolumns), beside the Android ones.
+
+The closure runs in a task of its own, off the caller's actor; a throw holds the write, and so do
+30 seconds without an answer, after which a late answer is dropped. The Swift API reference's
+Resolving conflicts article and [Conflicts and merging](../behaviors/conflicts.md) have the rest.
+
 ## Next
 
 The [Swift API reference](https://nesfeder.github.io/supabase-offline-kt/swift/documentation/supabaseoffline/)

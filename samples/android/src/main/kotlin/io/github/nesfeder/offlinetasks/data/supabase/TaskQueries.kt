@@ -31,6 +31,9 @@ internal const val TITLE = "title"
 /** Whether a task is done. */
 internal const val DONE = "done"
 
+/** The column the server moves on every change to a row (`moddatetime`): its version column. */
+internal const val UPDATED_AT = "updated_at"
+
 /** How many days the Recent filter reaches back, today included. */
 private const val RECENT_DAYS = 7
 

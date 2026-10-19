@@ -8,9 +8,9 @@ import androidx.sqlite.execSQL
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 
 /**
- * A `supabase_offline.db` exactly as this build leaves it on disk: Room schema version 1, the one
- * schema the library ships, identity hash `d82a2435c50b4595368573f8728a370b`, holding cached
- * queries, a storage row, unsent writes and one synced write not yet retired.
+ * A `supabase_offline.db` exactly as 0.1.0 leaves it on disk: Room schema version 1, identity hash
+ * `d82a2435c50b4595368573f8728a370b`, holding cached queries, a storage row, unsent writes and one
+ * synced write not yet retired. This build migrates it to [CURRENT_VERSION] when it opens it.
  *
  * [SCHEMA_STATEMENTS] are the `createSql` / index `createSql` / `setupQueries` of the exported
  * `schemas/<database class>/1.json`, copied verbatim with `${TABLE_NAME}` substituted — the file is
@@ -29,6 +29,12 @@ internal object ShippedDatabaseFixture {
 
     /** Room identity hash of schema version 1. */
     const val IDENTITY_HASH: String = "d82a2435c50b4595368573f8728a370b"
+
+    /** The schema version this build opens the database at, its migrations run. */
+    const val CURRENT_VERSION: Long = 2
+
+    /** Room identity hash of schema version [CURRENT_VERSION]. */
+    const val CURRENT_IDENTITY_HASH: String = "5f1a878933e35eebaa2b64aac7fccab0"
 
     /** Schema version 1, statement for statement, from the exported `1.json`. */
     val SCHEMA_STATEMENTS: List<String> =

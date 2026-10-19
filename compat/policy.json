@@ -19,7 +19,8 @@
       "io.github.nesfeder.supabase.offline.ReadStrategy",
       "io.github.nesfeder.supabase.offline.FlowReadStrategy",
       "io.github.nesfeder.supabase.offline.MutationStrategy",
-      "io.github.nesfeder.supabase.offline.ResponseTrust"
+      "io.github.nesfeder.supabase.offline.ResponseTrust",
+      "io.github.nesfeder.supabase.offline.ConflictResolution"
     ],
     "swift": [
       "ReadStrategy",
@@ -31,7 +32,8 @@
       "SupabaseOfflineClient.CacheSize",
       "SupabaseOfflineClient.LogLevel",
       "OfflineBucketApi.ImageTransformation.Resize",
-      "OfflineBucketApi.StorageListFilter.SortOrder"
+      "OfflineBucketApi.StorageListFilter.SortOrder",
+      "ConflictResolution"
     ]
   },
   "closedForImplementation": {

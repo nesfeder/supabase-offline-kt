@@ -491,6 +491,21 @@ final class TaskRepository {
     }
     // --8<-- [end:rejected-actions]
 
+    // --8<-- [start:resolve-conflict]
+    /// The writes parked because their task changed on the server meanwhile, oldest first: the
+    /// client's resolver holds a title both sides changed, until the user keeps one side.
+    func conflictedMutations() -> ConflictedMutationSequence {
+        client.conflictedMutations()
+    }
+
+    /// Keep mine queues the write again, preconditioned on the server's row as the conflict saw
+    /// it, and asks for a sync; Keep theirs drops it, and the server's row stands on the device
+    /// too. Either way it leaves the list.
+    func resolveConflictedMutation(id: Int64, keepMine: Bool) async throws {
+        try await client.resolveConflictedMutation(id: id, resolution: keepMine ? .keepLocal : .keepServer)
+    }
+    // --8<-- [end:resolve-conflict]
+
     // --8<-- [start:network-switch]
     /// Switches the app's own network access off (Simulate offline) or back on.
     func setNetworkEnabled(_ isEnabled: Bool) async throws {

@@ -10,7 +10,7 @@ dashboard open beside it.
 Two things hold on every screen. The client is built once, with every setting written out at its
 default, and the app's own connectivity signal
 ([Configuration](../reference/configuration.md)). Every failure a call can throw goes through one
-mapping, a sentence for each kind ([Conflicts and failures](../behaviors/failures.md)).
+mapping, a sentence for each kind ([Failures and the rejected list](../behaviors/failures.md)).
 
 ## Tasks
 
@@ -25,8 +25,8 @@ The list, open tasks first, with a search field and four chips above it.
 | Tick a task done | `update` with a JSON body | `update` with a `[String: OfflineJSON]` body | [Writes and the offline queue](../behaviors/mutations.md) |
 | Swipe a task away, with Undo | Its photo files (online only); its photos still waiting to upload, on the device; then `delete` of its photo rows and of the task | The same, with no Undo | [Writes and the offline queue](../behaviors/mutations.md), [Storage caching](../behaviors/storage.md#writes) |
 | **Mark all done**, in the menu | `rpc("complete_all_tasks")`, a database function, network only; then the list shown and the whole list are read again, since a function's changes reach the device only by a read | `rpc("complete_all_tasks")`, from the Tasks tab's menu | [Coming from supabase-kt](../getting-started/migrating.md#what-is-never-cached-or-queued) |
-| An alert when the server refused a waiting change | `rejectedMutations().first()` at launch, then the flow | The same | [Conflicts and failures](../behaviors/failures.md#the-rejected-list) |
-| The badges: open tasks on Tasks, waiting changes on Sync, red when one was refused | `select(readStrategy = CacheFirst(maxAge))` and `pendingMutationCount()` at launch, then the live list and `syncStatus` | `select(readStrategy: .cacheFirst(maxAge:))` and `pendingMutationCount()` at launch, then the live list and `syncStatus` | [One-shot reads](../behaviors/read-strategies.md), [Replaying the queue](../behaviors/sync.md#the-status) |
+| An alert when the server refused a waiting change | `rejectedMutations().first()` at launch, then the flow | The same | [Failures and the rejected list](../behaviors/failures.md#the-rejected-list) |
+| The badges: open tasks on Tasks, waiting changes on Sync, red when one was refused or conflicts | `select(readStrategy = CacheFirst(maxAge))` and `pendingMutationCount()` at launch, then the live list and `syncStatus` | `select(readStrategy: .cacheFirst(maxAge:))` and `pendingMutationCount()` at launch, then the live list and `syncStatus` | [One-shot reads](../behaviors/read-strategies.md), [Replaying the queue](../behaviors/sync.md#the-status) |
 
 ## New task
 
@@ -74,10 +74,11 @@ The list, open tasks first, with a search field and four chips above it.
 | Settings | **Prefer fresh data**, and **Live updates** with where its channel stands | The list's read strategy; `realtime { table(…) }` in the plugin's configuration, `realtimeStatus` mapped onto the row's words, and `enableRealtime()` / `disableRealtime()` behind the switch | `Config.realtimeTables`, `realtimeStatus`, and the same switch, called again around a sign-in | [Reactive reads](../behaviors/reactive-reads.md#the-three-strategies), [Applying Realtime events](../behaviors/realtime.md) |
 | Waiting changes | The count per table, one row per change ("Added “Buy milk”, 2 minutes ago") with **Discard**, when it last synced or why it stopped, and **Sync now** with every count of its report | `pendingMutationCountFlow(table)`, `pendingMutations()`, `discardPendingMutation(id)`, `lastSyncedAt`, `lastSyncError`, `syncPendingMutations()` and its `SyncReport` | `pendingMutationCountSequence(table:)`, `pendingMutations()`, `discardPendingMutation(id:)`, then the same | [Writes and the offline queue](../behaviors/mutations.md#seeing-and-dropping-queued-writes), [Replaying the queue](../behaviors/sync.md) |
 | Refresh | Where the list's refresh stands | `QuerySnapshot.refresh` | The same | [Refresh lifecycle](../behaviors/refresh-lifecycle.md) |
-| Refused changes | Each refused change, when it was made and refused, its rows and the server's answer, with **Retry** (off when it cannot be retried) and **Dismiss** | `rejectedMutations()`, `retryRejectedMutation(id)`, `dismissRejectedMutation(id)` | The same, with what the change did, and the server's details and hint | [Conflicts and failures](../behaviors/failures.md#the-rejected-list) |
+| Conflicting changes | Each change held because its task changed on the server too: which task, both values of each column both sides changed, when it was made and held, with **Keep mine** (off when the task is gone or the change too long to keep) and **Keep theirs** | `versionColumn("tasks", "updated_at")` and a `conflictResolver` in the configuration, `conflictedMutations()`, `resolveConflictedMutation(id, KeepLocal)` and `(id, KeepServer)`, and the report's conflict counts | `Config.versionColumns` and `Config.conflictResolver`, then the same | [Conflicts and merging](../behaviors/conflicts.md#the-conflicted-list) |
+| Refused changes | Each refused change, when it was made and refused, its rows and the server's answer, with **Retry** (off when it cannot be retried) and **Dismiss** | `rejectedMutations()`, `retryRejectedMutation(id)`, `dismissRejectedMutation(id)` | The same, with what the change did, and the server's details and hint | [Failures and the rejected list](../behaviors/failures.md#the-rejected-list) |
 | Server | "On the server: 7 of 12 done · 3 this week" | A `count`, and `rpc("tasks_done_count", …)` with typed and JSON parameters | The same | [One-shot reads](../behaviors/read-strategies.md#edge-cases), [Coming from supabase-kt](../getting-started/migrating.md#what-is-never-cached-or-queued) |
 | Storage | Your folders in the bucket with their files, and **Upload through a signed URL** | `list` with a limit, an offset, a sort and a search; `createSignedUploadUrl` and `uploadToSignedUrl` | **Browse photo files**: `list(path:options:)` with a `StorageListFilter`; the signed-URL upload is under Try it | [Storage caching](../behaviors/storage.md#writes) |
-| Try it | **Queue an invalid title**, **Add five sample tasks**, **Import the starter list**, **Delete done tasks offline**, **Two filters on one column**, **Count open tasks on the server**; each says what it called and what happened | `insert` of a JSON body, `insert` of a list, `upsert` with `onConflict` and `ignoreDuplicates`, a grouped `delete` refused offline with `MutationNotQueueableException`, a read refused with `IllegalArgumentException`, a `count` with `filter(column, operator, value)` | **Count tasks with notes** (`filter("notes", operator: "not.is", value: "null")`), **Delete last week's done tasks** and **Upload through a signed URL** in place of the count, the grouped delete and the two filters, which Swift sends in one group | [Writes and the offline queue](../behaviors/mutations.md#two-filters-on-one-column), [One-shot reads](../behaviors/read-strategies.md#edge-cases) |
+| Try it | **Queue an invalid title**, **Add five sample tasks**, **Import the starter list**, **Delete done tasks offline**, **Two filters on one column**, **Count open tasks on the server**, **Make a conflict**; each says what it called and what happened | `insert` of a JSON body, `insert` of a list, `upsert` with `onConflict` and `ignoreDuplicates`, a grouped `delete` refused offline with `MutationNotQueueableException`, a read refused with `IllegalArgumentException`, a `count` with `filter(column, operator, value)` | **Count tasks with notes** (`filter("notes", operator: "not.is", value: "null")`), **Delete last week's done tasks** and **Upload through a signed URL** in place of the count, the grouped delete and the two filters, which Swift sends in one group; **Make a conflict** plays the second writer itself in demo mode | [Writes and the offline queue](../behaviors/mutations.md#two-filters-on-one-column), [One-shot reads](../behaviors/read-strategies.md#edge-cases) |
 | Local data | **Clear local cache**, and **Start over** | `clearLocalData()`, then the app's pending-photo directory, which the library does not touch; Start over clears, deletes the user's files and rows `OnlineOnly`, clears the pending photos, then signs in as a new user | Clear local cache the same; Start over waits for a photo upload in progress, discards the user's waiting changes, deletes their files and rows `.onlineOnly`, turns the network off, signs out, clears the device and then the pending photos, signs in anew and turns the network back on | [Signing out and switching users](../behaviors/sign-out.md#deleting-an-account) |
 
 Coming back to the app sends what waits: the app calls `syncPendingMutations()` as it comes to the
@@ -180,19 +181,28 @@ sends both conditions in one group by itself.
 
 ### Try a conflict
 
-Two devices are two anonymous users, so play the second writer from the Table Editor. Switch
-**Live updates** off first, so the app shows only what it reads.
+The samples name `updated_at`, which the schema's trigger moves on every change, as the version
+column of both tables, so a change queued offline is sent only while the task still has the
+version the app saw. Two devices are two anonymous users, so play the second writer from the Table
+Editor. Switch **Live updates** off first, so the app shows only what it reads. **Make a conflict**,
+under Try it, says the same steps; on iOS in demo mode it plays them itself, with the stand-in
+server as the second writer.
 
 1. Go offline in the app and tick a task done.
 2. In the Table Editor, change the same task's title.
-3. Come back online and pull to refresh. Both changes are there: the app's queued update sets
-   only `done`, so it leaves the title the dashboard wrote.
+3. Come back online. The queued update finds the task moved, reads it again, sees that only the
+   title changed there and that the update sets only `done`, and sends it again at the new
+   version: both changes stand, and nothing asks you anything.
 4. Now go offline, change a task's title in the app, change the same title in the Table Editor,
-   and come back online. The app's title wins: the last write to reach the server wins, and the
-   app's arrived last.
+   and come back online. Both sides changed the title, so the app's resolver holds the change, and
+   it waits under **Conflicting changes** on the Sync tab, with both titles.
+5. Tap **Keep mine**: the app's title is sent against the task as the Table Editor left it, and
+   wins. **Keep theirs** drops it, and the Table Editor's title stays on both.
+6. Delete a task in the Table Editor after changing it offline in the app: when the app comes back,
+   the change is dropped, and the task leaves the list; nothing is recreated.
 
-The library does not merge or resolve conflicts; see
-[Conflicts and failures](../behaviors/failures.md#conflicts).
+[Conflicts and merging](../behaviors/conflicts.md) walks through what the library sent at each
+step.
 
 ### Start again
 

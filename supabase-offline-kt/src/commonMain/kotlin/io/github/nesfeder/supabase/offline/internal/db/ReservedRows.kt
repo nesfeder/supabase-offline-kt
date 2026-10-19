@@ -4,7 +4,8 @@ package io.github.nesfeder.supabase.offline.internal.db
 
 /**
  * The `object_cache` table name under which the engine keeps its own small records — the
- * rejected-mutation list, each cached query's shape and whose the cache is — beside the cache.
+ * rejected-mutation and conflicted-mutation lists, each cached query's shape and whose the cache is
+ * — beside the cache.
  *
  * It cannot collide with a table reachable through PostgREST: Postgres truncates identifiers to
  * `NAMEDATALEN - 1` = 63 bytes, so no table can be *named* anything longer, and this name is far
@@ -22,6 +23,9 @@ internal const val RESERVED_TABLE_NAME: String =
 
 /** Signature, within [RESERVED_TABLE_NAME], of the persisted rejected-mutation list. */
 internal const val REJECTED_MUTATIONS_CACHE_KEY: String = "rejected_mutations"
+
+/** Signature, within [RESERVED_TABLE_NAME], of the persisted conflicted-mutation list. */
+internal const val CONFLICTED_MUTATIONS_CACHE_KEY: String = "conflicted_mutations"
 
 /**
  * Signature, within [RESERVED_TABLE_NAME], of the identity the query cache and the Storage file

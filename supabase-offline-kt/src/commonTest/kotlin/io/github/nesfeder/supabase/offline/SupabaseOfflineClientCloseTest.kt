@@ -181,6 +181,7 @@ class SupabaseOfflineClientCloseTest {
                 "pendingMutations()" to { client -> client.pendingMutations() },
                 "pendingMutations(table)" to { client -> client.pendingMutations("todos") },
                 "rejectedMutations()" to { client -> client.rejectedMutations() },
+                "conflictedMutations()" to { client -> client.conflictedMutations() },
             ) +
                 everyFlowReadStrategy.map { strategy ->
                     "selectAsFlow($strategy)" to
@@ -362,6 +363,7 @@ class SupabaseOfflineClientCloseTest {
                 "pendingMutations()" to { client -> client.pendingMutations() },
                 "pendingMutations(table)" to { client -> client.pendingMutations("todos") },
                 "rejectedMutations()" to { client -> client.rejectedMutations() },
+                "conflictedMutations()" to { client -> client.conflictedMutations() },
             ) +
                 everyFlowReadStrategy.map { strategy ->
                     "selectAsFlow($strategy)" to
@@ -913,6 +915,7 @@ class SupabaseOfflineClientCloseTest {
                 "pendingMutations()" to { client.pendingMutations() },
                 "pendingMutations(table)" to { client.pendingMutations("todos") },
                 "rejectedMutations()" to { client.rejectedMutations() },
+                "conflictedMutations()" to { client.conflictedMutations() },
             ) +
                 everyFlowReadStrategy.map { strategy ->
                     "selectAsFlow($strategy)" to { builder.selectAsFlow(readStrategy = strategy) }
@@ -958,6 +961,11 @@ class SupabaseOfflineClientCloseTest {
         assertFailsWith<IllegalStateException> { client.rejectedMutations().first() }
         assertFailsWith<IllegalStateException> { client.dismissRejectedMutation(1L) }
         assertFailsWith<IllegalStateException> { client.retryRejectedMutation(1L) }
+        assertFailsWith<IllegalStateException> { client.conflictedMutations().first() }
+        assertFailsWith<IllegalStateException> {
+            client.resolveConflictedMutation(1L, ConflictResolution.KeepLocal)
+        }
+        assertFailsWith<IllegalStateException> { client.dismissConflictedMutation(1L) }
         assertFailsWith<IllegalStateException> { client.disableNetwork() }
         assertFailsWith<IllegalStateException> { client.enableNetwork() }
         assertFailsWith<IllegalStateException> {

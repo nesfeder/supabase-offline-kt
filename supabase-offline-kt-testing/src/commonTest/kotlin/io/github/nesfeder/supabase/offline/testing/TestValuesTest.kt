@@ -9,10 +9,14 @@ import io.github.nesfeder.supabase.offline.isNetworkOrConnectivityFailure
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
 import kotlin.time.Instant
 import kotlinx.io.IOException
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 
 /** The factories hand back the library's own types, holding exactly what they were given. */
 class TestValuesTest {
@@ -101,6 +105,245 @@ class TestValuesTest {
         assertTrue(failure.isNetworkOrConnectivityFailure())
         assertEquals(stalled, snapshot.refresh)
         assertFalse(snapshot.hasPendingMutations)
+    }
+
+    @Test
+    fun a_mutation_conflict_holds_every_field() {
+        // Given — every field distinct from its neighbors of the same type
+        val key = buildJsonObject { put("id", "t1") }
+        val base = buildJsonObject {
+            put("title", "Buy milk")
+            put("notes", "2 l")
+            put("updated_at", "v1")
+        }
+        val local = buildJsonObject {
+            put("title", "Mine")
+            put("notes", "2 l")
+        }
+        val server = buildJsonObject {
+            put("id", "t1")
+            put("title", "Buy oat milk")
+            put("notes", "1 l")
+            put("updated_at", "v2")
+        }
+
+        // When
+        val conflict =
+            mutationConflict(
+                mutationId = 7,
+                table = "tasks",
+                operation = MutationOperation.UPDATE,
+                rowKey = key,
+                base = base,
+                local = local,
+                server = server,
+                changedOnServer = setOf("title", "notes"),
+                conflictingColumns = setOf("title"),
+            )
+        val bare =
+            mutationConflict(
+                mutationId = 8,
+                table = "lists",
+                operation = MutationOperation.DELETE,
+                rowKey = key,
+            )
+
+        // Then
+        assertEquals(7, conflict.mutationId)
+        assertEquals("tasks", conflict.table)
+        assertEquals(MutationOperation.UPDATE, conflict.operation)
+        assertEquals(key, conflict.rowKey)
+        assertEquals(base, conflict.base)
+        assertEquals(local, conflict.local)
+        assertEquals(server, conflict.server)
+        assertEquals(setOf("title", "notes"), conflict.changedOnServer)
+        assertEquals(setOf("title"), conflict.conflictingColumns)
+        assertEquals(8, bare.mutationId)
+        assertEquals("lists", bare.table)
+        assertEquals(MutationOperation.DELETE, bare.operation)
+        assertEquals(JsonObject(emptyMap()), bare.base)
+        assertNull(bare.local)
+        assertNull(bare.server)
+        assertEquals(emptySet(), bare.changedOnServer)
+        assertEquals(emptySet(), bare.conflictingColumns)
+    }
+
+    @Test
+    fun a_conflicted_mutation_holds_every_field() {
+        // Given — every field distinct from its neighbors of the same type
+        val createdAt = Instant.parse("2026-10-18T13:00:00Z")
+        val conflictedAt = Instant.parse("2026-10-18T13:10:00Z")
+        val key = buildJsonObject { put("id", "t1") }
+        val body = buildJsonObject { put("title", "Mine") }
+        val base = buildJsonObject {
+            put("title", "Buy milk")
+            put("updated_at", "v1")
+        }
+        val server = buildJsonObject {
+            put("id", "t1")
+            put("title", "Buy oat milk")
+            put("updated_at", "v2")
+        }
+
+        // When
+        val entry =
+            conflictedMutation(
+                id = 9,
+                table = "tasks",
+                operation = MutationOperation.UPDATE,
+                createdAt = createdAt,
+                rowKeys = listOf(key),
+                body = body,
+                base = base,
+                server = server,
+                serverVersion = "v2",
+                changedOnServer = setOf("title", "notes"),
+                conflictingColumns = setOf("title"),
+                message = "held by the resolver",
+                conflictedAt = conflictedAt,
+            )
+        val bare =
+            conflictedMutation(
+                id = 10,
+                table = "lists",
+                operation = MutationOperation.DELETE,
+                createdAt = conflictedAt,
+                message = "gone",
+                conflictedAt = createdAt,
+            )
+
+        // Then
+        assertEquals(9, entry.id)
+        assertEquals("tasks", entry.table)
+        assertEquals(MutationOperation.UPDATE, entry.operation)
+        assertEquals(createdAt, entry.createdAt)
+        assertEquals(listOf(key), entry.rowKeys)
+        assertEquals(body, entry.body)
+        assertEquals(base, entry.base)
+        assertEquals(server, entry.server)
+        assertEquals("v2", entry.serverVersion)
+        assertEquals(setOf("title", "notes"), entry.changedOnServer)
+        assertEquals(setOf("title"), entry.conflictingColumns)
+        assertEquals("held by the resolver", entry.message)
+        assertEquals(conflictedAt, entry.conflictedAt)
+        assertEquals(10, bare.id)
+        assertEquals("lists", bare.table)
+        assertEquals(MutationOperation.DELETE, bare.operation)
+        assertEquals(conflictedAt, bare.createdAt)
+        assertEquals("gone", bare.message)
+        assertEquals(createdAt, bare.conflictedAt)
+        assertEquals(emptyList(), bare.rowKeys)
+        assertNull(bare.body)
+        assertEquals(JsonObject(emptyMap()), bare.base)
+        assertNull(bare.server)
+        assertNull(bare.serverVersion)
+        assertEquals(emptySet(), bare.changedOnServer)
+        assertEquals(emptySet(), bare.conflictingColumns)
+    }
+
+    @Test
+    fun the_overloads_hold_every_field_beside_the_existing_factories() {
+        // Given — every field distinct from its neighbors of the same type
+        val createdAt = Instant.parse("2026-10-18T13:00:00Z")
+        val syncedAt = Instant.parse("2026-10-18T13:20:00Z")
+        val key = buildJsonObject { put("id", "t1") }
+        val body = buildJsonObject { put("title", "Mine") }
+        val rejected =
+            rejectedMutation(
+                id = 14,
+                table = "tasks",
+                operation = MutationOperation.UPDATE,
+                createdAt = createdAt,
+                message = "refused",
+                rejectedAt = syncedAt,
+            )
+        val parked =
+            conflictedMutation(
+                id = 11,
+                table = "tasks",
+                operation = MutationOperation.UPDATE,
+                createdAt = createdAt,
+                message = "held",
+                conflictedAt = syncedAt,
+            )
+        val failure = syncFailedException(message = "stopped")
+
+        // When
+        val pending =
+            pendingMutation(
+                id = 12,
+                table = "tasks",
+                operation = MutationOperation.UPDATE,
+                createdAt = createdAt,
+                rowKeys = listOf(key),
+                body = body,
+                baseVersion = "v1",
+            )
+        val report =
+            syncReport(
+                syncedCount = 1,
+                rejected = listOf(rejected),
+                remainingCount = 2,
+                alreadyOnServerCount = 3,
+                heldBehindOtherTablesCount = 4,
+                conflictsResolvedCount = 5,
+                conflictsKeptServerCount = 6,
+                conflicted = listOf(parked),
+            )
+        val status =
+            syncStatus(
+                network = NetworkStatus.OFFLINE,
+                pendingMutationCount = 1,
+                rejectedMutationCount = 2,
+                isSyncing = true,
+                lastSyncedAt = syncedAt,
+                lastSyncError = failure,
+                conflictedMutationCount = 3,
+            )
+        // The existing factories: pendingMutation and syncStatus cannot reach the overloads, whose
+        // new parameter is required; syncReport compiles unambiguously, and Kotlin picks the
+        // existing factory, the candidate with fewer unspecified defaults. Both build the same
+        // value.
+        val plainPending =
+            pendingMutation(
+                id = 13,
+                table = "tasks",
+                operation = MutationOperation.UPDATE,
+                createdAt = createdAt,
+            )
+        val plainReport = syncReport(syncedCount = 1)
+        val plainStatus = syncStatus()
+
+        // Then
+        assertEquals(12, pending.id)
+        assertEquals("tasks", pending.table)
+        assertEquals(MutationOperation.UPDATE, pending.operation)
+        assertEquals(createdAt, pending.createdAt)
+        assertEquals(listOf(key), pending.rowKeys)
+        assertEquals(body, pending.body)
+        assertEquals("v1", pending.baseVersion)
+        assertEquals(1, report.syncedCount)
+        assertEquals(listOf(rejected), report.rejected)
+        assertEquals(2, report.remainingCount)
+        assertEquals(3, report.alreadyOnServerCount)
+        assertEquals(4, report.heldBehindOtherTablesCount)
+        assertEquals(5, report.conflictsResolvedCount)
+        assertEquals(6, report.conflictsKeptServerCount)
+        assertEquals(listOf(parked), report.conflicted)
+        assertEquals(NetworkStatus.OFFLINE, status.network)
+        assertEquals(1, status.pendingMutationCount)
+        assertEquals(2, status.rejectedMutationCount)
+        assertTrue(status.isSyncing)
+        assertEquals(syncedAt, status.lastSyncedAt)
+        assertSame(failure, status.lastSyncError)
+        assertEquals(3, status.conflictedMutationCount)
+        assertNull(plainPending.baseVersion)
+        assertEquals(
+            0 to 0,
+            plainReport.conflictsResolvedCount to plainReport.conflictsKeptServerCount,
+        )
+        assertEquals(emptyList(), plainReport.conflicted)
+        assertEquals(0, plainStatus.conflictedMutationCount)
     }
 
     @Test

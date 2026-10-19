@@ -21,6 +21,10 @@ import kotlinx.serialization.json.JsonObject
  *   as [Offline.Config.primaryKeys] gives it.
  * @property body the body the write sends, or `null` for a DELETE or a stored body that can no
  *   longer be read.
+ * @property baseVersion the version of the row the write is preconditioned on when a sync pass
+ *   replays it, as text: the version column's value as the device last saw it, for an UPDATE or
+ *   DELETE of one row of a table with a version column ([Offline.Config.versionColumns]). `null`
+ *   when the write is not guarded and replays as it was made.
  */
 @ConsistentCopyVisibility
 public data class PendingMutation
@@ -31,4 +35,5 @@ internal constructor(
     public val createdAt: Instant,
     public val rowKeys: List<JsonObject>,
     public val body: JsonElement?,
+    public val baseVersion: String?,
 )
