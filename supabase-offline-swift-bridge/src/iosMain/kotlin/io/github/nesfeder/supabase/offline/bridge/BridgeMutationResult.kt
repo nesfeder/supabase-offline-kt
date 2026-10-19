@@ -26,6 +26,8 @@ internal constructor(
  * @property createdAtEpochMillis when it was queued, in milliseconds since 1970.
  * @property rowKeysJson the primary-key values of the rows it touches, a JSON array of objects.
  * @property bodyJson the body it sends, as JSON text; `null` for a delete.
+ * @property baseVersion the row's version a replay is preconditioned on, as text; `null` when the
+ *   write is not guarded.
  */
 public class BridgePendingMutation
 internal constructor(
@@ -35,6 +37,7 @@ internal constructor(
     public val createdAtEpochMillis: Long,
     public val rowKeysJson: String,
     public val bodyJson: String?,
+    public val baseVersion: String?,
 )
 
 /**

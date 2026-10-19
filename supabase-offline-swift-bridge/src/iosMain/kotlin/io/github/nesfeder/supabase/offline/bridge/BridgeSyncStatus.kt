@@ -14,6 +14,7 @@ package io.github.nesfeder.supabase.offline.bridge
  *   1970; `null` until it happens.
  * @property lastSyncError why the last pass stopped with writes queued, a
  *   [BridgeErrorKind.SYNC_FAILED]; `null` once a later pass runs to the end.
+ * @property conflictedMutationCount the current user's entries on the conflicted list.
  */
 public class BridgeSyncStatus
 internal constructor(
@@ -23,6 +24,7 @@ internal constructor(
     public val isSyncing: Boolean,
     public val lastSyncedAtEpochMillis: Long?,
     public val lastSyncError: BridgeError?,
+    public val conflictedMutationCount: Int,
 )
 
 /** Whether the library believes it can reach the network; a hint, never a gate. */
@@ -49,6 +51,11 @@ public enum class BridgeNetworkStatus {
  * @property alreadyOnServerCount of [syncedCount], the inserts whose rows the server already held.
  * @property heldBehindOtherTablesCount of [remainingCount], the writes a call for one table held
  *   back behind an earlier write of the user to another table; `0` for a call over every table.
+ * @property conflictsResolvedCount of [syncedCount], the guarded writes whose conflict was settled
+ *   and that were sent.
+ * @property conflictsKeptServerCount the guarded writes dropped unsent because the server's row
+ *   stands.
+ * @property conflicted the guarded writes parked during this call, now on the conflicted list.
  */
 public class BridgeSyncReport
 internal constructor(
@@ -57,4 +64,7 @@ internal constructor(
     public val remainingCount: Int,
     public val alreadyOnServerCount: Int,
     public val heldBehindOtherTablesCount: Int,
+    public val conflictsResolvedCount: Int,
+    public val conflictsKeptServerCount: Int,
+    public val conflicted: List<BridgeConflictedMutation>,
 )

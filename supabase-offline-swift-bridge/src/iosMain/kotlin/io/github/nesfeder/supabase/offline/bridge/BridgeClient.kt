@@ -16,6 +16,7 @@ import io.github.nesfeder.supabase.offline.bridge.internal.bridgeErrorOf
 import io.github.nesfeder.supabase.offline.bridge.internal.mutationDescription
 import io.github.nesfeder.supabase.offline.bridge.internal.parseJsonText
 import io.github.nesfeder.supabase.offline.bridge.internal.readDescription
+import io.github.nesfeder.supabase.offline.bridge.internal.resolutionOf
 import io.github.nesfeder.supabase.offline.bridge.internal.rpcDescription
 import io.github.nesfeder.supabase.offline.bridge.internal.toBridge
 import io.github.nesfeder.supabase.offline.offline
@@ -262,6 +263,49 @@ internal constructor(
             offline.retryRejectedMutation(id)
         }
 
+    /** The current user's writes parked on the conflicted list, oldest first. */
+    public fun conflictedMutations(
+        completion: (List<BridgeConflictedMutation>?, BridgeError?) -> Unit
+    ): BridgeCancellable =
+        runner.runOnce("conflictedMutations", completion) {
+            offline.conflictedMutations().first().map { it.toBridge() }
+        }
+
+    /** [conflictedMutations] as the list changes; [onCompletion] fires once, when it ends. */
+    public fun observeConflictedMutations(
+        onMutations: (List<BridgeConflictedMutation>) -> Unit,
+        onCompletion: (BridgeError?) -> Unit,
+    ): BridgeCancellable =
+        runner.subscribe("observeConflictedMutations", onMutations, onCompletion) {
+            offline.conflictedMutations().map { mutations -> mutations.map { it.toBridge() } }
+        }
+
+    /**
+     * Settles an entry of the conflicted list: KEEP_LOCAL and APPLY queue it again under a new id,
+     * KEEP_SERVER drops it. A decision the library refuses fails with
+     * [BridgeErrorKind.INVALID_ARGUMENT].
+     *
+     * @param columnsJson the columns of APPLY, a JSON object as text; `null` for the others.
+     */
+    public fun resolveConflictedMutation(
+        id: Long,
+        decision: BridgeConflictDecision,
+        columnsJson: String?,
+        completion: (BridgeError?) -> Unit,
+    ): BridgeCancellable =
+        runner.runToCompletion("resolveConflictedMutation", completion) {
+            offline.resolveConflictedMutation(id, resolutionOf(decision, columnsJson))
+        }
+
+    /** Removes an entry from the conflicted list for good, without sending it. */
+    public fun dismissConflictedMutation(
+        id: Long,
+        completion: (BridgeError?) -> Unit,
+    ): BridgeCancellable =
+        runner.runToCompletion("dismissConflictedMutation", completion) {
+            offline.dismissConflictedMutation(id)
+        }
+
     /** Sends the current user's queued writes now, of [table] or of every table. */
     public fun syncPendingMutations(
         table: String?,
@@ -286,6 +330,7 @@ internal constructor(
                     isSyncing = false,
                     lastSyncedAtEpochMillis = null,
                     lastSyncError = error,
+                    conflictedMutationCount = 0,
                 )
             },
         ) {
