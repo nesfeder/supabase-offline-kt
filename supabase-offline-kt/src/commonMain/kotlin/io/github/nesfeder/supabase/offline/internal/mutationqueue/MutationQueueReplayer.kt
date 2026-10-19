@@ -954,10 +954,14 @@ internal class MutationQueueReplayer(
                     ConflictCase.Gone(mutation, base, sentBody)
                 } else {
                     val serverVersion = versionTextOf(server[versionColumn])
+                    val beyondKey = guarded.filterBeyondKeyMatch(server)
                     when {
-                        // The row no longer meets the rest of the filter: the unguarded replay
-                        // reached no row either, and that was a success
-                        !guarded.filterBeyondKeyMatches(server) ->
+                        // The row provably no longer meets the rest of the filter: the unguarded
+                        // replay reached no row either, and that was a success
+                        beyondKey == RowMatch.EXCLUDED -> return ReplayOutcome.Synced(false)
+                        // A condition the engine cannot judge, at the version the precondition
+                        // named: the server itself found the filter does not reach the row
+                        beyondKey == RowMatch.UNKNOWN && serverVersion == sentPrecondition ->
                             return ReplayOutcome.Synced(false)
                         serverVersion == sentPrecondition -> return policyDenied(mutation)
                         serverVersion == null ->
@@ -1269,14 +1273,15 @@ internal class MutationQueueReplayer(
                 )
 
             /**
-             * Whether [row] meets every condition of [filter] beyond the key, as the overlay
-             * evaluates them; `true` when there is none. One it cannot evaluate does not meet it.
+             * How [row] meets the conditions of [filter] beyond the key, as the overlay evaluates
+             * them: [RowMatch.MATCHES] when there is none, [RowMatch.UNKNOWN] when one is not
+             * evaluated and none is false.
              */
-            fun filterBeyondKeyMatches(row: JsonObject): Boolean {
+            fun filterBeyondKeyMatch(row: JsonObject): RowMatch {
                 val beyondKey =
                     filter.conditions.filterNot { condition -> condition.column in keyColumns }
-                if (beyondKey.isEmpty()) return true
-                return rowMatch(row, FilterDescriptor(conditions = beyondKey)) == RowMatch.MATCHES
+                if (beyondKey.isEmpty()) return RowMatch.MATCHES
+                return rowMatch(row, FilterDescriptor(conditions = beyondKey))
             }
         }
     }

@@ -427,6 +427,77 @@ class GuardedReplayOutcomesTest {
         )
     }
 
+    @Test
+    fun a_filter_the_engine_cannot_judge_on_a_row_moved_elsewhere_resends_the_write() = runTest {
+        // Given — an update filtered by a pattern the engine does not evaluate, on a row another
+        // device changed: the precondition fails although the pattern still matches
+        server.seed(GUARDED_TABLE, taskRow(1, "theirs"))
+        store.cacheRows(taskRow(1, "theirs"))
+        store.mutationQueue.enqueueUpdate(GUARDED_TABLE, column("done", true), titledLike(1))
+        server.replaceRow(GUARDED_TABLE, taskRow(1, "theirs", version = MOVED_VERSION))
+
+        // When
+        val report = replayer().sync()
+
+        // Then — never taken for a filter that missed: resent, and the change reached the server
+        assertEquals(listOf("PATCH", "GET", "PATCH"), server.requests.map { it.method })
+        assertEquals(1, report.syncedCount)
+        assertEquals(JsonPrimitive(true), server.rows(GUARDED_TABLE).single()["done"])
+    }
+
+    @Test
+    fun a_filter_the_engine_cannot_judge_on_an_unchanged_row_is_synced_without_a_resend() =
+        runTest {
+            // Given — the same update, the row at the version the device saw, renamed so the
+            // pattern no longer matches it: the server's own answer is that the filter missed
+            server.seed(GUARDED_TABLE, taskRow(1, "theirs"))
+            store.cacheRows(taskRow(1, "theirs"))
+            store.mutationQueue.enqueueUpdate(GUARDED_TABLE, column("done", true), titledLike(1))
+            server.replaceRow(GUARDED_TABLE, taskRow(1, "renamed"))
+
+            // When
+            val report = replayer().sync()
+
+            // Then — a write that reached no row, as unguarded: no resend, refusal or conflict
+            assertEquals(listOf("PATCH", "GET"), server.requests.map { it.method })
+            assertEquals(1, report.syncedCount)
+            assertEquals(emptyList(), report.rejected)
+            assertEquals(emptyList(), policy.cases)
+            assertEquals(JsonPrimitive(false), server.rows(GUARDED_TABLE).single()["done"])
+        }
+
+    @Test
+    fun partial_rows_back_patch_their_columns_and_forward_a_base_that_keeps_the_rest() = runTest {
+        // Given — two updates of task 1, each of one column; the server answers only the columns
+        // a guarded write selects
+        server.seed(GUARDED_TABLE, taskRow(1, "theirs"))
+        store.cacheRows(taskRow(1, "theirs"))
+        store.mutationQueue.enqueueUpdate(GUARDED_TABLE, titled("mine"), rowWithId(1))
+        store.mutationQueue.enqueueUpdate(GUARDED_TABLE, column("done", true), rowWithId(1))
+
+        // When
+        val report = replayer().sync()
+
+        // Then — the first came back without `done`, the second still replayed at its version,
+        // and the cached row keeps every column with the server's latest version
+        val (first, second) = server.requests
+        assertEquals("id,updated_at,title", first.query["select"])
+        assertEquals("id,updated_at,done", second.query["select"])
+        assertNotEquals(first.query[VERSION_COLUMN], second.query[VERSION_COLUMN])
+        assertEquals(2 to 0, report.syncedCount to report.conflictsResolvedCount)
+        val onServer = server.rows(GUARDED_TABLE).single()
+        assertEquals(listOf(onServer), cachedRows())
+    }
+
+    private fun titledLike(id: Int): FilterDescriptor =
+        FilterDescriptor(
+            conditions =
+                listOf(
+                    FilterDescriptor.Condition("id", "eq", id.toString()),
+                    FilterDescriptor.Condition("title", "like", "the*"),
+                )
+        )
+
     private fun notDone(id: Int): FilterDescriptor =
         FilterDescriptor(
             conditions =
