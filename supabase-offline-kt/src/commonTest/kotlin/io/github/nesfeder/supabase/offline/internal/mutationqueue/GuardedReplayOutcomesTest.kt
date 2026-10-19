@@ -439,8 +439,14 @@ class GuardedReplayOutcomesTest {
         // When
         val report = replayer().sync()
 
-        // Then — never taken for a filter that missed: resent, and the change reached the server
+        // Then — never taken for a filter that missed: resent with the whole stored filter
+        // against the new version, and the change reached the server
         assertEquals(listOf("PATCH", "GET", "PATCH"), server.requests.map { it.method })
+        val resent = server.requests.last()
+        assertEquals(
+            listOf("eq.1", "like.the*", "eq.$MOVED_VERSION"),
+            listOf(resent.query["id"], resent.query["title"], resent.query[VERSION_COLUMN]),
+        )
         assertEquals(1, report.syncedCount)
         assertEquals(JsonPrimitive(true), server.rows(GUARDED_TABLE).single()["done"])
     }
@@ -489,6 +495,30 @@ class GuardedReplayOutcomesTest {
         assertEquals(listOf(onServer), cachedRows())
     }
 
+    @Test
+    fun a_settled_resend_that_its_filter_no_longer_reaches_still_counts_as_resolved() = runTest {
+        // Given — an update of task 1 while it is not done; another device renamed it, and while
+        // the policy settles that, a third change marks it done
+        server.seed(GUARDED_TABLE, taskRow(1, "theirs"))
+        store.cacheRows(taskRow(1, "theirs"))
+        store.mutationQueue.enqueueUpdate(GUARDED_TABLE, titled("mine"), notDone(1))
+        server.replaceRow(GUARDED_TABLE, taskRow(1, "elsewhere", version = MOVED_VERSION))
+        policy.answer = {
+            server.replaceRow(GUARDED_TABLE, taskRow(1, "elsewhere", true, LATER_VERSION))
+            ConflictDecision.KeepLocal
+        }
+
+        // When
+        val report = replayer().sync()
+
+        // Then — the resend's filter no longer reaches the row, which is a success, and the
+        // conflict the policy settled on the way is counted
+        assertEquals(listOf("PATCH", "GET", "PATCH", "GET"), server.requests.map { it.method })
+        assertEquals(1 to 1, report.syncedCount to report.conflictsResolvedCount)
+        assertEquals(1, policy.cases.size)
+        assertEquals(JsonPrimitive("elsewhere"), server.rows(GUARDED_TABLE).single()["title"])
+    }
+
     private fun titledLike(id: Int): FilterDescriptor =
         FilterDescriptor(
             conditions =
@@ -528,4 +558,9 @@ class GuardedReplayOutcomesTest {
 
     private fun titled(title: String): JsonObject =
         JsonObject(mapOf("title" to JsonPrimitive(title)))
+
+    private companion object {
+        /** A version later than [MOVED_VERSION], as a third change leaves it. */
+        const val LATER_VERSION = "2026-10-18T13:00:00.25+00:00"
+    }
 }

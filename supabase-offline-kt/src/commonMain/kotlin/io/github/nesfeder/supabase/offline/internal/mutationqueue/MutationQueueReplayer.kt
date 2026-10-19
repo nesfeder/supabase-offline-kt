@@ -958,11 +958,12 @@ internal class MutationQueueReplayer(
                     when {
                         // The row provably no longer meets the rest of the filter: the unguarded
                         // replay reached no row either, and that was a success
-                        beyondKey == RowMatch.EXCLUDED -> return ReplayOutcome.Synced(false)
+                        beyondKey == RowMatch.EXCLUDED ->
+                            return ReplayOutcome.Synced(false, conflictResolved = resolved)
                         // A condition the engine cannot judge, at the version the precondition
                         // named: the server itself found the filter does not reach the row
                         beyondKey == RowMatch.UNKNOWN && serverVersion == sentPrecondition ->
-                            return ReplayOutcome.Synced(false)
+                            return ReplayOutcome.Synced(false, conflictResolved = resolved)
                         serverVersion == sentPrecondition -> return policyDenied(mutation)
                         serverVersion == null ->
                             return parked(mutation, server, NO_SERVER_VERSION_REASON)
