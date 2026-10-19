@@ -72,6 +72,13 @@ All notable changes to this project are recorded in this file. The format follow
   `SyncReport.conflicted`; `SyncStatus.conflictedMutationCount`, counted together with the pending
   and rejected counts; and `PendingMutation.baseVersion`, the version a queued write replays
   against.
+- `mutationConflict(…)` and `conflictedMutation(…)` in `supabase-offline-kt-testing`, which build
+  the two new value types for a test of the app's own resolver or conflicted-list screen, and
+  overloads of `pendingMutation` (with `baseVersion`), `syncReport` (with the conflict counts and
+  `conflicted`) and `syncStatus` (with `conflictedMutationCount`) beside the existing factories.
+  `ConflictStagingTest` shows how to stage a row moved on the server between enqueue and replay
+  with a Ktor `MockEngine` alone: answer the guarded write with `[]` and the read by key with the
+  moved row.
 
 ### Changed
 

@@ -11,6 +11,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
+import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Instant
 import kotlinx.coroutines.flow.first
@@ -128,8 +129,43 @@ class InMemoryTest {
         supabase.close()
     }
 
+    @Test
+    fun a_table_with_a_version_column_records_a_base_and_replays_against_it() = runTest {
+        // Given — a row read at a version, and the server's answer to the guarded write
+        val guardedServer =
+            ScriptedServer(
+                rows = """[{"id":1,"title":"Buy milk","updated_at":"$BASE"}]""",
+                writtenRows = """[{"id":1,"title":"Oat milk","updated_at":"$NEXT"}]""",
+            )
+        val supabase = guardedServer.supabaseClient {
+            inMemory()
+            autoSync = false
+            versionColumn(TABLE, "updated_at")
+        }
+        supabase.offline.from(TABLE).select()
+
+        // When — the row is renamed offline, then the queue replays
+        supabase.offline.disableNetwork()
+        supabase.offline.from(TABLE).update(buildJsonObject { put("title", "Oat milk") }) {
+            filter { eq("id", 1) }
+        }
+        val queued = supabase.offline.pendingMutations().first().single()
+        supabase.offline.enableNetwork()
+        val report = supabase.offline.syncPendingMutations()
+
+        // Then — the in-memory queue kept the base, and the replay was preconditioned on it
+        assertEquals(BASE, queued.baseVersion)
+        assertEquals(1, report.syncedCount)
+        val write = guardedServer.writes.single()
+        assertEquals("eq.$BASE", write.url.parameters["updated_at"])
+        assertTrue("return=representation" in write.headers["Prefer"].orEmpty())
+        supabase.close()
+    }
+
     private companion object {
         const val TABLE = "todos"
         const val SERVER_ROWS = """[{"id":1,"title":"Buy milk"}]"""
+        const val BASE = "2026-10-18T13:00:27.486123+00:00"
+        const val NEXT = "2026-10-18T13:05:00.000002+00:00"
     }
 }
