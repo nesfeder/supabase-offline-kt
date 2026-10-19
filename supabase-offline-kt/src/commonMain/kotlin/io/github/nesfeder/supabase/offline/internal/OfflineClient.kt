@@ -48,6 +48,7 @@ import io.github.nesfeder.supabase.offline.internal.mutationqueue.AUTH_SESSION_S
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.AutomaticReplay
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.CONFLICT_POLICY_TIMEOUT
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.ConflictPolicy
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.ConflictRequeue
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.DefaultConflictPolicy
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.DefaultPrimaryKeys
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueue
@@ -846,9 +847,16 @@ internal class OfflineClient(
             val identity = queueIdentityReader.current() ?: return@call
             val entry = mutationQueue.shownConflict(id, identity.storedValue) ?: return@call
             requireResolvable(entry, resolution)
-            mutationQueue.requeueConflict(id, identity.storedValue, conflictDecisionOf(resolution))
-                ?: return@call
-            automaticReplay.requestPass()
+            val requeue =
+                mutationQueue.requeueConflict(
+                    id,
+                    identity.storedValue,
+                    conflictDecisionOf(resolution),
+                )
+            require(requeue != ConflictRequeue.Refused) {
+                "This conflicted mutation cannot be settled that way"
+            }
+            if (requeue is ConflictRequeue.Requeued) automaticReplay.requestPass()
         }
 
     override suspend fun dismissConflictedMutation(id: Long): Unit = operationGate.call {
@@ -862,10 +870,15 @@ internal class OfflineClient(
      */
     private fun requireResolvable(entry: StoredConflict, resolution: ConflictResolution) {
         when (resolution) {
-            ConflictResolution.KeepLocal ->
+            ConflictResolution.KeepLocal -> {
+                require(entry.serverVersion != null) {
+                    "This conflicted mutation's row is gone from the server: there is nothing to " +
+                        "resend it against"
+                }
                 require(entry.bodyOmittedChars == null) {
                     "This conflicted mutation cannot be resent: its body was too large to keep"
                 }
+            }
             is ConflictResolution.Apply ->
                 require(
                     entry.operation == MutationOperation.UPDATE.storedName &&

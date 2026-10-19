@@ -26,12 +26,15 @@ import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
 import io.github.nesfeder.supabase.offline.internal.network.NetworkAccess
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 import io.github.nesfeder.supabase.offline.internal.postgrest.RemoteTable
+import io.github.nesfeder.supabase.offline.internal.postgrest.RowMatch
 import io.github.nesfeder.supabase.offline.internal.postgrest.SendOutcome
 import io.github.nesfeder.supabase.offline.internal.postgrest.SupabaseRemoteTable
 import io.github.nesfeder.supabase.offline.internal.postgrest.decodeFilterOrNull
 import io.github.nesfeder.supabase.offline.internal.postgrest.encodeFilter
+import io.github.nesfeder.supabase.offline.internal.postgrest.isPlainColumn
 import io.github.nesfeder.supabase.offline.internal.postgrest.replayOnto
 import io.github.nesfeder.supabase.offline.internal.postgrest.replaysFully
+import io.github.nesfeder.supabase.offline.internal.postgrest.rowMatch
 import io.github.nesfeder.supabase.offline.internal.postgrest.sendCapturingEngineFailure
 import io.ktor.client.plugins.ResponseException
 import kotlin.time.Duration
@@ -63,7 +66,9 @@ import kotlinx.serialization.json.jsonPrimitive
 
 /**
  * Sends the mutation queue to Supabase: replay passes, and the immediate send of a mutation that is
- * at the head of its identity's queue when it is made. Exactly one sender at a time per mutation.
+ * at the head of its identity's queue when it is made. Exactly one sender at a time per mutation. A
+ * guarded write needs SELECT on its key, version and written columns, and its returned row must
+ * pass the table's SELECT policy, as any supabase-kt write with `select()` does.
  */
 internal class MutationQueueReplayer(
     /** The queue it sends, and records each send's outcome in. */
@@ -878,8 +883,8 @@ internal class MutationQueueReplayer(
     /**
      * Replays a guarded UPDATE or DELETE: preconditioned on its base version, asking for its rows
      * back. Rows back mean it applied; none, and one read of the row by key tells a policy denial,
-     * a lost answer, a gone row and a moved one, which [conflictPolicy] settles, resending at most
-     * [MAX_CONFLICT_ROUNDS] times in all before the write is parked.
+     * a lost answer, a row the filter no longer reaches, a stale base, a gone row and a moved one,
+     * which [conflictPolicy] settles, in at most [MAX_CONFLICT_ROUNDS] sends before it is parked.
      */
     private suspend fun replayGuarded(
         mutation: MutationRow,
@@ -894,19 +899,21 @@ internal class MutationQueueReplayer(
         var precondition = guarded.baseVersion
         var body = guarded.body
         var resolved = false
-        var lastCase: ConflictCase? = null
-        repeat(MAX_CONFLICT_ROUNDS) {
+        for (round in 1..MAX_CONFLICT_ROUNDS) {
             val sentBody = body
             val sentPrecondition = precondition
+            val returning = guarded.returnedColumns(sentBody)
             val startedAtTick = freshness.tickNow()
             val result =
                 when (
                     val sent =
                         attempt(mutation, identity, pass) {
                             if (sentBody == null) {
-                                tableApi.delete { guardedBy(guarded, sentPrecondition) }
+                                tableApi.delete { guardedBy(guarded, sentPrecondition, returning) }
                             } else {
-                                tableApi.update(sentBody) { guardedBy(guarded, sentPrecondition) }
+                                tableApi.update(sentBody) {
+                                    guardedBy(guarded, sentPrecondition, returning)
+                                }
                             }
                         }
                 ) {
@@ -925,11 +932,12 @@ internal class MutationQueueReplayer(
 
             // No row matched: one read of it by key tells why
             val readStartedAtTick = freshness.tickNow()
+            val readColumns = guarded.readColumns(sentBody)
             val server =
                 when (
                     val read =
                         attempt(mutation, identity, pass) {
-                            tableApi.select(Columns.ALL) {
+                            tableApi.select(readColumns) {
                                 replayOnto(this, guarded.keyFilter)
                                 limit(1)
                             }
@@ -947,10 +955,15 @@ internal class MutationQueueReplayer(
                 } else {
                     val serverVersion = versionTextOf(server[versionColumn])
                     when {
+                        // The row no longer meets the rest of the filter: the unguarded replay
+                        // reached no row either, and that was a success
+                        !guarded.filterBeyondKeyMatches(server) ->
+                            return ReplayOutcome.Synced(false)
                         serverVersion == sentPrecondition -> return policyDenied(mutation)
                         serverVersion == null ->
                             return parked(mutation, server, NO_SERVER_VERSION_REASON)
-                        // The earlier send landed and its answer was lost
+                        // The earlier send landed and its answer was lost. Values compare as JSON:
+                        // one the server rewrote (`1` as `1.0`) reads as a move, resent harmlessly
                         sentBody != null &&
                             sentBody.all { (column, value) -> server[column] == value } -> {
                             patchCacheAfterReplay(table) { patcher ->
@@ -966,7 +979,14 @@ internal class MutationQueueReplayer(
                         else -> movedCase(mutation, base, sentBody, server, serverVersion)
                     }
                 }
-            lastCase = case
+            // No send is left to act on an answer, so nobody is asked
+            if (round == MAX_CONFLICT_ROUNDS) return parked(case, KEPT_MOVING_REASON)
+            // A stale base, not a conflict: none of the UPDATE's columns moved on the server since
+            // the device saw the row, so it is resent at the new version without asking anyone
+            if (case is ConflictCase.Moved && sentBody != null && case.changedOnServer.isEmpty()) {
+                precondition = case.serverVersion
+                continue
+            }
             when (val decision = decide(case, pass)) {
                 ConflictDecision.KeepLocal -> {
                     if (case !is ConflictCase.Moved) return parked(case, HELD_REASON)
@@ -987,14 +1007,18 @@ internal class MutationQueueReplayer(
                 ConflictDecision.Hold -> return parked(case, HELD_REASON)
             }
         }
-        return parked(checkNotNull(lastCase), KEPT_MOVING_REASON)
+        error("A guarded replay ends within its rounds")
     }
 
-    /** The stored filter, the version precondition and a request for the rows back. */
-    private fun PostgrestRequestBuilder.guardedBy(guarded: Prepared.Guarded, precondition: String) {
+    /** The stored filter, the version precondition and a request for [returning] back. */
+    private fun PostgrestRequestBuilder.guardedBy(
+        guarded: Prepared.Guarded,
+        precondition: String,
+        returning: Columns,
+    ) {
         replayOnto(this, guarded.filter)
         filter { eq(guarded.versionColumn, precondition) }
-        select()
+        select(returning)
     }
 
     /** [mutation]'s base row as stored, or just its [baseVersion] when that no longer reads. */
@@ -1044,18 +1068,24 @@ internal class MutationQueueReplayer(
     /**
      * [conflictPolicy]'s decision on [case], bounded by [conflictPolicyTimeout]; a timeout or a
      * failure reads as Hold, logged with the table and the failure's type only.
+     *
+     * @throws CancellationException when [pass] is canceled while the policy decides.
      */
     private suspend fun decide(case: ConflictCase, pass: Job): ConflictDecision {
         val table = case.mutation.table
         return try {
-            withTimeoutOrNull(conflictPolicyTimeout) { conflictPolicy.decide(case) }
+            // In the pass's job, so a clear or a close that cancels the pass cuts the wait short
+            withContext(pass) {
+                withTimeoutOrNull(conflictPolicyTimeout) { conflictPolicy.decide(case) }
+            }
                 ?: ConflictDecision.Hold.also {
                     engineLogger.warning {
                         "The conflict policy for $table did not decide in time; holding the write"
                     }
                 }
         } catch (failure: Exception) {
-            if (failure is CancellationException && pass.isCancelled) throw failure
+            // The write stays queued, as for a request the pass's cancellation stopped
+            if (pass.isCancelled) throw CancellationException("The replay pass was stopped")
             engineLogger.warning {
                 "The conflict policy for $table failed (${failure::class.simpleName}); " +
                     "holding the write"
@@ -1116,7 +1146,7 @@ internal class MutationQueueReplayer(
         return ReplayOutcome.Rejected(message = POLICY_DENIED_REASON, serverError = null)
     }
 
-    /** [case]'s write, parked on the conflicted list for [message]. */
+    /** [case]'s write, parked for [message]; a gone row's always for [GONE_REASON]. */
     private fun parked(case: ConflictCase, message: String): ReplayOutcome.Conflicted =
         when (case) {
             is ConflictCase.Moved ->
@@ -1133,7 +1163,7 @@ internal class MutationQueueReplayer(
             is ConflictCase.Gone ->
                 parkedWith(
                     case.mutation,
-                    ParkedConflict(null, null, emptySet(), emptySet(), message),
+                    ParkedConflict(null, null, emptySet(), emptySet(), GONE_REASON),
                 )
         }
 
@@ -1145,6 +1175,7 @@ internal class MutationQueueReplayer(
     ): ReplayOutcome.Conflicted =
         parkedWith(mutation, ParkedConflict(server, null, emptySet(), emptySet(), message))
 
+    /** [mutation] as parked with [parked], said at info with its operation and table only. */
     private fun parkedWith(
         mutation: MutationRow,
         parked: ParkedConflict,
@@ -1211,15 +1242,43 @@ internal class MutationQueueReplayer(
 
         /**
          * A guarded UPDATE ([body] set) or DELETE (`null`): [filter] plus `eq` on [versionColumn],
-         * first at [baseVersion]; [keyFilter] reads its one row back.
+         * first at [baseVersion]; [keyFilter] reads its one row back by [keyColumns].
          */
         class Guarded(
             val body: JsonObject?,
             val filter: FilterDescriptor,
             val keyFilter: FilterDescriptor,
+            val keyColumns: List<String>,
             val versionColumn: String,
             val baseVersion: String,
-        ) : Prepared
+        ) : Prepared {
+
+            /** What a send of [sent] asks back: the key, the version and the columns it sets. */
+            fun returnedColumns(sent: JsonObject?): Columns =
+                selectedColumns(keyColumns + versionColumn + sent?.keys.orEmpty())
+
+            /** What the read by key asks for: [returnedColumns] and the filter's other columns. */
+            fun readColumns(sent: JsonObject?): Columns =
+                selectedColumns(
+                    keyColumns +
+                        versionColumn +
+                        sent?.keys.orEmpty() +
+                        filter.conditions
+                            .map { condition -> condition.column }
+                            .filter(::isPlainColumn)
+                )
+
+            /**
+             * Whether [row] meets every condition of [filter] beyond the key, as the overlay
+             * evaluates them; `true` when there is none. One it cannot evaluate does not meet it.
+             */
+            fun filterBeyondKeyMatches(row: JsonObject): Boolean {
+                val beyondKey =
+                    filter.conditions.filterNot { condition -> condition.column in keyColumns }
+                if (beyondKey.isEmpty()) return true
+                return rowMatch(row, FilterDescriptor(conditions = beyondKey)) == RowMatch.MATCHES
+            }
+        }
     }
 
     private fun refuse(mutation: MutationRow, reason: String, message: String): Prepared.Refused {
@@ -1351,7 +1410,14 @@ internal class MutationQueueReplayer(
                         FilterDescriptor.Condition(column, "eq", value.jsonPrimitive.content)
                     }
             )
-        return Prepared.Guarded(body, filter, keyFilter, versionColumn, baseVersion)
+        return Prepared.Guarded(
+            body = body,
+            filter = filter,
+            keyFilter = keyFilter,
+            keyColumns = key.keys.toList(),
+            versionColumn = versionColumn,
+            baseVersion = baseVersion,
+        )
     }
 
     /**
@@ -1567,6 +1633,9 @@ internal class MutationQueueReplayer(
         /** Why a write is parked when the conflict policy holds it. */
         const val HELD_REASON = "The row changed on the server since this write was made"
 
+        /** Why a write is parked when its row is gone from the server, or hidden from the user. */
+        const val GONE_REASON = "The row is gone from the server, or hidden from this user"
+
         /** Why a write is parked when its row kept moving while it was replayed. */
         const val KEPT_MOVING_REASON =
             "The row kept changing on the server while this write was replayed"
@@ -1580,3 +1649,15 @@ internal class MutationQueueReplayer(
         const val BODY_NO_LONGER_PARSES = "has a body that no longer parses"
     }
 }
+
+/**
+ * [columns], each once, as a PostgREST `select` list: a name with anything but letters, digits and
+ * underscores is double-quoted.
+ */
+private fun selectedColumns(columns: List<String>): Columns =
+    Columns.list(
+        columns.distinct().map { column ->
+            if (column.all { character -> character.isLetterOrDigit() || character == '_' }) column
+            else "\"" + column.replace("\"", "\\\"") + "\""
+        }
+    )

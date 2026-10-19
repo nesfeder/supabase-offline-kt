@@ -21,8 +21,9 @@ import kotlinx.serialization.json.JsonObject
  *   list (such an entry cannot be resent with [ConflictResolution.KeepLocal]).
  * @property base the columns the write sets and the version column, as the device last saw the row;
  *   empty when they could not be kept.
- * @property server the server's row when the replay read it (its key columns, the version column
- *   and the columns the write sets); `null` when it was gone, or too large to keep.
+ * @property server the server's row when the replay read it, in part: its key columns, the version
+ *   column, the columns the write sets and the columns the write's filter names. `null` when it was
+ *   gone, or too large to keep.
  * @property serverVersion the server row's version then, as text; `null` when the row was gone. A
  *   write resolved from the list is sent preconditioned on it.
  * @property changedOnServer the columns the write sets whose server value differed from [base]'s.

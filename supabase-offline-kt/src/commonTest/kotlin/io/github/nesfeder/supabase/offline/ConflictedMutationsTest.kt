@@ -73,6 +73,7 @@ class ConflictedMutationsTest {
                         put("title", "theirs")
                         put(VERSION_COLUMN, FIRST_VERSION)
                     },
+                // The fake server answers whole rows, whatever the read selects
                 server = renamedElsewhere,
                 serverVersion = MOVED_VERSION,
                 changedOnServer = setOf("title"),
@@ -196,6 +197,28 @@ class ConflictedMutationsTest {
 
         // Then
         assertEquals(listOf(id), client.conflictedMutations().first().map { it.id })
+        client.close()
+    }
+
+    @Test
+    fun keep_local_is_refused_for_a_row_gone_from_the_server() = runTest {
+        // Given — an update of a row deleted elsewhere, held by the resolver
+        val client = newGuardedClient(server, holding)
+        server.seed(GUARDED_TABLE, taskRow(1, "theirs"))
+        val id = client.queueWhileOffline(server) { renameTask(1, "mine") }
+        server.deleteRow(GUARDED_TABLE, "1")
+        client.syncPendingMutations()
+
+        // When
+        assertFailsWith<IllegalArgumentException> {
+            client.resolveConflictedMutation(id, ConflictResolution.KeepLocal)
+        }
+
+        // Then — it stays listed, and dropping it is still possible
+        assertEquals(listOf(id), client.conflictedMutations().first().map { it.id })
+        client.resolveConflictedMutation(id, ConflictResolution.KeepServer)
+        assertEquals(emptyList(), client.conflictedMutations().first())
+        assertEquals(0, client.pendingMutationCount())
         client.close()
     }
 

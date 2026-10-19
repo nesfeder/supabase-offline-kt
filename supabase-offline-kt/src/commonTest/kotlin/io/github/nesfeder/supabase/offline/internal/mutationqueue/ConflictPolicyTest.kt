@@ -21,9 +21,15 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -147,6 +153,56 @@ class ConflictPolicyTest {
         val row = (Json.parseToJsonElement(cached.orEmpty()) as JsonArray).single() as JsonObject
         assertEquals(JsonPrimitive("elsewhere"), row["title"])
         assertEquals(JsonPrimitive(MOVED_VERSION), row[VERSION_COLUMN])
+    }
+
+    @Test
+    fun a_policy_may_read_the_queue_while_it_decides() = runTest {
+        // Given — a policy that takes the queue's lock, as an app resolver reading counts would
+        queueConflictingRename()
+        var counted: Int? = null
+        policy.answer = { case ->
+            counted =
+                store.mutationQueue.holdingQueueLock {
+                    store.mutationQueue.allPendingMutations().size
+                }
+            DefaultConflictPolicy.decide(case)
+        }
+
+        // When — bounded in real time, so a decision under the lock fails rather than hangs
+        val report = withContext(Dispatchers.Default) { withTimeout(10.seconds) { sync() } }
+
+        // Then — it read the write as still queued, and the pass went on to send it
+        assertEquals(1, counted)
+        assertEquals(1 to 1, report.syncedCount to report.conflictsResolvedCount)
+    }
+
+    @Test
+    fun clearing_local_data_while_the_policy_decides_cuts_the_wait_and_parks_nothing() = runTest {
+        // Given — a policy that would take its whole bound
+        queueConflictingRename()
+        val asked = CompletableDeferred<Unit>()
+        policy.answer = {
+            asked.complete(Unit)
+            awaitCancellation()
+        }
+        val replayer =
+            newTestMutationQueueReplayer(
+                store = store,
+                supabase = server.supabaseClient(),
+                conflictPolicy = policy,
+            )
+        val running = async(Dispatchers.Default) { replayer.sync() }
+        withContext(Dispatchers.Default) { withTimeout(10.seconds) { asked.await() } }
+
+        // When — a clear, which cancels the pass, keeping the queue here
+        withContext(Dispatchers.Default) { withTimeout(10.seconds) { replayer.clearLocalData {} } }
+        val report =
+            withContext(Dispatchers.Default) { withTimeout(10.seconds) { running.await() } }
+
+        // Then — the pass ended at once, and the write was left queued, not parked
+        assertEquals(SyncStop.LocalDataCleared, report.stop)
+        assertEquals(1, store.pendingMutationCount())
+        assertEquals(emptyList(), store.mutationQueue.conflictedList.conflicts())
     }
 
     private fun titled(title: String): JsonObject =

@@ -102,11 +102,18 @@ internal class FakeRelationalPostgrestServer(
      */
     var failsRequest: ((RecordedRequest) -> Boolean)? = null
 
+    /**
+     * Runs before a request is answered, outside the server's turn: a test parks a request here to
+     * act while it is on the wire. `null` answers at once.
+     */
+    var beforeAnswer: (suspend (RecordedRequest) -> Unit)? = null
+
     /** The recording server underneath; its `requests` list everything received. */
     val recorder: RecordingPostgrestServer =
         RecordingPostgrestServer(
             answer = { request ->
                 if (request.method == "GET" && answerDelayMillis > 0) delay(answerDelayMillis)
+                beforeAnswer?.invoke(request)
                 if (failsRequest?.invoke(request) == true) connectivityFailure()
                 answering.withLock { handle(request) }
             },

@@ -16,8 +16,9 @@ import kotlinx.serialization.json.JsonObject
  *   [PendingMutation.rowKeys] gives them).
  * @property base the columns the write sets and the version column, as the device last saw the row.
  * @property local the columns the write sets, with the values it sets them to; `null` for a DELETE.
- * @property server the server's row as it is now: its key columns, the version column and the
- *   columns the write sets. `null` when it is gone, or hidden from this user by a row-level policy.
+ * @property server the server's row as it is now, in part: its key columns, the version column, the
+ *   columns the write sets and the columns the write's filter names. `null` when it is gone, or
+ *   hidden from this user by a row-level policy.
  * @property changedOnServer the columns the write sets whose server value differs from [base]'s:
  *   what changed elsewhere. Empty for a DELETE, and for a row that is gone.
  * @property conflictingColumns of [changedOnServer], the columns [local] sets to another value than

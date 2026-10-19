@@ -30,8 +30,14 @@ private const val CONFLICTED_MUTATION_LIST_FORMAT_VERSION: Int = 1
  * be re-queued exactly, and what the server's row was when the replay found it moved.
  *
  * @property id The id it had in the queue.
+ * @property table [MutationRow.table].
  * @property operation [MutationRow.operation], in its stored form.
  * @property bodyJson [MutationRow.bodyJson], or empty when [bodyOmittedChars] is set.
+ * @property filterJson [MutationRow.filterJson].
+ * @property createdAtMs [MutationRow.createdAtMs].
+ * @property defaultToNull [MutationRow.defaultToNull].
+ * @property onConflict [MutationRow.onConflict].
+ * @property ignoreDuplicates [MutationRow.ignoreDuplicates].
  * @property owner The identity that made the write, or `null` when none was recorded.
  * @property baseVersion [MutationRow.baseVersion].
  * @property baseJson [MutationRow.baseJson].
@@ -92,6 +98,7 @@ internal class ConflictedMutationList(
     private val logger: EngineLogger,
 ) {
 
+    /** The list as last read or written; `null` until it is first read. */
     private val conflictedCache = MutableStateFlow<StoredConflictList?>(null)
 
     /** Every conflicted mutation, oldest first; an unreadable row is kept aside and reads empty. */
@@ -163,6 +170,7 @@ internal class ConflictedMutationList(
         conflictedCache.value = StoredConflictList()
     }
 
+    /** The list, read from its row the first time; an unreadable row is kept aside. */
     private suspend fun conflictedList(): StoredConflictList {
         conflictedCache.value?.let {
             return it
@@ -197,6 +205,7 @@ internal class ConflictedMutationList(
         return fresh
     }
 
+    /** The reserved row holding [list]. */
     private fun rowOf(list: StoredConflictList): CachedQueryRow =
         CachedQueryRow(
             table = RESERVED_TABLE_NAME,
@@ -226,6 +235,7 @@ internal class ConflictedMutationList(
     private fun charactersOf(entry: StoredConflict): Int =
         json.encodeToString(StoredConflict.serializer(), entry).length
 
+    /** [payload] decoded with [serializer], or `null` when it does not decode. */
     private fun <T> decodeOrNull(serializer: KSerializer<T>, payload: String): T? =
         try {
             json.decodeFromString(serializer, payload)

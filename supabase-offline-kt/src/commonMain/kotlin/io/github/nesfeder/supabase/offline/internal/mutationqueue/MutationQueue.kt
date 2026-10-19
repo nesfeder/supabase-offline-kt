@@ -199,38 +199,41 @@ internal class MutationQueue(
         /**
          * Queues an UPDATE, with an optional [filter] describing the targeted rows.
          *
+         * @param base the write's base, read with [baseFor] before the queue lock; `null` for none.
          * @return The row as stored.
          */
         suspend fun enqueueUpdate(
             table: String,
             body: JsonElement,
             filter: FilterDescriptor? = null,
-        ): MutationRow {
-            val base = baseOf(table, filter, columns = (body as? JsonObject)?.keys)
-            return insert(
+            base: MutationBase? = null,
+        ): MutationRow =
+            insert(
                 table = table,
                 operation = MutationOperation.UPDATE,
                 bodyJson = body.toString(),
                 filter = filter,
                 base = base,
             )
-        }
 
         /**
          * Queues a DELETE. [filter] describes which rows are removed.
          *
+         * @param base the write's base, read with [baseFor] before the queue lock; `null` for none.
          * @return The row as stored.
          */
-        suspend fun enqueueDelete(table: String, filter: FilterDescriptor? = null): MutationRow {
-            val base = baseOf(table, filter, columns = emptySet())
-            return insert(
+        suspend fun enqueueDelete(
+            table: String,
+            filter: FilterDescriptor? = null,
+            base: MutationBase? = null,
+        ): MutationRow =
+            insert(
                 table = table,
                 operation = MutationOperation.DELETE,
                 bodyJson = "{}",
                 filter = filter,
                 base = base,
             )
-        }
 
         /** Stores one pending mutation of [owner]'s, tells [table]'s readers, and returns it. */
         private suspend fun insert(
@@ -266,14 +269,18 @@ internal class MutationQueue(
     }
 
     /**
-     * The base of an UPDATE or DELETE of [table] by [filter] that sets [columns]: the newest cached
-     * row with the key [filter] pins and the version column, or `null` to replay it unguarded.
-     * Caller holds the queue lock, so a base is read before or after a forward, never between.
+     * The base of an UPDATE or DELETE of [table] by [filter] that sets [columns] (none for a
+     * DELETE), read from [identity]'s cache: the newest cached row with the key [filter] pins and
+     * the version column, or `null` to replay it unguarded. Read before the queue lock: a base a
+     * forward overtakes in between is older at worst, which its replay meets as a stale base.
+     *
+     * @param identity the enqueuing identity's stored value, or `null` when there is none.
      */
-    private suspend fun baseOf(
+    suspend fun baseFor(
         table: String,
         filter: FilterDescriptor?,
         columns: Set<String>?,
+        identity: String?,
     ): MutationBase? {
         val versionColumn = versionColumns.of(table) ?: return null
         val lookup = cachedRowLookup.load() ?: return null
@@ -285,7 +292,7 @@ internal class MutationQueue(
         if (key == null) return null
         val row =
             try {
-                lookup.cachedRowHolding(table, key, versionColumn)
+                lookup.cachedRowHolding(table, key, versionColumn, identity)
             } catch (cancellation: CancellationException) {
                 throw cancellation
             } catch (failure: Exception) {
@@ -798,43 +805,50 @@ internal class MutationQueue(
      * [identity] and preconditioned on the server version the entry recorded, in one transaction
      * with the entry's removal. [ConflictDecision.KeepServer] only removes the entry.
      *
-     * @param decision [ConflictDecision.KeepLocal], [ConflictDecision.Apply] (an UPDATE of a row
-     *   still on the server) or [ConflictDecision.KeepServer].
-     * @return The new pending mutation's id; `null` when there is no such entry, it is another
-     *   identity's, its body was not kept, the decision does not apply, or it only left the list.
+     * @param decision [ConflictDecision.KeepLocal] (a row still on the server),
+     *   [ConflictDecision.Apply] (an UPDATE of one) or [ConflictDecision.KeepServer].
+     * @return What became of the entry.
      */
-    suspend fun requeueConflict(id: Long, identity: String?, decision: ConflictDecision): Long? =
-        mutationQueueMutex.withLock {
-            val entry =
-                conflictedList.conflicts().firstOrNull { conflict -> conflict.id == id }
-                    ?: return@withLock null
-            if (identity != null && !belongsTo(entry.owner, identity)) return@withLock null
-            if (decision == ConflictDecision.KeepServer) {
-                conflictedList.removeConflict(id)
-                return@withLock null
-            }
-            val row = requeuedRowOf(entry, decision, owner = identity) ?: return@withLock null
-            val (conflictedRow, list) = conflictedList.conflictedRowWith(removeId = id)
-            val newId = mutationDao.inTransaction {
-                val inserted = mutationDao.insert(row)
-                queryCacheDao.upsert(conflictedRow)
-                inserted
-            }
-            conflictedList.conflictWritten(list)
-            noteMutationsChanged(row.table)
-            newId
+    suspend fun requeueConflict(
+        id: Long,
+        identity: String?,
+        decision: ConflictDecision,
+    ): ConflictRequeue = mutationQueueMutex.withLock {
+        val entry =
+            conflictedList.conflicts().firstOrNull { conflict -> conflict.id == id }
+                ?: return@withLock ConflictRequeue.NotFound
+        if (identity != null && !belongsTo(entry.owner, identity))
+            return@withLock ConflictRequeue.NotFound
+        if (decision == ConflictDecision.KeepServer) {
+            conflictedList.removeConflict(id)
+            return@withLock ConflictRequeue.Dropped
         }
+        val row =
+            requeuedRowOf(entry, decision, owner = identity)
+                ?: return@withLock ConflictRequeue.Refused
+        val (conflictedRow, list) = conflictedList.conflictedRowWith(removeId = id)
+        val newId = mutationDao.inTransaction {
+            val inserted = mutationDao.insert(row)
+            queryCacheDao.upsert(conflictedRow)
+            inserted
+        }
+        conflictedList.conflictWritten(list)
+        noteMutationsChanged(row.table)
+        ConflictRequeue.Requeued(newId)
+    }
 
     /**
      * The row [entry] re-queues as under [decision], at the tail: its body, or for
      * [ConflictDecision.Apply] the given columns, preconditioned on the server's version; `null`
-     * when the decision does not apply to it, or it would resend a body that was not kept.
+     * when the decision does not apply to it (a row gone from the server takes neither, since it
+     * would replay unguarded and change nothing) or it would resend a body that was not kept.
      */
     private fun requeuedRowOf(
         entry: StoredConflict,
         decision: ConflictDecision,
         owner: String?,
     ): MutationRow? {
+        if (entry.serverVersion == null) return null
         if (entry.bodyOmittedChars != null && decision !is ConflictDecision.Apply) return null
         val bodyJson =
             when (decision) {
@@ -1259,6 +1273,29 @@ internal class ParkedConflict(
  */
 internal fun interface CachedRowLookup {
 
-    /** The newest cached row of [table] with [key] that holds [column], or `null`. */
-    suspend fun cachedRowHolding(table: String, key: List<String>, column: String): JsonObject?
+    /**
+     * The newest row with [key] that holds [column] in [identity]'s cache of [table], or `null`.
+     */
+    suspend fun cachedRowHolding(
+        table: String,
+        key: List<String>,
+        column: String,
+        identity: String?,
+    ): JsonObject?
+}
+
+/** What [MutationQueue.requeueConflict] did with a conflicted entry. */
+internal sealed interface ConflictRequeue {
+
+    /** It is queued again, at the tail, as the pending mutation [id]. */
+    data class Requeued(val id: Long) : ConflictRequeue
+
+    /** It left the list, its change dropped: the server's row stands. */
+    data object Dropped : ConflictRequeue
+
+    /** There is no such entry the identity may settle. */
+    data object NotFound : ConflictRequeue
+
+    /** The decision does not apply to it, or its body was not kept; it stays on the list. */
+    data object Refused : ConflictRequeue
 }

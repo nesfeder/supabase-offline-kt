@@ -46,6 +46,11 @@ class ConflictResolverTest {
     /** Task 1 as another device's rename leaves it. */
     private val renamedElsewhere: JsonObject = taskRow(1, "elsewhere", version = MOVED_VERSION)
 
+    /*
+     * The fake server answers whole rows whatever the read selects; PostgREST answers only the
+     * columns the replay names, which the request tests pin.
+     */
+
     @Test
     fun a_row_renamed_on_both_sides_shows_the_resolver_each_side_and_the_conflicting_column() =
         runTest {
@@ -77,22 +82,19 @@ class ConflictResolverTest {
         }
 
     @Test
-    fun a_row_changed_elsewhere_on_another_column_shows_no_conflicting_column() = runTest {
+    fun a_row_changed_elsewhere_on_another_column_only_is_resent_without_asking() = runTest {
         // Given — another device marked the task done
         val client = newGuardedClient(server, resolver)
         client.queueRename()
-        val doneElsewhere = taskRow(1, "theirs", done = true, version = MOVED_VERSION)
-        server.replaceRow(GUARDED_TABLE, doneElsewhere)
+        server.replaceRow(GUARDED_TABLE, taskRow(1, "theirs", done = true, version = MOVED_VERSION))
 
         // When
         val report = client.syncPendingMutations()
 
-        // Then — the write's one column is unchanged on the server, so nothing conflicts
-        val conflict = resolver.conflicts.single()
-        assertEquals(doneElsewhere, conflict.server)
-        assertEquals(emptySet(), conflict.changedOnServer)
-        assertEquals(emptySet(), conflict.conflictingColumns)
-        assertEquals(1 to 1, report.syncedCount to report.conflictsResolvedCount)
+        // Then — the write's one column is unchanged on the server: nothing to decide
+        assertEquals(emptyList(), resolver.conflicts)
+        assertEquals(1 to 0, report.syncedCount to report.conflictsResolvedCount)
+        assertEquals("eq.$MOVED_VERSION", server.requests.last().query[VERSION_COLUMN])
         assertEquals(
             JsonPrimitive("mine") to JsonPrimitive(true),
             server.rows(GUARDED_TABLE).single().let { it["title"] to it["done"] },

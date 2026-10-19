@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.mutationqueue
 
+import io.github.jan.supabase.postgrest.postgrest
 import io.github.nesfeder.supabase.offline.MutationOutcome
 import io.github.nesfeder.supabase.offline.testdoubles.FIRST_VERSION
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
@@ -16,13 +17,20 @@ import io.github.nesfeder.supabase.offline.testdoubles.idleCoroutineScope
 import io.github.nesfeder.supabase.offline.testdoubles.newGuardedStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestMutationQueueReplayer
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
+import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineTable
 import io.github.nesfeder.supabase.offline.testdoubles.rowWithId
 import io.github.nesfeder.supabase.offline.testdoubles.taskRow
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 
@@ -128,6 +136,58 @@ class BaseForwardingTest {
         )
         client.close()
     }
+
+    @Test
+    fun a_send_at_the_head_with_its_row_asked_back_moves_the_base_of_a_write_queued_meanwhile() =
+        runTest {
+            // Given — task 1 cached; an update sent at once with select(), held on the wire while
+            // a second update of the row is made, queued behind it against the cached version
+            val mutationDao = FakeMutationDao()
+            val store = newGuardedStore(mutationDao = mutationDao)
+            server.seed(GUARDED_TABLE, taskRow(1, "theirs"))
+            store.cacheRows(taskRow(1, "theirs"))
+            val tasks =
+                newTestOfflineTable(
+                    delegate = server.supabaseClient().postgrest.from(GUARDED_TABLE),
+                    store = store,
+                )
+            val arrived = CompletableDeferred<Unit>()
+            val release = CompletableDeferred<Unit>()
+            server.beforeAnswer = { request ->
+                if (request.method == "PATCH" && !arrived.isCompleted) {
+                    arrived.complete(Unit)
+                    release.await()
+                }
+            }
+            val first =
+                async(Dispatchers.Default) {
+                    tasks.update(column("title", "mine")) {
+                        filter { eq("id", 1) }
+                        select()
+                    }
+                }
+            withContext(Dispatchers.Default) { withTimeout(10.seconds) { arrived.await() } }
+            val second = tasks.update(column("done", true)) { filter { eq("id", 1) } }
+            val queuedBase = mutationDao.inserted.last().baseVersion
+
+            // When — the first lands with its row, then the queue replays the second
+            release.complete(Unit)
+            assertIs<MutationOutcome.Applied>(first.await())
+            val returnedVersion = server.rows(GUARDED_TABLE).single()[VERSION_COLUMN]
+            val report =
+                newTestMutationQueueReplayer(store = store, supabase = server.supabaseClient())
+                    .sync()
+
+            // Then — queued against the version it saw, it replayed against the one returned
+            assertIs<MutationOutcome.Queued>(second)
+            assertEquals(FIRST_VERSION, queuedBase)
+            assertEquals(
+                "eq.${(returnedVersion as JsonPrimitive).content}",
+                server.requests.last().query[VERSION_COLUMN],
+            )
+            assertEquals(listOf("PATCH", "PATCH"), server.requests.map { it.method })
+            assertEquals(1 to 0, report.syncedCount to report.conflictsResolvedCount)
+        }
 
     private fun column(name: String, value: String): JsonObject =
         JsonObject(mapOf(name to JsonPrimitive(value)))
