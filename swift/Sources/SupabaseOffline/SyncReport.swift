@@ -28,19 +28,37 @@ public struct SyncReport: Sendable, Hashable {
     /// sync of every table sends them in order. Always `0` for a sync of every table.
     public let heldBehindOtherTablesCount: Int
 
+    /// Of ``syncedCount``, the guarded writes whose row had moved on the server and that were sent
+    /// once the conflict was settled.
+    public let conflictsResolvedCount: Int
+
+    /// The guarded writes dropped without being sent because the server's row stands
+    /// (``ConflictResolution/keepServer``).
+    public let conflictsKeptServerCount: Int
+
+    /// The guarded writes parked during this call, now on
+    /// ``SupabaseOfflineClient/conflictedMutations()`` unless local data was cleared since.
+    public let conflicted: [ConflictedMutation]
+
     /// Built by the package, and by the testing product's factories.
     package init(
         syncedCount: Int,
         rejected: [RejectedMutation],
         remainingCount: Int,
         alreadyOnServerCount: Int,
-        heldBehindOtherTablesCount: Int
+        heldBehindOtherTablesCount: Int,
+        conflictsResolvedCount: Int = 0,
+        conflictsKeptServerCount: Int = 0,
+        conflicted: [ConflictedMutation] = []
     ) {
         self.syncedCount = syncedCount
         self.rejected = rejected
         self.remainingCount = remainingCount
         self.alreadyOnServerCount = alreadyOnServerCount
         self.heldBehindOtherTablesCount = heldBehindOtherTablesCount
+        self.conflictsResolvedCount = conflictsResolvedCount
+        self.conflictsKeptServerCount = conflictsKeptServerCount
+        self.conflicted = conflicted
     }
 }
 
@@ -53,7 +71,10 @@ extension SyncReport {
             rejected: try report.rejected.map(RejectedMutation.init(core:)),
             remainingCount: Int(report.remainingCount),
             alreadyOnServerCount: Int(report.alreadyOnServerCount),
-            heldBehindOtherTablesCount: Int(report.heldBehindOtherTablesCount)
+            heldBehindOtherTablesCount: Int(report.heldBehindOtherTablesCount),
+            conflictsResolvedCount: Int(report.conflictsResolvedCount),
+            conflictsKeptServerCount: Int(report.conflictsKeptServerCount),
+            conflicted: try report.conflicted.map(ConflictedMutation.init(core:))
         )
     }
 }

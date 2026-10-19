@@ -258,4 +258,108 @@ struct TestValuesTests {
         #expect(closed.code == .clientClosed)
         #expect(!closed.isNetworkOrConnectivityFailure)
     }
+
+    @Test func aMutationConflictTakesEveryField() {
+        // When
+        let given = mutationConflict(
+            mutationId: 7,
+            table: "todos",
+            operation: .update,
+            rowKey: ["id": "1"],
+            base: ["title": "Milk", "updated_at": "v1"],
+            local: ["title": "Mine"],
+            server: ["id": 1, "title": "Theirs", "updated_at": "v2"],
+            changedOnServer: ["title"],
+            conflictingColumns: ["title"]
+        )
+        let defaulted = mutationConflict(mutationId: 8, table: "todos", operation: .delete, rowKey: ["id": "2"])
+
+        // Then
+        #expect(given.mutationId == 7)
+        #expect(given.table == "todos")
+        #expect(given.operation == .update)
+        #expect(given.rowKey == ["id": "1"])
+        #expect(given.base == ["title": "Milk", "updated_at": "v1"])
+        #expect(given.local == ["title": "Mine"])
+        #expect(given.server == ["id": 1, "title": "Theirs", "updated_at": "v2"])
+        #expect(given.changedOnServer == ["title"])
+        #expect(given.conflictingColumns == ["title"])
+        #expect(defaulted.base.isEmpty)
+        #expect(defaulted.local == nil)
+        #expect(defaulted.server == nil)
+        #expect(defaulted.changedOnServer.isEmpty)
+        #expect(defaulted.conflictingColumns.isEmpty)
+    }
+
+    @Test func aConflictedMutationTakesEveryField() {
+        // When
+        let given = conflictedMutation(
+            id: 7,
+            table: "todos",
+            operation: .update,
+            createdAt: Self.at,
+            rowKeys: [["id": "1"]],
+            body: ["title": "Mine"],
+            base: ["title": "Milk"],
+            server: ["title": "Theirs"],
+            serverVersion: "v2",
+            changedOnServer: ["title"],
+            conflictingColumns: ["title"],
+            message: "moved",
+            conflictedAt: Self.at.addingTimeInterval(60)
+        )
+        let defaulted = conflictedMutation(
+            id: 8,
+            table: "todos",
+            operation: .delete,
+            createdAt: Self.at,
+            message: "moved",
+            conflictedAt: Self.at
+        )
+
+        // Then
+        #expect(given.id == 7)
+        #expect(given.table == "todos")
+        #expect(given.operation == .update)
+        #expect(given.createdAt == Self.at)
+        #expect(given.rowKeys == [["id": "1"]])
+        #expect(given.body == ["title": "Mine"])
+        #expect(given.base == ["title": "Milk"])
+        #expect(given.server == ["title": "Theirs"])
+        #expect(given.serverVersion == "v2")
+        #expect(given.changedOnServer == ["title"])
+        #expect(given.conflictingColumns == ["title"])
+        #expect(given.message == "moved")
+        #expect(given.conflictedAt == Self.at.addingTimeInterval(60))
+        #expect(defaulted.rowKeys.isEmpty)
+        #expect(defaulted.body == nil)
+        #expect(defaulted.base.isEmpty)
+        #expect(defaulted.server == nil)
+        #expect(defaulted.serverVersion == nil)
+        #expect(defaulted.changedOnServer.isEmpty)
+        #expect(defaulted.conflictingColumns.isEmpty)
+    }
+
+    @Test func theOverloadsTakeTheAppendedFields() {
+        // When
+        let pending = pendingMutation(id: 7, table: "todos", operation: .update, createdAt: Self.at, baseVersion: "v1")
+        let parked = conflictedMutation(id: 8, table: "todos", operation: .update, createdAt: Self.at, message: "moved", conflictedAt: Self.at)
+        let report = syncReport(syncedCount: 2, conflictsResolvedCount: 1, conflictsKeptServerCount: 3, conflicted: [parked])
+        let plainReport = syncReport(syncedCount: 2)
+        let status = syncStatus(pendingMutationCount: 1, conflictedMutationCount: 4)
+        let plainStatus = syncStatus()
+
+        // Then
+        #expect(pending.baseVersion == "v1")
+        #expect(pendingMutation(id: 7, table: "todos", operation: .update, createdAt: Self.at).baseVersion == nil)
+        #expect(report.conflictsResolvedCount == 1)
+        #expect(report.conflictsKeptServerCount == 3)
+        #expect(report.conflicted == [parked])
+        #expect(plainReport.conflictsResolvedCount == 0)
+        #expect(plainReport.conflicted.isEmpty)
+        #expect(status.conflictedMutationCount == 4)
+        #expect(status.pendingMutationCount == 1)
+        #expect(plainStatus.conflictedMutationCount == 0)
+        #expect(status != syncStatus(pendingMutationCount: 1))
+    }
 }

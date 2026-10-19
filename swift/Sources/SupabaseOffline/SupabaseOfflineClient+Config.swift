@@ -80,10 +80,34 @@ extension SupabaseOfflineClient {
         /// ``OfflineError/Code/configuration``.
         public var realtimeTables: [RealtimeTable]
 
+        /// Each table's version column, by table name, keyed as ``primaryKeys`` is: a column a
+        /// server-side trigger changes on every update of a row, such as `updated_at` kept by
+        /// `moddatetime`, or an integer; none by default.
+        ///
+        /// Naming it guards the replay of a queued update or delete of one of the table's rows: when
+        /// the write's filter pins the row's key and the cache holds the row with the column, the
+        /// queue records the version the device saw, and a sync pass sends the write only while the
+        /// server's row still has it. A row that moved meanwhile is a conflict, settled by
+        /// ``conflictResolver``. A write sent at once, an insert, an upsert, and a write the queue
+        /// cannot pin to one cached row stay unguarded: the last write wins. A blank column, or one
+        /// of the table's key columns, fails the open with ``OfflineError/Code/configuration``.
+        public var versionColumns: [String: String]
+
+        /// Settles the conflicts a sync pass finds when it replays a guarded write
+        /// (``versionColumns``); `nil`, the default, settles them as ``ConflictResolution`` says.
+        ///
+        /// It is asked about an update whose row moved with one of the write's columns changed on
+        /// the server too, a delete of a row that moved, and an update whose row is gone. It runs in
+        /// a task of its own, off the main actor, while the pass waits for its answer, so it should
+        /// answer promptly and never wait for a sync itself. A throw, or no answer within 30
+        /// seconds, reads as ``ConflictResolution/hold``: the write is parked on
+        /// ``SupabaseOfflineClient/conflictedMutations()``.
+        public var conflictResolver: (@Sendable (MutationConflict) async throws -> ConflictResolution)?
+
         /// The least severe message written to the unified log, under the subsystem `SupabaseOffline`.
         public var logLevel: LogLevel
 
-        /// A configuration with every value given or defaulted, and no Realtime table.
+        /// A configuration with every value given or defaulted, no Realtime table and no version column.
         public init(
             defaultSchema: String = "public",
             accessToken: (@Sendable () async throws -> String?)? = nil,
@@ -123,6 +147,38 @@ extension SupabaseOfflineClient {
             realtimeTables: [RealtimeTable],
             logLevel: LogLevel = .warning
         ) {
+            self.init(
+                defaultSchema: defaultSchema,
+                accessToken: accessToken,
+                dataDirectory: dataDirectory,
+                cacheSize: cacheSize,
+                fileCacheSize: fileCacheSize,
+                networkAvailability: networkAvailability,
+                autoSync: autoSync,
+                primaryKeys: primaryKeys,
+                realtimeTables: realtimeTables,
+                versionColumns: [:],
+                conflictResolver: nil,
+                logLevel: logLevel
+            )
+        }
+
+        /// A configuration with every value given or defaulted, naming the tables whose queued
+        /// writes replay against a version column.
+        public init(
+            defaultSchema: String = "public",
+            accessToken: (@Sendable () async throws -> String?)? = nil,
+            dataDirectory: URL? = nil,
+            cacheSize: CacheSize = .bytes(100 * 1_024 * 1_024),
+            fileCacheSize: CacheSize = .bytes(256 * 1_024 * 1_024),
+            networkAvailability: (@Sendable () -> AsyncStream<Bool>)? = nil,
+            autoSync: Bool = true,
+            primaryKeys: [String: [String]] = [:],
+            realtimeTables: [RealtimeTable] = [],
+            versionColumns: [String: String],
+            conflictResolver: (@Sendable (MutationConflict) async throws -> ConflictResolution)? = nil,
+            logLevel: LogLevel = .warning
+        ) {
             self.defaultSchema = defaultSchema
             self.accessToken = accessToken
             self.dataDirectory = dataDirectory
@@ -132,6 +188,8 @@ extension SupabaseOfflineClient {
             self.autoSync = autoSync
             self.primaryKeys = primaryKeys
             self.realtimeTables = realtimeTables
+            self.versionColumns = versionColumns
+            self.conflictResolver = conflictResolver
             self.logLevel = logLevel
         }
 

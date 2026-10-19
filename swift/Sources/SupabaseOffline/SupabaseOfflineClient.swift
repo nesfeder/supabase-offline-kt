@@ -88,6 +88,14 @@ public final class SupabaseOfflineClient: Sendable {
                 )
             }
         }
+        for (table, column) in config.versionColumns {
+            guard !column.allSatisfy(\.isWhitespace) else {
+                throw OfflineError(code: .configuration, message: "The version column of \(table) is blank")
+            }
+            guard !(config.primaryKeys[table] ?? ["id"]).contains(column) else {
+                throw OfflineError(code: .configuration, message: "The version column of \(table) is one of its key columns")
+            }
+        }
         let coreOptions = BridgeClientOptions(
             supabaseUrl: supabaseURL.absoluteString,
             supabaseKey: supabaseKey,
@@ -101,6 +109,8 @@ public final class SupabaseOfflineClient: Sendable {
         coreOptions.reportsNetworkAvailability = config.networkAvailability != nil
         coreOptions.primaryKeys = config.primaryKeys
         coreOptions.realtimeTables = config.realtimeTables.map(\.core)
+        coreOptions.versionColumns = config.versionColumns
+        coreOptions.conflictResolver = config.conflictResolver.map(ConflictResolverRelay.init)
         coreOptions.logSink = SystemLogRelay()
         coreOptions.logLevel = config.logLevel.coreLevel
         return coreOptions

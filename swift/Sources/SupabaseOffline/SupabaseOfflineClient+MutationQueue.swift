@@ -136,6 +136,71 @@ extension SupabaseOfflineClient {
         }
     }
 
+    /// The current user's writes parked because their row moved on the server and the conflict was
+    /// not settled during the replay, oldest first, as the list changes.
+    ///
+    /// Iterate it for the list now and each change; ``ConflictedMutationSequence/first()`` reads it
+    /// once. Only a write to a table with a version column (``Config/versionColumns``) is ever
+    /// parked, and entries stay on the device across restarts until each is resolved or dismissed.
+    public func conflictedMutations() -> ConflictedMutationSequence {
+        ConflictedMutationSequence(
+            live: liveSequence { core, yield, finish in
+                let stopper = SubscriptionStopper()
+                let handle = core.observeConflictedMutations(
+                    onMutations: { mutations in
+                        do {
+                            yield(try mutations.map(ConflictedMutation.init(core:)))
+                        } catch {
+                            finish(error)
+                            stopper.stop()
+                        }
+                    },
+                    onCompletion: { failure in finish(failure.map(OfflineError.thrown(for:))) }
+                )
+                stopper.attach(handle)
+                return handle
+            },
+            current: { [self] in
+                try await connection.call { core, complete in
+                    core.conflictedMutations { mutations, failure in
+                        complete(coreResult(mutations, failure) { try requiredValue($0).map(ConflictedMutation.init(core:)) })
+                    }
+                }
+            }
+        )
+    }
+
+    /// Settles an entry of the conflicted list: ``ConflictResolution/keepLocal`` and
+    /// ``ConflictResolution/apply(columns:)`` queue the write again at the end of the queue under a
+    /// new id, preconditioned on ``ConflictedMutation/serverVersion``, and ask for a sync pass;
+    /// ``ConflictResolution/keepServer`` drops it. Either way it leaves the list.
+    ///
+    /// When the row has moved again since, the replay finds a new conflict. An id that is not one of
+    /// the current user's entries is ignored.
+    ///
+    /// - Throws: ``OfflineError``: `invalidRequest` for ``ConflictResolution/hold``, for an apply
+    ///   with no column or on an entry that is not an update of a row the server still held, and
+    ///   for a keep-local of a row that was gone or a body too large to keep; `encoding` for
+    ///   columns that cannot be encoded; `clientClosed` once the client is closed.
+    public func resolveConflictedMutation(id: Int64, resolution: ConflictResolution) async throws {
+        let (decision, columnsJson) = try resolution.coreDecision()
+        try await connection.call { core, complete in
+            core.resolveConflictedMutation(id: id, decision: decision, columnsJson: columnsJson) { failure in
+                complete(coreResult(failure))
+            }
+        }
+    }
+
+    /// Removes an entry from the conflicted list for good, without sending its write. An id that is
+    /// not one of the current user's entries is ignored.
+    ///
+    /// - Throws: ``OfflineError``: `clientClosed` once the client is closed.
+    public func dismissConflictedMutation(id: Int64) async throws {
+        try await connection.call { core, complete in
+            core.dismissConflictedMutation(id: id) { failure in complete(coreResult(failure)) }
+        }
+    }
+
     /// Sends the current user's queued writes now, of `table` or of every table, in the order they
     /// were made, and says what happened.
     ///
