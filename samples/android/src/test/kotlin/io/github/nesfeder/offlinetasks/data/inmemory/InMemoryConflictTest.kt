@@ -39,28 +39,27 @@ class InMemoryConflictTest {
     }
 
     @Test
-    fun an_edit_of_a_row_moved_on_another_column_is_resent_and_not_counted_as_resolved() =
-        runTest {
-            // Given — a title edit queued while another writer ticked the task done
-            val fixture = repositoryFixture()
-            val repository = fixture.repository
-            repository.addTask("Milk", notes = null)
-            val task = repository.awaitServerTasks().single()
-            fixture.deviceOnline.value = false
-            repository.updateTask(task.id, "Buy milk", notes = null)
-            repository.changeTaskOnServer(task.id) { it.copy(isDone = true) }
+    fun an_edit_of_a_row_moved_on_another_column_is_resent_and_not_counted_as_resolved() = runTest {
+        // Given — a title edit queued while another writer ticked the task done
+        val fixture = repositoryFixture()
+        val repository = fixture.repository
+        repository.addTask("Milk", notes = null)
+        val task = repository.awaitServerTasks().single()
+        fixture.deviceOnline.value = false
+        repository.updateTask(task.id, "Buy milk", notes = null)
+        repository.changeTaskOnServer(task.id) { it.copy(isDone = true) }
 
-            // When
-            fixture.goOnline()
-            val report = repository.syncPendingMutations()
+        // When
+        fixture.goOnline()
+        val report = repository.syncPendingMutations()
 
-            // Then — a stale base: sent again without asking, and no conflict counted
-            assertEquals(1, report.syncedCount)
-            assertEquals(0, report.conflictsResolvedCount)
-            val settled = repository.awaitServerTasks().single()
-            assertEquals("Buy milk", settled.title)
-            assertTrue(settled.isDone)
-        }
+        // Then — a stale base: sent again without asking, and no conflict counted
+        assertEquals(1, report.syncedCount)
+        assertEquals(0, report.conflictsResolvedCount)
+        val settled = repository.awaitServerTasks().single()
+        assertEquals("Buy milk", settled.title)
+        assertTrue(settled.isDone)
+    }
 
     @Test
     fun an_edit_the_server_already_holds_is_synced_as_already_there() = runTest {

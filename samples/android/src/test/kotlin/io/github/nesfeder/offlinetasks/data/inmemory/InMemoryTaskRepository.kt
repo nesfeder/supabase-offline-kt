@@ -992,7 +992,8 @@ class InMemoryTaskRepository(
                 is ServerAnswer.Moved ->
                     settleMoved(head as QueuedMutation.EditTask, answer.current)
                 is ServerAnswer.Accepted -> {
-                    // As the library forwards a returned row to the later writes guarded on it.
+                    // The returned row becomes the base of the later writes guarded on it, as in
+                    // the library.
                     updateState { it.accepted(head, answer.row).forwardingBase(answer.row) }
                     ReplayStep.Accepted
                 }
@@ -1324,8 +1325,8 @@ private data class DeviceState(
     }
 
     /**
-     * The later queued edits of [storedRow]'s task preconditioned on it, as the library forwards
-     * the row a write returned to the writes guarded behind it; none when there is no row.
+     * The later queued edits of [storedRow]'s task preconditioned on it, as the library hands the
+     * row a write returned to the writes guarded behind it; none when there is no row.
      */
     fun forwardingBase(storedRow: Task?): DeviceState {
         storedRow ?: return this
