@@ -73,7 +73,7 @@ class ScriptedServer(
 }
 
 /** A JSON response of [body] with [status]. */
-internal fun MockRequestHandleScope.respondJson(
+private fun MockRequestHandleScope.respondJson(
     body: String,
     status: HttpStatusCode = HttpStatusCode.OK,
 ): HttpResponseData =

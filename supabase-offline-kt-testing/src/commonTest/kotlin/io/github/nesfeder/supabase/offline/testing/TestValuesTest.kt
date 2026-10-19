@@ -109,16 +109,21 @@ class TestValuesTest {
 
     @Test
     fun a_mutation_conflict_holds_every_field() {
-        // Given
+        // Given — every field distinct from its neighbors of the same type
         val key = buildJsonObject { put("id", "t1") }
         val base = buildJsonObject {
             put("title", "Buy milk")
+            put("notes", "2 l")
             put("updated_at", "v1")
         }
-        val local = buildJsonObject { put("title", "Mine") }
+        val local = buildJsonObject {
+            put("title", "Mine")
+            put("notes", "2 l")
+        }
         val server = buildJsonObject {
             put("id", "t1")
             put("title", "Buy oat milk")
+            put("notes", "1 l")
             put("updated_at", "v2")
         }
 
@@ -132,13 +137,13 @@ class TestValuesTest {
                 base = base,
                 local = local,
                 server = server,
-                changedOnServer = setOf("title"),
+                changedOnServer = setOf("title", "notes"),
                 conflictingColumns = setOf("title"),
             )
         val bare =
             mutationConflict(
                 mutationId = 8,
-                table = "tasks",
+                table = "lists",
                 operation = MutationOperation.DELETE,
                 rowKey = key,
             )
@@ -151,8 +156,11 @@ class TestValuesTest {
         assertEquals(base, conflict.base)
         assertEquals(local, conflict.local)
         assertEquals(server, conflict.server)
-        assertEquals(setOf("title"), conflict.changedOnServer)
+        assertEquals(setOf("title", "notes"), conflict.changedOnServer)
         assertEquals(setOf("title"), conflict.conflictingColumns)
+        assertEquals(8, bare.mutationId)
+        assertEquals("lists", bare.table)
+        assertEquals(MutationOperation.DELETE, bare.operation)
         assertEquals(JsonObject(emptyMap()), bare.base)
         assertNull(bare.local)
         assertNull(bare.server)
@@ -162,7 +170,7 @@ class TestValuesTest {
 
     @Test
     fun a_conflicted_mutation_holds_every_field() {
-        // Given
+        // Given — every field distinct from its neighbors of the same type
         val createdAt = Instant.parse("2026-10-18T13:00:00Z")
         val conflictedAt = Instant.parse("2026-10-18T13:10:00Z")
         val key = buildJsonObject { put("id", "t1") }
@@ -189,7 +197,7 @@ class TestValuesTest {
                 base = base,
                 server = server,
                 serverVersion = "v2",
-                changedOnServer = setOf("title"),
+                changedOnServer = setOf("title", "notes"),
                 conflictingColumns = setOf("title"),
                 message = "held by the resolver",
                 conflictedAt = conflictedAt,
@@ -197,11 +205,11 @@ class TestValuesTest {
         val bare =
             conflictedMutation(
                 id = 10,
-                table = "tasks",
+                table = "lists",
                 operation = MutationOperation.DELETE,
-                createdAt = createdAt,
+                createdAt = conflictedAt,
                 message = "gone",
-                conflictedAt = conflictedAt,
+                conflictedAt = createdAt,
             )
 
         // Then
@@ -214,10 +222,16 @@ class TestValuesTest {
         assertEquals(base, entry.base)
         assertEquals(server, entry.server)
         assertEquals("v2", entry.serverVersion)
-        assertEquals(setOf("title"), entry.changedOnServer)
+        assertEquals(setOf("title", "notes"), entry.changedOnServer)
         assertEquals(setOf("title"), entry.conflictingColumns)
         assertEquals("held by the resolver", entry.message)
         assertEquals(conflictedAt, entry.conflictedAt)
+        assertEquals(10, bare.id)
+        assertEquals("lists", bare.table)
+        assertEquals(MutationOperation.DELETE, bare.operation)
+        assertEquals(conflictedAt, bare.createdAt)
+        assertEquals("gone", bare.message)
+        assertEquals(createdAt, bare.conflictedAt)
         assertEquals(emptyList(), bare.rowKeys)
         assertNull(bare.body)
         assertEquals(JsonObject(emptyMap()), bare.base)
@@ -228,18 +242,31 @@ class TestValuesTest {
     }
 
     @Test
-    fun the_overloads_carry_the_conflict_fields_and_the_old_factories_leave_them_empty() {
-        // Given
-        val at = Instant.parse("2026-10-18T13:00:00Z")
+    fun the_overloads_hold_every_field_beside_the_existing_factories() {
+        // Given — every field distinct from its neighbors of the same type
+        val createdAt = Instant.parse("2026-10-18T13:00:00Z")
+        val syncedAt = Instant.parse("2026-10-18T13:20:00Z")
+        val key = buildJsonObject { put("id", "t1") }
+        val body = buildJsonObject { put("title", "Mine") }
+        val rejected =
+            rejectedMutation(
+                id = 14,
+                table = "tasks",
+                operation = MutationOperation.UPDATE,
+                createdAt = createdAt,
+                message = "refused",
+                rejectedAt = syncedAt,
+            )
         val parked =
             conflictedMutation(
                 id = 11,
                 table = "tasks",
                 operation = MutationOperation.UPDATE,
-                createdAt = at,
+                createdAt = createdAt,
                 message = "held",
-                conflictedAt = at,
+                conflictedAt = syncedAt,
             )
+        val failure = syncFailedException(message = "stopped")
 
         // When
         val pending =
@@ -247,42 +274,69 @@ class TestValuesTest {
                 id = 12,
                 table = "tasks",
                 operation = MutationOperation.UPDATE,
-                createdAt = at,
+                createdAt = createdAt,
+                rowKeys = listOf(key),
+                body = body,
                 baseVersion = "v1",
             )
         val report =
             syncReport(
-                syncedCount = 3,
-                remainingCount = 1,
-                alreadyOnServerCount = 1,
-                heldBehindOtherTablesCount = 1,
-                conflictsResolvedCount = 2,
-                conflictsKeptServerCount = 1,
+                syncedCount = 1,
+                rejected = listOf(rejected),
+                remainingCount = 2,
+                alreadyOnServerCount = 3,
+                heldBehindOtherTablesCount = 4,
+                conflictsResolvedCount = 5,
+                conflictsKeptServerCount = 6,
                 conflicted = listOf(parked),
             )
-        val status = syncStatus(pendingMutationCount = 1, conflictedMutationCount = 4)
+        val status =
+            syncStatus(
+                network = NetworkStatus.OFFLINE,
+                pendingMutationCount = 1,
+                rejectedMutationCount = 2,
+                isSyncing = true,
+                lastSyncedAt = syncedAt,
+                lastSyncError = failure,
+                conflictedMutationCount = 3,
+            )
+        // The existing factories: pendingMutation and syncStatus cannot reach the overloads, whose
+        // new parameter is required; syncReport compiles unambiguously, and Kotlin picks the
+        // existing factory, the candidate with fewer unspecified defaults. Both build the same
+        // value.
         val plainPending =
             pendingMutation(
                 id = 13,
                 table = "tasks",
                 operation = MutationOperation.UPDATE,
-                createdAt = at,
+                createdAt = createdAt,
             )
         val plainReport = syncReport(syncedCount = 1)
         val plainStatus = syncStatus()
 
         // Then
-        assertEquals("v1", pending.baseVersion)
         assertEquals(12, pending.id)
-        assertEquals(3, report.syncedCount)
-        assertEquals(1, report.remainingCount)
-        assertEquals(1, report.alreadyOnServerCount)
-        assertEquals(1, report.heldBehindOtherTablesCount)
-        assertEquals(2, report.conflictsResolvedCount)
-        assertEquals(1, report.conflictsKeptServerCount)
+        assertEquals("tasks", pending.table)
+        assertEquals(MutationOperation.UPDATE, pending.operation)
+        assertEquals(createdAt, pending.createdAt)
+        assertEquals(listOf(key), pending.rowKeys)
+        assertEquals(body, pending.body)
+        assertEquals("v1", pending.baseVersion)
+        assertEquals(1, report.syncedCount)
+        assertEquals(listOf(rejected), report.rejected)
+        assertEquals(2, report.remainingCount)
+        assertEquals(3, report.alreadyOnServerCount)
+        assertEquals(4, report.heldBehindOtherTablesCount)
+        assertEquals(5, report.conflictsResolvedCount)
+        assertEquals(6, report.conflictsKeptServerCount)
         assertEquals(listOf(parked), report.conflicted)
+        assertEquals(NetworkStatus.OFFLINE, status.network)
         assertEquals(1, status.pendingMutationCount)
-        assertEquals(4, status.conflictedMutationCount)
+        assertEquals(2, status.rejectedMutationCount)
+        assertTrue(status.isSyncing)
+        assertEquals(syncedAt, status.lastSyncedAt)
+        assertSame(failure, status.lastSyncError)
+        assertEquals(3, status.conflictedMutationCount)
         assertNull(plainPending.baseVersion)
         assertEquals(
             0 to 0,

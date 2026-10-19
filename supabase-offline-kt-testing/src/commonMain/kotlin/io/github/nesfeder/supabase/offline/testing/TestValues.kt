@@ -274,7 +274,8 @@ public fun syncStatus(
 
 /**
  * Where the library stands with the queue and the network, the conflicted list included; every
- * field defaults to the state of a client that has done nothing yet.
+ * field but [conflictedMutationCount], which selects this overload, defaults to the state of a
+ * client that has done nothing yet.
  *
  * @param network whether the library believes it can reach the network.
  * @param pendingMutationCount the current user's queued writes.
