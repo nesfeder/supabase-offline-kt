@@ -25,9 +25,10 @@ import kotlinx.serialization.json.contentOrNull
 /**
  * A stateful PostgREST server over a [RecordingPostgrestServer] that keeps rows per table and
  * enforces primary and foreign keys, answering a violation as PostgREST does. It understands what
- * replay sends, `POST`, `PATCH`, `DELETE` and `GET` scoped by `eq`, `neq`, `in` and `is` filters on
- * any column, and answers anything else `400`. Requests are answered one at a time, and a write
- * asking for its rows back (`Prefer: return=representation`) is answered with the rows it wrote.
+ * replay sends, `POST`, `PATCH`, `DELETE` and `GET` scoped by `eq`, `neq`, `in`, `is` and prefix
+ * `like` filters on any column, returns only the columns a `GET`, `PATCH` or `DELETE` selects, and
+ * answers anything else `400`. Requests are answered one at a time, and a write asking for its rows
+ * back (`Prefer: return=representation`) is answered with the rows it wrote.
  *
  * @property primaryKey the primary-key column every table shares.
  * @property foreignKeys child table → the foreign key it must satisfy.
@@ -166,7 +167,8 @@ internal class FakeRelationalPostgrestServer(
                 "POST" -> insert(request)
                 "PATCH" -> update(request)
                 "DELETE" -> delete(request)
-                "GET" -> okJson(JsonArray(matching(request)).toString())
+                "GET" ->
+                    okJson(JsonArray(matching(request).map { projected(it, request) }).toString())
                 else -> postgrestError(HttpStatusCode.BadRequest, code = "PGRST000")
             }
         if (loseResponseAfterCommit?.invoke(request) == true) {
@@ -278,8 +280,21 @@ internal class FakeRelationalPostgrestServer(
     ): HttpResponseData {
         val preferences = request.prefer.orEmpty().split(',').map { it.trim() }
         return okJson(
-            if ("return=representation" in preferences) JsonArray(rows).toString() else "[]"
+            if ("return=representation" in preferences)
+                JsonArray(rows.map { row -> projected(row, request) }).toString()
+            else "[]"
         )
+    }
+
+    /**
+     * [row] with only the columns [request]'s `select` names, as PostgREST answers; the whole row
+     * for none, `*`, or a list with an embedded resource this server does not model.
+     */
+    private fun projected(row: JsonObject, request: RecordedRequest): JsonObject {
+        val select = request.query["select"] ?: return row
+        if (select == "*" || '(' in select) return row
+        val columns = select.split(',').map { column -> column.trim().removeSurrounding("\"") }
+        return JsonObject(row.filterKeys { column -> column in columns })
     }
 
     private fun matching(request: RecordedRequest): List<JsonObject> {
@@ -308,6 +323,9 @@ internal class FakeRelationalPostgrestServer(
                         .split(',')
                         .map { listed -> listed.trim().removeSurrounding("\"") }
                         .contains(content)
+            // A prefix pattern only (`abc*`), enough to stand for an operator the engine does not
+            // evaluate itself
+            "like" -> content != null && content.startsWith(operand.removeSuffix("*"))
             "is" ->
                 when (operand) {
                     "null" -> content == null

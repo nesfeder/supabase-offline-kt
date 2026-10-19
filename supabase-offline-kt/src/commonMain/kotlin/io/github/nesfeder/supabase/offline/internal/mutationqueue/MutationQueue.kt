@@ -271,8 +271,10 @@ internal class MutationQueue(
     /**
      * The base of an UPDATE or DELETE of [table] by [filter] that sets [columns] (none for a
      * DELETE), read from [identity]'s cache: the newest cached row with the key [filter] pins and
-     * the version column, or `null` to replay it unguarded. Read before the queue lock: a base a
-     * forward overtakes in between is older at worst, which its replay meets as a stale base.
+     * the version column, or `null` to replay it unguarded. Read before the queue lock, so a
+     * forward can land between this read and the insert and leave an older base: its replay then
+     * meets a stale base when the overlapping send set none of this write's columns, and otherwise
+     * a conflict for the policy (whose default sends the write).
      *
      * @param identity the enqueuing identity's stored value, or `null` when there is none.
      */
