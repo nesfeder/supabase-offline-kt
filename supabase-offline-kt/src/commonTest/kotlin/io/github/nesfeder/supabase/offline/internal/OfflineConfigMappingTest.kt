@@ -30,6 +30,8 @@ class OfflineConfigMappingTest {
         assertTrue(config.primaryKeys.isEmpty())
         assertEquals(ResponseTrust.SettledSession, config.responseTrust)
         assertNull(config.logLevel)
+        assertTrue(config.versionColumns.isEmpty())
+        assertNull(config.conflictResolver)
     }
 
     @Test
@@ -65,7 +67,7 @@ class OfflineConfigMappingTest {
     @Test
     fun the_version_column_setting_names_each_tables_column_and_no_other() {
         // Given
-        val config = Offline.createConfig { versionColumnSettings["tasks"] = "updated_at" }
+        val config = Offline.createConfig { versionColumn("tasks", "updated_at") }
 
         // When
         val columns = config.versionColumnsByTable()
@@ -73,7 +75,7 @@ class OfflineConfigMappingTest {
         // Then
         assertEquals("updated_at", columns.of("tasks"))
         assertNull(columns.of("notes"))
-        assertTrue(Offline.createConfig {}.versionColumnSettings.isEmpty())
+        assertTrue(Offline.createConfig {}.versionColumns.isEmpty())
         assertNull(Offline.createConfig {}.versionColumnsByTable().of("tasks"))
     }
 

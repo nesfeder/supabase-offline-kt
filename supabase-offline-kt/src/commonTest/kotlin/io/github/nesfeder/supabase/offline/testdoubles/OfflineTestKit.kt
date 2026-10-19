@@ -36,6 +36,7 @@ import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentity
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.SyncReport
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.VersionColumns
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.awaitSettledSession
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.conflictPolicyOf
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.currentQueueIdentity
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.currentReplayIdentity
 import io.github.nesfeder.supabase.offline.internal.network.NetworkAccess
@@ -54,6 +55,7 @@ import io.github.nesfeder.supabase.offline.internal.realtime.WatchedTable
 import io.github.nesfeder.supabase.offline.internal.storage.CachingBucketApi
 import io.github.nesfeder.supabase.offline.internal.storage.StorageFileCache
 import io.github.nesfeder.supabase.offline.internal.testing.InMemoryCachedFileDao
+import io.github.nesfeder.supabase.offline.internal.versionColumnsByTable
 import io.ktor.client.engine.HttpClientEngine
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respondOk
@@ -230,9 +232,12 @@ internal suspend fun TestStore.recordQueryShape(
  * @param onStillClosing what the client reports when `close()` outlives [closeWait], as the
  *   factories tell the registry; it is handed the count of calls still in flight.
  * @param primaryKeys each table's primary-key columns; `id` for every table by default.
- * @param versionColumns each table's version column; none by default.
+ * @param versionColumns each table's version column; by default, [config]'s.
  * @param responseTrust which read responses may replace what the cache holds.
- * @param config the plugin configuration the client reports, and reads `autoSync` from.
+ * @param config the plugin configuration the client reports, and reads `autoSync`, the version
+ *   columns and the conflict resolver from.
+ * @param conflictPolicyTimeout how long the conflict resolver may take; shorten it to test the
+ *   bound.
  * @param networkAvailability the connectivity signal the client watches; `null` for none.
  * @param fileSystem the file system the Storage file cache uses; pass a [FakeFailingFileSystem] to
  *   make it fail.
@@ -255,13 +260,14 @@ internal fun newTestOfflineClient(
     closeWait: Duration = OfflineClient.CLOSE_WAIT,
     onStillClosing: (callsInFlight: () -> Int) -> Unit = {},
     primaryKeys: PrimaryKeys = DefaultPrimaryKeys,
-    versionColumns: VersionColumns = NoVersionColumns,
+    versionColumns: VersionColumns? = null,
     responseTrust: ResponseTrustPolicy = ResponseTrustPolicy.SETTLED_SESSION,
     config: Offline.Config = Offline.Config(),
     networkAvailability: Flow<Boolean>? = null,
     fileSystem: FileSystem = FileSystem.SYSTEM,
     watchedTables: List<WatchedTable> = emptyList(),
     serverChangeFeed: ServerChangeFeed? = null,
+    conflictPolicyTimeout: Duration = CONFLICT_POLICY_TIMEOUT,
 ): OfflineClient =
     OfflineClient(
         supabaseClient = supabase,
@@ -280,7 +286,9 @@ internal fun newTestOfflineClient(
         closeWait = closeWait,
         onStillClosing = onStillClosing,
         primaryKeys = primaryKeys,
-        versionColumns = versionColumns,
+        versionColumns = versionColumns ?: config.versionColumnsByTable(),
+        conflictPolicy = conflictPolicyOf(config.conflictResolver, primaryKeys, engineLogger),
+        conflictPolicyTimeout = conflictPolicyTimeout,
         responseTrust = responseTrust,
         config = config,
         networkAvailability = networkAvailability,

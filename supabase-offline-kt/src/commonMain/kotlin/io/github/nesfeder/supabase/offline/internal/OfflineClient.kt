@@ -12,6 +12,8 @@ import io.github.jan.supabase.postgrest.postgrest
 import io.github.jan.supabase.postgrest.query.request.RpcRequestBuilder
 import io.github.jan.supabase.postgrest.result.PostgrestResult
 import io.github.jan.supabase.storage.storage
+import io.github.nesfeder.supabase.offline.ConflictResolution
+import io.github.nesfeder.supabase.offline.ConflictedMutation
 import io.github.nesfeder.supabase.offline.MutationOperation
 import io.github.nesfeder.supabase.offline.Offline
 import io.github.nesfeder.supabase.offline.OfflineBucketApi
@@ -39,10 +41,15 @@ import io.github.nesfeder.supabase.offline.internal.db.DatabaseScrub
 import io.github.nesfeder.supabase.offline.internal.db.MutationDao
 import io.github.nesfeder.supabase.offline.internal.db.QueryCacheDao
 import io.github.nesfeder.supabase.offline.internal.db.isReservedTable
+import io.github.nesfeder.supabase.offline.internal.db.storedName
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogLevel
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.AUTH_SESSION_SETTLE_TIMEOUT
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.AutomaticReplay
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.CONFLICT_POLICY_TIMEOUT
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.ConflictPolicy
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.ConflictRequeue
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.DefaultConflictPolicy
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.DefaultPrimaryKeys
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueue
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueueReplayer
@@ -51,12 +58,15 @@ import io.github.nesfeder.supabase.offline.internal.mutationqueue.PrimaryKeys
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentity
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentityReader
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.RejectedMutation as EngineRejectedMutation
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.StoredConflict
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.SyncReport as EngineSyncReport
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.SyncStop
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.VersionColumns
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.conflictDecisionOf
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.currentReplayIdentity
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.replayIdentityFor
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.syncFailureOf
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.toConflictedMutation
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.toPendingMutation
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.toRejectedMutation
 import io.github.nesfeder.supabase.offline.internal.network.NetworkAccess
@@ -182,6 +192,14 @@ internal class OfflineClient(
     private val primaryKeys: PrimaryKeys = DefaultPrimaryKeys,
     /** Each table's version column, which guards a queued UPDATE's or DELETE's replay; none. */
     versionColumns: VersionColumns = NoVersionColumns,
+    /**
+     * Settles a guarded write whose row moved on the server: the app's resolver, or the default.
+     */
+    private val conflictPolicy: ConflictPolicy = DefaultConflictPolicy,
+    /** How long [conflictPolicy] may take before its answer reads as Hold; tests shorten it. */
+    private val conflictPolicyTimeout: Duration = CONFLICT_POLICY_TIMEOUT,
+    /** The engine's dispatcher, where [conflictPolicy] runs whatever dispatcher syncs. */
+    private val conflictPolicyDispatcher: CoroutineDispatcher = Dispatchers.Default,
     /** Which read responses may replace what the cache holds; see [ResponseTrustPolicy]. */
     private val responseTrust: ResponseTrustPolicy = ResponseTrustPolicy.SETTLED_SESSION,
     /** The configuration the client was opened with, as [Offline.config] reports it. */
@@ -243,6 +261,7 @@ internal class OfflineClient(
                 isSyncing = false,
                 lastSyncedAt = null,
                 lastSyncError = null,
+                conflictedMutationCount = 0,
             )
         )
 
@@ -398,6 +417,9 @@ internal class OfflineClient(
             primaryKeys = primaryKeys,
             passEnded = { _, report -> recordPassEnded(report) },
             cachePatcher = cachePatcher,
+            conflictPolicy = conflictPolicy,
+            conflictPolicyTimeout = conflictPolicyTimeout,
+            conflictPolicyDispatcher = conflictPolicyDispatcher,
         )
 
     /**
@@ -813,6 +835,65 @@ internal class OfflineClient(
         automaticReplay.requestPass()
     }
 
+    override fun conflictedMutations(): Flow<List<ConflictedMutation>> =
+        operationGate.callCollecting(
+            mutationQueue.shownConflictsFlow().map { entries ->
+                entries.map { entry -> entry.toConflictedMutation(EngineJson, primaryKeys) }
+            }
+        )
+
+    override suspend fun resolveConflictedMutation(id: Long, resolution: ConflictResolution): Unit =
+        operationGate.call {
+            require(resolution != ConflictResolution.Hold) {
+                "A conflicted mutation cannot be resolved with Hold: it is held already"
+            }
+            val identity = queueIdentityReader.current() ?: return@call
+            val entry = mutationQueue.shownConflict(id, identity.storedValue) ?: return@call
+            requireResolvable(entry, resolution)
+            val requeue =
+                mutationQueue.requeueConflict(
+                    id,
+                    identity.storedValue,
+                    conflictDecisionOf(resolution),
+                )
+            require(requeue != ConflictRequeue.Refused) {
+                "This conflicted mutation cannot be settled that way"
+            }
+            if (requeue is ConflictRequeue.Requeued) automaticReplay.requestPass()
+        }
+
+    override suspend fun dismissConflictedMutation(id: Long): Unit = operationGate.call {
+        val identity = queueIdentityReader.current() ?: return@call
+        mutationQueue.dismissConflictOf(id, identity.storedValue)
+    }
+
+    /**
+     * Refuses a [resolution] the conflicted [entry] cannot take, as [resolveConflictedMutation]
+     * says.
+     */
+    private fun requireResolvable(entry: StoredConflict, resolution: ConflictResolution) {
+        when (resolution) {
+            ConflictResolution.KeepLocal -> {
+                require(entry.serverVersion != null) {
+                    "This conflicted mutation's row is gone from the server: there is nothing to " +
+                        "resend it against"
+                }
+                require(entry.bodyOmittedChars == null) {
+                    "This conflicted mutation cannot be resent: its body was too large to keep"
+                }
+            }
+            is ConflictResolution.Apply ->
+                require(
+                    entry.operation == MutationOperation.UPDATE.storedName &&
+                        entry.serverVersion != null
+                ) {
+                    "Apply settles only an update of a row the server still held"
+                }
+            ConflictResolution.KeepServer,
+            ConflictResolution.Hold -> Unit
+        }
+    }
+
     override suspend fun syncPendingMutations(table: String?): SyncReport =
         operationGate.cancellableCall(clientScope) {
             ensurePostgrestInstalled()
@@ -881,10 +962,14 @@ internal class OfflineClient(
             }
         }
         clientScope.launch {
-            // The two flows only say when to count; both counts are read in one snapshot under the
-            // queue's lock, so a write moving between the queue and the rejected list is counted
-            // once, and an older snapshot never lands after a newer one
-            merge(mutationQueue.queueChanges(), mutationQueue.shownRejectionsFlow().map {})
+            // The flows only say when to count; every count is read in one snapshot under the
+            // queue's lock, so a write moving between the queue and a list is counted once, and
+            // an older snapshot never lands after a newer one
+            merge(
+                    mutationQueue.queueChanges(),
+                    mutationQueue.shownRejectionsFlow().map {},
+                    mutationQueue.shownConflictsFlow().map {},
+                )
                 .conflate()
                 .retryWhen { failure, attempt ->
                     engineLogger.warning {
@@ -901,6 +986,7 @@ internal class OfflineClient(
                         status.copy(
                             pendingMutationCount = counts.pending,
                             rejectedMutationCount = counts.rejected,
+                            conflictedMutationCount = counts.conflicted,
                         )
                     }
                 }
@@ -1004,6 +1090,10 @@ internal class OfflineClient(
             alreadyOnServerCount = alreadyOnServerCount,
             heldBehindOtherTablesCount =
                 if (stop is SyncStop.HeldBehindOtherTables) remainingCount else 0,
+            conflictsResolvedCount = conflictsResolvedCount,
+            conflictsKeptServerCount = conflictsKeptServerCount,
+            conflicted =
+                conflicted.map { entry -> entry.toConflictedMutation(EngineJson, primaryKeys) },
         )
 
     override suspend fun applyServerRecord(

@@ -22,13 +22,17 @@ import io.github.nesfeder.supabase.offline.internal.mutationqueue.DefaultPrimary
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.NoVersionColumns
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.PrimaryKeys
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.VersionColumns
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.conflictPolicyOf
 import io.github.nesfeder.supabase.offline.internal.postgrest.ResponseTrustPolicy
 import io.github.nesfeder.supabase.offline.internal.realtime.ServerChangeFeed
 import io.github.nesfeder.supabase.offline.internal.realtime.SupabaseRealtimeFeed
 import io.github.nesfeder.supabase.offline.internal.storage.markFileUsed
+import kotlin.coroutines.ContinuationInterceptor
 import kotlin.time.Clock
 import kotlin.time.Duration
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import okio.FileSystem
 import okio.Path
@@ -142,8 +146,9 @@ internal fun Offline.Config.buildOfflineClient(
     clock: Clock = Clock.System,
     rowClock: () -> Long = { clock.now().toEpochMilliseconds() },
     platformNetworkAvailability: Flow<Boolean>? = null,
-): OfflineClient =
-    OfflineClient(
+): OfflineClient {
+    val engineScope = coordinatorScope ?: newEngineScope(engineLogger)
+    return OfflineClient(
         supabaseClient = supabase,
         queryCacheDao = queryCacheDao,
         cachedFileDao = cachedFileDao,
@@ -152,7 +157,7 @@ internal fun Offline.Config.buildOfflineClient(
         baseDirectoryProvider = { dataDirectory },
         engineLogger = engineLogger,
         networkAvailability = networkAvailability ?: platformNetworkAvailability,
-        coordinatorScope = coordinatorScope ?: newEngineScope(engineLogger),
+        coordinatorScope = engineScope,
         fileCacheMaxBytes = fileCacheBoundOrNull(),
         prepareFileCacheDirectories = prepareFileCacheDirectories,
         scrubDatabase = scrubDatabase,
@@ -162,6 +167,10 @@ internal fun Offline.Config.buildOfflineClient(
         closeWait = closeWait,
         primaryKeys = primaryKeysByTable(),
         versionColumns = versionColumnsByTable(),
+        conflictPolicy = conflictPolicyOf(conflictResolver, primaryKeysByTable(), engineLogger),
+        conflictPolicyDispatcher =
+            (engineScope.coroutineContext[ContinuationInterceptor] as? CoroutineDispatcher)
+                ?: Dispatchers.Default,
         responseTrust = responseTrustPolicy(),
         config = this,
         fileSystem = fileSystem,
@@ -171,6 +180,7 @@ internal fun Offline.Config.buildOfflineClient(
         watchedTables = watchedTables,
         serverChangeFeed = serverChangeFeedFor(supabase, engineLogger, clock),
     )
+}
 
 /**
  * The feed the watched tables are followed through: a test's script when one is set, Realtime's
@@ -214,9 +224,9 @@ internal fun Offline.Config.primaryKeysByTable(): PrimaryKeys {
     else PrimaryKeys { table -> keys[table] ?: DEFAULT_PRIMARY_KEY }
 }
 
-/** Each table's version column as [Offline.Config.versionColumnSettings] names it; none else. */
+/** Each table's version column as [Offline.Config.versionColumns] names it; none else. */
 internal fun Offline.Config.versionColumnsByTable(): VersionColumns {
-    val columns = versionColumnSettings.toMap()
+    val columns = versionColumns.toMap()
     return if (columns.isEmpty()) NoVersionColumns else VersionColumns { table -> columns[table] }
 }
 

@@ -2,7 +2,11 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.mutationqueue
 
+import io.github.nesfeder.supabase.offline.ConflictResolver
+import io.github.nesfeder.supabase.offline.internal.EngineJson
 import io.github.nesfeder.supabase.offline.internal.db.MutationRow
+import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
+import kotlin.coroutines.cancellation.CancellationException
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.serialization.json.JsonObject
@@ -88,3 +92,32 @@ internal val DefaultConflictPolicy: ConflictPolicy = ConflictPolicy { case ->
         is ConflictCase.Gone -> ConflictDecision.KeepServer
     }
 }
+
+/**
+ * The policy that asks the app's [resolver], each case and answer mapped to the public types; the
+ * default policy when the app set none. Anything the resolver throws but a cancellation, an `Error`
+ * included, reads as Hold and is logged with the table and its type only.
+ *
+ * @param primaryKeys Where each table's key columns come from, for the row key the resolver sees.
+ */
+internal fun conflictPolicyOf(
+    resolver: ConflictResolver?,
+    primaryKeys: PrimaryKeys,
+    engineLogger: EngineLogger,
+): ConflictPolicy =
+    if (resolver == null) DefaultConflictPolicy
+    else
+        ConflictPolicy { case ->
+            val conflict = case.toMutationConflict(EngineJson, primaryKeys)
+            try {
+                conflictDecisionOf(resolver.resolve(conflict))
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (failure: Throwable) {
+                engineLogger.warning {
+                    "The conflict resolver for ${conflict.table} failed " +
+                        "(${failure::class.simpleName}); holding the write"
+                }
+                ConflictDecision.Hold
+            }
+        }

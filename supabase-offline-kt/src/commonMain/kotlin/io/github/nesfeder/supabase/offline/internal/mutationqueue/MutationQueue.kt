@@ -359,12 +359,7 @@ internal class MutationQueue(
         mutation.baseJson?.let(::jsonObjectOrNull) ?: JsonObject(emptyMap())
 
     /** [text] as a JSON object, or `null` when it is not one or does not parse. */
-    private fun jsonObjectOrNull(text: String): JsonObject? =
-        try {
-            json.parseToJsonElement(text) as? JsonObject
-        } catch (_: IllegalArgumentException) {
-            null
-        }
+    private fun jsonObjectOrNull(text: String): JsonObject? = jsonObjectOrNull(text, json)
 
     /**
      * Runs [enqueue], which queues one write with [identity] as its owner: a replay pass sends only
@@ -843,14 +838,15 @@ internal class MutationQueue(
      * The row [entry] re-queues as under [decision], at the tail: its body, or for
      * [ConflictDecision.Apply] the given columns, preconditioned on the server's version; `null`
      * when the decision does not apply to it (a row gone from the server takes neither, since it
-     * would replay unguarded and change nothing) or its body was not kept.
+     * would replay unguarded and change nothing) or it would resend a body that was not kept.
      */
     private fun requeuedRowOf(
         entry: StoredConflict,
         decision: ConflictDecision,
         owner: String?,
     ): MutationRow? {
-        if (entry.bodyOmittedChars != null || entry.serverVersion == null) return null
+        if (entry.serverVersion == null) return null
+        if (entry.bodyOmittedChars != null && decision !is ConflictDecision.Apply) return null
         val bodyJson =
             when (decision) {
                 ConflictDecision.KeepLocal -> entry.bodyJson
@@ -950,9 +946,9 @@ internal class MutationQueue(
     }
 
     /**
-     * How many pending mutations and rejected entries the app is shown, read together under the
-     * queue's lock. A refusal and a retry move a mutation between the two under that lock, so it is
-     * in exactly one of them, never both and never neither.
+     * How many pending mutations, rejected and conflicted entries the app is shown, read together
+     * under the queue's lock. A refusal, a park, a retry and a resolve move a mutation between them
+     * under that lock, so it is in exactly one of them, never two and never none.
      */
     suspend fun shownQueueCounts(): ShownQueueCounts {
         val identity =

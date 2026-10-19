@@ -7,6 +7,8 @@ package io.github.nesfeder.supabase.offline.internal.testing
 import io.github.jan.supabase.postgrest.result.PostgrestResult
 import io.github.nesfeder.supabase.offline.CacheMissException
 import io.github.nesfeder.supabase.offline.CachedFile
+import io.github.nesfeder.supabase.offline.ConflictedMutation
+import io.github.nesfeder.supabase.offline.MutationConflict
 import io.github.nesfeder.supabase.offline.MutationNotQueueableException
 import io.github.nesfeder.supabase.offline.MutationOperation
 import io.github.nesfeder.supabase.offline.MutationOutcome
@@ -72,7 +74,19 @@ public object ValueConstructors {
         createdAt: Instant,
         rowKeys: List<JsonObject>,
         body: JsonElement?,
-    ): PendingMutation = PendingMutation(id, table, operation, createdAt, rowKeys, body)
+    ): PendingMutation = PendingMutation(id, table, operation, createdAt, rowKeys, body, null)
+
+    /** A [PendingMutation] with the given fields, [PendingMutation.baseVersion] included. */
+    public fun pendingMutation(
+        id: Long,
+        table: String,
+        operation: MutationOperation,
+        createdAt: Instant,
+        rowKeys: List<JsonObject>,
+        body: JsonElement?,
+        baseVersion: String?,
+    ): PendingMutation =
+        PendingMutation(id, table, operation, createdAt, rowKeys, body, baseVersion)
 
     /** A [RefreshState.Stalled] that [cause] stalled. */
     public fun stalled(cause: Throwable): RefreshState.Stalled = RefreshState.Stalled(cause)
@@ -104,6 +118,31 @@ public object ValueConstructors {
             remainingCount,
             alreadyOnServerCount,
             heldBehindOtherTablesCount,
+            conflictsResolvedCount = 0,
+            conflictsKeptServerCount = 0,
+            conflicted = emptyList(),
+        )
+
+    /** A [SyncReport] with the given fields, the conflict counts included. */
+    public fun syncReport(
+        syncedCount: Int,
+        rejected: List<RejectedMutation>,
+        remainingCount: Int,
+        alreadyOnServerCount: Int,
+        heldBehindOtherTablesCount: Int,
+        conflictsResolvedCount: Int,
+        conflictsKeptServerCount: Int,
+        conflicted: List<ConflictedMutation>,
+    ): SyncReport =
+        SyncReport(
+            syncedCount,
+            rejected,
+            remainingCount,
+            alreadyOnServerCount,
+            heldBehindOtherTablesCount,
+            conflictsResolvedCount,
+            conflictsKeptServerCount,
+            conflicted,
         )
 
     /** A [SyncStatus] with the given fields. */
@@ -122,6 +161,83 @@ public object ValueConstructors {
             isSyncing,
             lastSyncedAt,
             lastSyncError,
+            conflictedMutationCount = 0,
+        )
+
+    /** A [SyncStatus] with the given fields, [SyncStatus.conflictedMutationCount] included. */
+    public fun syncStatus(
+        network: NetworkStatus,
+        pendingMutationCount: Int,
+        rejectedMutationCount: Int,
+        isSyncing: Boolean,
+        lastSyncedAt: Instant?,
+        lastSyncError: SyncFailedException?,
+        conflictedMutationCount: Int,
+    ): SyncStatus =
+        SyncStatus(
+            network,
+            pendingMutationCount,
+            rejectedMutationCount,
+            isSyncing,
+            lastSyncedAt,
+            lastSyncError,
+            conflictedMutationCount,
+        )
+
+    /** A [MutationConflict] with the given fields. */
+    public fun mutationConflict(
+        mutationId: Long,
+        table: String,
+        operation: MutationOperation,
+        rowKey: JsonObject,
+        base: JsonObject,
+        local: JsonObject?,
+        server: JsonObject?,
+        changedOnServer: Set<String>,
+        conflictingColumns: Set<String>,
+    ): MutationConflict =
+        MutationConflict(
+            mutationId,
+            table,
+            operation,
+            rowKey,
+            base,
+            local,
+            server,
+            changedOnServer,
+            conflictingColumns,
+        )
+
+    /** A [ConflictedMutation] with the given fields. */
+    public fun conflictedMutation(
+        id: Long,
+        table: String,
+        operation: MutationOperation,
+        createdAt: Instant,
+        rowKeys: List<JsonObject>,
+        body: JsonElement?,
+        base: JsonObject,
+        server: JsonObject?,
+        serverVersion: String?,
+        changedOnServer: Set<String>,
+        conflictingColumns: Set<String>,
+        message: String,
+        conflictedAt: Instant,
+    ): ConflictedMutation =
+        ConflictedMutation(
+            id,
+            table,
+            operation,
+            createdAt,
+            rowKeys,
+            body,
+            base,
+            server,
+            serverVersion,
+            changedOnServer,
+            conflictingColumns,
+            message,
+            conflictedAt,
         )
 
     /** A [RejectedMutation] with the given fields. */

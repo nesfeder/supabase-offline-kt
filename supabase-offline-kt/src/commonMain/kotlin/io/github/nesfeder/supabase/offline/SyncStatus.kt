@@ -11,8 +11,8 @@ import kotlin.time.Instant
  * [SyncStatus.network] is current as soon as [Offline.disableNetwork] or [Offline.enableNetwork]
  * returns. The counts are eventually current: they follow each change to the mutation queue shortly
  * after it is made, so a test that reads them straight after a write waits for the value it
- * expects. The two are read together: a write moving between the queue and the rejected list,
- * refused on replay or retried, is counted in exactly one of them.
+ * expects. They are read together: a write moving between the queue and the rejected or conflicted
+ * list, refused or parked on replay, retried or resolved, is counted in exactly one of them.
  *
  * @property network whether the library believes it can reach the network; see [NetworkStatus].
  * @property pendingMutationCount the current user's writes waiting in the mutation queue, in every
@@ -26,6 +26,8 @@ import kotlin.time.Instant
  *   [SyncFailedException.httpStatus] and [SyncFailedException.code], or a failure the network
  *   caused. `null` once a later pass runs to the end, sending empties the queue, or local data is
  *   cleared. It carries no row, filter value or token.
+ * @property conflictedMutationCount the current user's entries on the conflicted list
+ *   ([Offline.conflictedMutations]).
  */
 @ConsistentCopyVisibility
 public data class SyncStatus
@@ -36,4 +38,5 @@ internal constructor(
     public val isSyncing: Boolean,
     public val lastSyncedAt: Instant?,
     public val lastSyncError: SyncFailedException?,
+    public val conflictedMutationCount: Int,
 )

@@ -37,9 +37,11 @@ import io.github.nesfeder.supabase.offline.internal.postgrest.replaysFully
 import io.github.nesfeder.supabase.offline.internal.postgrest.rowMatch
 import io.github.nesfeder.supabase.offline.internal.postgrest.sendCapturingEngineFailure
 import io.ktor.client.plugins.ResponseException
+import kotlin.coroutines.EmptyCoroutineContext
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
@@ -103,6 +105,8 @@ internal class MutationQueueReplayer(
     private val conflictPolicy: ConflictPolicy = DefaultConflictPolicy,
     /** How long [conflictPolicy] may take before its answer reads as Hold; tests shorten it. */
     private val conflictPolicyTimeout: Duration = CONFLICT_POLICY_TIMEOUT,
+    /** Where [conflictPolicy] runs; `null` runs it on the pass's own dispatcher. */
+    private val conflictPolicyDispatcher: CoroutineDispatcher? = null,
 ) {
 
     /**
@@ -958,11 +962,12 @@ internal class MutationQueueReplayer(
                     when {
                         // The row provably no longer meets the rest of the filter: the unguarded
                         // replay reached no row either, and that was a success
-                        beyondKey == RowMatch.EXCLUDED -> return ReplayOutcome.Synced(false)
+                        beyondKey == RowMatch.EXCLUDED ->
+                            return ReplayOutcome.Synced(false, conflictResolved = resolved)
                         // A condition the engine cannot judge, at the version the precondition
                         // named: the server itself found the filter does not reach the row
                         beyondKey == RowMatch.UNKNOWN && serverVersion == sentPrecondition ->
-                            return ReplayOutcome.Synced(false)
+                            return ReplayOutcome.Synced(false, conflictResolved = resolved)
                         serverVersion == sentPrecondition -> return policyDenied(mutation)
                         serverVersion == null ->
                             return parked(mutation, server, NO_SERVER_VERSION_REASON)
@@ -1078,8 +1083,9 @@ internal class MutationQueueReplayer(
     private suspend fun decide(case: ConflictCase, pass: Job): ConflictDecision {
         val table = case.mutation.table
         return try {
-            // In the pass's job, so a clear or a close that cancels the pass cuts the wait short
-            withContext(pass) {
+            // In the pass's job, so a clear or a close that cancels the pass cuts the wait short,
+            // and on the engine's dispatcher, never the caller's, with the bound on its clock
+            withContext(pass + (conflictPolicyDispatcher ?: EmptyCoroutineContext)) {
                 withTimeoutOrNull(conflictPolicyTimeout) { conflictPolicy.decide(case) }
             }
                 ?: ConflictDecision.Hold.also {

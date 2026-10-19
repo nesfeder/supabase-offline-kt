@@ -15,6 +15,7 @@ import io.github.jan.supabase.postgrest.result.PostgrestResult
 import io.github.jan.supabase.storage.Storage
 import io.github.nesfeder.supabase.offline.internal.OfflineClient
 import io.github.nesfeder.supabase.offline.internal.OfflinePlugin
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.DEFAULT_PRIMARY_KEY
 import io.github.nesfeder.supabase.offline.internal.openPlatformClient
 import io.github.nesfeder.supabase.offline.internal.realtime.ServerChangeFeed
 import io.github.nesfeder.supabase.offline.internal.realtime.WatchedTable
@@ -266,6 +267,53 @@ public interface Offline : SupabasePlugin<Offline.Config> {
     @Throws(Throwable::class) public suspend fun retryRejectedMutation(id: Long)
 
     /**
+     * The current user's queued writes parked because their row moved on the server and the
+     * conflict was not settled during the replay ([ConflictResolution.Hold], a [ConflictResolver]
+     * that failed or did not answer in time, or a row that kept moving), oldest first, as the list
+     * changes: what an app shows so its user can choose between their change and the server's.
+     *
+     * The list is kept on the device across restarts until each entry is resolved or dismissed, and
+     * holds the newest 100 entries of every user together, within a size bound, as
+     * [rejectedMutations] does; when it is full, the oldest entries go, and their writes are lost.
+     * It shows the current user's entries, and those with no user recorded that they may take over;
+     * never another user's. Only a write to a table with a version column ([Config.versionColumns])
+     * can end up here. A collection live at [close] completes, so `first()` on one that has not
+     * emitted yet throws [NoSuchElementException]; collected after [close], the flow fails with
+     * [IllegalStateException].
+     *
+     * @return the flow of lists.
+     */
+    public fun conflictedMutations(): Flow<List<ConflictedMutation>>
+
+    /**
+     * Settles a parked write. [ConflictResolution.KeepLocal] and [ConflictResolution.Apply] queue
+     * it again, at the end of the current user's queue and under a new id, preconditioned on the
+     * server version the entry recorded ([ConflictedMutation.serverVersion]), and ask for it to be
+     * sent: when the row has moved again since, the replay finds a new conflict.
+     * [ConflictResolution.KeepServer] drops it. Either way it leaves the conflicted list. Nothing
+     * happens when the current user has no entry with this id.
+     *
+     * @param id the entry's [ConflictedMutation.id].
+     * @param resolution how to settle it.
+     * @throws IllegalArgumentException for [ConflictResolution.Hold]; for
+     *   [ConflictResolution.Apply] on an entry that is not an UPDATE of a row the server still
+     *   held; and for [ConflictResolution.KeepLocal] on an entry whose row was gone from the server
+     *   ([ConflictedMutation.serverVersion] is `null`) or whose body was too large to keep.
+     * @throws IllegalStateException when the client is closed.
+     */
+    @Throws(Throwable::class)
+    public suspend fun resolveConflictedMutation(id: Long, resolution: ConflictResolution)
+
+    /**
+     * Removes a parked write from the conflicted list for good, without sending it. Nothing happens
+     * when the current user has no entry with this id.
+     *
+     * @param id the entry's [ConflictedMutation.id].
+     * @throws IllegalStateException when the client is closed.
+     */
+    @Throws(Throwable::class) public suspend fun dismissConflictedMutation(id: Long)
+
+    /**
      * Sends the current user's queued writes, of [table] or of every table, in the order they were
      * made, and reports what happened. Returns promptly when offline, with the writes still queued.
      *
@@ -274,10 +322,12 @@ public interface Offline : SupabasePlugin<Offline.Config> {
      * connection, a `401`, `408`, `429` or `5xx`) stops it with every remaining write still queued,
      * so no write overtakes an earlier one; it is not thrown, and [SyncStatus.lastSyncError] says
      * what it was. A write the server refuses for good (another `4xx`) goes to [rejectedMutations],
-     * and the pass goes on. For a single table, the pass stops at the first write that has an
-     * earlier write of the user still queued in another table, which may be the row it depends on:
-     * no write is sent ahead of an earlier one, and [SyncReport.heldBehindOtherTablesCount] counts
-     * what it held back.
+     * and the pass goes on. A guarded write whose row moved on the server ([Config.versionColumns])
+     * is settled by [Config.conflictResolver] and sent again, dropped, or parked on
+     * [conflictedMutations], and the pass goes on. For a single table, the pass stops at the first
+     * write that has an earlier write of the user still queued in another table, which may be the
+     * row it depends on: no write is sent ahead of an earlier one, and
+     * [SyncReport.heldBehindOtherTablesCount] counts what it held back.
      *
      * When the library is sending the same writes at that moment, by itself or for another call,
      * this waits for it to let go and then sends what is left, so it returns only once nothing more
@@ -416,7 +466,7 @@ public interface Offline : SupabasePlugin<Offline.Config> {
     /**
      * Deletes everything the library keeps on this device: cached query results, downloaded Storage
      * files, **and every write still waiting in the mutation queue, which is never sent**, with the
-     * rejected list. It does not touch the server.
+     * rejected and conflicted lists. It does not touch the server.
      *
      * Call it when a user signs out for good, switches account, or deletes their account, so one
      * user's rows, unsent writes and files never reach the next. With [Auth] installed, the cache
@@ -604,10 +654,44 @@ public interface Offline : SupabasePlugin<Offline.Config> {
         public var logLevel: LogLevel? = null
 
         /**
-         * Each table's version column, keyed as [primaryKeys] is; none by default. An internal
-         * setting the engine's tests fill in.
+         * Each table's version column, by table name, keyed as [primaryKeys] is; none by default.
+         * Use [versionColumn] to add one.
+         *
+         * A version column holds a value the server changes on every update of the row: a
+         * `timestamptz` a trigger sets (such as `moddatetime(updated_at)`), or an integer a trigger
+         * increments. Naming it guards the replay of a queued UPDATE or DELETE of one of the
+         * table's rows: when the write's filter pins the row's key and the cache holds the row with
+         * the column, the queue records the version the device saw, and a sync pass sends the write
+         * only while the server's row still has it. A row that moved meanwhile is a conflict,
+         * settled by [conflictResolver]; see [ConflictResolution] for the defaults.
+         *
+         * A write sent at once, an INSERT, an UPSERT, and an UPDATE or DELETE whose filter pins no
+         * single row, whose filter itself names the version column, or whose row the cache does not
+         * hold, stay unguarded: they are sent as they were made, and the last write wins. Without
+         * the trigger on the server, a row that moved cannot be told from one that did not. The
+         * value is compared as text, for equality only, exactly as the server sent it.
          */
-        internal val versionColumnSettings: MutableMap<String, String> = mutableMapOf()
+        public val versionColumns: MutableMap<String, String> = mutableMapOf()
+
+        /**
+         * Sets [table]'s version column to [column], in [versionColumns].
+         *
+         * @param table the table: its name in the client's default schema, `schema.table` in
+         *   another.
+         * @param column the column; not blank, and not one of the table's key columns.
+         * @throws IllegalArgumentException when [column] is blank.
+         */
+        public fun versionColumn(table: String, column: String) {
+            require(column.isNotBlank()) { "A version column needs a name" }
+            versionColumns[table] = column
+        }
+
+        /**
+         * Settles the conflicts a sync pass finds when it replays a guarded write
+         * ([versionColumns]); `null`, the default, settles them as [ConflictResolution] says. See
+         * [ConflictResolver].
+         */
+        public var conflictResolver: ConflictResolver? = null
 
         /** Opens the plugin's local data: the platform's database, unless a test replaces it. */
         internal var openLocalData: (SupabaseClient, Config) -> OfflineClient = ::openPlatformClient
@@ -663,12 +747,20 @@ public interface Offline : SupabasePlugin<Offline.Config> {
         /**
          * The configuration [init] writes.
          *
-         * @throws IllegalArgumentException when a table's primary key names no column.
+         * @throws IllegalArgumentException when a table's primary key names no column, or its
+         *   version column is blank or one of its key columns.
          */
         override fun createConfig(init: Config.() -> Unit): Config =
             Config().apply(init).also { config ->
                 config.primaryKeys.forEach { (table, columns) ->
                     require(columns.isNotEmpty()) { "The primary key of $table names no column" }
+                }
+                config.versionColumns.forEach { (table, column) ->
+                    require(column.isNotBlank()) { "The version column of $table is blank" }
+                    val keyColumns = config.primaryKeys[table] ?: DEFAULT_PRIMARY_KEY
+                    require(column !in keyColumns) {
+                        "The version column of $table is one of its key columns"
+                    }
                 }
             }
 
