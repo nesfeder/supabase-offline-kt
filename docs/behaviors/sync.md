@@ -113,6 +113,7 @@ sends that token whoever is signed in, so the owner check of
 | PostgREST's schema cache does not know the table or a column yet (`PGRST204`, `PGRST205`) | Stays queued, and the pass stops; the tenth such refusal, each at least 30 seconds after the last, rejects it |
 | Any other `4xx` | Moves to the rejected list, and the pass goes on |
 | (The library can no longer replay it exactly as it was made) | Moves to the rejected list with no `serverError`, and the pass goes on |
+| No row at the version the device saw, on a table with a version column | One read by key tells the case: already applied or gone (synced), a policy denial (the rejected list), or a moved row, which the resolver settles: resent, dropped or parked on the conflicted list, and the pass goes on ([Conflicts and merging](conflicts.md#the-five-outcomes)) |
 
 ## What a sync returns
 
@@ -121,8 +122,11 @@ sends that token whoever is signed in, so the owner check of
 | `syncedCount` | The writes this call sent and the server accepted |
 | `rejected` | The `RejectedMutation`s refused during this call, now on `rejectedMutations()` |
 | `remainingCount` | The writes still queued when the call returned |
-| `alreadyOnServerCount` | Of `syncedCount`, the inserts whose rows the server already held, because an earlier send whose answer was lost had reached it |
+| `alreadyOnServerCount` | Of `syncedCount`, the inserts whose rows the server already held, because an earlier send whose answer was lost had reached it; and on a table with a version column, the updates whose row already held their values and the deletes whose row was already gone |
 | `heldBehindOtherTablesCount` | Of `remainingCount`, the writes a call for one table held back behind an earlier write to another table; `0` for a call over every table |
+| `conflictsResolvedCount` | Of `syncedCount`, the conflicts settled with `KeepLocal` or `Apply`, by the resolver or the default, and sent |
+| `conflictsKeptServerCount` | The writes dropped for the server's row, with `KeepServer`: by default, an update whose row is gone |
+| `conflicted` | The `ConflictedMutation`s parked during this call, now on `conflictedMutations()` |
 
 The counts are this call's own: a pass the library ran by itself just before is counted nowhere
 here, and a refusal it made is on `rejectedMutations()`. Calling sync more than once at a time is
@@ -156,7 +160,7 @@ From the samples: [LibraryMappings.kt](https://github.com/nesfeder/supabase-offl
 | Field | Meaning |
 | --- | --- |
 | `network` | `UNKNOWN` (nothing has said yet; counts as online), `ONLINE`, `OFFLINE` or `DISABLED` (after `disableNetwork()`) |
-| `pendingMutationCount`, `rejectedMutationCount` | The current user's queued writes and rejected entries. They follow each change to the queue shortly after it, read together, so a write moving between the two is counted in exactly one |
+| `pendingMutationCount`, `rejectedMutationCount`, `conflictedMutationCount` | The current user's queued writes, rejected entries and conflicted entries. They follow each change to the queue shortly after it, read together, so a write moving between them is counted in exactly one |
 | `isSyncing` | Whether a pass is sending, started by you or by the library |
 | `lastSyncedAt` | When a pass, or a write sent at once, last left the user's queue empty. Kept in memory only |
 | `lastSyncError` | Why the last pass stopped with writes queued; cleared when a later pass runs to the end, when sending empties the queue, and when local data is cleared |
@@ -210,6 +214,10 @@ worker on Android, a `BGTaskScheduler` task on iOS), never from a second process
 - `lastSyncError` carries the status and code, never the server's text, a filter value or a token.
 - An insert whose earlier send had in fact arrived is counted in `alreadyOnServerCount`, not
   inserted twice.
+- On a table with a version column, a replayed update or delete whose row moved on the server is a
+  conflict: the report counts what the resolver settled and dropped, and lists what it parked.
+- `syncStatus.conflictedMutationCount` counts the writes waiting on the conflicted list for the
+  app.
 - A sync that meets the library sending the same writes waits for it, then returns with what is
   still queued after both.
 - With `autoSync` on, the network coming back, network access turned back on, and the session

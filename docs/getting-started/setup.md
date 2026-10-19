@@ -193,6 +193,53 @@ itself when the network comes back and when a user's session settles. `syncStatu
 banner reads, and `syncPendingMutations()` is what a "Sync now" button calls
 ([Replaying the queue](../behaviors/sync.md)).
 
+## A server-side version column
+
+Optional. By default the last write to reach the server wins: a write made offline and sent later
+overwrites what another device changed meanwhile. To have such a write checked instead, give the
+table a column the server changes on every update, and name it in the configuration with
+`versionColumn("tasks", "updated_at")` ([Conflicts and merging](../behaviors/conflicts.md)). Either
+kind works:
+
+=== "A timestamp"
+
+    ```sql
+    create extension if not exists moddatetime with schema extensions;
+    alter table public.tasks
+      add column if not exists updated_at timestamptz not null default now();
+    create or replace trigger tasks_set_updated_at
+      before update on public.tasks
+      for each row execute function extensions.moddatetime(updated_at);
+    ```
+
+=== "An integer"
+
+    ```sql
+    alter table public.tasks
+      add column if not exists version bigint not null default 1;
+    create or replace function public.tasks_bump_version()
+    returns trigger
+    language plpgsql
+    set search_path = ''
+    as $$
+    begin
+      new.version := old.version + 1;
+      return new;
+    end;
+    $$;
+    create or replace trigger tasks_bump_version
+      before update on public.tasks
+      for each row execute function public.tasks_bump_version();
+    ```
+
+`moddatetime` stamps the time the server's transaction began, so two updates of one row inside one
+server-side transaction (a function or a trigger that updates it twice) leave one version, and
+the second is not seen: use the counter for such a table. Through PostgREST each request is a
+transaction of its own. The library compares the value for equality only, as the text the server
+sent, so the server's time zone and precision do not matter, and a value the app writes into the
+column is overwritten by the trigger. The sample apps' schema uses `moddatetime` on both tables
+([Set up Supabase](../samples/supabase-setup.md#what-it-creates)).
+
 ## Sign-out
 
 Call `supabase.offline.clearLocalData()` when a user signs out for good, before `auth.signOut()` or

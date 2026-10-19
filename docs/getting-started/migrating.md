@@ -191,6 +191,15 @@ server refuses on replay is not thrown but goes to the rejected list for your ap
 ([Conflicts and failures](../behaviors/failures.md)). The client holds a database: one client per
 process, and `clearLocalData()` on sign-out.
 
+supabase-kt sends a write when you call it, and the last write to reach the server wins. Here a
+write made offline reaches the server later, so name a version column for the tables where that
+matters ([Conflicts and merging](../behaviors/conflicts.md)): a queued update or delete of one
+cached row then replays with one more filter, `updated_at=eq.<the version the device saw>`, and
+`select=` the key, the version and the columns it sets, with `Prefer: return=representation`. A
+replayed request therefore needs SELECT on those columns, and its row must pass the table's SELECT
+policy, as a supabase-kt write with `select()` does. The request sent at once, while nothing waits
+ahead of it, is still exactly the one you built.
+
 ## Checklist
 
 1. Add the dependency and install the plugin last ([Project setup](setup.md)).
@@ -200,3 +209,4 @@ process, and `clearLocalData()` on sign-out.
 4. Make new rows' ids on the device.
 5. Call `clearLocalData()` when a user signs out.
 6. Show the sync status and the rejected list somewhere in the app.
+7. For a table several devices edit, name its version column, and show the conflicted list too.

@@ -163,6 +163,7 @@ nav:
       - Writes and the offline queue: behaviors/mutations.md
       - Optimistic overlay: behaviors/overlay.md
       - Replaying the queue: behaviors/sync.md
+      - Conflicts and merging: behaviors/conflicts.md
       - Conflicts and failures: behaviors/failures.md
       - Cache size and eviction: behaviors/eviction.md
       - Signing out and switching users: behaviors/sign-out.md

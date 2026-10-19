@@ -90,17 +90,23 @@ It is indexed on (`owner`, `synced_at_ms`) and indexed on (`table_name`).
 
 
 The library's own records (the rejected list, the conflicted list, whose cache it is, and each
-cached list's query shape) are JSON text in reserved rows of `object_cache`, under a table name 94 bytes long:
-Postgres cuts identifiers at 63 bytes, so no table of yours can have that name, and `from()`
-refuses it. A reserved row is never evicted, counted against `cacheSizeBytes`, read as a query or
+cached list's query shape) are JSON text in reserved rows of `object_cache`, under a table name 94
+bytes long: Postgres cuts identifiers at 63 bytes, so no table of yours can have that name, and
+`from()` refuses it. A reserved row is never evicted, counted against `cacheSizeBytes`, read as a query or
 overlaid.
+
+The conflicted list is one more such row, bounded as the
+rejected list is (its newest 100 entries, within 512 K characters). Each entry holds a held write's
+body and filter keys, its base (the columns it sets and the version, as the device saw them) and
+the server's row as the replay read it: the key, the version and the columns the write sets or
+filters on.
 
 ## What removes it
 
 | Event | What goes | What stays |
 | --- | --- | --- |
-| `clearLocalData()` | Every cached list, every downloaded file, every queued write (never sent) and the rejected list. The database is rewritten without them, as far as open reads allow ([details](../behaviors/sign-out.md#what-clearlocaldata-deletes)) | The database file itself, empty |
-| A user signs out, or another signs in (with Auth) | Once the session settles as someone else: the cached lists and the downloaded files | The mutation queue and the rejected list: each user's writes wait for that user |
+| `clearLocalData()` | Every cached list, every downloaded file, every queued write (never sent), the rejected list and the conflicted list. The database is rewritten without them, as far as open reads allow ([details](../behaviors/sign-out.md#what-clearlocaldata-deletes)) | The database file itself, empty |
+| A user signs out, or another signs in (with Auth) | Once the session settles as someone else: the cached lists and the downloaded files | The mutation queue, the rejected list and the conflicted list: each user's writes wait for that user |
 | Sign-out without Auth, or with your own token provider | Nothing: there is one identity for the life of the install | Everything |
 | `close()` | Nothing | Everything, for the next client |
 | Eviction | Cached lists fetched longest ago, past `cacheSizeBytes`; files used least recently, past `fileCacheSizeBytes` | The queue, which is never evicted; the rejected list keeps its newest 100 entries (see [Conflicts and failures](../behaviors/failures.md#the-rejected-list)) |
@@ -109,7 +115,10 @@ overlaid.
 ## Schema versions
 
 0.1.0 ships schema version 1. Version 2 adds `base_version` and `base_json` to `mutation_cache`,
-with a migration that keeps every queued write. Each later schema change is a new version with a
-migration that keeps the queued writes, and a minor release of the library. Going back to an older version of the
-library across a schema version is not supported, and loses the writes queued since. See
+for [conflict detection](../behaviors/conflicts.md#what-the-queue-records), with a migration that
+keeps every queued write: a write queued under version 1 has no base and replays unchecked, as it
+would have. Each later schema change is a new version with a migration that keeps the queued
+writes, and a minor release of the library. Going back to an older version of the library across a
+schema version is not supported, and loses the writes queued since, with the rejected and
+conflicted lists. See
 [Compatibility](../project/compatibility.md).

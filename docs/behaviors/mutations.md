@@ -128,6 +128,12 @@ whose `id` identifies it from then on, on the rejected list too. `isQueued` says
 | Sent at once, and the server refused it with any other answer | The server's exception is thrown, as `supabase.from(…)` would, and the write leaves the queue; it never reaches the rejected list, which holds only refusals found on replay ([Conflicts and failures](failures.md)) |
 | The caller is canceled while the write is on the wire | It stays queued, since the server may have it, and a pass sends it |
 
+A write sent at once goes out exactly as you built it. A `Queued` UPDATE or DELETE of one cached
+row of a table with a version column replays with a precondition instead: only while the server's
+row still has the version the device saw, asking for its row back. A row that moved meanwhile is a
+conflict, which your resolver settles or holds for the user
+([Conflicts and merging](conflicts.md)); `MutationOutcome` keeps its two cases either way.
+
 ## Writes the queue cannot hold
 
 These are sent at once instead, as `OnlineOnly` writes are, except that a success still updates
@@ -195,7 +201,10 @@ earlier send may have reached the server is replayed as an upsert that ignores d
 such rows. An INSERT whose key the server makes is inserted twice when the answer to its first send
 was lost; it can show twice in a read of its table answered while it is on the wire and, unless it
 asks for its rows back (`select()`), in that query's cached rows, across restarts, until they are
-fetched again; what a replay overwrites is on [Conflicts and failures](failures.md#conflicts). A
+fetched again; what a replay overwrites is on [Conflicts and failures](failures.md#conflicts).
+An upsert is never checked for conflicts, even on a table with a version column: PostgREST has no
+precondition for one, so a replayed upsert overwrites the columns it sets and recreates a row
+deleted elsewhere. Edit a row that exists with an update. A
 queued row carries only the columns it wrote until the list is fetched again
 ([Optimistic overlay](overlay.md#tips)).
 
@@ -242,7 +251,9 @@ From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabas
 `pendingMutations(table)`, `pendingMutationCount(table)` and `pendingMutationCountFlow(table)` show
 the current user's queued writes, of one table or of all, in the order they will be sent: each a
 `PendingMutation` with its `id`, `table`, `operation`, `createdAt`, the keys of the rows it touches
-(`rowKeys`) and its `body`. `discardPendingMutation(id)` is **destructive**, and the way out of a
+(`rowKeys`), its `body`, and `baseVersion`: the version of the row the write replays against, on a
+table with a version column, or `null` when the write is not checked
+([What the queue records](conflicts.md#what-the-queue-records)). `discardPendingMutation(id)` is **destructive**, and the way out of a
 write the server keeps failing, which holds every later write of the user behind it. The queue is
 never evicted and has no size bound. Sending it is on [Replaying the queue](sync.md); refused
 writes are on [Conflicts and failures](failures.md#the-rejected-list).
@@ -259,6 +270,7 @@ queries a write touches are cached.
 | **Offline, warm** | Throws the connectivity failure; nothing is queued. | `Queued`, and shown at once in each cached query that admits it; an UPDATE also brings a row cached by another query with the same columns into a list it starts matching. Not queued, a `MutationNotQueueableException` thrown instead, its cause the connectivity failure: an UPDATE or DELETE with no filter or one the queue cannot record exactly, and a dry run. |
 | **Offline, cold** | As offline, warm. | `Queued`; a reader of a query with nothing cached sees the queued rows it admits. |
 | **Network access off** (`disableNetwork()`) | Throws `NetworkDisabledException`; nothing is sent. | `Queued`, and nothing is sent until access is back on. |
+| **Replayed, on a table with a version column** | Never queued, so never checked. | An UPDATE or DELETE that pins one cached row is sent with its version as a precondition and asks for its row back: the row back is cached at its new version; no row back is followed by a read by key, which finds it applied already, gone, denied by a policy, or moved, a conflict for the resolver ([The five outcomes](conflicts.md#the-five-outcomes)). Inserts and upserts replay as they were made. |
 | **Session restoring** | Sent at once, as supabase-kt sends any request meanwhile: on the anon key. | `Queued` for the stored user, online or not, and sent with that user's token once the session settles. |
 
 What is waiting and what was refused:
@@ -277,3 +289,6 @@ What is waiting and what was refused:
   throws.
 - A write sent at once that the server refuses throws the server's error, and is not listed: the
   list is for refusals found on replay.
+- `conflictedMutations` lists the current user's writes held after a conflict; resolving one with
+  `KeepLocal` or `Apply` queues it again under a new id, against the server's version it recorded
+  ([The conflicted list](conflicts.md#the-conflicted-list)).

@@ -12,6 +12,7 @@ security on your project.
 | Cached lists | The database | The rows PostgREST returned to the user's list reads |
 | The mutation queue | The database | Each unsent write's body and filter, and the id of the user who made it |
 | The rejected list | The database | Each refused write's body, and the server's message, details and hint |
+| The conflicted list | The database | Each write held after a conflict: its body, the columns it sets as the device saw them, and the server's columns as the replay read them |
 | The cache owner | The database | Which user the cache belongs to |
 | Downloaded files | The files directory | The bytes of each Storage object downloaded through the offline bucket |
 
@@ -46,7 +47,10 @@ tagged `Supabase-Offline`. It writes nothing to the console itself.
 - **`INFO`, `WARNING` and `ERROR`** messages name tables, buckets, operations, queued writes' ids,
   counts, HTTP statuses and exception types. They carry no rows, request bodies, filter values,
   tokens, object paths or server messages. A failure in the library's own background work is
-  logged by its type, never its message. These are safe to keep as crash-report breadcrumbs.
+  logged by its type, never its message. A version a guarded write carries is a filter value
+  like any other, and never appears in them; neither does a resolver's conflict, which a failing
+  resolver reports by the table and the failure's type alone. These are safe to keep as
+  crash-report breadcrumbs.
 - **`DEBUG`** messages carry request bodies, the server's responses and failures' text: rows,
   filter values, object paths. Keep `DEBUG` out of release builds.
 

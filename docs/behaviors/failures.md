@@ -3,7 +3,8 @@
 A failure is either the network's or the server's. On the network's, the library serves the cache
 or keeps the write queued; on the server's, it hands you supabase-kt's own exception, unchanged. A
 queued write the server refuses later, on replay, is thrown at no one: it goes to the rejected
-list, which your app shows. The samples turn every failure a call can throw into their own words in
+list, which your app shows; one whose row moved on the server meanwhile is a conflict
+([Conflicts](#conflicts)). The samples turn every failure a call can throw into their own words in
 one place, a branch per kind:
 
 From the samples: [LibraryFailures.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/LibraryFailures.kt) · [SampleFailure.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/SampleFailure.swift)
@@ -106,10 +107,31 @@ full the oldest entries go, and their writes are lost: nothing reports the loss 
 
 ## Conflicts
 
-The last write wins: the library does not merge or resolve conflicting writes.
+A table whose version column you name ([Configuration](../reference/configuration.md#versioncolumns))
+has its queued updates and deletes of one cached row checked when they replay: each is sent only
+while the server's row still has the version the device saw, and a row that moved meanwhile is a
+conflict your resolver settles. [Conflicts and merging](conflicts.md) walks through it, with a
+running example.
 
-- **A replayed UPSERT, UPDATE or DELETE** sends what it was given; if its first send reached the
-  server but the answer was lost, the replay overwrites what another writer changed in between.
+| The replay finds | An UPDATE | A DELETE |
+| --- | --- | --- |
+| The row at the version the device saw | Applied; the server's row is cached | Applied |
+| No row | Gone: the resolver is asked with `server = null`; by default the write is dropped (`conflictsKeptServerCount`) | Already gone: synced (`alreadyOnServerCount`) |
+| The row at that version, still meeting the filter, unchanged | A policy denies it: the rejected list | The same |
+| The row moved, already holding the write's values | An earlier send landed: synced (`alreadyOnServerCount`) | — |
+| The row moved on other columns only | Resent at the new version, without asking | — |
+| The row moved on the write's columns | A conflict: the resolver, by default `KeepLocal` (resent at the new version) | A conflict: by default `KeepLocal` (deleted) |
+| No connection | The pass stops; the write stays queued | The same |
+
+A resolver that answers `Hold`, throws or takes 30 seconds parks the write on
+`conflictedMutations()`, for the app to resolve or dismiss.
+
+Everything else keeps the last write wins:
+
+- **A replayed UPSERT**, any write to a table without a version column, a write sent at once, and
+  an UPDATE or DELETE that pins no single cached row send what they were given; if a first send
+  reached the server but the answer was lost, the replay overwrites what another writer changed in
+  between, and an upsert recreates a row deleted elsewhere.
 - **A value several devices change** (a counter, a running total) belongs in a server-side
   computation: a queued write replays exactly the value it set, so write the facts that feed it.
 - **A policy change** under row-level security can turn writes already queued into refusals.

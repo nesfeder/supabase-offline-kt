@@ -44,16 +44,18 @@ All notable changes to this project are recorded in this file. The format follow
   refreshes its token before it expires through `Config.accessToken`; an app brackets a sign-in or
   sign-out with the switch, since the core sees no Auth session. `FakeRealtime` in
   `SupabaseOfflineTesting`, with `inMemory(…, realtime:)`, reports changes to an in-memory client.
-- `versionColumn("tasks", "updated_at")` in `install(Offline)`, and the map
-  `Offline.Config.versionColumns` behind it, keyed as `primaryKeys` is: the column a server-side
-  trigger changes on every update of a row (a `timestamptz` kept by `moddatetime`, or an integer). A
-  queued UPDATE or DELETE whose filter pins one cached row of such a table records the row's
-  version, and a sync pass replays it only while the server's row still has that version. A row that
-  moved meanwhile is compared column by column with the row as the device saw it: a change to other
-  columns only is resent against the new version, anything else is a conflict; a lost answer whose
-  write had landed counts as already on the server. Writes sent at once, inserts, upserts and writes
-  the queue cannot pin to one cached row replay as before. A blank version column, or one among the
-  table's key columns, fails `createConfig`.
+- Conflict detection for replayed writes, opt-in per table. `versionColumn("tasks", "updated_at")`
+  in `install(Offline)`, and the map `Offline.Config.versionColumns` behind it, keyed as
+  `primaryKeys` is, names the column a server-side trigger changes on every update of a row (a
+  `timestamptz` kept by `moddatetime`, or an integer). A queued UPDATE or DELETE whose filter pins
+  one cached row of such a table records the row's version, and a sync pass replays it only while
+  the server's row still has that version, asking for the row back; the returned row is cached and
+  its version forwarded to the writes queued behind it. When no row comes back, one read by key
+  tells a gone row, a policy denial (the rejected list), a lost answer whose write had landed
+  (already on the server), a change to other columns only (resent against the new version) and a
+  conflict. Writes sent at once, inserts, upserts and writes the queue cannot pin to one cached row
+  replay as before. A blank version column, or one among the table's key columns, fails
+  `createConfig`. The documentation's new "Conflicts and merging" page walks through it.
 - `Offline.Config.conflictResolver`, a `ConflictResolver` the app may implement, asked about a moved
   row whose written columns changed on the server too, a DELETE of a moved row, or an UPDATE of a
   gone one, with a `MutationConflict` (the row key, the base, the local columns, the server's row,
@@ -92,9 +94,10 @@ All notable changes to this project are recorded in this file. The format follow
 
 ### Changed
 
-- The database moves to schema version 2, which adds two columns to the mutation queue, with a
-  migration that keeps every queued write. Going back to 0.1.0 across it is not supported, and
-  loses the writes queued since.
+- The database moves to schema version 2, which adds `base_version` and `base_json` to the mutation
+  queue, with a migration that keeps every queued write; a write queued before the upgrade replays
+  unchecked, as it would have. Going back to 0.1.0 across it is not supported, and loses the writes
+  queued since.
 
 ### Deprecated
 
