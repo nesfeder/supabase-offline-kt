@@ -52,6 +52,19 @@ public class BridgeClientOptions(
      */
     public var realtimeTables: List<BridgeRealtimeTable> = emptyList()
 
+    /**
+     * Each table's version column, by table name, keyed as [primaryKeys] is: a sync pass replays a
+     * queued UPDATE or DELETE of one cached row only while the server's row still has the version
+     * the device saw. None by default.
+     */
+    public var versionColumns: Map<String, String> = emptyMap()
+
+    /**
+     * Settles the conflicts such a replay finds, or `null` for the library's defaults: the local
+     * change wins a moved row, and an UPDATE of a row that is gone is dropped.
+     */
+    public var conflictResolver: BridgeConflictResolver? = null
+
     /** Receives every log message of the library and of supabase-kt, or `null` to drop them. */
     public var logSink: BridgeLogSink? = null
 

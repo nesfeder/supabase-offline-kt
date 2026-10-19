@@ -307,3 +307,22 @@ const val INSERT_TODO = """{"v":1,"operation":"insert","table":"todos"}"""
 
 /** An insert of one row into `projects`, the table a test makes a parent of `todos`. */
 const val INSERT_PROJECT = """{"v":1,"operation":"insert","table":"projects"}"""
+
+/**
+ * A conflict resolver that records every conflict it is shown and answers each through
+ * [answerWith], on the calling thread.
+ */
+class RecordingConflictResolver(
+    private val answerWith: (BridgeConflict, BridgeConflictAnswer) -> Unit
+) : BridgeConflictResolver {
+    private val recorded = AtomicReference(emptyList<BridgeConflict>())
+
+    /** Every conflict so far, in order. */
+    val conflicts: List<BridgeConflict>
+        get() = recorded.load()
+
+    override fun resolve(conflict: BridgeConflict, answer: BridgeConflictAnswer) {
+        recorded.update { it + conflict }
+        answerWith(conflict, answer)
+    }
+}

@@ -26,13 +26,19 @@ public struct PendingMutation: Sendable, Hashable, Identifiable {
     /// The body it sends; `nil` for a delete.
     public let body: OfflineJSON?
 
+    /// The row's version, as text, that a sync pass sends the write only against; `nil` when the
+    /// write is not guarded (``SupabaseOfflineClient/Config/versionColumns``).
+    public let baseVersion: String?
+
+    /// Built by the package, and by the testing product's factories.
     package init(
         id: Int64,
         table: String,
         operation: MutationOperation,
         createdAt: Date,
         rowKeys: [[String: OfflineJSON]],
-        body: OfflineJSON?
+        body: OfflineJSON?,
+        baseVersion: String? = nil
     ) {
         self.id = id
         self.table = table
@@ -40,6 +46,7 @@ public struct PendingMutation: Sendable, Hashable, Identifiable {
         self.createdAt = createdAt
         self.rowKeys = rowKeys
         self.body = body
+        self.baseVersion = baseVersion
     }
 }
 
@@ -53,7 +60,8 @@ extension PendingMutation {
             operation: try MutationOperation(core: mutation.operation),
             createdAt: Date(epochMilliseconds: mutation.createdAtEpochMillis),
             rowKeys: try RowCoding.decode([[String: OfflineJSON]].self, from: mutation.rowKeysJson),
-            body: try mutation.bodyJson.map { try RowCoding.decode(OfflineJSON.self, from: $0) }
+            body: try mutation.bodyJson.map { try RowCoding.decode(OfflineJSON.self, from: $0) },
+            baseVersion: mutation.baseVersion
         )
     }
 }

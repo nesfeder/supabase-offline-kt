@@ -21,10 +21,15 @@ of your own.
 ### Values
 
 - ``pendingMutation(id:table:operation:createdAt:rowKeys:body:)``
+- ``pendingMutation(id:table:operation:createdAt:rowKeys:body:baseVersion:)``
 - ``rejectedMutation(id:table:operation:createdAt:rowKeys:body:serverError:message:rejectedAt:isRetryable:)``
 - ``serverError(status:code:message:details:hint:)``
 - ``syncReport(syncedCount:rejected:remainingCount:alreadyOnServerCount:heldBehindOtherTablesCount:)``
+- ``syncReport(syncedCount:rejected:remainingCount:alreadyOnServerCount:heldBehindOtherTablesCount:conflictsResolvedCount:conflictsKeptServerCount:conflicted:)``
 - ``syncStatus(network:pendingMutationCount:rejectedMutationCount:isSyncing:lastSyncedAt:lastSyncError:)``
+- ``syncStatus(network:pendingMutationCount:rejectedMutationCount:isSyncing:lastSyncedAt:lastSyncError:conflictedMutationCount:)``
+- ``mutationConflict(mutationId:table:operation:rowKey:base:local:server:changedOnServer:conflictingColumns:)``
+- ``conflictedMutation(id:table:operation:createdAt:rowKeys:body:base:server:serverVersion:changedOnServer:conflictingColumns:message:conflictedAt:)``
 - ``querySnapshot(result:isFromCache:fetchedAt:hasPendingMutations:refresh:)``
 - ``offlineResponse(value:data:count:isFromCache:fetchedAt:hasPendingMutations:)``
 - ``cachedFile(path:fetchedAt:sizeBytes:)``
