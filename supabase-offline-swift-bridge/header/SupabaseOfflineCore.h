@@ -6,9 +6,9 @@
 #import <Foundation/NSString.h>
 #import <Foundation/NSValue.h>
 
-@class NSData, SOCBridgeAccessTokenCallback, SOCBridgeCachedFile, SOCBridgeCancellable, SOCBridgeClient, SOCBridgeClientCompanion, SOCBridgeClientOptions, SOCBridgeClientOptionsCompanion, SOCBridgeError, SOCBridgeErrorKind, SOCBridgeFakeRealtime, SOCBridgeHttpRequest, SOCBridgeHttpResponder, SOCBridgeLogLevel, SOCBridgeMutationOperation, SOCBridgeMutationResult, SOCBridgeNetworkStatus, SOCBridgeOpenResult, SOCBridgePendingMutation, SOCBridgeQueryResult, SOCBridgeQuerySnapshot, SOCBridgeRealtimeFilter, SOCBridgeRealtimeStatus, SOCBridgeRealtimeStatusKind, SOCBridgeRealtimeTable, SOCBridgeRefreshKind, SOCBridgeRefreshState, SOCBridgeRejectedMutation, SOCBridgeServerError, SOCBridgeStorage, SOCBridgeStringResult, SOCBridgeSyncReport, SOCBridgeSyncStatus, SOCBridgeTesting, SOCKotlinArray<T>, SOCKotlinEnum<E>, SOCKotlinEnumCompanion;
+@class NSData, SOCBridgeAccessTokenCallback, SOCBridgeCachedFile, SOCBridgeCancellable, SOCBridgeClient, SOCBridgeClientCompanion, SOCBridgeClientOptions, SOCBridgeClientOptionsCompanion, SOCBridgeConflict, SOCBridgeConflictAnswer, SOCBridgeConflictDecision, SOCBridgeConflictedMutation, SOCBridgeError, SOCBridgeErrorKind, SOCBridgeFakeRealtime, SOCBridgeHttpRequest, SOCBridgeHttpResponder, SOCBridgeLogLevel, SOCBridgeMutationOperation, SOCBridgeMutationResult, SOCBridgeNetworkStatus, SOCBridgeOpenResult, SOCBridgePendingMutation, SOCBridgeQueryResult, SOCBridgeQuerySnapshot, SOCBridgeRealtimeFilter, SOCBridgeRealtimeStatus, SOCBridgeRealtimeStatusKind, SOCBridgeRealtimeTable, SOCBridgeRefreshKind, SOCBridgeRefreshState, SOCBridgeRejectedMutation, SOCBridgeServerError, SOCBridgeStorage, SOCBridgeStringResult, SOCBridgeSyncReport, SOCBridgeSyncStatus, SOCBridgeTesting, SOCKotlinArray<T>, SOCKotlinEnum<E>, SOCKotlinEnumCompanion;
 
-@protocol SOCBridgeAccessTokenProvider, SOCBridgeClock, SOCBridgeFakeServer, SOCBridgeLogSink, SOCKotlinComparable, SOCKotlinIterator;
+@protocol SOCBridgeAccessTokenProvider, SOCBridgeClock, SOCBridgeConflictResolver, SOCBridgeFakeServer, SOCBridgeLogSink, SOCKotlinComparable, SOCKotlinIterator;
 
 NS_ASSUME_NONNULL_BEGIN
 #pragma clang diagnostic push
@@ -252,6 +252,9 @@ __attribute__((swift_name("BridgeClient")))
  */
 - (SOCBridgeCancellable *)closeCompletion:(void (^)(SOCBridgeError * _Nullable))completion __attribute__((swift_name("close(completion:)")));
 
+/** The current user's writes parked on the conflicted list, oldest first. */
+- (SOCBridgeCancellable *)conflictedMutationsCompletion:(void (^)(NSArray<SOCBridgeConflictedMutation *> * _Nullable, SOCBridgeError * _Nullable))completion __attribute__((swift_name("conflictedMutations(completion:)")));
+
 /**
  * Where the channel for [BridgeClientOptions.realtimeTables] stands now; off without named
  * tables and after [close]. A failure to read it is reported as a stalled status carrying the
@@ -276,6 +279,9 @@ __attribute__((swift_name("BridgeClient")))
 
 /** Removes one of the current user's queued writes without sending it: destructive. */
 - (SOCBridgeCancellable *)discardPendingMutationId:(int64_t)id completion:(void (^)(SOCBridgeError * _Nullable))completion __attribute__((swift_name("discardPendingMutation(id:completion:)")));
+
+/** Removes an entry from the conflicted list for good, without sending it. */
+- (SOCBridgeCancellable *)dismissConflictedMutationId:(int64_t)id completion:(void (^)(SOCBridgeError * _Nullable))completion __attribute__((swift_name("dismissConflictedMutation(id:completion:)")));
 
 /** Removes an entry from the rejected list for good. */
 - (SOCBridgeCancellable *)dismissRejectedMutationId:(int64_t)id completion:(void (^)(SOCBridgeError * _Nullable))completion __attribute__((swift_name("dismissRejectedMutation(id:completion:)")));
@@ -304,6 +310,9 @@ __attribute__((swift_name("BridgeClient")))
  * @param query the read's description, as JSON text; its strategy is a live one.
  */
 - (SOCBridgeCancellable *)observeQuery:(NSString *)query onSnapshot:(void (^)(SOCBridgeQuerySnapshot *))onSnapshot onCompletion:(void (^)(SOCBridgeError * _Nullable))onCompletion __attribute__((swift_name("observe(query:onSnapshot:onCompletion:)")));
+
+/** [conflictedMutations] as the list changes; [onCompletion] fires once, when it ends. */
+- (SOCBridgeCancellable *)observeConflictedMutationsOnMutations:(void (^)(NSArray<SOCBridgeConflictedMutation *> *))onMutations onCompletion:(void (^)(SOCBridgeError * _Nullable))onCompletion __attribute__((swift_name("observeConflictedMutations(onMutations:onCompletion:)")));
 
 /** [pendingMutationCount] as it changes; a value only when it differs from the last. */
 - (SOCBridgeCancellable *)observePendingMutationCountTable:(NSString * _Nullable)table onCount:(void (^)(SOCInt *))onCount onCompletion:(void (^)(SOCBridgeError * _Nullable))onCompletion __attribute__((swift_name("observePendingMutationCount(table:onCount:onCompletion:)")));
@@ -337,6 +346,15 @@ __attribute__((swift_name("BridgeClient")))
 
 /** The current user's writes the server refused for good on replay, oldest first. */
 - (SOCBridgeCancellable *)rejectedMutationsCompletion:(void (^)(NSArray<SOCBridgeRejectedMutation *> * _Nullable, SOCBridgeError * _Nullable))completion __attribute__((swift_name("rejectedMutations(completion:)")));
+
+/**
+ * Settles an entry of the conflicted list: KEEP_LOCAL and APPLY queue it again under a new id,
+ * KEEP_SERVER drops it. A decision the library refuses fails with
+ * [BridgeErrorKind.INVALID_ARGUMENT].
+ *
+ * @param columnsJson the columns of APPLY, a JSON object as text; `null` for the others.
+ */
+- (SOCBridgeCancellable *)resolveConflictedMutationId:(int64_t)id decision:(SOCBridgeConflictDecision *)decision columnsJson:(NSString * _Nullable)columnsJson completion:(void (^)(SOCBridgeError * _Nullable))completion __attribute__((swift_name("resolveConflictedMutation(id:decision:columnsJson:completion:)")));
 
 /**
  * Queues a rejected write again, at the end of the queue under a new id; an entry that cannot
@@ -426,6 +444,12 @@ __attribute__((swift_name("BridgeClientOptions")))
  * The most the cached query results may hold, in bytes; [CACHE_SIZE_UNLIMITED] for no bound.
  */
 @property int64_t cacheSizeBytes __attribute__((swift_name("cacheSizeBytes")));
+
+/**
+ * Settles the conflicts such a replay finds, or `null` for the library's defaults: the local
+ * change wins a moved row, and an UPDATE of a row that is gone is dropped.
+ */
+@property id<SOCBridgeConflictResolver> _Nullable conflictResolver __attribute__((swift_name("conflictResolver")));
 @property (readonly) NSString *dataDirectory __attribute__((swift_name("dataDirectory")));
 
 /** The most the Storage file cache may hold, in bytes; [CACHE_SIZE_UNLIMITED] for no bound. */
@@ -458,6 +482,13 @@ __attribute__((swift_name("BridgeClientOptions")))
 @property NSString *schema __attribute__((swift_name("schema")));
 @property (readonly) NSString *supabaseKey __attribute__((swift_name("supabaseKey")));
 @property (readonly) NSString *supabaseUrl __attribute__((swift_name("supabaseUrl")));
+
+/**
+ * Each table's version column, by table name, keyed as [primaryKeys] is: a sync pass replays a
+ * queued UPDATE or DELETE of one cached row only while the server's row still has the version
+ * the device saw. None by default.
+ */
+@property NSDictionary<NSString *, NSString *> *versionColumns __attribute__((swift_name("versionColumns")));
 @end
 
 
@@ -494,6 +525,152 @@ __attribute__((swift_name("BridgeClock")))
 
 
 /**
+ * A conflict a replay found: a queued UPDATE or DELETE of one row whose version on the server is no
+ * longer the one the device saw. Rows cross as JSON text.
+ *
+ * @property mutationId the write's id in the queue.
+ * @property table the table the write targets.
+ * @property operation [BridgeMutationOperation.UPDATE] or [BridgeMutationOperation.DELETE].
+ * @property rowKeyJson the row's key values as the write's filter pins them, as text, a JSON object.
+ * @property baseJson the columns the write sets and the version column, as the device last saw the
+ *   row, a JSON object.
+ * @property localJson the columns the write sets, a JSON object; `null` for a DELETE.
+ * @property serverJson the server's row now, in part, a JSON object; `null` when it is gone.
+ * @property changedOnServer the columns the write sets whose server value differs from the base.
+ * @property conflictingColumns of [changedOnServer], those the write sets to another value.
+ */
+__attribute__((objc_subclassing_restricted))
+__attribute__((swift_name("BridgeConflict")))
+@interface SOCBridgeConflict : SOCBase
+@property (readonly) NSString *baseJson __attribute__((swift_name("baseJson")));
+@property (readonly) NSArray<NSString *> *changedOnServer __attribute__((swift_name("changedOnServer")));
+@property (readonly) NSArray<NSString *> *conflictingColumns __attribute__((swift_name("conflictingColumns")));
+@property (readonly) NSString * _Nullable localJson __attribute__((swift_name("localJson")));
+@property (readonly) int64_t mutationId __attribute__((swift_name("mutationId")));
+@property (readonly) SOCBridgeMutationOperation *operation __attribute__((swift_name("operation")));
+@property (readonly) NSString *rowKeyJson __attribute__((swift_name("rowKeyJson")));
+@property (readonly) NSString * _Nullable serverJson __attribute__((swift_name("serverJson")));
+@property (readonly) NSString *table __attribute__((swift_name("table")));
+@end
+
+
+/** The one-time answer to a [BridgeConflictResolver.resolve] call; later answers are ignored. */
+__attribute__((objc_subclassing_restricted))
+__attribute__((swift_name("BridgeConflictAnswer")))
+@interface SOCBridgeConflictAnswer : SOCBase
+
+/**
+ * Sends [columnsJson], a JSON object of at least one column, as the UPDATE's body instead; any
+ * other text holds the write.
+ */
+- (void)applyColumnsJson:(NSString *)columnsJson __attribute__((swift_name("apply(columnsJson:)")));
+
+/** Answers that the app's resolver failed, which holds the write; [message] is not logged. */
+- (void)failMessage:(NSString *)message __attribute__((swift_name("fail(message:)")));
+
+/** Parks the write on the conflicted list. */
+- (void)hold __attribute__((swift_name("hold()")));
+
+/** Sends the write again, preconditioned on the server's row as it is now. */
+- (void)keepLocal __attribute__((swift_name("keepLocal()")));
+
+/** Drops the write without sending it; the server's row stands. */
+- (void)keepServer __attribute__((swift_name("keepServer()")));
+@end
+
+__attribute__((swift_name("KotlinComparable")))
+@protocol SOCKotlinComparable
+@required
+- (int32_t)compareToOther:(id _Nullable)other __attribute__((swift_name("compareTo(other:)")));
+@end
+
+__attribute__((swift_name("KotlinEnum")))
+@interface SOCKotlinEnum<E> : SOCBase <SOCKotlinComparable>
+- (instancetype)initWithName:(NSString *)name ordinal:(int32_t)ordinal __attribute__((swift_name("init(name:ordinal:)"))) __attribute__((objc_designated_initializer));
+@property (class, readonly, getter=companion) SOCKotlinEnumCompanion *companion __attribute__((swift_name("companion")));
+- (int32_t)compareToOther:(E)other __attribute__((swift_name("compareTo(other:)")));
+- (BOOL)isEqual:(id _Nullable)other __attribute__((swift_name("isEqual(_:)")));
+- (NSUInteger)hash __attribute__((swift_name("hash()")));
+- (NSString *)description __attribute__((swift_name("description()")));
+@property (readonly) NSString *name __attribute__((swift_name("name")));
+@property (readonly) int32_t ordinal __attribute__((swift_name("ordinal")));
+@end
+
+
+/** How [BridgeClient.resolveConflictedMutation] settles an entry of the conflicted list. */
+__attribute__((objc_subclassing_restricted))
+__attribute__((swift_name("BridgeConflictDecision")))
+@interface SOCBridgeConflictDecision : SOCKotlinEnum<SOCBridgeConflictDecision *>
++ (instancetype)alloc __attribute__((unavailable));
+
+/** How [BridgeClient.resolveConflictedMutation] settles an entry of the conflicted list. */
++ (instancetype)allocWithZone:(struct _NSZone *)zone __attribute__((unavailable));
+- (instancetype)initWithName:(NSString *)name ordinal:(int32_t)ordinal __attribute__((swift_name("init(name:ordinal:)"))) __attribute__((objc_designated_initializer)) __attribute__((unavailable));
+@property (class, readonly) SOCBridgeConflictDecision *keepLocal __attribute__((swift_name("keepLocal")));
+@property (class, readonly) SOCBridgeConflictDecision *keepServer __attribute__((swift_name("keepServer")));
+@property (class, readonly) SOCBridgeConflictDecision *apply __attribute__((swift_name("apply")));
+@property (class, readonly) SOCBridgeConflictDecision *hold __attribute__((swift_name("hold")));
++ (SOCKotlinArray<SOCBridgeConflictDecision *> *)values __attribute__((swift_name("values()")));
+@property (class, readonly) NSArray<SOCBridgeConflictDecision *> *entries __attribute__((swift_name("entries")));
+@end
+
+
+/**
+ * Settles the conflicts a sync pass finds when it replays a guarded write
+ * ([BridgeClientOptions.versionColumns]): the app's own resolver, behind a callback.
+ */
+__attribute__((swift_name("BridgeConflictResolver")))
+@protocol SOCBridgeConflictResolver
+@required
+
+/**
+ * Decides [conflict] and hands the decision to [answer], once, on any thread. The pass waits
+ * for it; no answer within 30 seconds, or [BridgeConflictAnswer.fail], holds the write.
+ */
+- (void)resolveConflict:(SOCBridgeConflict *)conflict answer:(SOCBridgeConflictAnswer *)answer __attribute__((swift_name("resolve(conflict:answer:)")));
+@end
+
+
+/**
+ * A queued write parked on the conflicted list, kept until the app resolves or dismisses it.
+ *
+ * @property id the write's id, as it had in the queue.
+ * @property table the table it targeted.
+ * @property operation [BridgeMutationOperation.UPDATE] or [BridgeMutationOperation.DELETE].
+ * @property createdAtEpochMillis when it was queued, in milliseconds since 1970.
+ * @property rowKeysJson the row's key values as the write's filter pins them, as text, a JSON array
+ *   of objects.
+ * @property bodyJson the body it sends, as JSON text; `null` for a DELETE or one too large to keep.
+ * @property baseJson the columns it sets and the version column as the device saw them, a JSON
+ *   object.
+ * @property serverJson the server's row when the replay read it, in part, a JSON object; `null`
+ *   when it was gone or too large to keep.
+ * @property serverVersion the server row's version then, as text; `null` when the row was gone.
+ * @property changedOnServer the columns it sets whose server value differed from the base.
+ * @property conflictingColumns of [changedOnServer], those it sets to another value.
+ * @property message why it was parked, in words.
+ * @property conflictedAtEpochMillis when it was parked, in milliseconds since 1970.
+ */
+__attribute__((objc_subclassing_restricted))
+__attribute__((swift_name("BridgeConflictedMutation")))
+@interface SOCBridgeConflictedMutation : SOCBase
+@property (readonly) NSString *baseJson __attribute__((swift_name("baseJson")));
+@property (readonly) NSString * _Nullable bodyJson __attribute__((swift_name("bodyJson")));
+@property (readonly) NSArray<NSString *> *changedOnServer __attribute__((swift_name("changedOnServer")));
+@property (readonly) int64_t conflictedAtEpochMillis __attribute__((swift_name("conflictedAtEpochMillis")));
+@property (readonly) NSArray<NSString *> *conflictingColumns __attribute__((swift_name("conflictingColumns")));
+@property (readonly) int64_t createdAtEpochMillis __attribute__((swift_name("createdAtEpochMillis")));
+@property (readonly) int64_t id __attribute__((swift_name("id")));
+@property (readonly) NSString *message __attribute__((swift_name("message")));
+@property (readonly) SOCBridgeMutationOperation *operation __attribute__((swift_name("operation")));
+@property (readonly) NSString *rowKeysJson __attribute__((swift_name("rowKeysJson")));
+@property (readonly) NSString * _Nullable serverJson __attribute__((swift_name("serverJson")));
+@property (readonly) NSString * _Nullable serverVersion __attribute__((swift_name("serverVersion")));
+@property (readonly) NSString *table __attribute__((swift_name("table")));
+@end
+
+
+/**
  * Every failure of a bridge call, as a value: nothing the bridge exports ever throws.
  *
  * @property kind what failed; decides what the other fields hold.
@@ -524,24 +701,6 @@ __attribute__((swift_name("BridgeError")))
 @property (readonly) BOOL isConnectivityFailure __attribute__((swift_name("isConnectivityFailure")));
 @property (readonly) SOCBridgeErrorKind *kind __attribute__((swift_name("kind")));
 @property (readonly) NSString *message __attribute__((swift_name("message")));
-@end
-
-__attribute__((swift_name("KotlinComparable")))
-@protocol SOCKotlinComparable
-@required
-- (int32_t)compareToOther:(id _Nullable)other __attribute__((swift_name("compareTo(other:)")));
-@end
-
-__attribute__((swift_name("KotlinEnum")))
-@interface SOCKotlinEnum<E> : SOCBase <SOCKotlinComparable>
-- (instancetype)initWithName:(NSString *)name ordinal:(int32_t)ordinal __attribute__((swift_name("init(name:ordinal:)"))) __attribute__((objc_designated_initializer));
-@property (class, readonly, getter=companion) SOCKotlinEnumCompanion *companion __attribute__((swift_name("companion")));
-- (int32_t)compareToOther:(E)other __attribute__((swift_name("compareTo(other:)")));
-- (BOOL)isEqual:(id _Nullable)other __attribute__((swift_name("isEqual(_:)")));
-- (NSUInteger)hash __attribute__((swift_name("hash()")));
-- (NSString *)description __attribute__((swift_name("description()")));
-@property (readonly) NSString *name __attribute__((swift_name("name")));
-@property (readonly) int32_t ordinal __attribute__((swift_name("ordinal")));
 @end
 
 
@@ -797,10 +956,13 @@ __attribute__((swift_name("BridgeOpenResult")))
  * @property createdAtEpochMillis when it was queued, in milliseconds since 1970.
  * @property rowKeysJson the primary-key values of the rows it touches, a JSON array of objects.
  * @property bodyJson the body it sends, as JSON text; `null` for a delete.
+ * @property baseVersion the row's version a replay is preconditioned on, as text; `null` when the
+ *   write is not guarded.
  */
 __attribute__((objc_subclassing_restricted))
 __attribute__((swift_name("BridgePendingMutation")))
 @interface SOCBridgePendingMutation : SOCBase
+@property (readonly) NSString * _Nullable baseVersion __attribute__((swift_name("baseVersion")));
 @property (readonly) NSString * _Nullable bodyJson __attribute__((swift_name("bodyJson")));
 @property (readonly) int64_t createdAtEpochMillis __attribute__((swift_name("createdAtEpochMillis")));
 @property (readonly) int64_t id __attribute__((swift_name("id")));
@@ -1129,11 +1291,19 @@ __attribute__((swift_name("BridgeStringResult")))
  * @property alreadyOnServerCount of [syncedCount], the inserts whose rows the server already held.
  * @property heldBehindOtherTablesCount of [remainingCount], the writes a call for one table held
  *   back behind an earlier write of the user to another table; `0` for a call over every table.
+ * @property conflictsResolvedCount of [syncedCount], the guarded writes whose conflict was settled
+ *   and that were sent.
+ * @property conflictsKeptServerCount the guarded writes dropped unsent because the server's row
+ *   stands.
+ * @property conflicted the guarded writes parked during this call, now on the conflicted list.
  */
 __attribute__((objc_subclassing_restricted))
 __attribute__((swift_name("BridgeSyncReport")))
 @interface SOCBridgeSyncReport : SOCBase
 @property (readonly) int32_t alreadyOnServerCount __attribute__((swift_name("alreadyOnServerCount")));
+@property (readonly) NSArray<SOCBridgeConflictedMutation *> *conflicted __attribute__((swift_name("conflicted")));
+@property (readonly) int32_t conflictsKeptServerCount __attribute__((swift_name("conflictsKeptServerCount")));
+@property (readonly) int32_t conflictsResolvedCount __attribute__((swift_name("conflictsResolvedCount")));
 @property (readonly) int32_t heldBehindOtherTablesCount __attribute__((swift_name("heldBehindOtherTablesCount")));
 @property (readonly) NSArray<SOCBridgeRejectedMutation *> *rejected __attribute__((swift_name("rejected")));
 @property (readonly) int32_t remainingCount __attribute__((swift_name("remainingCount")));
@@ -1153,10 +1323,12 @@ __attribute__((swift_name("BridgeSyncReport")))
  *   1970; `null` until it happens.
  * @property lastSyncError why the last pass stopped with writes queued, a
  *   [BridgeErrorKind.SYNC_FAILED]; `null` once a later pass runs to the end.
+ * @property conflictedMutationCount the current user's entries on the conflicted list.
  */
 __attribute__((objc_subclassing_restricted))
 __attribute__((swift_name("BridgeSyncStatus")))
 @interface SOCBridgeSyncStatus : SOCBase
+@property (readonly) int32_t conflictedMutationCount __attribute__((swift_name("conflictedMutationCount")));
 @property (readonly) BOOL isSyncing __attribute__((swift_name("isSyncing")));
 @property (readonly) SOCBridgeError * _Nullable lastSyncError __attribute__((swift_name("lastSyncError")));
 @property (readonly) SOCLong * _Nullable lastSyncedAtEpochMillis __attribute__((swift_name("lastSyncedAtEpochMillis")));
