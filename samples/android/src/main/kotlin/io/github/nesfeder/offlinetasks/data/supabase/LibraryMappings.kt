@@ -107,7 +107,7 @@ internal fun SyncStatus.toAppSyncStatus(): AppSyncStatus =
             },
         pendingMutationCount = pendingMutationCount,
         rejectedMutationCount = rejectedMutationCount,
-        conflictedMutationCount = conflictedMutationCount, // parked until the user settles them
+        conflictedMutationCount = conflictedMutationCount,
         isSyncing = isSyncing,
         lastSyncedAt = lastSyncedAt,
         lastSyncError = lastSyncError?.toAppFailure(LibraryCall.Sync),
@@ -124,9 +124,9 @@ internal fun SyncReport.toTaskSyncReport(): TaskSyncReport =
         remainingCount = remainingCount,
         alreadyOnServerCount = alreadyOnServerCount,
         heldBehindOtherTablesCount = heldBehindOtherTablesCount,
-        conflictsResolvedCount = conflictsResolvedCount, // moved rows settled and sent again
-        conflictsKeptServerCount = conflictsKeptServerCount, // dropped: the server's row stands
-        conflicted = conflicted.map { it.toConflictedTaskMutation() }, // parked for the user
+        conflictsResolvedCount = conflictsResolvedCount,
+        conflictsKeptServerCount = conflictsKeptServerCount,
+        conflicted = conflicted.map { it.toConflictedTaskMutation() },
     )
 
 // --8<-- [end:sync-report]

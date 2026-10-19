@@ -895,6 +895,28 @@ class OfflineTaskRepositoryTest {
         assertTrue(repository.conflictedMutations().first().isEmpty())
     }
 
+    @Test
+    fun an_edit_of_a_task_deleted_on_the_server_is_dropped() = runTest {
+        // Given — the device's title edit queued while another writer deleted the task
+        server.insertRow(Tables.TASKS, serverOnlyTask("Milk"))
+        repository.tasks().awaitValue { tasks -> tasks.any { it.id == SERVER_TASK_ID } }
+        repository.setNetworkEnabled(false)
+        repository.updateTask(SERVER_TASK_ID, "Buy milk", notes = null)
+        server.deleteRows(Tables.TASKS)
+
+        // When
+        repository.setNetworkEnabled(true)
+        repository.syncPendingMutations()
+
+        // Then — the resolver keeps the server's side: nothing parked, refused or brought back
+        repository.syncStatus.awaitState { it.pendingMutationCount == 0 }
+        repository.tasks().awaitValue { it.isEmpty() }
+        assertTrue(repository.conflictedMutations().first().isEmpty())
+        assertTrue(repository.rejectedMutationsNow().isEmpty())
+        assertTrue(server.rows(Tables.TASKS).isEmpty())
+    }
+
+    // --8<-- [start:make-conflict]
     /**
      * Stages the tour's conflict through the fake server: a task the list read from the server, its
      * title edited to [mine] offline, then changed to [theirs] on the server, then the network back
@@ -912,6 +934,8 @@ class OfflineTaskRepositoryTest {
         repository.syncPendingMutations()
         return repository.conflictedMutations().awaitState { it.isNotEmpty() }.single()
     }
+
+    // --8<-- [end:make-conflict]
 
     /** The title of the server-only task, as the server holds it. */
     private fun serverTitle(): String? =
