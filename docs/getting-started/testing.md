@@ -123,6 +123,35 @@ In Swift, `SupabaseOfflineClient.inMemory(…, realtime:)` takes the testing pro
 the same way, with `reportInsert(table:record:)` and the rest; the Swift API reference's Testing
 your app article has the listing.
 
+## Stage a conflict
+
+To test your resolver or your conflicted-list screen, move the row on the server between the moment
+a write is queued and the moment it replays. The server lives in the test's `MockEngine`, so stage
+it there: answer the first read with the row at one version, the replayed PATCH preconditioned on
+that version with `[]`, the read by key with the row at a new version, and the resend with the
+row. This test, from the testing artifact's own suite, does exactly that; `BASE`, `MOVED` and
+`RESENT` are constants of the test (`2026-10-18T13:00:27.486123+00:00`,
+`2026-10-18T13:04:00.000001+00:00` and `2026-10-18T13:05:00.000002+00:00`):
+
+From the tests: [ConflictStagingTest.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/supabase-offline-kt-testing/src/commonTest/kotlin/io/github/nesfeder/supabase/offline/testing/ConflictStagingTest.kt)
+
+```kotlin
+--8<-- "ConflictStagingTest.kt:stage-conflict-rows"
+
+--8<-- "ConflictStagingTest.kt:stage-conflict"
+```
+
+The resolver is then shown `conflictingColumns == setOf("title")`, the first PATCH carries
+`updated_at=eq.2026-10-18T13%3A00%3A27.486123%2B00%3A00` and `Prefer: return=representation`, the
+resend carries the moved version, and the report counts one write synced and one conflict
+resolved. A resolver that answers `Hold` instead puts the write on `conflictedMutations()`. Tell the
+read by key from the first read by its `id=eq.…` filter, and keep `autoSync = false`, so that the
+test's own `syncPendingMutations()` is the pass that replays.
+
+In Swift, the testing product's `FakeServer` stages the same: answer the guarded PATCH with `[]`
+and the read by key with the moved row, and the closure in `Config.conflictResolver` is shown the
+conflict.
+
 ## Waiting for the client
 
 The client runs on real time, not the test's virtual clock: `inMemory(clock)` sets the times it
@@ -156,9 +185,10 @@ From the samples: [LibraryMappingsTest.kt](https://github.com/nesfeder/supabase-
 | Factory | Builds |
 | --- | --- |
 | `appliedOutcome`, `queuedOutcome` | `MutationOutcome.Applied`, `MutationOutcome.Queued` |
-| `pendingMutation`, `rejectedMutation`, `serverError` | The queue's values |
+| `pendingMutation`, `rejectedMutation`, `serverError` | The queue's values; an overload of `pendingMutation` takes `baseVersion` |
+| `mutationConflict`, `conflictedMutation` | What a resolver is shown, and an entry of the conflicted list |
 | `querySnapshot`, `stalledRefresh` | A live read's emission, and a stalled refresh |
-| `syncReport`, `syncStatus` | What a sync returns, and the status |
+| `syncReport`, `syncStatus` | What a sync returns, and the status; overloads take the conflict counts, `conflicted` and `conflictedMutationCount` |
 | `cachedFile` | A Storage file in the cache |
 | `cacheMissException`, `mutationNotQueueableException`, `networkDisabledException`, `syncFailedException` | The exceptions; `syncFailedException(isConnectivityFailure = true)` is one `isNetworkOrConnectivityFailure()` accepts |
 

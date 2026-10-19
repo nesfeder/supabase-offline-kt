@@ -112,6 +112,18 @@ kept. Offline, it waits in the queue like any other change. When it is sent the 
 
 ![The Sync tab's Refused changes: "Couldn't save "(no title)"", the reason, "The server answered HTTP 400 · 23514", when it was made and refused, Retry and Dismiss; below it the Server section's count](../assets/samples/android/refused-change.png){ width="270" loading=lazy }
 
+### Conflicting changes
+
+The client names `updated_at` as the version column of both tables and sets a resolver that holds
+a title both sides changed. Such a change waits under **Conflicting changes**, between Refused
+changes and Server, with the title on the server beside this device's, when it was made and held,
+**Keep mine** (send it over the server's row as it is now; off when the task is gone or the change
+was too long to keep) and **Keep theirs** (drop it). The Sync badge counts it with the refused ones,
+and the last report's line says how many conflicts were settled, kept the server's or held. **Make
+a conflict**, under Try it, gives the two-writers recipe: the app ships no stand-in server, so
+the second writer is your project's Table Editor
+([Try a conflict](tour.md#try-a-conflict)).
+
 ### Attach a photo
 
 Open a task and tap **Add photo**, or add photos as you create a task with **New task**'s **Add

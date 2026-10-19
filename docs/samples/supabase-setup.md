@@ -93,7 +93,7 @@ delete every file in `task-photos`. Deal with each as the hint says, then run th
 | `public.task_photos` | `id`, `user_id`, `task_id`, `object_path`, `width`, `height`, `created_at`, `updated_at` |
 | Row-level security | Enabled and forced on both tables. Each has four policies, one per operation, and each admits a row only when its `user_id` is the caller's id |
 | Grants | Nothing for `anon`. `select`, `insert`, `update` and `delete` for `authenticated`, and for `service_role`, which the samples never use |
-| `updated_at` | Set by the server on every update, with the `moddatetime` extension, installed in the `extensions` schema |
+| `updated_at` | Set by the server on every update, with the `moddatetime` extension, installed in the `extensions` schema. The samples name it as both tables' version column, so a change queued offline is checked against it when it is sent ([Conflicts and merging](../behaviors/conflicts.md)) |
 | Storage bucket `task-photos` | Private, JPEG only, 5 MB per file |
 | Storage policies | Read, upload, update and delete, each only under `<user id>/` in `task-photos`. Update is the second file's: Storage's replace and move need it, and copy needs read and upload |
 | `public.complete_all_tasks()` | Marks every open task of the caller done, and returns how many it changed. The samples' **Mark all done** |

@@ -167,6 +167,19 @@ made; **Dismiss** removes it.
 
 ![The Sync tab's Refused changes: "Couldn't save "(no title)"", the reason, when it was made and refused, "The server answered HTTP 400 · 23514", Retry and Dismiss; below it the Server and Storage sections](../assets/samples/ios/refused-change.png){ width="270" loading=lazy }
 
+### Conflicting changes
+
+The configuration names `updated_at` as the version column of both tables and sets a resolver that
+holds a title both sides changed. Such a change waits under **Conflicting changes**, between Refused
+changes and Server, with the title on the server beside this device's, when it was made and held,
+**Keep mine** (send it over the server's row as it is now; off when the task is gone or the change
+was too long to keep) and **Keep theirs** (drop it). The Sync tab's badge counts it, and the last
+report's line says how many conflicts were settled, kept the server's or held. In demo mode,
+**Make a conflict** under Try it makes one: it switches the client's network off, edits your newest
+task's title, changes the same title on the stand-in server as another writer would, then turns
+the network back on and syncs. Against a project it is switched off, and its line gives the
+two-writers recipe ([Try a conflict](tour.md#try-a-conflict)).
+
 ### Attach a photo
 
 Open a task and tap **Add photo** in its Photos section, or add photos as you create a task with

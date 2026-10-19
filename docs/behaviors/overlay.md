@@ -24,10 +24,10 @@ From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabas
 
 - **The user's queued writes**, in the order they were made: every write in the mutation queue that
   belongs to the current user, or to no user yet. Another user's writes are never laid over.
-- **Writes a replay pass sent** that a cached list has not seen yet. Such a write stays in the
-  overlay until each cached list of its table has been fetched again after it, then retires. A
-  table keeps at most its newest 1,000 such writes: past that, the oldest go whether or not every
-  list has seen them.
+- **Writes a replay pass sent** that a cached list has not seen yet; a guarded replay's returned
+  row is also written into the lists ([Tips](#tips)). Such a write stays in the overlay until each
+  cached list of its table has been fetched again after it, then retires. A table keeps at most its
+  newest 1,000 such writes: past that, the oldest go whether or not every list has seen them.
 
 A write sent at once and accepted is patched into the cached lists instead: the rows the server
 returned, or the rows sent when it returned none, are laid into every cached list of the table that
@@ -101,4 +101,7 @@ you set another with `primaryKey` ([Configuration](../reference/configuration.md
 - **Ask an online write for its rows back** with `select()`: when it is sent at once, the server's
   values (defaults, triggers) are patched into the cache with it. A write that waited in the queue
   does not use them, so its replay brings nothing back: the list shows the server's values once it
-  is fetched again.
+  is fetched again. The exception is a guarded replay, an update of one cached row of a table with
+  a version column: it asks for the key, the version and the columns it sets, and the row it gets
+  back is written into every cached list that holds it, so the list shows the row once, at the
+  server's new version ([What a replay sends](conflicts.md#what-a-replay-sends)).
