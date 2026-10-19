@@ -101,7 +101,7 @@ extension SupabaseOfflineClient {
         /// a task of its own, off the main actor, while the pass waits for its answer, so it should
         /// answer promptly and never wait for a sync itself. A throw, or no answer within 30
         /// seconds, reads as ``ConflictResolution/hold``: the write is parked on
-        /// ``SupabaseOfflineClient/conflictedMutations()``.
+        /// ``SupabaseOfflineClient/conflictedMutations()``, and a late answer is dropped.
         public var conflictResolver: (@Sendable (MutationConflict) async throws -> ConflictResolution)?
 
         /// The least severe message written to the unified log, under the subsystem `SupabaseOffline`.

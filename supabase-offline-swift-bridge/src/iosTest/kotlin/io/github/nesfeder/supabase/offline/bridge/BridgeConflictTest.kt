@@ -82,13 +82,19 @@ class BridgeConflictTest {
 
     @Test
     fun a_failure_holds_the_write_and_logs_the_table_only() = bridgeTest {
-        assertHeldAndLoggedWithoutDetail { _, answer -> answer.fail("secret detail") }
+        assertHeldAndLoggedWithoutDetail("secret detail") { _, answer ->
+            answer.fail("secret detail")
+        }
     }
 
     @Test
-    fun columns_that_are_not_an_object_hold_the_write_and_log_the_table_only() = bridgeTest {
-        assertHeldAndLoggedWithoutDetail { _, answer -> answer.apply("[1]") }
-    }
+    fun columns_that_are_not_an_object_with_a_column_hold_the_write_and_log_the_table_only() =
+        bridgeTest {
+            // An array, text that is not JSON, and an object with no column
+            for (body in listOf("[1]", "not json", "{}")) {
+                assertHeldAndLoggedWithoutDetail(body) { _, answer -> answer.apply(body) }
+            }
+        }
 
     @Test
     fun applied_columns_are_sent_as_the_body() = bridgeTest {
@@ -162,10 +168,11 @@ class BridgeConflictTest {
     }
 
     /**
-     * Syncs a conflict [answerWith] settles, and checks it parked the write with a bare warning.
+     * Syncs a conflict [answerWith] settles; checks the write is parked and [detail] is not logged.
      */
     private suspend fun assertHeldAndLoggedWithoutDetail(
-        answerWith: (BridgeConflict, BridgeConflictAnswer) -> Unit
+        detail: String,
+        answerWith: (BridgeConflict, BridgeConflictAnswer) -> Unit,
     ) {
         // Given
         val sink = RecordingLogSink()
@@ -179,7 +186,7 @@ class BridgeConflictTest {
         val warning = sink.messages.single { "conflict resolver" in it }
         assertTrue(warning.startsWith("WARNING"), warning)
         assertTrue("todos" in warning, warning)
-        assertTrue("secret" !in warning && "[1]" !in warning, warning)
+        assertTrue(detail !in warning, warning)
         client.closeAndWait()
     }
 

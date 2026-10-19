@@ -283,7 +283,8 @@ internal constructor(
     /**
      * Settles an entry of the conflicted list: KEEP_LOCAL and APPLY queue it again under a new id,
      * KEEP_SERVER drops it. A decision the library refuses fails with
-     * [BridgeErrorKind.INVALID_ARGUMENT].
+     * [BridgeErrorKind.INVALID_ARGUMENT]; APPLY with [columnsJson] that is not a JSON object fails
+     * with [BridgeErrorKind.INVALID_REQUEST].
      *
      * @param columnsJson the columns of APPLY, a JSON object as text; `null` for the others.
      */

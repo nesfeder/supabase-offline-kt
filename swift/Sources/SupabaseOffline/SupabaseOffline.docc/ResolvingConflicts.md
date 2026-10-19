@@ -12,21 +12,18 @@ version the device saw:
 
 <!-- swift-listing: ResolvingConflictsListings.swift:configure -->
 ```swift
-let offline = SupabaseOfflineClient(
-    supabaseURL: supabaseURL,
-    supabaseKey: supabaseKey,
-    config: .init(
-        versionColumns: ["todos": "updated_at"],
-        conflictResolver: { conflict in
-            // Another device renamed the task: keep its title, send the rest.
-            guard conflict.conflictingColumns == ["title"], var columns = conflict.local else {
-                return .keepLocal
-            }
-            columns.removeValue(forKey: "title")
-            return columns.isEmpty ? .keepServer : .apply(columns: columns)
+let config = SupabaseOfflineClient.Config(
+    versionColumns: ["todos": "updated_at"],
+    conflictResolver: { conflict in
+        // Another device renamed the task: keep its title, send the rest.
+        guard conflict.conflictingColumns == ["title"], var columns = conflict.local else {
+            return .keepLocal
         }
-    )
+        columns.removeValue(forKey: "title")
+        return columns.isEmpty ? .keepServer : .apply(columns: columns)
+    }
 )
+let offline = SupabaseOfflineClient(supabaseURL: supabaseURL, supabaseKey: supabaseKey, config: config)
 ```
 
 When the row moved, the client reads it again and compares it with the row as the device saw it. A
