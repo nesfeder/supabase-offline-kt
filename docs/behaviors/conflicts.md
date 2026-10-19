@@ -286,8 +286,9 @@ the `server` row and its `serverVersion` when the replay read it; `changedOnServ
 `conflictingColumns`; a `message` saying why it was parked; and `conflictedAt`.
 
 - `resolveConflictedMutation(id, KeepLocal)`, or with `ConflictResolution.apply(columns)`, queues the write again at the end of the user's queue, under a new id, preconditioned on the
-  entry's `serverVersion`, and asks for a pass. If the row has moved again since, the replay finds
-  a new conflict.
+  entry's `serverVersion`, and asks for a pass. Its replay is an ordinary guarded replay: when the
+  row comes back, the write counts in `syncedCount` alone; when the row has moved again since, the
+  resolver is asked, as for any conflict.
 - `resolveConflictedMutation(id, KeepServer)` and `dismissConflictedMutation(id)` drop it.
 - `Hold` is refused with `IllegalArgumentException`, as are `Apply` on anything but an UPDATE of a
   row that was there, and `KeepLocal` on a row that was gone or on an entry whose body was too
@@ -448,7 +449,7 @@ The samples' resolver answers `Hold` for a conflicting title
 ```
 
 **6. The Sync tab shows it** under Conflicting changes: "“Buy oat milk” changed in two places",
-with "title: “Buy almond milk” on the server, “Buy oat milk” on this device" (the mapping and the
+with "Title: “Buy almond milk” on the server, “Buy oat milk” on this device" (the mapping and the
 resolve call are under [The conflicted list](#the-conflicted-list)).
 
 **7. The user taps Keep mine.** `resolveConflictedMutation(7, KeepLocal)` queues the write again,
@@ -465,7 +466,8 @@ HTTP/1.1 200 OK
 [{"id":42,"updated_at":"2026-10-18T13:05:00.000002+00:00","title":"Buy oat milk","done":true}]
 ```
 
-The row comes back at `T3`, and the cached list shows it at once. Keep theirs would have dropped
+The row comes back at `T3`, and the cached list shows it at once. That pass's report counts the
+write in `syncedCount` alone: the conflict was settled by the user, not during the pass. Keep theirs would have dropped
 the write and left "Buy almond milk" on both phones.
 
 ### Three quiet cases
@@ -507,13 +509,15 @@ sequenceDiagram
 On iOS in demo mode, the Sync tab's **Try it → Make a conflict** does steps 1 to 5 with the
 stand-in server playing Phone B. Against a project, and on Android, the second writer is the Table
 Editor ([Try a conflict](../samples/tour.md#try-a-conflict)); the Android sample's tests stage the
-same edit on their fake server:
+same steps on their fake server:
 
-From the samples: [FakeSupabaseServer.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/test/kotlin/io/github/nesfeder/offlinetasks/testing/FakeSupabaseServer.kt) · [SyncModel.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Sync/SyncModel.swift) · [DemoServer.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Demo/DemoServer.swift)
+From the samples: [OfflineTaskRepositoryTest.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/test/kotlin/io/github/nesfeder/offlinetasks/data/supabase/OfflineTaskRepositoryTest.kt) · [FakeSupabaseServer.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/test/kotlin/io/github/nesfeder/offlinetasks/testing/FakeSupabaseServer.kt) · [SyncModel.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Sync/SyncModel.swift) · [DemoServer.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Demo/DemoServer.swift)
 
 === "Android"
 
     ```kotlin
+    --8<-- "data/supabase/OfflineTaskRepositoryTest.kt:make-conflict"
+
     --8<-- "testing/FakeSupabaseServer.kt:stage-server-edit"
     ```
 
