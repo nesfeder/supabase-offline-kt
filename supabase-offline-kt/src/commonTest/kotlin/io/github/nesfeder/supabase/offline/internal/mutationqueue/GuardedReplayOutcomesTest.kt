@@ -512,7 +512,7 @@ class GuardedReplayOutcomesTest {
         val report = replayer().sync()
 
         // Then — the resend's filter no longer reaches the row, which is a success, and the
-        // conflict the policy settled on the way is counted
+        // conflict the policy settled on the way is counted: settled and sent, not applied
         assertEquals(listOf("PATCH", "GET", "PATCH", "GET"), server.requests.map { it.method })
         assertEquals(1 to 1, report.syncedCount to report.conflictsResolvedCount)
         assertEquals(1, policy.cases.size)

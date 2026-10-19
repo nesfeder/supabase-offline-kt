@@ -5,6 +5,9 @@ package io.github.nesfeder.supabase.offline.testdoubles
 import io.github.nesfeder.supabase.offline.ConflictResolution
 import io.github.nesfeder.supabase.offline.ConflictResolver
 import io.github.nesfeder.supabase.offline.MutationConflict
+import kotlin.coroutines.ContinuationInterceptor
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.currentCoroutineContext
 
 /**
  * A [ConflictResolver] that records every conflict it is asked about and answers with [answer]: the
@@ -19,8 +22,12 @@ internal class RecordingConflictResolver(
     /** Every conflict asked about, in order. */
     val conflicts: MutableList<MutationConflict> = mutableListOf()
 
+    /** The dispatcher each call ran on, in order. */
+    val dispatchers: MutableList<CoroutineDispatcher?> = mutableListOf()
+
     override suspend fun resolve(conflict: MutationConflict): ConflictResolution {
         conflicts += conflict
+        dispatchers += currentCoroutineContext()[ContinuationInterceptor] as? CoroutineDispatcher
         return answer(conflict)
     }
 }

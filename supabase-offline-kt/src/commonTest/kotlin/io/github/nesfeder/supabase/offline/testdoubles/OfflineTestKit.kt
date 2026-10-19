@@ -287,7 +287,7 @@ internal fun newTestOfflineClient(
         onStillClosing = onStillClosing,
         primaryKeys = primaryKeys,
         versionColumns = versionColumns ?: config.versionColumnsByTable(),
-        conflictPolicy = conflictPolicyOf(config.conflictResolver, primaryKeys),
+        conflictPolicy = conflictPolicyOf(config.conflictResolver, primaryKeys, engineLogger),
         conflictPolicyTimeout = conflictPolicyTimeout,
         responseTrust = responseTrust,
         config = config,

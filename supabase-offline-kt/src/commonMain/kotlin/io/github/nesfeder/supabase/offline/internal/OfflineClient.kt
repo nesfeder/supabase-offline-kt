@@ -198,6 +198,8 @@ internal class OfflineClient(
     private val conflictPolicy: ConflictPolicy = DefaultConflictPolicy,
     /** How long [conflictPolicy] may take before its answer reads as Hold; tests shorten it. */
     private val conflictPolicyTimeout: Duration = CONFLICT_POLICY_TIMEOUT,
+    /** The engine's dispatcher, where [conflictPolicy] runs whatever dispatcher syncs. */
+    private val conflictPolicyDispatcher: CoroutineDispatcher = Dispatchers.Default,
     /** Which read responses may replace what the cache holds; see [ResponseTrustPolicy]. */
     private val responseTrust: ResponseTrustPolicy = ResponseTrustPolicy.SETTLED_SESSION,
     /** The configuration the client was opened with, as [Offline.config] reports it. */
@@ -417,6 +419,7 @@ internal class OfflineClient(
             cachePatcher = cachePatcher,
             conflictPolicy = conflictPolicy,
             conflictPolicyTimeout = conflictPolicyTimeout,
+            conflictPolicyDispatcher = conflictPolicyDispatcher,
         )
 
     /**
