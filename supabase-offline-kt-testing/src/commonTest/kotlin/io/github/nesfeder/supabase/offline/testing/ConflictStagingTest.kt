@@ -64,9 +64,9 @@ class ConflictStagingTest {
             supabase.offline.from("tasks").select()
             // When — the title is changed offline, then the queue replays
             supabase.offline.disableNetwork()
-            supabase.offline
-                .from("tasks")
-                .update(buildJsonObject { put("title", "Mine") }) { filter { eq("id", "t1") } }
+            supabase.offline.from("tasks").update(buildJsonObject { put("title", "Mine") }) {
+                filter { eq("id", "t1") }
+            }
             supabase.offline.enableNetwork()
             val report = supabase.offline.syncPendingMutations()
             // --8<-- [end:stage-conflict]
