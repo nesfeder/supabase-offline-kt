@@ -46,10 +46,12 @@ class ConflictResolverTest {
     /** Task 1 as another device's rename leaves it. */
     private val renamedElsewhere: JsonObject = taskRow(1, "elsewhere", version = MOVED_VERSION)
 
-    /*
-     * The fake server answers whole rows whatever the read selects; PostgREST answers only the
-     * columns the replay names, which the request tests pin.
-     */
+    /** [renamedElsewhere] as a rename's replay reads it: the key, the version and the title. */
+    private val renamedElsewhereAsRead: JsonObject = buildJsonObject {
+        put("id", 1)
+        put("title", "elsewhere")
+        put(VERSION_COLUMN, MOVED_VERSION)
+    }
 
     @Test
     fun a_row_renamed_on_both_sides_shows_the_resolver_each_side_and_the_conflicting_column() =
@@ -72,7 +74,7 @@ class ConflictResolverTest {
                     rowKey = keyOfTaskOne,
                     base = titledAt("theirs", FIRST_VERSION),
                     local = titled("mine"),
-                    server = renamedElsewhere,
+                    server = renamedElsewhereAsRead,
                     changedOnServer = setOf("title"),
                     conflictingColumns = setOf("title"),
                 ),
@@ -122,7 +124,11 @@ class ConflictResolverTest {
                 rowKey = keyOfTaskOne,
                 base = buildJsonObject { put(VERSION_COLUMN, FIRST_VERSION) },
                 local = null,
-                server = renamedElsewhere,
+                server =
+                    buildJsonObject {
+                        put("id", 1)
+                        put(VERSION_COLUMN, MOVED_VERSION)
+                    },
                 changedOnServer = emptySet(),
                 conflictingColumns = emptySet(),
             ),

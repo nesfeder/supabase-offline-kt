@@ -73,8 +73,12 @@ class ConflictedMutationsTest {
                         put("title", "theirs")
                         put(VERSION_COLUMN, FIRST_VERSION)
                     },
-                // The fake server answers whole rows, whatever the read selects
-                server = renamedElsewhere,
+                server =
+                    buildJsonObject {
+                        put("id", 1)
+                        put("title", "elsewhere")
+                        put(VERSION_COLUMN, MOVED_VERSION)
+                    },
                 serverVersion = MOVED_VERSION,
                 changedOnServer = setOf("title"),
                 conflictingColumns = setOf("title"),
