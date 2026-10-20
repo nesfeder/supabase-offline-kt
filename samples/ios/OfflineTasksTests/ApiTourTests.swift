@@ -460,16 +460,20 @@ struct ApiTourTests {
 
     @Test("Live updates: a task changed on another device shows without this app asking")
     func liveUpdates() async throws {
-        // Given
-        let test = TestApp()
+        // Given: a task the server holds, on the client's clock, and Live updates on
+        let clock = ManualClock(now: Date(timeIntervalSince1970: 1_760_000_000))
+        let test = TestApp(clock: clock)
         try await test.start()
         try await test.addTask("Buy milk")
-        let task = try await test.task(titled: "Buy milk")
-        let taskReadsBefore = await test.server.requests.filter { $0.path == "/rest/v1/\(Tables.tasks)" }.count
+        let task = try await test.savedTask(titled: "Buy milk")
+        clock.advance(by: .seconds(1))
         try await test.startLiveUpdates()
         // Each join reads the lists on screen again, since Realtime does not replay what it missed.
-        try await eventually("the task list is read again") {
-            await test.server.requests.filter { $0.path == "/rest/v1/\(Tables.tasks)" }.count > taskReadsBefore
+        // The change below waits for that answer to be shown: a change applied while the read is
+        // still out makes its answer stale, and the list is read once more.
+        try await eventually("the task list is read again, and the answer shown") {
+            guard let provenance = test.app.tasks.provenance else { return false }
+            return !provenance.isFromCache && provenance.fetchedAt == clock.now
         }
         try await eventually("the Sync tab says so") { test.app.realtimeStatus == .subscribed }
         let readsBefore = await test.server.requests.filter { $0.method == "GET" }.count
@@ -493,7 +497,7 @@ struct ApiTourTests {
         try await test.start()
         try await eventually("the device is online") { test.app.syncStatus.network == .online }
         try await test.addTask("Buy milk")
-        let task = try await test.task(titled: "Buy milk")
+        let task = try await test.savedTask(titled: "Buy milk")
         try await test.startLiveUpdates()
         try await eventually("the channel is joined") { test.app.realtimeStatus == .subscribed }
 
@@ -503,14 +507,12 @@ struct ApiTourTests {
         try await eventually("the channel is left") { test.server.realtime.subscribedTables.isEmpty }
         await test.server.changeElsewhere(task: task.id, ["title": "Buy oat milk"])
         #expect(test.server.realtime.droppedReportCount == 1)
-        let taskReadsBefore = await test.server.requests.filter { $0.path == "/rest/v1/\(Tables.tasks)" }.count
+        let taskReadsBefore = await test.taskListReads()
 
         // Then: back online, the client joins again and reads the list again, so the change shows
         network.yield(true)
         try await eventually("the client joins again") { test.app.realtimeStatus == .subscribed }
-        try await eventually("the task list is read again") {
-            await test.server.requests.filter { $0.path == "/rest/v1/\(Tables.tasks)" }.count > taskReadsBefore
-        }
+        try await eventually("the task list is read again") { await test.taskListReads() > taskReadsBefore }
         try await eventually("the change made during the drop shows") { test.app.tasks.tasks?.first?.title == "Buy oat milk" }
         network.finish()
         try await test.stop()
