@@ -6,8 +6,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/nesfeder/supabase-offline-swift",
       "state" : {
-        "revision" : "de9d2d3532ec2a5eed933864284a2f937fd3780c",
-        "version" : "0.1.0"
+        "revision" : "455fdf3885bd64f266505a8192213d2079300a00",
+        "version" : "0.2.0"
       }
     },
     {

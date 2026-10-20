@@ -106,7 +106,7 @@ supabase-bom = "3.6.0"
 # The library as the samples take it: its newest release on Maven Central, never the version this
 # build makes. The post-release pull request moves it (RELEASING.md); the Android sample builds
 # this checkout instead with -PsupabaseOffline.local=true (settings.gradle.kts).
-supabase-offline = "0.1.0"
+supabase-offline = "0.2.0"
 
 [libraries]
 # The `gradleApi` and `gradlePlugin` entries are the plugins build-logic compiles against; the
