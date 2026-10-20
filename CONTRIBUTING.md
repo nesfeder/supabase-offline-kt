@@ -475,6 +475,7 @@ moves the coupled versions together.
 | Kotlin | The version the library is built with limits the Kotlin versions its consumers can use, and it has to work with the pinned supabase-kt. |
 | Android Gradle plugin | It has to stay inside the Kotlin Gradle plugin's supported range. |
 | Room, androidx.sqlite | Together they define the on-device database and the bundled SQLite, and Room is built against a particular androidx.sqlite. |
+| Robolectric's framework jar | `org.robolectric:android-all-instrumented`, the Android build each Robolectric release names for the SDK the host tests run on. The build resolves it, so no test downloads it (see "When a run fails on a download"). It moves with Robolectric, by hand, as `robolectric-androidAll` in the catalog; Dependabot proposes nothing for it. |
 
 **The pass-through set.** Ktor, okio, kotlinx.coroutines and kotlinx.serialization reach every
 app that uses the library at the versions this build names: the first, third and fourth as `api`
@@ -599,6 +600,12 @@ A job can fail because something it downloads is briefly unavailable. Each of th
   too. A job whose only error is "The request was canceled due to the configured
   HttpClient.Timeout of 100 seconds elapsing" was canceled while it waited, so the runner never
   retried: re-run it.
+- **Robolectric's Android framework jar.** The host tests of the library and of the Android
+  sample run on `org.robolectric:android-all-instrumented`, which Robolectric would download
+  itself when the first test class starts, with one attempt and nothing caching it on the runner.
+  The build resolves it instead, as a build dependency (`supabase-offline.host-test-robolectric`
+  in `build-logic`): Gradle's download, retried and cached like the rest, and the tests run offline
+  on the copy the build keeps. So a failure to fetch it is one of the "other downloads" below.
 - **Other downloads in a step:** `setup-java`'s JDK, the Gradle wrapper's distribution, the build's
   dependencies and the documentation toolchain, when one of them fails with the same kinds of
   error.
