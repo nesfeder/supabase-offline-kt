@@ -63,6 +63,13 @@ updates:
         update-types: ["version-update:semver-minor", "version-update:semver-major"]
       - dependency-name: "androidx.sqlite:*"
         update-types: ["version-update:semver-minor", "version-update:semver-major"]
+      # Robolectric's Android framework jar: the exact build each Robolectric release names for the
+      # SDK the host tests run on (`robolectric-androidAll` in the catalog). A newer version is
+      # another SDK's jar, or one this Robolectric was not built with, so it moves with Robolectric,
+      # by hand (CONTRIBUTING.md, "Held dependencies"). Every level is listed, as for the
+      # pass-through set.
+      - dependency-name: "org.robolectric:android-all-instrumented"
+        update-types: ["version-update:semver-patch", "version-update:semver-minor", "version-update:semver-major"]
       # The build-tool floors (`buildToolFloor-*` in the catalog) are the patched versions the
       # advisories name, not trackers of the latest release: a floor only ever raises what a plugin
       # brings, so moving it past the advisory buys nothing and can run a plugin on a library

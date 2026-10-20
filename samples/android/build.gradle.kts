@@ -11,6 +11,9 @@ plugins {
     alias(libs.plugins.kotlinSerialization)
     // The build-tool floors on this module's lint tool and test platform, as on every module.
     id("supabase-offline.build-tool-floors")
+    // The Android framework jar the Compose UI tests run on under Robolectric, resolved by the
+    // build so no test downloads it.
+    id("supabase-offline.host-test-robolectric")
 }
 
 // The sample project's URL and publishable key, from the git-ignored local.properties at the
