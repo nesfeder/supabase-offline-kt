@@ -9,7 +9,7 @@ All notable changes to this project are recorded in this file. The format follow
      the heading it needs (before the first release, under any of them). A release renames
      "Unreleased" to its version and date, and starts a new one. -->
 
-## [0.2.0] - 2026-10-19
+## [0.2.0] - 2026-10-20
 
 ### Breaking
 
