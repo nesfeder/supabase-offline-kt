@@ -23,6 +23,12 @@ All notable changes to this project are recorded in this file. The format follow
 
 ### Fixed
 
+- A reactive read's refresh asks again, on its retry schedule, for as long as its answers are
+  refused as older than a change to the table, and reads `Refreshing` meanwhile; a
+  `NetworkFirstThenCache` read whose first fetch is refused that way stays `Refreshing` too. Before,
+  the second refusal settled the read on the rows it had and reported `Idle`, so a busy table, or a
+  reconnect with queued writes, could leave a list stale for good.
+
 ## [0.2.0] - 2026-10-20
 
 ### Breaking
