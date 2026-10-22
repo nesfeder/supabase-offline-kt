@@ -70,8 +70,11 @@ user.
 ## An old answer never replaces a newer write
 
 Every request reads a tick from a monotonic clock before it goes out, and every write that changes
-the cache moves its table's mark forward. An answer whose request left before the table's last
-change is refused, since it cannot hold that change, and the refresh asks again. One that left
-before `clearLocalData()` is refused and not asked again, since it may carry the cleared session's
-token; one that left before the cache passed to a new owner is not written, and the refresh asks
-again.
+the cache moves its table's mark forward: a write made online, a replayed one, and a server record
+or Realtime event that changes a cached query or marks one stale. A record that reaches no cached
+query moves nothing. An answer whose request left before the table's last change is refused, since
+it cannot hold that change. A reactive read then asks again, once at once and after that on its
+retry schedule, until an answer lands; a one-shot read asks once more and then serves the cache.
+One that left before `clearLocalData()` is refused and not asked again, since it may carry the
+cleared session's token; one that left before the cache passed to a new owner is not written, and
+the refresh asks again.

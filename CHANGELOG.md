@@ -23,6 +23,15 @@ All notable changes to this project are recorded in this file. The format follow
 
 ### Fixed
 
+- A reactive read whose refresh was refused twice as older than a local write settled on the stale
+  list and reported `Idle`, so a busy table, or a reconnect with queued writes, could keep a list
+  stale for good; it now keeps asking on its retry schedule until an answer lands, and a
+  `NetworkFirstThenCache` read whose first fetch was refused that way stays `Refreshing` instead of
+  reporting nothing as settled.
+- A server record or Realtime event that reached no cached query still moved its table's freshness
+  mark, refusing every refresh in flight; the mark now moves only for a patch that changes a cached
+  query or marks one stale.
+
 ## [0.2.0] - 2026-10-20
 
 ### Breaking

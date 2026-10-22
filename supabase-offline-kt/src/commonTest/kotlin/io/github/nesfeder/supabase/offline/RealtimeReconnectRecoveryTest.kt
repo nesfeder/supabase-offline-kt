@@ -148,6 +148,39 @@ class RealtimeReconnectRecoveryTest {
             client.close()
         }
 
+    @Test
+    fun a_joins_re_read_lands_while_other_users_deletes_keep_arriving() =
+        runTest(timeout = 2.minutes) {
+            onRealThreads {
+                // Given — a live list showing the server's row, a row only the server has, and a
+                // server that takes a while to answer
+                val list = RecordedLiveList(client, TABLE)
+                list.await { seen -> seen.titles == listOf("Milk") && !seen.isFromCache }
+                server.seed(TABLE, row("b", "Eggs"))
+                server.answerDelayMillis = 200
+
+                // When — the channel joins while other users' deletes, of rows this device never
+                // cached, arrive faster than the server answers (Realtime sends every delete to
+                // every subscriber)
+                val follow = feed.awaitFollow(0)
+                val deletes = launch {
+                    var n = 0
+                    while (true) {
+                        follow.deleted(TABLE, row("theirs-${n++}", "Theirs"))
+                        delay(50)
+                    }
+                }
+                follow.join()
+
+                // Then — the join's re-read lands all the same: a delete that reaches no cached
+                // query leaves the response current
+                list.await { seen -> seen.titles == listOf("Milk", "Eggs") && !seen.isFromCache }
+                deletes.cancelAndJoin()
+                list.stop()
+            }
+            client.close()
+        }
+
     /** A cache-only live list of [table]: the titles of each emission, in order. */
     private class CacheOnlyList(client: Offline, table: String) {
         private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
