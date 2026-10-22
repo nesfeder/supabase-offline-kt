@@ -100,6 +100,12 @@ internal class RecordingStorageServer {
     /** Completed each time a request reaches the server (and before it waits on [gate]). */
     var requestArrived: CompletableDeferred<Unit> = CompletableDeferred()
 
+    /**
+     * Completed each time a download has read its object's bytes and is about to wait on
+     * [downloadGate]: from then on a write cannot change what it answers.
+     */
+    var downloadHeld: CompletableDeferred<Unit> = CompletableDeferred()
+
     /** The engine to install on a client (see [supabaseClient]). */
     val engine: MockEngine = MockEngine { request ->
         val recorded =
@@ -257,6 +263,7 @@ internal class RecordingStorageServer {
                 )
         val whole =
             if (transform == null) original else "render?$transform:".encodeToByteArray() + original
+        downloadHeld.complete(Unit)
         downloadGate?.await()
         val octetStream =
             HttpHeaders.ContentType to listOf(ContentType.Application.OctetStream.toString())

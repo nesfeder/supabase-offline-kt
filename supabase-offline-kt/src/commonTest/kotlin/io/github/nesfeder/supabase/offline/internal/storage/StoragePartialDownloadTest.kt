@@ -19,6 +19,7 @@ import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -30,13 +31,14 @@ import okio.Path
 import okio.SYSTEM
 
 /**
- * A download whose request the caller's own overrides turned into part of the object (a `Range`
- * header) or none of it (a `HEAD`) is the caller's, never the cached copy: the cache holds whole
- * objects only, so nothing of it is stored, and offline it is not answered from the whole copy
- * either.
+ * A download whose request the caller's own overrides, or a header set on the bucket, turned into
+ * part of the object (a `Range` or `If-Range` header) or none of it (a `HEAD`) is the caller's,
+ * never the cached copy: the cache holds whole objects only, so nothing of it is stored, it is
+ * fetched once, and offline it is not answered from the whole copy either.
  *
  * These run the real supabase-kt bucket against [RecordingStorageServer], which answers a range
- * with HTTP 206 and a `HEAD` with no body, as Storage does.
+ * with HTTP 206 and a `HEAD` with no body, as Storage does, with the download status check the
+ * client installs, which marks a partial request or answer on the download.
  */
 class StoragePartialDownloadTest {
 
@@ -61,7 +63,12 @@ class StoragePartialDownloadTest {
 
     private fun bucket() =
         newTestBucketApi(
-            delegate = server.supabaseClient().storage.from(BUCKET),
+            delegate =
+                server
+                    .supabaseClient()
+                    .also { it.installDownloadStatusCheck() }
+                    .storage
+                    .from(BUCKET),
             baseDirectory = dataDirectory,
             store = store,
         )
@@ -135,9 +142,89 @@ class StoragePartialDownloadTest {
             httpOverride { header(HttpHeaders.Range, "bytes=4-7") }
         }
 
-        // Then
+        // Then — fetched once
         assertEquals(CONTENT.substring(4, 8), received.await().decodeToString())
+        assertEquals(1, server.requests.size)
         assertNull(store.getStorageByKey(BUCKET, PATH))
+        assertEquals(emptyList(), cachedFiles())
+    }
+
+    @Test
+    fun a_head_channel_download_closes_the_channel_empty_and_is_never_the_cached_copy() = runTest {
+        // Given
+        val channel = ByteChannel()
+        val received = async { channel.readRemaining().readByteArray() }
+
+        // When
+        bucket().downloadAuthenticated(PATH, channel) { httpOverride { method = HttpMethod.Head } }
+
+        // Then — one request, no bytes, nothing cached
+        assertEquals(0, received.await().size)
+        assertEquals(listOf("HEAD"), server.requests.map { it.method })
+        assertNull(store.getStorageByKey(BUCKET, PATH))
+        assertEquals(emptyList(), cachedFiles())
+    }
+
+    @Test
+    fun an_if_range_download_is_never_the_cached_copy() = runTest {
+        // Given / When — the server has no range to compare, so it answers the whole object
+        val bytes =
+            bucket().downloadAuthenticated(PATH) {
+                httpOverride { header(HttpHeaders.IfRange, "\"etag\"") }
+            }
+
+        // Then — the whole object this time, but a request that can get part of it is never cached
+        assertEquals(CONTENT, bytes.decodeToString())
+        assertNull(store.getStorageByKey(BUCKET, PATH))
+        assertEquals(emptyList(), cachedFiles())
+    }
+
+    @Test
+    fun a_range_header_set_on_the_bucket_is_never_cached_by_a_channel_download() = runTest {
+        // Given — a bucket that asks for the first four bytes of everything, which supabase-kt adds
+        // after the download's own overrides
+        val ranged = bucket().setHeader(HttpHeaders.Range, "bytes=0-3")
+        val channel = ByteChannel()
+        val received = async { channel.readRemaining().readByteArray() }
+
+        // When
+        ranged.downloadAuthenticated(PATH, channel) {}
+
+        // Then — the fragment reached the caller from one request, and nothing was cached
+        assertEquals(CONTENT.take(4), received.await().decodeToString())
+        assertEquals(1, server.requests.size)
+        assertNull(store.getStorageByKey(BUCKET, PATH))
+        assertEquals(emptyList(), cachedFiles())
+    }
+
+    @Test
+    fun a_range_header_set_on_the_bucket_is_never_cached_by_a_bytes_download() = runTest {
+        // Given
+        val ranged = bucket().setHeader(HttpHeaders.Range, "bytes=0-3")
+
+        // When
+        val bytes = ranged.downloadAuthenticated(PATH) {}
+
+        // Then
+        assertEquals(CONTENT.take(4), bytes.decodeToString())
+        assertEquals(1, server.requests.size)
+        assertNull(store.getStorageByKey(BUCKET, PATH))
+        assertEquals(emptyList(), cachedFiles())
+    }
+
+    @Test
+    fun ensureCachedFile_refuses_a_fragment_a_range_header_set_on_the_bucket_fetched() = runTest {
+        // Given
+        val ranged = bucket().setHeader(HttpHeaders.Range, "bytes=0-3")
+
+        // When
+        val failure = assertFailsWith<IllegalStateException> { ranged.ensureCachedFile(PATH) }
+
+        // Then — said so, from one request, with nothing cached
+        assertIs<IllegalStateException>(failure)
+        assertEquals(1, server.requests.size)
+        assertNull(store.getStorageByKey(BUCKET, PATH))
+        assertNull(ranged.cachedFile(PATH))
         assertEquals(emptyList(), cachedFiles())
     }
 

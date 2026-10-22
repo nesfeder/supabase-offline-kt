@@ -128,9 +128,9 @@ internal enum class CommitOutcome {
     CLEARED,
 
     /**
-     * The object was written, deleted or moved through this client while the file downloaded, so
-     * the file may hold the old bytes; it was not kept. The temporary file is left for the caller
-     * to read and then [discard].
+     * The object was written, deleted, moved or copied over through this client while the file
+     * downloaded, so the file may hold the old bytes; it was not kept. The temporary file is left
+     * for the caller to read and then [discard].
      */
     SUPERSEDED,
 
@@ -372,8 +372,10 @@ internal class StorageFileCache(
                 fileSystem.metadataOrNull(entry.file)?.takeIf { it.isRegularFile }?.size
                     ?: return@withContext null
             if (row.sizeBytes != null && row.sizeBytes != size) {
-                withContext(NonCancellable) { lock.withLock { dropTruncatedFileLocked(entry) } }
-                return@withContext null
+                val dropped =
+                    withContext(NonCancellable) { lock.withLock { dropTruncatedFileLocked(entry) } }
+                // Not dropped: a commit replaced the row and the file between the two reads
+                return@withContext if (dropped) null else useCachedCopy(entry)
             }
             markUsed(entry.file, nowMillis())
             CachedFile(
@@ -528,9 +530,9 @@ internal class StorageFileCache(
     }
 
     /**
-     * Records [temporary]'s entry, writes the file through to the disk, renames it over the entry's
-     * own, then enforces the size bound. The row goes first, so a database that refuses it leaves
-     * the previous copy in place.
+     * Writes the file through to the disk, records [temporary]'s entry, renames the file over the
+     * entry's own, then enforces the size bound. The row goes first, so a database that refuses it
+     * leaves the previous copy in place.
      *
      * @param start the download's [beginDownload].
      * @return what happened, even to a caller canceled meanwhile; on anything but
@@ -538,16 +540,24 @@ internal class StorageFileCache(
      */
     suspend fun commit(temporary: TemporaryDownload, start: DownloadStart): CommitOutcome =
         onIoHandingBackItsResult {
-            lock.withLock {
-                val entry = temporary.entry
-                try {
-                    temporary.sink.close()
-                } catch (failure: IOException) {
-                    engineLogger.warning {
-                        "Storage cache could not finish a file (${failure::class.simpleName}); not caching"
-                    }
-                    return@withLock CommitOutcome.FAILED
+            val entry = temporary.entry
+            // Closed and synced outside the lock: the file is this download's alone, and a sync
+            // takes as long as the drive does
+            try {
+                temporary.sink.close()
+            } catch (failure: IOException) {
+                engineLogger.warning {
+                    "Storage cache could not finish a file (${failure::class.simpleName}); not caching"
                 }
+                return@onIoHandingBackItsResult CommitOutcome.FAILED
+            }
+            try {
+                syncFile(temporary.path)
+            } catch (failure: IOException) {
+                // The read side's size check catches what a power loss leaves of the file
+                engineLogger.debug { "Storage cache could not sync a file to disk: $failure" }
+            }
+            lock.withLock {
                 if (
                     generation.load() != start.generation ||
                         !ownership.cacheTakesWritesOfCurrentIdentity()
@@ -569,12 +579,6 @@ internal class StorageFileCache(
                         "Storage cache refused a directory that resolves outside the cache; not caching"
                     }
                     return@withLock CommitOutcome.FAILED
-                }
-                try {
-                    syncFile(temporary.path)
-                } catch (failure: IOException) {
-                    // The read side's size check catches what a power loss leaves of the file
-                    engineLogger.debug { "Storage cache could not sync a file to disk: $failure" }
                 }
                 val size = fileSystem.metadataOrNull(temporary.path)?.size
                 val previous =
@@ -772,16 +776,19 @@ internal class StorageFileCache(
     /**
      * Drops [entry]'s row and file once a read found the file's size is not the one the row
      * recorded, unless a commit replaced both meanwhile.
+     *
+     * @return `true` when they were dropped.
      */
-    private suspend fun dropTruncatedFileLocked(entry: FileCacheEntry) {
-        val row = rowOf(entry.bucketId, entry.rowPath) ?: return
+    private suspend fun dropTruncatedFileLocked(entry: FileCacheEntry): Boolean {
+        val row = rowOf(entry.bucketId, entry.rowPath) ?: return true
         val size = fileSystem.metadataOrNull(entry.file)?.takeIf { it.isRegularFile }?.size
-        if (row.sizeBytes == null || size == null || row.sizeBytes == size) return
+        if (row.sizeBytes == null || size == null || row.sizeBytes == size) return false
         engineLogger.warning {
             "Storage cache dropped a file from ${entry.bucketId} whose size is not the one recorded"
         }
         removeRowLocked(row)
         deleteContained(entry.file)
+        return true
     }
 
     /**

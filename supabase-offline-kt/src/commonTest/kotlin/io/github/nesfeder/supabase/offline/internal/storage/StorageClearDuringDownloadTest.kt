@@ -172,8 +172,10 @@ class StorageClearDuringDownloadTest {
             awaitSoon(download)
             channel.flushAndClose()
 
-            // Then — the caller got every byte, nothing was put back, and the file is gone
+            // Then — the caller got every byte from the one fetch, nothing was put back, and the
+            // file is gone
             assertEquals(CONTENT, awaitSoon(received).decodeToString())
+            assertEquals(1, server.requests.size, "the download was fetched again")
             assertNull(store.getStorageByKey(BUCKET, PATH))
             assertEquals(emptyList(), cachedFiles(fileSystem))
         }

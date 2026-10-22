@@ -17,9 +17,9 @@ All notable changes to this project are recorded in this file. The format follow
 
 ### Changed
 
-- An object whose path has a segment of a letter and a colon (`u:42/a.png`) is stored under
-  `storage-hashed/`, like every other name that cannot be stored verbatim. Nothing was cached under
-  its plain path before, so no file already on a device moves.
+- An object whose bucket id or path has a segment that starts with a letter and a colon
+  (`u:42/a.png`) is stored under `storage-hashed/`, like every other name that cannot be stored
+  verbatim. Nothing was cached under its plain path before, so no file already on a device moves.
 
 ### Deprecated
 
@@ -27,13 +27,15 @@ All notable changes to this project are recorded in this file. The format follow
 
 ### Fixed
 
-- A download of a Storage object that was still on the wire when an upload, update, delete, move
-  or resumable upload of the same object landed no longer becomes the cached copy: the caller gets
-  the bytes it asked for, and the next read downloads the new ones. `ensureCachedFile` throws
-  `IllegalStateException` for a download the object outran, as it does after a clear.
-- A download whose `httpOverride` asks for part of the object (a `Range` or `If-Range` header) or
-  none of it (a `HEAD`) is no longer cached as the whole object, and offline is no longer answered
-  from the whole copy.
+- A download of a Storage object that was still on the wire when an upload, update, delete, move,
+  copy or resumable upload of the same object landed no longer becomes the cached copy: the caller
+  gets the bytes it asked for, and the next read downloads the new ones. `ensureCachedFile`
+  downloads again once when the object outran it, and throws `IllegalStateException` when that
+  happens twice, as it does after a clear.
+- A download whose `httpOverride`, or a header set on the bucket, asks for part of the object (a
+  `Range` or `If-Range` header) or none of it (a `HEAD`) is no longer cached as the whole object,
+  and offline is no longer answered from the whole copy. `ensureCachedFile` on a bucket with such a
+  header throws `IllegalStateException` instead of caching the fragment.
 - A cached file whose size is not the one its row recorded, as a power loss right after a download
   can leave, is dropped and downloaded again instead of being served. Each download is written
   through to the disk before it is renamed into place.
@@ -41,8 +43,9 @@ All notable changes to this project are recorded in this file. The format follow
   device, and the in-memory client behaves the same.
 - A moved object's cached copy keeps the time it was fetched; `cachedFile(path).fetchedAt` no
   longer reads as the time of the move.
-- An object whose path has a segment of a letter and a colon (`u:42/a.png`) is now cached;
-  `ensureCachedFile` no longer refuses it, and channel downloads of it no longer fetch every time.
+- An object whose path has a segment that starts with a letter and a colon (`u:42/a.png`) is now
+  cached; `ensureCachedFile` no longer refuses it, and channel downloads of it no longer fetch every
+  time.
 
 ## [0.2.0] - 2026-10-20
 

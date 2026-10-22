@@ -80,8 +80,10 @@ public interface OfflineBucketApi : BucketApi {
      * @param isPublic whether to download through the public URL rather than the authenticated one.
      * @return the cached file.
      * @throws IllegalArgumentException when [path] cannot be cached (see [OfflineBucketApi]).
-     * @throws IllegalStateException when local data was cleared, or the object was written through
-     *   this client, while the file was downloading; ask again for the new copy.
+     * @throws IllegalStateException when local data was cleared while the file was downloading;
+     *   when the object was written through this client while it was downloading, twice in a row
+     *   (the first time, it is downloaded again); or when a header set on this bucket made the
+     *   request fetch only part of the object, which cannot be the cached copy.
      * @throws Exception the download's own failure when nothing is cached: supabase-kt's
      *   connectivity error offline, or its REST error from the server.
      */

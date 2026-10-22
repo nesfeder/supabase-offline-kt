@@ -195,9 +195,9 @@ class StorageWriteInvalidationTest {
             // Given — a download of the old avatar is on the wire, held at the server
             val bucket = bucket()
             server.downloadGate = CompletableDeferred()
-            server.requestArrived = CompletableDeferred()
+            server.downloadHeld = CompletableDeferred()
             val download = async(Dispatchers.Default) { bucket.downloadAuthenticated(PATH) {} }
-            awaitSoon(server.requestArrived)
+            awaitSoon(server.downloadHeld)
 
             // When — the user replaces the avatar, then the old bytes arrive
             bucket.update(PATH, NEW.encodeToByteArray())
@@ -219,12 +219,12 @@ class StorageWriteInvalidationTest {
             // Given — a channel download of the old avatar, held at the server
             val bucket = bucket()
             server.downloadGate = CompletableDeferred()
-            server.requestArrived = CompletableDeferred()
+            server.downloadHeld = CompletableDeferred()
             val channel = ByteChannel()
             val download =
                 async(Dispatchers.Default) { bucket.downloadAuthenticated(PATH, channel) {} }
             val received = async(Dispatchers.Default) { channel.readRemaining().readByteArray() }
-            awaitSoon(server.requestArrived)
+            awaitSoon(server.downloadHeld)
 
             // When
             bucket.update(PATH, NEW.encodeToByteArray())
@@ -239,27 +239,58 @@ class StorageWriteInvalidationTest {
         }
 
     @Test
-    fun ensureCachedFile_outrun_by_an_update_throws_and_the_next_call_downloads_the_new_bytes() =
-        runTest {
-            // Given — nothing cached, and ensureCachedFile's download held at the server
-            val bucket = bucket()
-            server.downloadGate = CompletableDeferred()
-            server.requestArrived = CompletableDeferred()
-            val ensure =
-                async(Dispatchers.Default) { runCatching { bucket.ensureCachedFile(PATH) } }
-            awaitSoon(server.requestArrived)
+    fun ensureCachedFile_outrun_by_an_update_downloads_again_and_returns_the_new_bytes() = runTest {
+        // Given — nothing cached, and ensureCachedFile's download held at the server
+        val bucket = bucket()
+        val gate = CompletableDeferred<Unit>()
+        server.downloadGate = gate
+        server.downloadHeld = CompletableDeferred()
+        val ensure = async(Dispatchers.Default) { bucket.ensureCachedFile(PATH) }
+        awaitSoon(server.downloadHeld)
 
-            // When — the user replaces the avatar, then the old bytes arrive
-            bucket.update(PATH, NEW.encodeToByteArray())
-            server.downloadGate?.complete(Unit)
-            val outcome = awaitSoon(ensure)
+        // When — the user replaces the avatar, then the old bytes arrive
+        bucket.update(PATH, NEW.encodeToByteArray())
+        server.downloadGate = null
+        gate.complete(Unit)
+        val ensured = awaitSoon(ensure)
 
-            // Then — the old file is not what was asked for, so the call says so instead of
-            // returning it, keeps nothing, and the next call downloads the new avatar
-            assertIs<IllegalStateException>(outcome.exceptionOrNull())
-            assertNull(bucket.cachedFile(PATH))
-            assertEquals(NEW, ensured(bucket))
-        }
+        // Then — the old file was not kept: the call downloaded once more and returned the new
+        // avatar, which is what is cached now
+        assertEquals(NEW, FileSystem.SYSTEM.read(ensured.path.toPath()) { readUtf8() })
+        assertEquals(2, server.requests.count { it.method == "GET" })
+        assertEquals(NEW, ensured(bucket))
+        assertEquals(2, server.requests.count { it.method == "GET" })
+    }
+
+    @Test
+    fun ensureCachedFile_outrun_by_two_updates_in_a_row_throws() = runTest {
+        // Given — ensureCachedFile's download held at the server
+        val bucket = bucket()
+        val firstGate = CompletableDeferred<Unit>()
+        server.downloadGate = firstGate
+        server.downloadHeld = CompletableDeferred()
+        val ensure = async(Dispatchers.Default) { runCatching { bucket.ensureCachedFile(PATH) } }
+        awaitSoon(server.downloadHeld)
+
+        // When — a write lands and the old bytes arrive; the download that follows is held too,
+        // and another write lands before its bytes arrive
+        bucket.update(PATH, NEW.encodeToByteArray())
+        val secondGate = CompletableDeferred<Unit>()
+        server.downloadGate = secondGate
+        server.downloadHeld = CompletableDeferred()
+        firstGate.complete(Unit)
+        awaitSoon(server.downloadHeld)
+        bucket.update(PATH, NEWER.encodeToByteArray())
+        server.downloadGate = null
+        secondGate.complete(Unit)
+        val outcome = awaitSoon(ensure)
+
+        // Then — the call gives up rather than keep downloading; nothing stale is cached, and the
+        // next call gets the newest bytes
+        assertIs<IllegalStateException>(outcome.exceptionOrNull())
+        assertNull(bucket.cachedFile(PATH))
+        assertEquals(NEWER, ensured(bucket))
+    }
 
     @Test
     fun a_download_that_finishes_after_a_resumable_upload_never_leaves_the_old_bytes_to_be_served() =
@@ -268,9 +299,9 @@ class StorageWriteInvalidationTest {
             val bucket = bucket()
             bucket.downloadAuthenticated(PATH) {}
             server.downloadGate = CompletableDeferred()
-            server.requestArrived = CompletableDeferred()
+            server.downloadHeld = CompletableDeferred()
             val download = async(Dispatchers.Default) { bucket.downloadAuthenticated(PATH) {} }
-            awaitSoon(server.requestArrived)
+            awaitSoon(server.downloadHeld)
 
             // When — a resumable upload replaces the avatar, which drops the cached copy, then the
             // old bytes arrive
@@ -292,6 +323,66 @@ class StorageWriteInvalidationTest {
             assertNull(bucket.cachedFile(PATH))
             assertEquals(NEW, ensured(bucket))
         }
+
+    /**
+     * A bucket whose downloads of [PATH] park at [parked] until [release] completes, over the fake
+     * bucket, so a delete or a move can land while the old bytes are on the wire.
+     */
+    private fun parkedDownloads(
+        parked: CompletableDeferred<Unit>,
+        release: CompletableDeferred<Unit>,
+    ): OfflineBucketApi {
+        val fake = FakeBucketApi(bucketId = BUCKET)
+        fake.onDownload = { _ ->
+            parked.complete(Unit)
+            release.await()
+            OLD.encodeToByteArray()
+        }
+        return newTestBucketApi(delegate = fake, baseDirectory = dataDirectory, store = store)
+    }
+
+    @Test
+    fun a_download_that_finishes_after_a_delete_never_leaves_the_old_bytes_to_be_served() =
+        runTest {
+            // Given — a download of the avatar parked at the server
+            val parked = CompletableDeferred<Unit>()
+            val release = CompletableDeferred<Unit>()
+            val bucket = parkedDownloads(parked, release)
+            val download = async(Dispatchers.Default) { bucket.downloadAuthenticated(PATH) {} }
+            awaitSoon(parked)
+
+            // When — the object is deleted, then the old bytes arrive
+            bucket.delete(PATH)
+            release.complete(Unit)
+            val downloaded = awaitSoon(download).decodeToString()
+
+            // Then — handed to the caller, and kept nowhere
+            assertEquals(OLD, downloaded)
+            assertNull(bucket.cachedFile(PATH))
+            assertNull(store.getStorageByKey(BUCKET, PATH))
+        }
+
+    @Test
+    fun a_download_that_finishes_after_a_move_never_leaves_the_old_bytes_to_be_served() = runTest {
+        // Given
+        val parked = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val bucket = parkedDownloads(parked, release)
+        val download = async(Dispatchers.Default) { bucket.downloadAuthenticated(PATH) {} }
+        awaitSoon(parked)
+
+        // When — the object moves, then the old bytes arrive at its old path
+        bucket.move(PATH, OTHER_PATH)
+        release.complete(Unit)
+        val downloaded = awaitSoon(download).decodeToString()
+
+        // Then — cached at neither path
+        assertEquals(OLD, downloaded)
+        assertNull(bucket.cachedFile(PATH))
+        assertNull(bucket.cachedFile(OTHER_PATH))
+        assertNull(store.getStorageByKey(BUCKET, PATH))
+        assertNull(store.getStorageByKey(BUCKET, OTHER_PATH))
+    }
 
     @Test
     fun an_upsert_upload_never_leaves_the_old_bytes_to_be_served() = runTest {
@@ -436,6 +527,7 @@ class StorageWriteInvalidationTest {
         const val PATH = "u-1/me.png"
         const val OLD = "old-avatar"
         const val NEW = "new-avatar"
+        const val NEWER = "newer-avatar"
         const val OTHER_PATH = "u-1/other.png"
     }
 }

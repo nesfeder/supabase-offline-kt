@@ -331,9 +331,10 @@ segment that starts with a letter and a colon, like `u:42`, is cached, under a h
 ## Whose files they are
 
 With Auth installed, the file cache belongs to one user at a time, like the query cache, and
-`clearLocalData()` deletes every file ([Signing out and switching users](sign-out.md)). Its bound
-is `fileCacheSizeBytes` ([Cache size and eviction](eviction.md#the-file-cache)); where the files
-live is on [On-device data](../reference/on-device-data.md).
+`clearLocalData()` deletes every file ([Signing out and switching users](sign-out.md)); a download
+in flight keeps its temporary file until it ends, then deletes it. Its bound is
+`fileCacheSizeBytes` ([Cache size and eviction](eviction.md#the-file-cache)); where the files live
+is on [On-device data](../reference/on-device-data.md).
 
 ## Behavior matrix
 
