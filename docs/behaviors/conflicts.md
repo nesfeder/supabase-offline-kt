@@ -124,18 +124,18 @@ another write, or when that send may not have run.
 
 **Writes queued one after another do not conflict with each other.** When a guarded write, or a
 write sent at once that asked for its rows back, returns the row, every later queued write to that
-row by the same user takes the returned version and columns as its base. Only the same user's: on a
-shared device, another user's queued write to the row keeps the base its user saw, and its replay
-meets the change as a conflict. A write sent at once without `select()`
-returns no row to forward, so the next write meets an old version; once the first write's answer
-has been patched into the cache, the next write's base holds its values, and it is resent at the
-new version without asking anyone ([below](#the-five-outcomes)). **The exception is a write queued
-while an earlier write to the same row is still on the wire** without `select()`: its base is the
-row from before that write, so if both set one column to different values, the replay meets the
-earlier write as a change made elsewhere, and your resolver is asked. Call `select()` on such
-writes: the returned row then forwards its version to the writes behind it. A Realtime event or
-`applyServerRecord` never moves a base: a base is what this device's user saw, and a change made
-elsewhere has to show as a conflict.
+row by the same user takes the returned version and columns as its base. Only the same user's: on
+a shared device, another user's queued write to the row keeps the base its user saw, and its replay
+meets the change as a conflict. A write sent at once without `select()` returns no row to forward,
+so the next write meets an old version; once the first write's answer has been patched into the
+cache, the next write's base holds its values, and it is resent at the new version without asking
+anyone ([below](#the-five-outcomes)). **The exception is a write queued while an earlier write to
+the same row is still on the wire** without `select()`: its base is the row from before that
+write, so if both set one column to different values, the replay meets the earlier write as a
+change made elsewhere, and your resolver is asked. Call `select()` on such writes: the returned row
+then forwards its version to the writes behind it. A Realtime event or `applyServerRecord` never
+moves a base: a base is what this device's user saw, and a change made elsewhere has to show as a
+conflict.
 
 ## What a replay sends
 
@@ -168,7 +168,7 @@ one of two, both `200`:
 
 - **The row**, with the trigger's new version: the write applied. The row is written into every
   cached list that holds it, so a read after the replay shows it once, at the server's version, and
-  its version is forwarded to the writes queued behind it.
+  its version is forwarded to the writes the same user queued behind it.
 - **An empty list**: no row matched. The server has moved the row, deleted it, hidden it, or the
   filter missed; the answer does not say which, so the library reads the row by its key, from the
   network only:
@@ -254,8 +254,8 @@ flowchart TD
 | --- | --- |
 | `KeepLocal` | The write is sent again, preconditioned on the server's version now: an UPDATE sets its columns over the server's, and the others keep the server's values; a DELETE deletes. On a gone row it cannot apply, so the write is parked |
 | `ConflictResolution.apply(columns)` | These columns are sent instead, preconditioned the same way: for a merge the app works out. Only for an UPDATE of a row still there; otherwise the write is parked. It needs at least one column |
-| `KeepServer` | The write leaves the queue unsent, and the server's row, or its deletion, is laid into the cache |
-| `Hold` | The write is parked on the conflicted list for later, the server's row is laid into the cache, and the pass goes on with the next write |
+| `KeepServer` | The write leaves the queue unsent. The server's values for the columns the read asked for are laid into the cached row, which keeps the version the device saw (so a later write to it still meets the move); a gone row is dropped from the cache |
+| `Hold` | The write is parked on the conflicted list for later, the server's values are laid into the cached row as for `KeepServer` when the read found a row, and the pass goes on with the next write |
 
 A resend that finds the row moved again is a new conflict, and the resolver is asked again; a write
 is sent at most three times in one pass, and if the third send still finds the row moved, or an
@@ -315,15 +315,19 @@ precondition the resend on.
   `serverVersion`, and asks for a pass. Its replay is an ordinary guarded replay: when the row comes
   back, the write counts in `syncedCount` alone; when the row has moved again since, the resolver is
   asked, as for any conflict.
-- `resolveConflictedMutation(id, KeepServer)` drops it and lays the server's row the entry
-  recorded into the cache, or drops a gone row from it, as the resolver's own `KeepServer` does;
-  the cached lists holding the row are then fetched again when they can be, since the row may have
-  moved while the entry waited. `dismissConflictedMutation(id)` drops the entry alone.
-- While a write is parked, the cached lists show its row as the server had it when the replay read
-  it: the write is on the conflicted list, not laid over the cache, so a read shows neither the
-  device's change nor the row as the device last read it. A write parked because its row was gone
-  leaves the cached row as it was, since a row that is gone and one a policy hides look the same
-  from the device; `KeepServer` on the entry then drops it.
+- `resolveConflictedMutation(id, KeepServer)` drops it, and shows the server's side in the cache
+  as the resolver's own `KeepServer` does: a gone row is dropped from the cached lists; the columns
+  the entry recorded are laid into the cached row, without the version, while that row is still as
+  the device saw it before the write (an entry a build before this one parked left it so), and a
+  row fetched since is left as it is. Either way the lists holding the row are fetched again when
+  they can be, since the row may have moved while the entry waited. `dismissConflictedMutation(id)`
+  drops the entry alone.
+- While a write is parked, the cached row shows the server's values for the columns the replay
+  read, under the version the device saw: the write is on the conflicted list, not laid over the
+  cache, so a read shows neither the device's change nor the values the device last read. The
+  version stays, so a later write to the row still meets the move. A write parked because its row
+  was gone leaves the cached row as it was, since a row that is gone and one a policy hides look
+  the same from the device; `KeepServer` on the entry then drops it.
 - `Hold` is refused with `IllegalArgumentException`, as are `Apply` on anything but an UPDATE of a
   row that was there, and `KeepLocal` on a row that was gone or on an entry whose body was too
   large to keep.
@@ -469,7 +473,8 @@ disagrees, since both phones ticked the task done:
 
 The samples' resolver answers `Hold` for a conflicting title
 ([The resolver](#the-resolver) has its code), so the write is parked, the cached list shows
-"Buy almond milk", the server's row, and the report's `conflicted` holds it:
+"Buy almond milk", the server's title, under the version the device saw, and the report's
+`conflicted` holds it:
 
 ```json
 {"id": 7, "table": "tasks", "operation": "UPDATE",
@@ -573,7 +578,8 @@ From the samples: [OfflineTaskRepositoryTest.kt](https://github.com/nesfeder/sup
 - A write sent at once, an insert, an upsert, and a write that pins no single cached row are not
   guarded: the last write wins.
 - A guarded replay asks for its row back; the row, at its new version, is cached and forwarded to
-  the writes queued behind it, so edits queued one after another do not conflict with each other.
+  the writes the same user queued behind it, so edits queued one after another do not conflict
+  with each other.
   An edit queued while an earlier one to the row is on the wire can, unless that one asks for its
   row back with `select()`.
 - A list read without the version column leaves the writes to its rows unguarded.

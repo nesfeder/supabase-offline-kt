@@ -341,6 +341,9 @@ internal class MutationQueue(
         var forwarded = false
         mutationDao.pendingForTable(table).forEach { pending ->
             if (pending.id <= afterId || pending.baseVersion == null) return@forEach
+            // The owner's exactly: a row with none was queued by a store with no session model,
+            // as the completed write then was too, and under a session model a pass adopts every
+            // ownerless row, under the send lock, before it sends anything
             if (pending.owner != owner) return@forEach
             val filter = decodeFilterOrNull(pending.filterJson, json) ?: return@forEach
             val key =
@@ -675,7 +678,7 @@ internal class MutationQueue(
             if (touched.isEmpty() && rejected == null) return@withLock
             // A row already gone cannot say whose it was: its response forwards to nothing
             val completed = forwarding?.let { (_, afterId, _) ->
-                found?.firstOrNull { row -> row.id == afterId }
+                found?.firstOrNull { row -> row.id == afterId } ?: mutationDao.byId(afterId)
             }
             val forwarded = mutationDao.inTransaction {
                 idSet.forEach { id -> mutationDao.deleteById(id) }

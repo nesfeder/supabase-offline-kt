@@ -249,13 +249,14 @@ class ConflictResolverTest {
         // When
         val report = client.syncPendingMutations()
 
-        // Then — parked, and the cached list shows the server's row, not the device's rename
+        // Then — parked, and the cached list shows the server's title, not the device's rename,
+        // under the version the device saw
         val parked = report.conflicted.single()
         assertEquals(id to MOVED_VERSION, parked.id to parked.serverVersion)
         assertEquals(setOf("title"), parked.conflictingColumns)
         assertEquals(0 to 0, report.syncedCount to report.remainingCount)
         assertEquals(renamedElsewhere, server.rows(GUARDED_TABLE).single())
-        assertEquals(listOf(renamedElsewhere), client.cachedTasks())
+        assertEquals(listOf(taskRow(1, "elsewhere")), client.cachedTasks())
         client.close()
     }
 

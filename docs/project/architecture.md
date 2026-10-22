@@ -939,15 +939,18 @@ recorded, because a write the server applied but the queue kept would be sent ag
 - **A guarded UPDATE or DELETE** (one with a `base_version`) replays with the stored filter, a
   top-level `eq` on the version column at the base, and a `select` of the key, the version and the
   written columns. Rows back mean it applied: an UPDATE's rows are patched into the cache with
-  `CachePatcher.patchReturnedRows`, and every later guarded write to the row takes the returned
-  version and columns as its base, in the transaction that marks the write replayed. No rows back
+  `CachePatcher.patchReturnedRows`, and every later guarded write to the row by the same user takes
+  the returned version and columns as its base, in the transaction that marks the write replayed
+  (another user's keeps the base its user saw). No rows back
   is followed by one network-only read by key, which tells a gone row, a filter the row no longer
   meets, a policy denial (the row at the base, meeting the filter: the rejected list), a lost answer
   (the row already holds the written values), a stale base (none of the written columns moved:
   resent at the new version without the policy) and a moved row, classified per column and handed
   to the `ConflictPolicy`. `KeepLocal` and `Apply` resend at the server's version, at most three
-  sends in a pass; `KeepServer` removes the write and lays the server's row, or its deletion, into
-  the cache; `Hold`, a throw, the 30-second bound or a third move park it on the conflicted list.
+  sends in a pass; `KeepServer` removes the write and lays the server's values for the columns read,
+  without the version, or the row's deletion, into the cache; `Hold`, a throw, the 30-second bound
+  or a third move park it on the conflicted list, with the same values laid in when the read found
+  a row, before the write leaves the queue.
   The policy is called outside every transaction and lock but the pass's send lock, in the pass's
   job, so a clear or a close cuts its wait short and leaves the write queued.
 - **Accepted**, a write's table watermark advances, then, in one transaction, the write is marked

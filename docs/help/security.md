@@ -11,7 +11,7 @@ security on your project.
 | --- | --- | --- |
 | Cached lists | The database | The rows PostgREST returned to the user's list reads |
 | The mutation queue | The database | Each unsent write's body and filter, and the id of the user who made it |
-| The rejected list | The database | Each refused write's body, and the server's message, details and hint |
+| The rejected list | The database | Each refused write's body, the earlier values of the columns it sets and the row's version as the device saw them, and the server's message, details and hint |
 | The conflicted list | The database | Each write held after a conflict: its body, the columns it sets as the device saw them, and the server's columns as the replay read them |
 | The cache owner | The database | Which user the cache belongs to |
 | Downloaded files | The files directory | The bytes of each Storage object downloaded through the offline bucket |

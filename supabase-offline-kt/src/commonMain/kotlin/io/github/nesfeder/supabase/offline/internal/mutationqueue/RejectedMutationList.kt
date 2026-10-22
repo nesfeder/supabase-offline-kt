@@ -343,9 +343,16 @@ internal class RejectedMutationList(
                         )
                     },
             )
-        // Without its base row the retry still carries its base version, so it is still guarded
-        if ((entry.baseJson?.length ?: 0) > MAX_REJECTED_BODY_CHARS)
+        // Without its base row the retry still carries its base version, so it is still guarded,
+        // though every column it sets then reads as moved when the row has
+        if ((entry.baseJson?.length ?: 0) > MAX_REJECTED_BODY_CHARS) {
+            logger.warning {
+                "Rejected ${entry.operation} ${entry.id} on ${entry.table}: its base row of " +
+                    "${entry.baseJson?.length} characters is too long to keep; a retry is guarded " +
+                    "by its version alone, so any move of the row is a conflict for the resolver"
+            }
             bounded = bounded.copy(baseJson = null)
+        }
         if (entry.bodyJson.length > MAX_REJECTED_BODY_CHARS) {
             logger.warning {
                 "Rejected ${entry.operation} ${entry.id} on ${entry.table}: its body of " +

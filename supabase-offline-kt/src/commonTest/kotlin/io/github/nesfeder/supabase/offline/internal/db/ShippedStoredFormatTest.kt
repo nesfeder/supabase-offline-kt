@@ -82,8 +82,14 @@ class ShippedStoredFormatTest {
 
     @Test
     fun a_stored_rejected_list_decodes_to_the_entries_that_were_refused_with_their_base() {
-        // Given — a list as this build writes it, and one as 0.2.0 wrote it, with no base
-        val payload = ShippedDatabaseFixture.REJECTED_LIST_JSON
+        // Given — a list as this build writes a guarded UPDATE a policy refused, its base under
+        // `baseVersion` and `baseJson`, and one as 0.2.0 wrote it, with no base
+        val payload =
+            """{"version":1,"entries":[{"id":3,"table":"todos","operation":"UPDATE",""" +
+                """"bodyJson":"{\"done\":true}","filterJson":${JsonPrimitive(ShippedDatabaseFixture.UPDATE_FILTER_JSON)},""" +
+                """"createdAtMs":1,"baseVersion":"2026-10-18T13:00:27.486123+00:00",""" +
+                """"baseJson":"{\"done\":false,\"updated_at\":\"2026-10-18T13:00:27.486123+00:00\"}",""" +
+                """"rejectedAtMs":2,"message":"The row cannot be changed under the server's current policies"}]}"""
         val fromEarlierBuild = ShippedDatabaseFixture.REJECTED_LIST_JSON_WITHOUT_BASE
 
         // When
@@ -106,7 +112,10 @@ class ShippedStoredFormatTest {
             ShippedDatabaseFixture.UPDATE_FILTER,
             decodeFilterOrNull(requeued.filterJson, EngineJson),
         )
-        assertEquals(null to null, earlier.entries.single().let { it.baseVersion to it.baseJson })
+        val earlierEntry = earlier.entries.single()
+        assertEquals(null to null, earlierEntry.baseVersion to earlierEntry.baseJson)
+        assertEquals("user:u-1" to 17000, earlierEntry.owner to earlierEntry.bodyOmittedChars)
+        assertEquals(1, earlier.droppedCount)
         assertEquals(EngineJson.encodeToString(StoredRejectionList.serializer(), list), payload)
         assertEquals(
             EngineJson.encodeToString(StoredRejectionList.serializer(), earlier),

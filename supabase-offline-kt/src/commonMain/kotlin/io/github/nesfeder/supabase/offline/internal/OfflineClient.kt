@@ -35,6 +35,7 @@ import io.github.nesfeder.supabase.offline.internal.cache.QueryCacheLimits
 import io.github.nesfeder.supabase.offline.internal.cache.QueryOverlay
 import io.github.nesfeder.supabase.offline.internal.cache.ShownQueueCounts
 import io.github.nesfeder.supabase.offline.internal.cache.buildCacheComponents
+import io.github.nesfeder.supabase.offline.internal.cache.keyOf
 import io.github.nesfeder.supabase.offline.internal.cache.monotonicTickSource
 import io.github.nesfeder.supabase.offline.internal.db.CachedFileDao
 import io.github.nesfeder.supabase.offline.internal.db.DatabaseScrub
@@ -51,6 +52,7 @@ import io.github.nesfeder.supabase.offline.internal.mutationqueue.ConflictPolicy
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.ConflictRequeue
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.DefaultConflictPolicy
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.DefaultPrimaryKeys
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.GONE_REASON
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueue
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueueReplayer
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.NoVersionColumns
@@ -71,6 +73,7 @@ import io.github.nesfeder.supabase.offline.internal.mutationqueue.syncFailureOf
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.toConflictedMutation
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.toPendingMutation
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.toRejectedMutation
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.versionTextOf
 import io.github.nesfeder.supabase.offline.internal.network.NetworkAccess
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 import io.github.nesfeder.supabase.offline.internal.postgrest.LiveQueries
@@ -865,40 +868,65 @@ internal class OfflineClient(
                 "This conflicted mutation cannot be settled that way"
             }
             if (requeue is ConflictRequeue.Requeued) automaticReplay.requestPass()
-            if (requeue == ConflictRequeue.Dropped) showServerSideOf(entry, startedAtTick)
+            if (requeue == ConflictRequeue.Dropped)
+                showServerSideOf(entry, identity.storedValue, startedAtTick)
         }
 
     /**
      * Shows the server's side of the conflicted [entry] the app dropped with
-     * [ConflictResolution.KeepServer] in the cache, as the resolver's own `KeepServer` does: the
-     * row the replay read is laid into the cached queries, or the row is dropped from them when the
-     * server had none. The row may have moved while the entry waited, so the queries holding it are
-     * then marked stale, and a live read fetches it again; a row the entry could not keep (too
-     * long) is only marked so. Runs after the queue lock is released, since the patch takes the
-     * table's lock, which precedes the queue's; a failure is logged, since the entry is gone either
-     * way. An entry whose filter pins no row (a guarded replay always pins one) patches nothing.
+     * [ConflictResolution.KeepServer] in the cache, as the resolver's own `KeepServer` does. A row
+     * gone from the server is dropped from the cached queries. A row the replay read is laid in,
+     * without its version, only while the cached row still carries the entry's base version: the
+     * row as the device saw it before the write, which an entry a build before this one parked left
+     * there; a cached row at any other version was fetched, or laid in, since the entry was made,
+     * and is left as it is. Either way the queries holding the row are then marked stale, so a live
+     * read fetches it again: the row may have moved while the entry waited. Runs after the queue
+     * lock is released, since the patch takes the table's lock, which precedes the queue's; a
+     * failure is logged, since the entry is gone either way. An entry whose filter pins no row (a
+     * guarded replay always pins one) patches nothing.
      *
+     * @param identity the stored value of the identity resolving, whose cache the row is read from.
      * @param startedAtTick the tick the resolution started at; a clear since then voids the patch.
      */
-    private suspend fun showServerSideOf(entry: StoredConflict, startedAtTick: Long) {
+    private suspend fun showServerSideOf(
+        entry: StoredConflict,
+        identity: String,
+        startedAtTick: Long,
+    ) {
         val table = entry.table
-        val keyFilter = keyFilterOf(entry) ?: return
+        val keyColumns = primaryKeys.of(table)
+        val filter = decodeFilterOrNull(entry.filterJson, EngineJson) ?: return
+        val pinned = pinnedRowKeyOf(filter, keyColumns) ?: return
+        val keyFilter =
+            FilterDescriptor(
+                conditions =
+                    pinned.map { (column, value) ->
+                        FilterDescriptor.Condition(column, "eq", value.jsonPrimitive.content)
+                    }
+            )
+        val versionColumn = mutationQueue.versionColumns.of(table)
         val server = entry.serverRowJson?.let { text -> jsonObjectOrNull(text, EngineJson) }
         try {
-            if (server != null) {
-                cachePatcher.patchReturnedRows(
-                    table,
-                    JsonObject(emptyMap()),
-                    JsonArray(listOf(server)).toString(),
-                    startedAtTick,
-                )
-            } else if (entry.serverVersion == null) {
+            if (entry.serverVersion == null && entry.message == GONE_REASON) {
                 cachePatcher.patchCachedQueries(
                     table = table,
                     operation = MutationOperation.DELETE,
                     bodyJson = "{}",
                     filterJson = encodeFilter(keyFilter, EngineJson),
                     startedAtTick = startedAtTick,
+                )
+            } else if (
+                server != null &&
+                    versionColumn != null &&
+                    entry.baseVersion != null &&
+                    cachedVersionOf(table, pinned, keyColumns, versionColumn, identity) ==
+                        entry.baseVersion
+            ) {
+                cachePatcher.patchReturnedRows(
+                    table,
+                    JsonObject(emptyMap()),
+                    JsonArray(listOf(JsonObject(server - versionColumn))).toString(),
+                    startedAtTick,
                 )
             }
             // As a delete would: the queries that still hold the row, which a dropped row left
@@ -920,17 +948,19 @@ internal class OfflineClient(
     }
 
     /**
-     * The filter that reads the conflicted [entry]'s one row by its key; `null` when it pins none.
+     * The version the newest cached row of [table] with the key [pinned] carries, in [identity]'s
+     * cache, as text; `null` when no cached list holds the row with [versionColumn].
      */
-    private fun keyFilterOf(entry: StoredConflict): FilterDescriptor? {
-        val filter = decodeFilterOrNull(entry.filterJson, EngineJson) ?: return null
-        val key = pinnedRowKeyOf(filter, primaryKeys.of(entry.table)) ?: return null
-        return FilterDescriptor(
-            conditions =
-                key.map { (column, value) ->
-                    FilterDescriptor.Condition(column, "eq", value.jsonPrimitive.content)
-                }
-        )
+    private suspend fun cachedVersionOf(
+        table: String,
+        pinned: JsonObject,
+        keyColumns: List<String>,
+        versionColumn: String,
+        identity: String,
+    ): String? {
+        val key = keyOf(pinned, keyColumns) ?: return null
+        val row = queryOverlay.cachedRowHolding(table, key, versionColumn, identity) ?: return null
+        return versionTextOf(row[versionColumn])
     }
 
     override suspend fun dismissConflictedMutation(id: Long): Unit = operationGate.call {

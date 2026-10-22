@@ -47,6 +47,12 @@ class ConflictedMutationsTest {
     /** Task 1, renamed here while the server could not be reached and elsewhere meanwhile. */
     private val renamedElsewhere: JsonObject = taskRow(1, "elsewhere", version = MOVED_VERSION)
 
+    /**
+     * [renamedElsewhere] as a park lays it into the cache: the server's title, under the version
+     * the device saw, so a later write to the row still meets the move.
+     */
+    private val renamedElsewhereAtTheDevicesVersion: JsonObject = taskRow(1, "elsewhere")
+
     /** Renames task 1 to "mine" offline, renames it elsewhere, and syncs, parking the write. */
     private suspend fun OfflineClient.parkConflictingRename(): Long {
         server.seed(GUARDED_TABLE, taskRow(1, "theirs"))
@@ -198,8 +204,9 @@ class ConflictedMutationsTest {
         client.parkConflictingRename()
         val cached = client.cachedTasks()
 
-        // Then — neither the device's rename nor the row as the device last read it: the server's
-        assertEquals(listOf(renamedElsewhere), cached)
+        // Then — neither the device's rename nor the title as the device last read it: the
+        // server's, under the version the device saw
+        assertEquals(listOf(renamedElsewhereAtTheDevicesVersion), cached)
         client.close()
     }
 
@@ -220,9 +227,28 @@ class ConflictedMutationsTest {
         // When
         client.resolveConflictedMutation(id, ConflictResolution.KeepServer)
 
-        // Then — the row the entry recorded, and the list is stale, since the row may have moved
-        // since, so a live read fetches it again
-        assertEquals(listOf(renamedElsewhere), client.cachedTasks())
+        // Then — the columns the entry recorded, under the version the device saw, and the list
+        // is stale, since the row may have moved since, so a live read fetches it again
+        assertEquals(listOf(renamedElsewhereAtTheDevicesVersion), client.cachedTasks())
+        assertTrue(isStaleStamp(cacheDao.allForTable(GUARDED_TABLE).single().updatedAt))
+        client.close()
+    }
+
+    @Test
+    fun keep_server_leaves_a_cached_row_fetched_since_the_entry_was_made() = runTest {
+        // Given — a parked rename; the row then moved again elsewhere, and the list was read again
+        val cacheDao = FakeQueryCacheDao()
+        val client = newGuardedClient(server, holding, queryCacheDao = cacheDao)
+        val id = client.parkConflictingRename()
+        val movedAgain = taskRow(1, "later", version = LATER_VERSION)
+        server.replaceRow(GUARDED_TABLE, movedAgain)
+        client.from(GUARDED_TABLE).select()
+
+        // When
+        client.resolveConflictedMutation(id, ConflictResolution.KeepServer)
+
+        // Then — the entry's older row is not laid over the newer one; the list is fetched again
+        assertEquals(listOf(movedAgain), client.cachedTasks())
         assertTrue(isStaleStamp(cacheDao.allForTable(GUARDED_TABLE).single().updatedAt))
         client.close()
     }
@@ -244,9 +270,9 @@ class ConflictedMutationsTest {
             // When
             client.resolveConflictedMutation(id, ConflictResolution.KeepServer)
 
-            // Then — nothing to lay in: the cache keeps the row the park laid in, marked stale
+            // Then — nothing to lay in: the cache keeps what the park laid in, marked stale
             assertEquals(null to MOVED_VERSION, entry.server to entry.serverVersion)
-            assertEquals(listOf(longElsewhere), client.cachedTasks())
+            assertEquals(listOf(taskRow(1, "x".repeat(OVERSIZED_TITLE))), client.cachedTasks())
             assertTrue(isStaleStamp(cacheDao.allForTable(GUARDED_TABLE).single().updatedAt))
             client.close()
         }
@@ -425,5 +451,8 @@ class ConflictedMutationsTest {
 
         /** A title past the 16 K characters the conflicted list keeps of a body. */
         const val OVERSIZED_TITLE = 17_000
+
+        /** A version later than [MOVED_VERSION], as a third change leaves it. */
+        const val LATER_VERSION = "2026-10-18T13:00:00.25+00:00"
     }
 }

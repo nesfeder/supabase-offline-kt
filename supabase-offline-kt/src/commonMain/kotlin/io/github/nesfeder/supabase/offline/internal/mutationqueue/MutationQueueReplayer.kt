@@ -225,13 +225,27 @@ internal class MutationQueueReplayer(
             try {
                 pass.await()
             } catch (cancellation: CancellationException) {
-                // Rethrows when the caller itself was canceled, or when nothing cleared local data:
-                // a cancellation the transport threw is not a clear, and the queue still stands.
-                // Otherwise only the pass was canceled, by clearLocalData, which left nothing
-                // queued: report what it sent before
+                // Rethrows when the caller itself was canceled. Otherwise, when local data was
+                // cleared, only the pass was canceled, by clearLocalData, which left nothing
+                // queued: report what it sent before. A cancellation from anywhere else (the
+                // transport's own) is this pass's failure, not the caller's and not a clear: the
+                // queue stands for a later pass, as after any failure on the device
                 currentCoroutineContext().ensureActive()
-                if (clearGeneration.value == generation) throw cancellation
-                progress.report(remainingCount = 0, stop = SyncStop.LocalDataCleared)
+                if (clearGeneration.value != generation) {
+                    progress.report(remainingCount = 0, stop = SyncStop.LocalDataCleared)
+                } else {
+                    engineLogger.warning {
+                        "A replay pass was canceled by something other than a clear " +
+                            "(${cancellation::class.simpleName}); the queued writes stay queued"
+                    }
+                    progress.report(
+                        remainingCount = remainingFor(currentIdentity(), table),
+                        stop =
+                            SyncStop.TransientFailure(
+                                IllegalStateException("The replay pass was canceled", cancellation)
+                            ),
+                    )
+                }
             } finally {
                 activePasses.update { passes -> passes - pass }
             }
@@ -978,6 +992,7 @@ internal class MutationQueueReplayer(
                                 mutation,
                                 server,
                                 NO_SERVER_VERSION_REASON,
+                                versionColumn,
                                 readStartedAtTick,
                             )
                         // The earlier send landed and its answer was lost. Values compare as JSON:
@@ -999,7 +1014,7 @@ internal class MutationQueueReplayer(
                 }
             // No send is left to act on an answer, so nobody is asked
             if (round == MAX_CONFLICT_ROUNDS)
-                return park(case, KEPT_MOVING_REASON, readStartedAtTick)
+                return park(case, KEPT_MOVING_REASON, versionColumn, readStartedAtTick)
             // A stale base, not a conflict: none of the UPDATE's columns moved on the server since
             // the device saw the row, so it is resent at the new version without asking anyone
             if (case is ConflictCase.Moved && sentBody != null && case.changedOnServer.isEmpty()) {
@@ -1009,13 +1024,13 @@ internal class MutationQueueReplayer(
             when (val decision = decide(case, pass)) {
                 ConflictDecision.KeepLocal -> {
                     if (case !is ConflictCase.Moved)
-                        return park(case, HELD_REASON, readStartedAtTick)
+                        return park(case, HELD_REASON, versionColumn, readStartedAtTick)
                     precondition = case.serverVersion
                     resolved = true
                 }
                 is ConflictDecision.Apply -> {
                     if (case !is ConflictCase.Moved || sentBody == null)
-                        return park(case, HELD_REASON, readStartedAtTick)
+                        return park(case, HELD_REASON, versionColumn, readStartedAtTick)
                     body = decision.columns
                     precondition = case.serverVersion
                     resolved = true
@@ -1024,7 +1039,8 @@ internal class MutationQueueReplayer(
                     keepServerRow(case, guarded, readStartedAtTick)
                     return ReplayOutcome.KeptServer
                 }
-                ConflictDecision.Hold -> return park(case, HELD_REASON, readStartedAtTick)
+                ConflictDecision.Hold ->
+                    return park(case, HELD_REASON, versionColumn, readStartedAtTick)
             }
         }
         error("A guarded replay ends within its rounds")
@@ -1115,11 +1131,14 @@ internal class MutationQueueReplayer(
         }
     }
 
-    /** Lays the server's row of [case] into the cache, or drops the gone row, as the write goes. */
+    /**
+     * Lays the server's row of [case] into the cache, as [showServerRow] does, or drops the gone
+     * row, as the write goes.
+     */
     private suspend fun keepServerRow(case: ConflictCase, guarded: Prepared.Guarded, tick: Long) {
         val table = case.mutation.table
         when (case) {
-            is ConflictCase.Moved -> showServerRow(table, case.server, tick)
+            is ConflictCase.Moved -> showServerRow(table, case.server, guarded.versionColumn, tick)
             is ConflictCase.Gone ->
                 patchCacheAfterReplay(table) { patcher ->
                     patcher.patchCachedQueries(
@@ -1134,15 +1153,24 @@ internal class MutationQueueReplayer(
     }
 
     /**
-     * Lays [server], the row a replay read by key at [tick], into [table]'s cached queries: a write
-     * that leaves the queue is no longer laid over them, so they show the row as the server has it.
+     * Lays the columns of [server], the row a replay read by key at [tick], into [table]'s cached
+     * queries, all but [versionColumn]: a write that leaves the queue is no longer laid over them,
+     * so they show the server's values for the columns the read asked for. The read asks for the
+     * key, the version and the write's own columns, never the whole row, so the cached row keeps
+     * the version the device saw: a later write to it still meets the move, as a stale base for the
+     * columns read and a conflict for the rest.
      */
-    private suspend fun showServerRow(table: String, server: JsonObject, tick: Long) {
+    private suspend fun showServerRow(
+        table: String,
+        server: JsonObject,
+        versionColumn: String,
+        tick: Long,
+    ) {
         patchCacheAfterReplay(table) { patcher ->
             patcher.patchReturnedRows(
                 table,
                 JsonObject(emptyMap()),
-                JsonArray(listOf(server)).toString(),
+                JsonArray(listOf(JsonObject(server - versionColumn))).toString(),
                 tick,
             )
         }
@@ -1151,16 +1179,18 @@ internal class MutationQueueReplayer(
     /**
      * [case]'s write, parked for [message], the server's row laid into the cache first as
      * [keepServerRow] lays it: the parked write is not shown over the cache any more, so the device
-     * shows the row as the server has it until the app settles the write. A gone row's cached copy
-     * stays, since a row that is gone and one a policy hides look the same from the device; Keep
-     * theirs on the entry drops it.
+     * shows the row's columns as the server has them until the app settles the write. A gone row's
+     * cached copy stays, since a row that is gone and one a policy hides look the same from the
+     * device; Keep theirs on the entry drops it.
      */
     private suspend fun park(
         case: ConflictCase,
         message: String,
+        versionColumn: String,
         tick: Long,
     ): ReplayOutcome.Conflicted {
-        if (case is ConflictCase.Moved) showServerRow(case.mutation.table, case.server, tick)
+        if (case is ConflictCase.Moved)
+            showServerRow(case.mutation.table, case.server, versionColumn, tick)
         return parked(case, message)
     }
 
@@ -1169,9 +1199,10 @@ internal class MutationQueueReplayer(
         mutation: MutationRow,
         server: JsonObject,
         message: String,
+        versionColumn: String,
         tick: Long,
     ): ReplayOutcome.Conflicted {
-        showServerRow(mutation.table, server, tick)
+        showServerRow(mutation.table, server, versionColumn, tick)
         return parked(mutation, server, message)
     }
 
@@ -1691,9 +1722,6 @@ internal class MutationQueueReplayer(
         /** Why a write is parked when the conflict policy holds it. */
         const val HELD_REASON = "The row changed on the server since this write was made"
 
-        /** Why a write is parked when its row is gone from the server, or hidden from the user. */
-        const val GONE_REASON = "The row is gone from the server, or hidden from this user"
-
         /** Why a write is parked when its row kept moving while it was replayed. */
         const val KEPT_MOVING_REASON =
             "The row kept changing on the server while this write was replayed"
@@ -1707,6 +1735,13 @@ internal class MutationQueueReplayer(
         const val BODY_NO_LONGER_PARSES = "has a body that no longer parses"
     }
 }
+
+/**
+ * Why a write is parked when its row is gone from the server, or hidden from the user: the one
+ * reason a parked write with no server version carries when there was no row, which tells such an
+ * entry from one whose row came back without a version.
+ */
+internal const val GONE_REASON: String = "The row is gone from the server, or hidden from this user"
 
 /**
  * [columns], each once, as a PostgREST `select` list: a name with anything but letters, digits and

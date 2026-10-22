@@ -73,26 +73,18 @@ internal object ShippedDatabaseFixture {
             """{"column":"status","operatorId":"eq","value":"archived"}]}"""
 
     /**
-     * The rejected list's reserved row as this build writes it for a guarded UPDATE a policy
-     * refused: the write's base beside it, under `baseVersion` and `baseJson`, so a retry replays
-     * guarded as the write was first sent.
-     */
-    val REJECTED_LIST_JSON: String =
-        """{"version":1,"entries":[{"id":3,"table":"todos","operation":"UPDATE",""" +
-            """"bodyJson":"{\"done\":true}","filterJson":${JsonPrimitive(UPDATE_FILTER_JSON)},""" +
-            """"createdAtMs":1,"baseVersion":"2026-10-18T13:00:27.486123+00:00",""" +
-            """"baseJson":"{\"done\":false,\"updated_at\":\"2026-10-18T13:00:27.486123+00:00\"}",""" +
-            """"rejectedAtMs":2,"message":"The row cannot be changed under the server's current policies"}]}"""
-
-    /**
-     * The same refusal as 0.2.0 wrote it, which kept no base. This build reads it back with none,
-     * and such a retry replays unguarded, as it did there.
+     * The rejected list's reserved row as 0.2.0 writes one refused UPDATE whose body was too long
+     * to keep, every optional key set: no base, since that build kept none. This build reads it
+     * back with none, and a retry of such an entry replays unguarded, as it did there.
      */
     val REJECTED_LIST_JSON_WITHOUT_BASE: String =
-        """{"version":1,"entries":[{"id":3,"table":"todos","operation":"UPDATE",""" +
-            """"bodyJson":"{\"done\":true}","filterJson":${JsonPrimitive(UPDATE_FILTER_JSON)},""" +
-            """"createdAtMs":1,"rejectedAtMs":2,""" +
-            """"message":"The row cannot be changed under the server's current policies"}]}"""
+        """{"version":1,"entries":[{"id":3,"table":"todos","operation":"UPDATE","bodyJson":"",""" +
+            """"filterJson":${JsonPrimitive(UPDATE_FILTER_JSON)},"createdAtMs":1,""" +
+            """"defaultToNull":false,"onConflict":"id","ignoreDuplicates":false,"owner":"user:u-1",""" +
+            """"rejectedAtMs":2,"message":"new row violates row-level security policy",""" +
+            """"serverError":{"status":403,"code":"42501",""" +
+            """"message":"new row violates row-level security policy","details":"d","hint":"h"},""" +
+            """"bodyOmittedChars":17000}],"droppedCount":1}"""
 
     /** [UPDATE_FILTER_JSON] decoded. */
     val UPDATE_FILTER: FilterDescriptor =
