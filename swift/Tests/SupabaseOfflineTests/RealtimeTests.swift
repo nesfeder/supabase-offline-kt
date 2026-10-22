@@ -107,6 +107,20 @@ struct RealtimeTests {
         #expect(client.realtimeStatus.value == .off)
     }
 
+    @Test func anEmptyInListFailsTheOpen() async throws {
+        // Given a table filtered with an `in` of no values, which the server would refuse the join for
+        let filter = RealtimeFilter(column: "id", in: [Int]())
+        let client = SupabaseOfflineClient.inMemory(config: .init(realtimeTables: [RealtimeTable("todos", filter: filter)]))
+
+        // When the client is used
+        let failure = await #expect(throws: OfflineError.self) { try await client.enableRealtime() }
+
+        // Then every call fails with the configuration, saying what `in` needs
+        #expect(failure?.code == .configuration)
+        #expect(failure?.message.contains("at least one") == true)
+        #expect(client.realtimeStatus.value == .off)
+    }
+
     @Test func withoutNamedTablesTheStatusIsOffAndTheSwitchDoesNothing() async throws {
         // Given a client naming no table
         let realtime = FakeRealtime()

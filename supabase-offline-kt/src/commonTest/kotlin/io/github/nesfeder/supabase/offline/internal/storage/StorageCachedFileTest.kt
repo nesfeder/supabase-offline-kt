@@ -238,18 +238,29 @@ class StorageCachedFileTest {
         }
 
     @Test
-    fun cachedFile_reports_the_size_of_the_file_on_disk() = runTest {
-        // Given — the file was replaced and the process died before the row caught up
+    fun cachedFile_drops_a_file_whose_size_is_not_the_one_its_row_recorded() = runTest {
+        // Given — the row records the download's size, but a power loss after the rename left the
+        // file empty
         delegate.onDownload = { BYTES }
         val bucket = bucket()
         val cached = bucket.ensureCachedFile(PATH)
-        FileSystem.SYSTEM.write(cached.path.toPath()) { writeUtf8("a longer replacement avatar") }
+        FileSystem.SYSTEM.write(cached.path.toPath()) {}
+        assertEquals(
+            BYTES.size.toLong(),
+            assertNotNull(store.getStorageByKey(BUCKET, PATH)).sizeBytes,
+        )
 
         // When
-        val reported = assertNotNull(bucket.cachedFile(PATH))
+        val reported = bucket.cachedFile(PATH)
 
-        // Then
-        assertEquals("a longer replacement avatar".length.toLong(), reported.sizeBytes)
+        // Then — not served; the row and the file are gone, and the next ensureCachedFile downloads
+        // the object again
+        assertNull(reported)
+        assertNull(store.getStorageByKey(BUCKET, PATH))
+        assertFalse(FileSystem.SYSTEM.exists(cached.path.toPath()))
+        assertEquals(1, delegate.downloadInvocations)
+        assertEquals(BYTES.size.toLong(), bucket.ensureCachedFile(PATH).sizeBytes)
+        assertEquals(2, delegate.downloadInvocations)
     }
 
     private companion object {

@@ -47,7 +47,9 @@ class StorageObjectNameEncodingTest {
         val entry = assertNotNull(cache.entryFor(BUCKET, NAME))
 
         // When
-        cache.write(entry, CONTENT.encodeToByteArray(), cache.currentGeneration())
+        val start = cache.beginDownload()
+        cache.write(entry, CONTENT.encodeToByteArray(), start)
+        cache.endDownload(start)
 
         // Then
         val row = assertNotNull(store.getStorageByKey(BUCKET, NAME))

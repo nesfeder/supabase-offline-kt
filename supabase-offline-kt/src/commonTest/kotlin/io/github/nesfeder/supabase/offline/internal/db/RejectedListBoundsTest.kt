@@ -55,6 +55,29 @@ class RejectedListBoundsTest {
     }
 
     @Test
+    fun a_base_row_too_long_to_keep_is_dropped_and_the_base_version_kept() = runTest {
+        // Given — a guarded write refused with a base row past the bound
+        val entry =
+            rejection(1)
+                .copy(
+                    baseVersion = "v1",
+                    baseJson = "x".repeat(MAX_REJECTED_BODY_CHARS + 1),
+                )
+
+        // When
+        store.addRejection(entry)
+
+        // Then — the row is not kept, the version is, so a retry still replays guarded
+        val stored = store.mutationQueue.rejectedList.rejections().single()
+        assertNull(stored.baseJson)
+        assertEquals("v1", stored.baseVersion)
+        assertEquals(
+            "v1" to null,
+            stored.toRequeuedRow(0, null)?.let { it.baseVersion to it.baseJson },
+        )
+    }
+
+    @Test
     fun an_entry_that_leaves_the_full_list_is_logged() = runTest {
         // Given / When — one more than the list keeps
         repeat(MAX_REJECTED_MUTATIONS + 1) { index ->

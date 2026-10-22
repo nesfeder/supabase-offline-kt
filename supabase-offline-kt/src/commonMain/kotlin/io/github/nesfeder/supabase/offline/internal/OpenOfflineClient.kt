@@ -27,6 +27,7 @@ import io.github.nesfeder.supabase.offline.internal.postgrest.ResponseTrustPolic
 import io.github.nesfeder.supabase.offline.internal.realtime.ServerChangeFeed
 import io.github.nesfeder.supabase.offline.internal.realtime.SupabaseRealtimeFeed
 import io.github.nesfeder.supabase.offline.internal.storage.markFileUsed
+import io.github.nesfeder.supabase.offline.internal.storage.syncFileToDisk
 import kotlin.coroutines.ContinuationInterceptor
 import kotlin.time.Clock
 import kotlin.time.Duration
@@ -122,6 +123,8 @@ internal fun openOfflineClient(
  * @param fileSystem where the Storage file cache keeps its files: the device's disk unless a test
  *   keeps them in memory.
  * @param markFileUsed records a use time on one of [fileSystem]'s files.
+ * @param syncFile writes one of [fileSystem]'s files through to the disk before the cache renames
+ *   it into place.
  * @param clock the time the client sees, and by default the time its rows are stamped with.
  * @param rowClock the clock the rows are stamped with.
  * @param platformNetworkAvailability the platform's connectivity monitor, used unless
@@ -143,6 +146,7 @@ internal fun Offline.Config.buildOfflineClient(
     closeWait: Duration = OfflineClient.CLOSE_WAIT,
     fileSystem: FileSystem = FileSystem.SYSTEM,
     markFileUsed: (Path, Long) -> Unit = ::markFileUsed,
+    syncFile: (Path) -> Unit = ::syncFileToDisk,
     clock: Clock = Clock.System,
     rowClock: () -> Long = { clock.now().toEpochMilliseconds() },
     platformNetworkAvailability: Flow<Boolean>? = null,
@@ -175,6 +179,7 @@ internal fun Offline.Config.buildOfflineClient(
         config = this,
         fileSystem = fileSystem,
         markFileUsed = markFileUsed,
+        syncFile = syncFile,
         clock = clock,
         rowClock = rowClock,
         watchedTables = watchedTables,

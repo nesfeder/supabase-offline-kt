@@ -17,6 +17,26 @@ All notable changes to this project are recorded in this file. The format follow
 
 ### Changed
 
+- The rejected list keeps a guarded write's base in each guarded entry, under two new keys
+  (`baseVersion`, `baseJson`), so a retry replays guarded. A list an earlier build wrote reads back
+  without them, and a retry of such an entry replays unguarded, as it did there.
+- An object whose bucket id or path has a segment that starts with a letter and a colon
+  (`u:42/a.png`) is stored under `storage-hashed/`, like every other name that cannot be stored
+  verbatim. Nothing was cached under its plain path before, so no file already on a device moves.
+- An `in` element, or a comparison value inside an `or { }` or `and { }` group, that holds `"` or
+  `\` and none of `,.:()` is refused with `IllegalArgumentException` before anything is sent or
+  queued, in a read, an update or a delete, and by the Swift package's core: supabase-kt escapes
+  such a value but does not quote it, so the server read the escapes as the value and the request
+  matched nothing, while a queued row with that value showed offline and vanished on the next
+  refresh. A write queued by 0.2.0 with such an `in` element is moved to the rejected list when
+  it comes up for sending, with a message naming the column, instead of being sent and dropped as
+  applied. Filter on such a value with a single top-level filter, which sends it as written.
+- `RealtimeFilter` refuses, when made, an `in` without a non-empty list and another operator with
+  a collection or an array, and the Swift package's core refuses a filter that sets both forms or
+  the wrong one: such a filter was sent as `owner=in.<id>` or `id=eq.[1]`, the server refused the
+  join, and the channel stalled and retried forever. Pass a `List` for `in` and a single value for
+  every other operator.
+
 ### Deprecated
 
 ### Removed
@@ -37,6 +57,70 @@ All notable changes to this project are recorded in this file. The format follow
 - Each change a followed table received was applied as its own pass over the table's cached
   queries, so a burst ran far behind the connection; the changes waiting for a table are now
   applied as one pass, in the order the server sent them.
+- A one-shot read made while a stored session's token refresh has failed waits for the session,
+  as it does while one restores. supabase-kt sends the anon key meanwhile, and tries the refresh
+  again every ten seconds by default; the read returned the anon key's answer, empty under
+  row-level security, as the server's. When the session does not settle within the wait, a
+  `NetworkFirst` read with the query cached, or a `CacheFirst` read of a list marked stale, serves
+  the cached rows rather than that answer. A `NetworkFirstThenCache` read waits the same way
+  before its first emission. A read answered after the session settled asks again at once.
+- A read of a shape the cache cannot hold (`single()`, `maybeSingle()`, `head`, a `count`, …)
+  waits for a session that is restoring, or whose refresh failed, before it is sent. It went out
+  at once on the anon key, where a detail screen's `single()` failed with `PGRST116` and a `count`
+  read 0 at cold start.
+- A cached list whose shape record the library could not read (one another build wrote, or one
+  that did not decode) admitted every row of its table into the list, for good; the record is now
+  replaced by the one the next read records.
+- A write patched into a table while the cache was being trimmed could bring back a list the
+  trimming had just removed; a patch now changes only the lists still there. A read of the cache
+  that overlapped `clearLocalData()` could leave a record of its query's filter values behind; such
+  a record is now written only beside the rows it describes, and never after a clear.
+- A `2xx` answer that was not a list of rows (a captive portal's sign-in page, a proxy's block page,
+  a self-hosted server's fallback page) replaced the cached list, and every offline read of the
+  query then failed to decode it. Such an answer is no longer written: a `NetworkFirst` or
+  `CacheFirst` read with the query cached within its `maxAge` is served the cached rows, and a
+  reactive read's refresh asks again, `Stalled` by that cause after its fast retries. A blank
+  answer is an empty list, served and stored as `[]`.
+- Two different queries could share one cache key when a filter value held `&`, `=` or `|`, and be
+  served each other's rows offline. Such a query's key now ends in a digest of its parts; every
+  other key is unchanged. Such a query's rows cached before the upgrade are not found; it is fetched
+  again once, and the old rows stay until evicted.
+- A rejected write that was guarded by a version column keeps its base when it is retried: the
+  retry checks the server's row as the first send did, so a row another device changed meanwhile is
+  a conflict for the resolver, not an overwrite.
+- A replayed write's returned row moves the base of the writes queued behind it by the same user
+  only. On a shared device, another user's queued write to the same row keeps the version its user
+  saw, so its replay meets the change as a conflict.
+- A write parked on the conflicted list leaves the cached row showing the server's values for the
+  columns the replay read, instead of the values the device last read. The row keeps the version
+  the device saw, as it now does after the resolver's `KeepServer` too, so a later write to it
+  still meets the move instead of applying over another device's change to a column the replay
+  did not read.
+- `KeepServer` on a listed entry drops a gone row from the cache, or lays the columns the entry
+  recorded into the cached row while that row is still as the device saw it before the write, as
+  the resolver's own `KeepServer` does; the lists holding the row are then fetched again.
+- A sync pass canceled by anything but `clearLocalData()` (a cancellation the transport threw) is
+  no longer reported as a cleared pass with nothing left queued. It reports a failure on the
+  device, the writes stay queued, and the library's own passes go on.
+- A download of a Storage object that was still on the wire when an upload, update, delete, move,
+  copy or resumable upload of the same object landed no longer becomes the cached copy: the caller
+  gets the bytes it asked for, and the next read downloads the new ones. `ensureCachedFile`
+  downloads again once when the object outran it, and throws `IllegalStateException` when that
+  happens twice, as it does after a clear.
+- A download whose `httpOverride`, or a header set on the bucket, asks for part of the object (a
+  `Range` or `If-Range` header) or none of it (a `HEAD`) is no longer cached as the whole object,
+  and offline is no longer answered from the whole copy. `ensureCachedFile` on a bucket with such a
+  header throws `IllegalStateException` instead of caching the fragment.
+- A cached file whose size is not the one its row recorded, as a power loss right after a download
+  can leave, is dropped and downloaded again instead of being served. Each download is written
+  through to the disk before it is renamed into place.
+- `clearLocalData()` part-way through a channel download no longer fails the download on the
+  device, and the in-memory client behaves the same.
+- A moved object's cached copy keeps the time it was fetched; `cachedFile(path).fetchedAt` no
+  longer reads as the time of the move.
+- An object whose path has a segment that starts with a letter and a colon (`u:42/a.png`) is now
+  cached; `ensureCachedFile` no longer refuses it, and channel downloads of it no longer fetch every
+  time.
 - A sign-in as another user without a sign-out first, as an anonymous session signing into an
   account does, kept the Realtime channel joined as the old user, so the new user's named tables
   were not read again and a change still arriving for the old user could be applied to the new

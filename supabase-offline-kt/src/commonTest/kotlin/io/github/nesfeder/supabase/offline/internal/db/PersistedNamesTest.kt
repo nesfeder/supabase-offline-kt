@@ -153,6 +153,8 @@ class PersistedNamesTest {
                 onConflict = "id",
                 ignoreDuplicates = true,
                 owner = "user:user-a",
+                baseVersion = "v1",
+                baseJson = """{"title":"a","updated_at":"v1"}""",
                 rejectedAtMs = 2,
                 message = "refused",
                 serverError =
@@ -171,7 +173,8 @@ class PersistedNamesTest {
         assertEquals(
             """{"version":1,"entries":[{"id":7,"table":"todos","operation":"UPDATE","bodyJson":"{}",""" +
                 """"filterJson":"f","createdAtMs":1,"defaultToNull":false,"onConflict":"id",""" +
-                """"ignoreDuplicates":true,"owner":"user:user-a","rejectedAtMs":2,""" +
+                """"ignoreDuplicates":true,"owner":"user:user-a","baseVersion":"v1",""" +
+                """"baseJson":"{\"title\":\"a\",\"updated_at\":\"v1\"}","rejectedAtMs":2,""" +
                 """"message":"refused","serverError":{"status":409,"code":"23505","message":"duplicate",""" +
                 """"details":"x","hint":"y"},"bodyOmittedChars":5}]}""",
             assertNotNull(queryCacheDao.getRow(RESERVED_TABLE_NAME, REJECTED_MUTATIONS_CACHE_KEY))

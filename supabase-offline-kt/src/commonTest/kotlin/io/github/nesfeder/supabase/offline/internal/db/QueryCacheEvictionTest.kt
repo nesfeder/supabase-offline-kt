@@ -246,7 +246,7 @@ class QueryCacheEvictionTest {
             )
 
         // When a payload large enough to otherwise trigger enforcement is written
-        store.queryCache.cacheResponse("ratings", "sig", "x".repeat(8_192))
+        store.queryCache.cacheResponse("ratings", "sig", arrayOfLength(8_192))
 
         // Then enforcement was skipped entirely (kept off the hot path)
         assertEquals(0, queryCacheDao.deleteCallCount)
@@ -263,10 +263,10 @@ class QueryCacheEvictionTest {
                 evictionBatchSize = 1,
                 nowMillis = incrementingClock(),
             )
-        store.queryCache.cacheResponse("ratings", "old", "x".repeat(800))
+        store.queryCache.cacheResponse("ratings", "old", arrayOfLength(800))
 
         // When a large payload pushes the cache over the limit
-        store.queryCache.cacheResponse("ratings", "new", "x".repeat(9_000))
+        store.queryCache.cacheResponse("ratings", "new", arrayOfLength(9_000))
 
         // Then the large write's enforcement evicted the older entry, keeping the newest
         assertTrue(queryCacheDao.totalPayloadBytes() <= 9_500L)
@@ -297,11 +297,11 @@ class QueryCacheEvictionTest {
             )
 
         // When 31 small writes arrive, the periodic backstop has not yet fired
-        repeat(31) { index -> store.queryCache.cacheResponse("ratings", "small-$index", "x") }
+        repeat(31) { index -> store.queryCache.cacheResponse("ratings", "small-$index", "[1]") }
         assertEquals(0, queryCacheDao.deleteCallCount, "no enforcement before the write interval")
 
         // When the 32nd write arrives, the rolling counter reaches the interval
-        store.queryCache.cacheResponse("ratings", "small-31", "x")
+        store.queryCache.cacheResponse("ratings", "small-31", "[1]")
 
         // Then the periodic backstop triggered an eviction pass off the per-write hot path
         assertTrue(queryCacheDao.deleteCallCount >= 1, "enforcement should fire on the 32nd write")
@@ -358,7 +358,7 @@ class QueryCacheEvictionTest {
         val writers =
             List(50) { index ->
                 launch {
-                    store.queryCache.cacheResponse("ratings", "sig-$index", "x".repeat(4_096))
+                    store.queryCache.cacheResponse("ratings", "sig-$index", arrayOfLength(4_096))
                 }
             }
         writers.forEach { writer -> writer.join() }
@@ -385,6 +385,9 @@ class QueryCacheEvictionTest {
                 ),
             nowMillis = nowMillis,
         )
+
+    /** A payload of [length] characters shaped as a JSON array, the only shape the cache writes. */
+    private fun arrayOfLength(length: Int): String = "[" + "x".repeat(length - 2) + "]"
 
     /** A monotonically increasing clock so each write receives a distinct, ordered timestamp. */
     private fun incrementingClock(): () -> Long {

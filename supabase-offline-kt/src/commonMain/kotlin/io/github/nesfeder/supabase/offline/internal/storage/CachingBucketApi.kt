@@ -34,6 +34,7 @@ import io.ktor.utils.io.ByteChannel
 import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.ByteWriteChannel
 import io.ktor.utils.io.readAvailable
+import io.ktor.utils.io.writeFully
 import kotlin.time.Duration
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
@@ -120,18 +121,62 @@ internal class CachingBucketApi(
             "This object path cannot be cached on the device: it holds '%', '?' or '#', which go " +
                 "into the request's URL unencoded, so its request can reach another object"
         }
+        require(isCacheableObjectPath(path)) {
+            "This object path cannot be cached on the device: it has a leading '/', an empty, '.' " +
+                "or '..' segment, a '\\' or a control character"
+        }
         val entry =
             cache.entryFor(bucketId, path)
                 ?: throw IllegalArgumentException(
-                    "This object path cannot be cached on the device: it has a leading '/', an empty, '.' " +
-                        "or '..' segment, a '\\' or a control character"
+                    "This object cannot be cached on the device: its bucket id or its path cannot " +
+                        "be mapped onto a file"
                 )
-        cache.useCachedCopy(entry)?.let {
-            return it
+        var supersededBefore = false
+        while (true) {
+            cache.useCachedCopy(entry)?.let {
+                return it
+            }
+            when (downloadIntoCache(entry, path, isPublic)) {
+                CommitOutcome.COMMITTED ->
+                    return cache.useCachedCopy(entry)
+                        ?: throw IOException(
+                            "The downloaded file left the cache before it could be returned"
+                        )
+                CommitOutcome.CLEARED ->
+                    throw IllegalStateException(
+                        "Local data was cleared while this file was downloading"
+                    )
+                CommitOutcome.SUPERSEDED -> {
+                    // The object was written while it downloaded: a download started now fetches
+                    // the new one. Once only, so writes landing in a row do not keep this call
+                    // going
+                    if (supersededBefore) {
+                        throw IllegalStateException(
+                            "The object was written while this file was downloading, twice in a row"
+                        )
+                    }
+                    supersededBefore = true
+                }
+                CommitOutcome.FAILED ->
+                    throw IOException("The file cache could not store the download")
+            }
         }
-        val generation = cache.currentGeneration()
+    }
+
+    /**
+     * Downloads [path] into [entry]'s file and commits it. A request that fetched only part of the
+     * object, by a header set on this bucket, is refused: the fragment cannot be the cached copy.
+     *
+     * @return what the commit said.
+     */
+    private suspend fun downloadIntoCache(
+        entry: FileCacheEntry,
+        path: String,
+        isPublic: Boolean,
+    ): CommitOutcome {
         val sentUnsettled = isSessionUnsettled()
         val file = OwnedTemporaryFile()
+        val start = cache.beginDownload()
         try {
             val download =
                 try {
@@ -152,31 +197,31 @@ internal class CachingBucketApi(
                         cache.invalidateObject(bucketId, path)
                     throw failure
                 }
-            val temporary =
+            val written =
                 when (download) {
-                    is StreamedDownload.Written -> download.temporary
+                    is StreamedDownload.Written -> download
                     is StreamedDownload.CacheRefused ->
                         throw IOException(
                             "The file cache could not store the download",
                             download.cause,
                         )
+                    StreamedDownload.StreamedThrough,
                     StreamedDownload.Uncacheable ->
                         error("A known cache entry was reported uncacheable")
                 }
-            when (cache.commit(temporary, generation)) {
-                CommitOutcome.COMMITTED -> file.temporary = null
-                CommitOutcome.CLEARED ->
-                    throw IllegalStateException(
-                        "Local data was cleared while this file was downloading"
-                    )
-                CommitOutcome.FAILED ->
-                    throw IOException("The file cache could not store the download")
+            if (written.fetchedPart) {
+                throw IllegalStateException(
+                    "A header set on this bucket made the request fetch only part of the object, " +
+                        "which cannot be the cached copy"
+                )
             }
+            val outcome = cache.commit(written.temporary, start)
+            if (outcome == CommitOutcome.COMMITTED) file.temporary = null
+            return outcome
         } finally {
             file.discard()
+            cache.endDownload(start)
         }
-        return cache.useCachedCopy(entry)
-            ?: throw IOException("The downloaded file left the cache before it could be returned")
     }
 
     override suspend fun downloadAuthenticated(
@@ -238,21 +283,25 @@ internal class CachingBucketApi(
             return fetch { options -> options }
         }
         val probe = DownloadRequestProbe(renderImagePath, beforeSend = networkAccess::ensureEnabled)
-        val generation = cache.currentGeneration()
-        val sentUnsettled = isSessionUnsettled()
-        val bytes =
-            try {
-                fetch(probe::wrap)
-            } catch (failure: Exception) {
-                currentCoroutineContext().ensureActive()
-                return recover(path, probe, failure, sentUnsettled) { entry ->
-                    cache.readBytes(entry)
+        val start = cache.beginDownload()
+        try {
+            val sentUnsettled = isSessionUnsettled()
+            val bytes =
+                try {
+                    fetch(probe::wrap)
+                } catch (failure: Exception) {
+                    currentCoroutineContext().ensureActive()
+                    return recover(path, probe, failure, sentUnsettled) { entry ->
+                        cache.readBytes(entry)
+                    }
                 }
+            probe.entryToStore(cache, bucketId, path)?.let { entry ->
+                cache.write(entry, bytes, start)
             }
-        probe.entryToStore(cache, bucketId, path)?.let { entry ->
-            cache.write(entry, bytes, generation)
+            return bytes
+        } finally {
+            cache.endDownload(start)
         }
-        return bytes
     }
 
     /**
@@ -269,7 +318,10 @@ internal class CachingBucketApi(
             suspend (target: ByteWriteChannel, options: DownloadOptionBuilder.() -> Unit) -> Unit,
     ) {
         val fetch:
-            suspend (target: ByteWriteChannel, options: DownloadOptionBuilder.() -> Unit) -> Unit =
+            suspend (
+                target: ByteWriteChannel,
+                options: DownloadOptionBuilder.() -> Unit,
+            ) -> CheckedDownload =
             { target, wrappedOptions ->
                 checkingDownloadStatus { uncheckedFetch(target, wrappedOptions) }
             }
@@ -281,15 +333,16 @@ internal class CachingBucketApi(
             return
         }
         val probe = DownloadRequestProbe(renderImagePath, beforeSend = networkAccess::ensureEnabled)
-        val generation = cache.currentGeneration()
         val sentUnsettled = isSessionUnsettled()
         val file = OwnedTemporaryFile()
+        val start = cache.beginDownload()
         try {
             val download =
                 try {
                     downloadToTemporaryFile(
                         file,
                         entryProvider = { probe.entryToStore(cache, bucketId, path) },
+                        passThrough = channel,
                     ) { target ->
                         fetch(target, probe.wrap(options))
                     }
@@ -302,30 +355,41 @@ internal class CachingBucketApi(
                     return
                 }
             when (download) {
-                is StreamedDownload.Written ->
-                    commitAndStream(file, download.temporary, generation, channel)
-                is StreamedDownload.CacheRefused,
-                StreamedDownload.Uncacheable -> {
-                    // The disk refused the copy (logged), or the variant is unknown: rather than
-                    // fail a good download, fetch it again straight into the caller's channel.
+                is StreamedDownload.Written -> commitAndStream(file, download, start, channel)
+                is StreamedDownload.CacheRefused -> {
+                    // The disk refused the copy (logged): rather than fail a good download, fetch
+                    // it again straight into the caller's channel.
                     fetch(channel, options)
                     return
                 }
+                // Part of the object, or none: delivered as it came, and never cached
+                StreamedDownload.StreamedThrough -> Unit
+                StreamedDownload.Uncacheable -> error("A channel download had no channel to fill")
             }
             channel.flushAndClose()
         } finally {
             file.discard()
+            cache.endDownload(start)
         }
     }
 
-    /** Commits a finished download, then streams the cache's copy (or the uncommitted file) out. */
+    /**
+     * Commits a finished download, then streams the cache's copy (or the uncommitted file) out. A
+     * download that fetched only part of the object, by a header set on this bucket, is streamed
+     * out as it is and never committed.
+     */
     private suspend fun commitAndStream(
         file: OwnedTemporaryFile,
-        temporary: TemporaryDownload,
-        generation: Long,
+        download: StreamedDownload.Written,
+        start: DownloadStart,
         channel: ByteWriteChannel,
     ) {
-        when (cache.commit(temporary, generation)) {
+        val temporary = download.temporary
+        if (download.fetchedPart) {
+            cache.copyFile(temporary.path, channel)
+            return
+        }
+        when (cache.commit(temporary, start)) {
             CommitOutcome.COMMITTED -> {
                 file.temporary = null
                 if (!cache.copyTo(temporary.entry, channel)) {
@@ -334,6 +398,7 @@ internal class CachingBucketApi(
             }
             // The call's own clean-up discards the file once it has been read
             CommitOutcome.CLEARED,
+            CommitOutcome.SUPERSEDED,
             CommitOutcome.FAILED -> cache.copyFile(temporary.path, channel)
         }
     }
@@ -375,31 +440,38 @@ internal class CachingBucketApi(
 
     /** How a streamed download into a temporary file ended, when it did not throw. */
     private sealed interface StreamedDownload {
-        /** Every byte is in [temporary]. */
-        class Written(val temporary: TemporaryDownload) : StreamedDownload
+        /**
+         * Every byte is in [temporary]. With [fetchedPart], the request fetched only part of the
+         * object, or none of it: the file is the caller's, never the cached copy.
+         */
+        class Written(val temporary: TemporaryDownload, val fetchedPart: Boolean) : StreamedDownload
 
         /** The disk refused the copy; the download was abandoned. */
         class CacheRefused(val cause: Throwable?) : StreamedDownload
 
-        /** The download finished without a cache entry to hold it. */
+        /** Every byte went straight to the caller's channel: no whole variant to cache. */
+        data object StreamedThrough : StreamedDownload
+
+        /** The download finished without a cache entry to hold it, nor a channel to fill. */
         data object Uncacheable : StreamedDownload
     }
 
     /**
-     * Streams [fetch] into [file] for the entry [entryProvider] names, once bytes arrive. A failed
-     * or canceled download leaves the file to [file]'s owner; a disk that refuses it deletes it at
-     * once, cancels the download and reports [StreamedDownload.CacheRefused].
+     * Streams [fetch] into [file] for the entry [entryProvider] names, once bytes arrive; when it
+     * names none, a request for part of the object, straight into [passThrough] when there is one.
+     * A failed or canceled download leaves the file to [file]'s owner; a disk that refuses it
+     * deletes it at once, cancels the download and reports [StreamedDownload.CacheRefused].
      */
     private suspend fun downloadToTemporaryFile(
         file: OwnedTemporaryFile,
         entryProvider: () -> FileCacheEntry?,
-        fetch: suspend (ByteWriteChannel) -> Unit,
+        passThrough: ByteWriteChannel? = null,
+        fetch: suspend (ByteWriteChannel) -> CheckedDownload,
     ): StreamedDownload = coroutineScope {
         val pipe = ByteChannel()
         val producer = async {
             try {
-                fetch(pipe)
-                pipe.flushAndClose()
+                fetch(pipe).also { pipe.flushAndClose() }
             } catch (failure: Throwable) {
                 pipe.cancel(failure)
                 throw failure
@@ -413,13 +485,13 @@ internal class CachingBucketApi(
             val target =
                 file.temporary
                     ?: file.open(entryProvider())
-                    ?: return@coroutineScope abandon(
-                        file,
-                        producer,
-                        pipe,
-                        cause = null,
-                        uncacheable = entryProvider() == null,
-                    )
+                    ?: return@coroutineScope when {
+                        entryProvider() != null ->
+                            abandon(file, producer, pipe, cause = null, uncacheable = false)
+                        passThrough != null ->
+                            streamThrough(pipe, buffer, read, passThrough, producer)
+                        else -> abandon(file, producer, pipe, cause = null, uncacheable = true)
+                    }
             try {
                 withContext(ioDispatcher) { target.sink.write(buffer, 0, read) }
             } catch (failure: IOException) {
@@ -435,12 +507,15 @@ internal class CachingBucketApi(
                 )
             }
         }
-        producer.await()
+        val checked = producer.await()
         val target =
             file.temporary
                 ?: file.open(entryProvider())
-                ?: return@coroutineScope if (entryProvider() == null) StreamedDownload.Uncacheable
-                else StreamedDownload.CacheRefused(null)
+                ?: return@coroutineScope when {
+                    entryProvider() != null -> StreamedDownload.CacheRefused(null)
+                    passThrough != null -> StreamedDownload.StreamedThrough
+                    else -> StreamedDownload.Uncacheable
+                }
         // The sink buffers; a full disk can surface only here. Past this point the temporary
         // file holds every byte, so it can be served even if the rename that follows fails.
         try {
@@ -452,7 +527,30 @@ internal class CachingBucketApi(
             file.discard()
             return@coroutineScope StreamedDownload.CacheRefused(failure)
         }
-        StreamedDownload.Written(target)
+        StreamedDownload.Written(target, fetchedPart = checked.fetchedPart)
+    }
+
+    /**
+     * Hands [buffer]'s first [read] bytes, then the rest of [pipe], straight to [channel]: the
+     * download has no cache entry to go through.
+     */
+    private suspend fun streamThrough(
+        pipe: ByteReadChannel,
+        buffer: ByteArray,
+        read: Int,
+        channel: ByteWriteChannel,
+        producer: Deferred<CheckedDownload>,
+    ): StreamedDownload {
+        var count = read
+        while (count >= 0) {
+            if (count > 0) {
+                channel.writeFully(buffer, 0, count)
+                channel.flush()
+            }
+            count = readOrRethrow(pipe, buffer) { producer.await() }
+        }
+        producer.await()
+        return StreamedDownload.StreamedThrough
     }
 
     /**
@@ -482,7 +580,7 @@ internal class CachingBucketApi(
     /** Stops the download, deletes its file and says why nothing was cached. */
     private suspend fun abandon(
         file: OwnedTemporaryFile,
-        producer: Deferred<Unit>,
+        producer: Deferred<CheckedDownload>,
         pipe: ByteChannel,
         cause: Throwable?,
         uncacheable: Boolean,

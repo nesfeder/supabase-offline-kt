@@ -150,14 +150,16 @@ Facts about the engine, one row per condition; the conditions are those of the
 | **Offline, cold** | `null`, `Refreshing`, then `Stalled`; the flow stays live and settles when the server answers. | The flow fails with the connectivity failure. | `null`, or the queued rows the query admits. |
 | **Network known down** (the monitor says offline, or `disableNetwork()`) | The cached payload, `Paused`, not `Stalled`: waiting for the network, not failing. While access is off nothing is sent; when the network comes back the refresh runs at once and is `Idle`. | The cached payload, from the cache, `Paused`. | As offline. |
 | **Session restoring** | The cached payload. Nothing a request returns is written, and the refresh does not settle (it reads `Refreshing`), until the session has. Settled as the stored user: the user's answer. Settled signed out: a stored user's rows show while the session restores and are dropped when it settles signed out; with no stored session they are never shown. It then settles on the anonymous answer. | Nothing until the session settles, as a one-shot read waits; then the user's rows, `Idle`. A session that never settles: the cache, still `Refreshing`, since waiting for the session is not a failure. | The cached payload, no request. |
+| **Session refresh failed** (the stored session expired and supabase-kt could not refresh it; it tries again, every ten seconds by default) | As **Session restoring**, until the refresh lands. | As **Session restoring**: nothing until the refresh lands, as a one-shot read waits; a refresh that does not land within the wait: the cache, still `Refreshing`. | The cached payload, no request. |
 
 A server's own error (4xx or 5xx) is a refresh failure for `CacheFirstThenNetwork`, and fails a
 `NetworkFirstThenCache` flow even with a warm cache.
 
 A read of a shape the cache cannot hold (`single()`, a `count`, `csv()`, …; see the
 [one-shot matrix](read-strategies.md#behavior-matrix)) emits the network's answer once, `Idle`,
-and completes; offline it fails. Under `CacheOnly` it fails at once with `CacheMissException` and
-sends nothing.
+and completes; offline it fails. While the session restores, or after its refresh failed, it waits
+for the session first, as a one-shot read does. Under `CacheOnly` it fails at once with
+`CacheMissException` and sends nothing.
 
 A collector slow to take each value is not handed every list in between: under
 `CacheFirstThenNetwork` it gets the latest, under the other two a few superseded lists at most. It

@@ -30,8 +30,9 @@ import io.github.jan.supabase.storage.BucketApi
  * are tried whatever the connectivity monitor says, and offline fail with supabase-kt's own
  * connectivity error; while network access is off ([Offline.disableNetwork]) they throw
  * [NetworkDisabledException] without being sent. A write that reaches the server drops any cached
- * copy it made stale, so a later read never serves the old bytes. A resumable upload started or
- * continued through [resumable] drops them once it finishes.
+ * copy it made stale, so a later read never serves the old bytes: a download of the object still on
+ * the wire when the write lands is handed to its caller but never becomes the cached copy. A
+ * resumable upload started or continued through [resumable] drops them once it finishes.
  *
  * **Object paths that cannot be cached** — a leading `/`, an empty or `.`/`..` segment, a `\`, a
  * control character, and with supabase-kt below 3.8 a `%`, `?` or `#`, which it puts in the URL
@@ -79,7 +80,10 @@ public interface OfflineBucketApi : BucketApi {
      * @param isPublic whether to download through the public URL rather than the authenticated one.
      * @return the cached file.
      * @throws IllegalArgumentException when [path] cannot be cached (see [OfflineBucketApi]).
-     * @throws IllegalStateException when local data was cleared while the file was downloading.
+     * @throws IllegalStateException when local data was cleared while the file was downloading;
+     *   when the object was written through this client while it was downloading, twice in a row
+     *   (the first time, it is downloaded again); or when a header set on this bucket made the
+     *   request fetch only part of the object, which cannot be the cached copy.
      * @throws Exception the download's own failure when nothing is cached: supabase-kt's
      *   connectivity error offline, or its REST error from the server.
      */

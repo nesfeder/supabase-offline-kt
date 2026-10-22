@@ -54,6 +54,7 @@ import io.github.nesfeder.supabase.offline.internal.realtime.ServerChangeFeed
 import io.github.nesfeder.supabase.offline.internal.realtime.WatchedTable
 import io.github.nesfeder.supabase.offline.internal.storage.CachingBucketApi
 import io.github.nesfeder.supabase.offline.internal.storage.StorageFileCache
+import io.github.nesfeder.supabase.offline.internal.storage.syncFileToDisk
 import io.github.nesfeder.supabase.offline.internal.testing.InMemoryCachedFileDao
 import io.github.nesfeder.supabase.offline.internal.versionColumnsByTable
 import io.ktor.client.engine.HttpClientEngine
@@ -265,6 +266,7 @@ internal fun newTestOfflineClient(
     config: Offline.Config = Offline.Config(),
     networkAvailability: Flow<Boolean>? = null,
     fileSystem: FileSystem = FileSystem.SYSTEM,
+    syncFile: (Path) -> Unit = ::syncFileToDisk,
     watchedTables: List<WatchedTable> = emptyList(),
     serverChangeFeed: ServerChangeFeed? = null,
     conflictPolicyTimeout: Duration = CONFLICT_POLICY_TIMEOUT,
@@ -293,6 +295,7 @@ internal fun newTestOfflineClient(
         config = config,
         networkAvailability = networkAvailability,
         fileSystem = fileSystem,
+        syncFile = syncFile,
         watchedTables = watchedTables,
         serverChangeFeed = serverChangeFeed,
     )
@@ -430,6 +433,8 @@ internal fun newTestMutationQueueReplayer(
  * @param fileSystem the file system; pass a [FakeFailingFileSystem] to make it fail.
  * @param maxSizeBytes the size bound, or `null` for none.
  * @param nowMillis the clock use times are stamped from.
+ * @param syncFile writes a finished download through to the disk before it is renamed into place;
+ *   the platform's by default.
  * @return the cache.
  */
 internal fun newTestFileCache(
@@ -439,6 +444,7 @@ internal fun newTestFileCache(
     fileSystem: FileSystem = FileSystem.SYSTEM,
     maxSizeBytes: Long? = null,
     nowMillis: () -> Long = { Clock.System.now().toEpochMilliseconds() },
+    syncFile: (Path) -> Unit = ::syncFileToDisk,
 ): StorageFileCache =
     StorageFileCache(
         cachedFileDao = store.cachedFileDao,
@@ -449,6 +455,7 @@ internal fun newTestFileCache(
         engineLogger = engineLogger,
         fileSystem = fileSystem,
         nowMillis = nowMillis,
+        syncFile = syncFile,
     )
 
 /**

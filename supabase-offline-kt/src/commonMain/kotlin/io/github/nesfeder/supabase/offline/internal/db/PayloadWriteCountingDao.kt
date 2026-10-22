@@ -53,6 +53,13 @@ internal class PayloadWriteCountingDao(private val delegate: QueryCacheDao) :
 
     override suspend fun upsert(row: CachedQueryRow) = counted(row.table) { delegate.upsert(row) }
 
+    override suspend fun updatePayload(
+        table: String,
+        cacheKey: String,
+        payload: String,
+        updatedAt: Long,
+    ): Int = counted(table) { delegate.updatePayload(table, cacheKey, payload, updatedAt) }
+
     override suspend fun delete(table: String, cacheKey: String) =
         counted(table) { delegate.delete(table, cacheKey) }
 

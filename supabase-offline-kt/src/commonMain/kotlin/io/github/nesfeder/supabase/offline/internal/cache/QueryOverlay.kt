@@ -70,6 +70,7 @@ internal class PatchWrites(private val json: Json) {
  * index. Builds the overlay a patch runs, too. Owns the [TableSnapshotLocks].
  *
  * @param queryCacheDao the object cache, whose write counts say when a key index is stale.
+ * @param freshness the clear lock, under which a read's record of its query's shape is written.
  * @param identityProvider the current identity's stored value, or `null` when it cannot be told.
  * @param identityChanges emits when the session may have changed, so a reader's overlay is laid
  *   again for the identity.
@@ -79,6 +80,7 @@ internal class QueryOverlay(
     private val queryCacheDao: PayloadWriteCountingDao,
     private val json: Json,
     private val queryCache: QueryCache,
+    private val freshness: CacheFreshness,
     private val mutationQueue: MutationQueue,
     private val ownership: CacheOwnership,
     private val primaryKeys: PrimaryKeys,
@@ -165,6 +167,8 @@ internal class QueryOverlay(
         serves: (updatedAt: Long) -> Boolean = { true },
     ): OverlaidCachedPayload? {
         if (isReservedTable(table) || !ownership.cacheServesCurrentIdentity()) return null
+        // Read before the snapshot: a clear landing after it voids the shape record written below
+        val readTick = freshness.tickNow()
         val snapshot = readTogether(table, cacheKey)
         val stored = snapshot.row?.takeIf { cached -> serves(cached.updatedAt) } ?: return null
         val overlaid =
@@ -174,6 +178,7 @@ internal class QueryOverlay(
                 cachedJson = stored.payload,
                 shape = shape,
                 readWithIt = snapshot,
+                readTick = readTick,
             )
         return OverlaidCachedPayload(overlaid, stored.updatedAt)
     }
@@ -190,11 +195,21 @@ internal class QueryOverlay(
         cacheKey: String?,
         cachedJson: String,
         shape: QueryShape? = null,
-    ): ServedOverlay = overlayCachedPayloadReporting(table, cacheKey, cachedJson, shape, null)
+    ): ServedOverlay =
+        overlayCachedPayloadReporting(
+            table,
+            cacheKey,
+            cachedJson,
+            shape,
+            readWithIt = null,
+            readTick = freshness.tickNow(),
+        )
 
     /**
      * [overlayCachedPayloadReporting], with the queue's records as [readWithIt] read them with the
      * payload, or as they are now when it is `null`.
+     *
+     * @param readTick the tick read before the payload was; a clear since voids the shape record.
      */
     private suspend fun overlayCachedPayloadReporting(
         table: String,
@@ -202,10 +217,11 @@ internal class QueryOverlay(
         cachedJson: String,
         shape: QueryShape?,
         readWithIt: TableSnapshot?,
+        readTick: Long,
     ): ServedOverlay {
         if (isReservedTable(table)) return ServedOverlay(cachedJson, hasPendingMutations = false)
         if (cacheKey != null && shape != null)
-            queryCache.queryShapes.remember(table, cacheKey, shape, persist = true)
+            rememberUnlessCleared(table, cacheKey, shape, readTick)
         val visible =
             mutationQueue.visibleTo(
                 identityProvider(),
@@ -301,6 +317,8 @@ internal class QueryOverlay(
         /** Reads the view now, in the order [servedPayloadFlow] states, and serves it. */
         suspend fun <T> read(alongside: StateFlow<T>): Pair<ServedPayload?, T> {
             val value = alongside.value
+            // Read before the snapshot: a clear landing after it voids the shape record written
+            val readTick = freshness.tickNow()
             val identity = identityProvider()
             val served = ownership.cacheServesCurrentIdentity()
             val snapshot = readTogether(table, cacheKey)
@@ -319,6 +337,7 @@ internal class QueryOverlay(
                         shape,
                         inputs,
                         snapshot.mutations::bodyOf,
+                        readTick,
                     )
                 last = inputs
             }
@@ -358,6 +377,8 @@ internal class QueryOverlay(
     /**
      * [servedPayloadFlow]'s overlay of [inputs]: the payload the current identity is served (`null`
      * for none), with those of its mutations the payload does not hold.
+     *
+     * @param readTick the tick read before [inputs] were; a clear since voids the shape record.
      */
     private suspend fun overlaidOrNull(
         table: String,
@@ -365,12 +386,15 @@ internal class QueryOverlay(
         shape: QueryShape?,
         inputs: OverlaidInputs,
         bodyOf: (MutationRow) -> JsonElement,
+        readTick: Long,
     ): ServedOverlay? {
         val stored = inputs.stored
         // A live query's shape is known for as long as it is read; it is written once a payload
         // exists
-        if (shape != null)
-            queryCache.queryShapes.remember(table, cacheKey, shape, persist = stored != null)
+        if (shape != null) {
+            if (stored != null) rememberUnlessCleared(table, cacheKey, shape, readTick)
+            else queryCache.queryShapes.remember(table, cacheKey, shape, persist = false)
+        }
         val cachedJson = stored?.payload
         val syncedThrough = stored?.syncedThrough ?: 0L
         val applicable =
@@ -389,6 +413,27 @@ internal class QueryOverlay(
                 .served(applicable)
         return if (cachedJson == null && isEmptyJsonArrayPayload(overlaid.payload)) null
         else overlaid
+    }
+
+    /**
+     * Records that the query cached under [cacheKey] has [shape] and writes the record, as one step
+     * with a clear: not once local data was cleared, or the cache dropped, since [readTick], when
+     * the payload the record would sit beside is gone and the record, with the query's filter
+     * values, would outlive it. The shape is then still known in memory, as a live query's is with
+     * no payload. A read whose record is already written takes no lock but the records' own.
+     */
+    private suspend fun rememberUnlessCleared(
+        table: String,
+        cacheKey: String,
+        shape: QueryShape,
+        readTick: Long,
+    ) {
+        if (queryCache.queryShapes.isRecorded(table, cacheKey, shape)) return
+        val written =
+            freshness.writeUnlessCleared(readTick) {
+                queryCache.queryShapes.remember(table, cacheKey, shape, persist = true)
+            }
+        if (!written) queryCache.queryShapes.remember(table, cacheKey, shape, persist = false)
     }
 
     /**

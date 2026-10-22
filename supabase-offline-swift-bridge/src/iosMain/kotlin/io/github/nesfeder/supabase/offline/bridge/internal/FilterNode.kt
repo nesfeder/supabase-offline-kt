@@ -27,10 +27,30 @@ internal sealed interface FilterNode {
         private val value: Any?,
         private val negated: Boolean,
     ) : FilterNode {
+        /** The operator's request name, such as `eq` or `in`. */
+        val operatorName: String
+            get() = operator.identifier
+
         override fun applyTo(builder: PostgrestFilterBuilder) {
             if (negated) builder.filterNot(column, operator, value)
             else builder.filter(column, operator, value)
         }
+
+        /**
+         * Whether supabase-kt 3.6 would send a value of this condition in a form the server reads
+         * differently: an element of an `in` list at any level, or a single value [inGroup], that
+         * holds `"` or `\` and none of `,.:()`. supabase-kt puts a backslash before each `"` and
+         * `\` of such a value and quotes it only when it holds one of `,.:()`, and PostgREST reads
+         * an unquoted element or group value as written, escapes included. A top-level single
+         * value, a list of the array operators, a range and `null` are sent as written.
+         */
+        fun hasValueReadDifferently(inGroup: Boolean): Boolean =
+            when {
+                operator == FilterOperator.IN && value is List<*> ->
+                    value.any { element -> element is String && isReadDifferentlyUnquoted(element) }
+                inGroup && value is String -> isReadDifferentlyUnquoted(value)
+                else -> false
+            }
     }
 
     /** `or { … }` or `and { … }` over [children], negated or on a referenced table. */
@@ -113,8 +133,8 @@ internal sealed interface FilterNode {
 
 /**
  * The filter nodes of [description]'s [key] array, in order: the description's own list when
- * [isTopLevel], a group's otherwise. A list supabase-kt would send narrower than written is refused
- * (see [refuseWhatSupabaseKtDrops]).
+ * [isTopLevel], a group's otherwise. A list supabase-kt would send narrower than written, or with a
+ * value the server would read differently, is refused (see [refuseWhatSupabaseKtDrops]).
  */
 internal fun readFilterNodes(
     description: DescriptionObject,
@@ -128,8 +148,12 @@ internal fun readFilterNodes(
 
 /**
  * Refuses a filter list supabase-kt 3.6 would quietly drop part of, so a read is never wider than
- * the caller wrote it. At the top level supabase-kt sends one filter per column and keeps one group
- * per parameter; at any level a text search replaces its column's earlier filters.
+ * the caller wrote it, or would send with a value the server reads differently, so it never matches
+ * other rows than written. At the top level supabase-kt sends one filter per column and keeps one
+ * group per parameter; at any level a text search replaces its column's earlier filters, and an
+ * `in` element or a group value holding `"` or `\` and none of `,.:()` goes out escaped but
+ * unquoted ([FilterNode.Condition.hasValueReadDifferently]). The message names the column and the
+ * operator, never the value.
  */
 private fun refuseWhatSupabaseKtDrops(nodes: List<FilterNode>, path: String, isTopLevel: Boolean) {
     val filteredColumns = mutableSetOf<String>()
@@ -143,6 +167,13 @@ private fun refuseWhatSupabaseKtDrops(nodes: List<FilterNode>, path: String, isT
                 is FilterNode.Group -> null
             }
         when {
+            node is FilterNode.Condition && node.hasValueReadDifferently(inGroup = !isTopLevel) ->
+                throw InvalidDescriptionException(
+                    "$path[$index]: a value of \"${node.operatorName}\" on \"$column\" holds a " +
+                        "quote or a backslash and none of ,.:(), which supabase-kt escapes but does " +
+                        "not quote, so the server would read the escapes as the value; only a " +
+                        "single top-level filter sends such a value as written"
+                )
             node is FilterNode.Group && isTopLevel && !groupParameters.add(node.parameter) ->
                 throw InvalidDescriptionException(
                     "$path[$index]: a second \"${node.parameter}\" group at the top level, of " +
@@ -164,6 +195,11 @@ private fun refuseWhatSupabaseKtDrops(nodes: List<FilterNode>, path: String, isT
         }
     }
 }
+
+/** Whether [text] would be escaped but left unquoted: a `"` or `\`, and none of `,.:()`. */
+private fun isReadDifferentlyUnquoted(text: String): Boolean =
+    text.any { character -> character == '"' || character == '\\' } &&
+        text.none { character -> character in ",.:()" }
 
 /** One filter node; its `kind` says which. */
 private fun readFilterNode(node: DescriptionObject): FilterNode {

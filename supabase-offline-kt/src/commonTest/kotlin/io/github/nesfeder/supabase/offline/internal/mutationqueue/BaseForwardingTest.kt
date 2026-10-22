@@ -10,6 +10,7 @@ import io.github.nesfeder.supabase.offline.testdoubles.FakeRelationalPostgrestSe
 import io.github.nesfeder.supabase.offline.testdoubles.GUARDED_TABLE
 import io.github.nesfeder.supabase.offline.testdoubles.GUARDED_VERSION_COLUMNS
 import io.github.nesfeder.supabase.offline.testdoubles.MOVED_VERSION
+import io.github.nesfeder.supabase.offline.testdoubles.TestStore
 import io.github.nesfeder.supabase.offline.testdoubles.VERSION_COLUMN
 import io.github.nesfeder.supabase.offline.testdoubles.cacheRows
 import io.github.nesfeder.supabase.offline.testdoubles.enqueueUpdate
@@ -189,9 +190,73 @@ class BaseForwardingTest {
             assertEquals(1 to 0, report.syncedCount to report.conflictsResolvedCount)
         }
 
+    @Test
+    fun a_replay_moves_the_bases_of_its_own_users_writes_only() = runTest {
+        // Given — on a shared device, user A renamed task 1 against the cached version, then user
+        // B did, then A queued one more change of it
+        val mutationDao = FakeMutationDao()
+        val store = newGuardedStore(mutationDao = mutationDao)
+        store.cacheRows(taskRow(1, "theirs"))
+        val first = store.queueRenameOwnedBy(USER_A, "a")
+        store.queueRenameOwnedBy(USER_B, "b")
+        store.queueRenameOwnedBy(USER_A, "a again")
+
+        // When — A's first write replays, with the row the server returned
+        store.mutationQueue.recordReplayed(
+            id = first,
+            table = GUARDED_TABLE,
+            returnedRows = listOf(taskRow(1, "a", version = MOVED_VERSION)),
+            owner = USER_A,
+        )
+
+        // Then — B's base is still what B saw, so B's replay meets A's change as a conflict; A's
+        // own later write moved on to the returned row
+        val (_, bs, aAgain) = mutationDao.inserted
+        assertEquals(USER_B to FIRST_VERSION, bs.owner to bs.baseVersion)
+        assertEquals(USER_A to MOVED_VERSION, aAgain.owner to aAgain.baseVersion)
+        assertEquals("""{"title":"a","updated_at":"$MOVED_VERSION"}""", aAgain.baseJson)
+    }
+
+    @Test
+    fun a_send_at_the_head_moves_the_bases_of_its_own_users_writes_only() = runTest {
+        // Given — A's rename sent at the head of the queue, with B's queued behind it
+        val mutationDao = FakeMutationDao()
+        val store = newGuardedStore(mutationDao = mutationDao)
+        store.cacheRows(taskRow(1, "theirs"))
+        val sent = store.queueRenameOwnedBy(USER_A, "a")
+        store.queueRenameOwnedBy(USER_B, "b")
+
+        // When — A's leaves the queue with the row its response carried
+        store.mutationQueue.completeSentMutation(
+            sent,
+            GUARDED_TABLE,
+            listOf(taskRow(1, "a", version = MOVED_VERSION)),
+        )
+
+        // Then
+        val left = mutationDao.inserted.single()
+        assertEquals(USER_B to FIRST_VERSION, left.owner to left.baseVersion)
+    }
+
+    /** Queues [owner]'s rename of task 1 to [title], against the cached row, and returns its id. */
+    private suspend fun TestStore.queueRenameOwnedBy(owner: String, title: String): Long {
+        val base =
+            mutationQueue.baseFor(GUARDED_TABLE, rowWithId(1), setOf("title"), identity = null)
+        val queued =
+            mutationQueue.enqueueOwnedBy(owner) {
+                enqueueUpdate(GUARDED_TABLE, column("title", title), rowWithId(1), base)
+            }
+        return assertIs<EnqueueOutcome.Queued>(queued).id
+    }
+
     private fun column(name: String, value: String): JsonObject =
         JsonObject(mapOf(name to JsonPrimitive(value)))
 
     private fun column(name: String, value: Boolean): JsonObject =
         JsonObject(mapOf(name to JsonPrimitive(value)))
+
+    private companion object {
+        const val USER_A = "user:user-a"
+        const val USER_B = "user:user-b"
+    }
 }
