@@ -49,8 +49,9 @@ import kotlinx.coroutines.withTimeoutOrNull
  * feed. A backlog past [backlogCapacity] is discarded, with every change the applier had taken but
  * not applied yet, and once the applier is free every watched table is read again instead, as on a
  * join, with one warning for the episode. A batch is applied only while the inputs still want the
- * follow it came from: what an earlier user's channel still delivers, once another user has signed
- * in, is dropped instead of reaching the new user's cache.
+ * follow it came from and the session is still its identity's, read fresh: what an earlier user's
+ * channel still delivers, once another user has signed in, is dropped instead of reaching the new
+ * user's cache, and [apply] is told the identity so the cache can refuse it under its own lock.
  *
  * A channel that ends is logged at DEBUG; the warning comes when it is joined again, so an end that
  * a sign-out, a network known down, the switch or [stop] brought about, which pauses the follow
@@ -63,9 +64,12 @@ import kotlinx.coroutines.withTimeoutOrNull
  * @param defaultSchema the schema of a table that names none, read at each join.
  * @param sessionIdentity the identity to subscribe for, as it changes: `null` while there is none;
  *   one value, once, without Auth.
+ * @param currentIdentity what [sessionIdentity] says now, read fresh: the session may have changed
+ *   before the follower hears of it.
  * @param networkStatuses the network as the client sees it, as it changes.
  * @param wakeUps the edges that cut a wait short: a reconnection, a settled session.
- * @param apply applies one table's changes, in the order they arrived, to the cache.
+ * @param apply applies one table's changes, in the order they arrived, to the cache, for the
+ *   identity the follow was joined for.
  * @param markStale marks a table's cached queries stale and has its live readers fetch again.
  * @param initialBackoff the wait after the first channel that ended.
  * @param maxBackoff the longest wait.
@@ -78,9 +82,10 @@ internal class ServerChangeFollower(
     private val feed: ServerChangeFeed,
     private val defaultSchema: () -> String,
     private val sessionIdentity: Flow<String?>,
+    private val currentIdentity: () -> String?,
     private val networkStatuses: Flow<NetworkStatus>,
     private val wakeUps: Flow<Unit>,
-    private val apply: suspend (List<ServerChangeEvent.Change>) -> Unit,
+    private val apply: suspend (identity: String, changes: List<ServerChangeEvent.Change>) -> Unit,
     private val markStale: suspend (table: String, schema: String) -> Unit,
     private val engineLogger: EngineLogger,
     private val initialBackoff: Duration = 1.seconds,
@@ -137,6 +142,8 @@ internal class ServerChangeFollower(
     /** Reports [status], unless [stop] has made the state final. */
     private fun report(status: RealtimeStatus) {
         followState.update { current -> if (stopped.load()) current else status }
+        // A stop between the check and the write: its Off stands, whatever landed after it
+        if (stopped.load()) followState.value = RealtimeStatus.Off
     }
 
     /** What the inputs ask for. */
@@ -242,8 +249,9 @@ internal class ServerChangeFollower(
      * Applies [backlog]'s changes until it is closed and empty: every change waiting, each table's
      * as one patch in the order they arrived, tables in the order of their first change. A batch
      * taken before a discard is dropped instead, and a discard is reported once the take is done.
-     * So is a batch taken once the inputs no longer ask for [wanted], the follow it came from: an
-     * earlier user's changes never reach the next user's cache.
+     * So is a batch taken once the inputs no longer ask for [wanted], the follow it came from, or
+     * the session is no longer its identity's: an earlier user's changes never reach the next
+     * user's cache.
      */
     private suspend fun applyBacklog(wanted: Wanted.Follow, backlog: ChangeBacklog) {
         while (true) {
@@ -264,14 +272,14 @@ internal class ServerChangeFollower(
                 if (current.size < batch.size) backlog.countDropped(batch.size - current.size)
                 if (current.isEmpty()) continue
                 val changes = current.map { entry -> entry.change }
-                if (wantedNow.value != wanted) {
+                if (wantedNow.value != wanted || currentIdentity() != wanted.identity) {
                     engineLogger.debug {
                         "Realtime: ${changes.size} change(s) to ${key.first} arrived on a " +
-                            "channel that is being left; they are dropped"
+                            "channel that is no longer the session's; they are dropped"
                     }
                     continue
                 }
-                applyQuietly(changes, table = key.first, schema = key.second)
+                applyQuietly(wanted.identity, changes, table = key.first, schema = key.second)
             }
             reportDiscard(backlog)
         }
@@ -303,16 +311,17 @@ internal class ServerChangeFollower(
         schema?.let { named -> "$named.$table" } ?: table
 
     /**
-     * Applies [changes], all of [table]; a failure is logged, and the table's cached queries are
-     * marked stale so a live reader fetches what the changes would have shown.
+     * Applies [changes], all of [table], for [identity]; a failure is logged, and the table's
+     * cached queries are marked stale so a live reader fetches what the changes would have shown.
      */
     private suspend fun applyQuietly(
+        identity: String,
         changes: List<ServerChangeEvent.Change>,
         table: String,
         schema: String,
     ) {
         try {
-            apply(changes)
+            apply(identity, changes)
         } catch (cancellation: CancellationException) {
             throw cancellation
         } catch (failure: Exception) {

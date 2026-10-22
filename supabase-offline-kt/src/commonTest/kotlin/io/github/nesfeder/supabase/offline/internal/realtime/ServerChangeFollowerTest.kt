@@ -55,6 +55,7 @@ class ServerChangeFollowerTest {
     private val network = MutableStateFlow(NetworkStatus.UNKNOWN)
     private val wakeUps = MutableSharedFlow<Unit>()
     private val applied = mutableListOf<List<ServerChangeEvent.Change>>()
+    private val appliedFor = mutableListOf<String>()
     private val staled = mutableListOf<Pair<String, String>>()
     private val logs = RecordingLogSink()
 
@@ -67,7 +68,8 @@ class ServerChangeFollowerTest {
         markStale: suspend (String, String) -> Unit = { table, schema ->
             staled += table to schema
         },
-        apply: suspend (List<ServerChangeEvent.Change>) -> Unit = { changes ->
+        currentIdentity: () -> String? = { sessionIdentity.replayCache.firstOrNull() },
+        apply: suspend (String, List<ServerChangeEvent.Change>) -> Unit = { _, changes ->
             applied += changes
         },
     ): ServerChangeFollower =
@@ -77,6 +79,7 @@ class ServerChangeFollowerTest {
             feed = feed,
             defaultSchema = { SCHEMA },
             sessionIdentity = sessionIdentity,
+            currentIdentity = currentIdentity,
             networkStatuses = network,
             wakeUps = wakeUps,
             apply = apply,
@@ -196,7 +199,7 @@ class ServerChangeFollowerTest {
         // Given — joined, with an apply that refuses a batch holding one record
         val scope = newScope()
         val follower =
-            newFollower(scope) { changes ->
+            newFollower(scope) { _, changes ->
                 if (
                     changes.any { change -> change is ServerChangeEvent.Saved && change.id == "t2" }
                 )
@@ -300,7 +303,7 @@ class ServerChangeFollowerTest {
                     scope,
                     tables = listOf(WatchedTable(TABLE), WatchedTable("audit", schema = "app")),
                     backlogCapacity = 10,
-                ) { changes ->
+                ) { _, changes ->
                     if (changes.first().table == "audit") release.await()
                     applied += changes
                 }
@@ -416,7 +419,7 @@ class ServerChangeFollowerTest {
         val release = CompletableDeferred<Unit>()
         val scope = newScope()
         val follower =
-            newFollower(scope, feed = bounded) { changes ->
+            newFollower(scope, feed = bounded) { _, changes ->
                 release.await()
                 applied += changes
             }
@@ -671,11 +674,12 @@ class ServerChangeFollowerTest {
         var held = false
         val scope = newScope()
         val follower =
-            newFollower(scope) { changes ->
+            newFollower(scope) { identity, changes ->
                 if (!held) {
                     held = true
                     withContext(NonCancellable) { release.await() }
                 }
+                appliedFor += identity
                 applied += changes
             }
         sessionIdentity.emit(USER)
@@ -694,13 +698,15 @@ class ServerChangeFollowerTest {
         release.complete(Unit)
         runCurrent()
 
-        // Then — the held batch finished, the one behind it was dropped, said at DEBUG, and the
-        // new user's channel was joined only then
+        // Then — the held batch finished, for the user it was joined for, the one behind it was
+        // dropped, said at DEBUG, and the new user's channel was joined only then
         assertEquals<List<List<ServerChangeEvent.Change>>>(
             listOf(listOf(ServerChangeEvent.Saved(TABLE, SCHEMA, row("held")))),
             applied,
         )
-        val debug = logs.entriesAt(EngineLogLevel.DEBUG).single { "being left" in it.message }
+        assertEquals(listOf(USER), appliedFor)
+        val debug =
+            logs.entriesAt(EngineLogLevel.DEBUG).single { "no longer the session's" in it.message }
         assertTrue("1 change(s) to $TABLE" in debug.message, debug.message)
         assertTrue(first.isLeft)
         assertEquals(2, feed.follows.value.size)
@@ -789,6 +795,53 @@ class ServerChangeFollowerTest {
         assertEquals(RealtimeStatus.Off, follower.state.value)
         scope.cancel()
     }
+
+    @Test
+    fun a_batch_taken_once_the_session_is_another_users_is_dropped_before_the_inputs_say_so() =
+        runTest {
+            // Given — joined for one user, with the session's identity read fresh, and an apply
+            // held on its first batch
+            var sessionNow: String? = USER
+            val release = CompletableDeferred<Unit>()
+            var held = false
+            val scope = newScope()
+            val follower =
+                newFollower(scope, currentIdentity = { sessionNow }) { _, changes ->
+                    if (!held) {
+                        held = true
+                        withContext(NonCancellable) { release.await() }
+                    }
+                    applied += changes
+                }
+            sessionIdentity.emit(USER)
+            follower.start()
+            runCurrent()
+            val first = feed.follows.value.single()
+            first.join()
+            first.saved(TABLE, row("held"))
+            runCurrent()
+            first.saved(TABLE, row("behind"))
+            runCurrent()
+
+            // When — the session is another user's before the follower's inputs say so, and the
+            // hold is released
+            sessionNow = OTHER_USER
+            release.complete(Unit)
+            runCurrent()
+
+            // Then — the batch behind the held one was dropped all the same, and the follow is
+            // still the first user's until the inputs change
+            assertEquals<List<List<ServerChangeEvent.Change>>>(
+                listOf(listOf(ServerChangeEvent.Saved(TABLE, SCHEMA, row("held")))),
+                applied,
+            )
+            assertTrue(
+                logs.entriesAt(EngineLogLevel.DEBUG).any { "no longer the session's" in it.message }
+            )
+            assertTrue(!first.isLeft)
+            assertEquals(1, feed.follows.value.size)
+            scope.cancel()
+        }
 
     private fun row(id: String) = buildJsonObject { put("id", id) }
 

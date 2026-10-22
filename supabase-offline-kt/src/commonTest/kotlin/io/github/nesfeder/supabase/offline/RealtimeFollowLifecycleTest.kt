@@ -10,6 +10,7 @@ import io.github.nesfeder.supabase.offline.internal.db.RecordedLiveList
 import io.github.nesfeder.supabase.offline.internal.realtime.WatchedTable
 import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeServerChangeFeed
+import io.github.nesfeder.supabase.offline.testdoubles.RecordingLogSink
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
@@ -29,6 +30,7 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
@@ -155,8 +157,10 @@ class RealtimeFollowLifecycleTest {
         runTest(timeout = 2.minutes) {
             onRealThreads {
                 // Given — the channel joined for user A, a live list showing A's row, and a
-                // cache that parks the next patch of the table inside its write
+                // cache that records every payload written and parks the next patch of the
+                // table inside its write
                 val cache = FakeQueryCacheDao()
+                val logs = RecordingLogSink()
                 val server =
                     RecordingPostgrestServer(
                         answer = { request ->
@@ -168,6 +172,7 @@ class RealtimeFollowLifecycleTest {
                     newTestOfflineClient(
                         supabase = supabase,
                         queryCacheDao = cache,
+                        engineLogger = logs.asEngineLogger(),
                         watchedTables = listOf(WatchedTable(TABLE)),
                         serverChangeFeed = feed,
                         networkAvailability = monitor,
@@ -178,6 +183,8 @@ class RealtimeFollowLifecycleTest {
                 client.awaitState(RealtimeStatus.Subscribed)
                 val list = RecordedLiveList(client, TABLE)
                 list.await { seen -> seen.titles == listOf("A's milk") && !seen.isFromCache }
+                val written = MutableStateFlow<List<String>>(emptyList())
+                cache.onUpsert = { row -> written.update { payloads -> payloads + row.payload } }
                 val parked = CompletableDeferred<Unit>()
                 val release = CompletableDeferred<Unit>()
                 cache.onAllForTableSnapshot = { table ->
@@ -187,24 +194,36 @@ class RealtimeFollowLifecycleTest {
                 }
 
                 // When — A's channel delivers a change that is parked in its patch, then another
-                // that waits behind it; B signs in meanwhile, and the patch goes on
-                first.saved(TABLE, row("a2", "A's eggs"))
-                withContext(Dispatchers.Default) { withTimeout(10.seconds) { parked.await() } }
-                first.saved(TABLE, row("x", "Theirs"))
+                // that waits behind it; B signs in and the cache is emptied for B while the
+                // patch is parked; then the patch goes on
+                first.saved(TABLE, row("a2-late", "A's eggs"))
+                withTimeout(10.seconds) { parked.await() }
+                first.saved(TABLE, row("theirs-x", "Theirs"))
                 supabase.signInForTest(USER_B)
+                withTimeout(10.seconds) {
+                    while (
+                        logs.entries.none { entry ->
+                            "settled into another identity" in entry.message
+                        }
+                    ) {
+                        delay(20)
+                    }
+                }
                 release.complete(Unit)
 
                 // Then — A's channel is left and B's joined, the list shows B's row after the
-                // join, and the change behind the parked one never showed: dropped as a channel
-                // being left, or canceled with it
+                // join, and neither change was ever written: the parked one started before the
+                // cache was emptied, and the one behind it came from a channel that is no longer
+                // the session's
                 first.awaitLeft()
                 val second = feed.awaitFollow(1)
                 second.join()
                 list.await { seen -> seen.titles == listOf("B's milk") && !seen.isFromCache }
-                val shown = list.stop()
+                list.stop()
+                val payloads = written.value
                 assertTrue(
-                    shown.none { seen -> seen.titles.orEmpty().contains("Theirs") },
-                    "a change of the old user's channel reached the new user's list: $shown",
+                    payloads.none { payload -> "a2-late" in payload || "theirs-x" in payload },
+                    "a change of the old user's channel was written: $payloads",
                 )
                 client.close()
             }

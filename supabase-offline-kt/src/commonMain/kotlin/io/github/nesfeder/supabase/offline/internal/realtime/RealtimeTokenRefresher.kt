@@ -25,8 +25,11 @@ import kotlinx.serialization.json.longOrNull
  * token the join went out with is not seen here, and then as soon as the provider returns a token
  * that expires later than the one last sent. The provider is asked again [lead] before the sent
  * token's expiry, and more and more often as the expiry nears, so a token it rotates late still
- * reaches the channel before the server closes it. A provider that fails is asked again after
- * [retryWait].
+ * reaches the channel before the server closes it; after a send the next ask waits for the sent
+ * token's own lead, so a provider that mints a token on every call is not asked, and sent, over and
+ * over. A provider that fails is asked again after [retryWait], and one that keeps failing is
+ * warned about once; a token that has already expired is not sent, since the server would refuse
+ * it.
  *
  * @param accessToken the client's token provider.
  * @param refresh hands a token to Realtime, which sends it to its channels.
@@ -50,6 +53,7 @@ internal class RealtimeTokenRefresher(
      */
     suspend fun keepFresh() {
         var sentExpiry: Instant? = null
+        var failedAsks = 0
         while (true) {
             val token =
                 try {
@@ -57,13 +61,17 @@ internal class RealtimeTokenRefresher(
                 } catch (cancellation: CancellationException) {
                     throw cancellation
                 } catch (failure: Exception) {
-                    engineLogger.warning {
+                    // The first failure of a streak is a warning; the rest would only repeat it
+                    val message = {
                         "Realtime: the access-token provider failed " +
                             "(${failure::class.simpleName}); it is asked again in $retryWait"
                     }
+                    if (failedAsks++ == 0) engineLogger.warning(message)
+                    else engineLogger.debug(message)
                     delay(retryWait)
                     continue
                 } ?: return
+            failedAsks = 0
             val expiry = jwtExpiryOrNull(token)
             if (expiry == null) {
                 engineLogger.debug {
@@ -72,17 +80,26 @@ internal class RealtimeTokenRefresher(
                 }
                 return
             }
-            val lastSent = sentExpiry
-            if (lastSent == null || expiry > lastSent) {
-                if (refreshOnce(token)) {
-                    sentExpiry = expiry
-                    engineLogger.debug { "Realtime: sent the provider's token to the channel" }
-                } else {
-                    delay(retryWait)
+            if (expiry <= clock.now()) {
+                // Realtime would refuse it; the channel's rejoin, with a fresh token, covers it
+                engineLogger.debug {
+                    "Realtime: the provider's token has already expired; it is not sent, and the " +
+                        "provider is asked again in $retryWait"
                 }
+                delay(retryWait)
                 continue
             }
-            delay(nextAskIn(lastSent - clock.now()))
+            var sent = sentExpiry
+            if (sent == null || expiry > sent) {
+                if (!refreshOnce(token)) {
+                    delay(retryWait)
+                    continue
+                }
+                sent = expiry
+                sentExpiry = expiry
+                engineLogger.debug { "Realtime: sent the provider's token to the channel" }
+            }
+            delay(nextAskIn(sent - clock.now()))
         }
     }
 
