@@ -7,6 +7,8 @@ import io.github.nesfeder.supabase.offline.ConflictResolver
 import io.github.nesfeder.supabase.offline.MutationOutcome
 import io.github.nesfeder.supabase.offline.Offline
 import io.github.nesfeder.supabase.offline.internal.OfflineClient
+import io.github.nesfeder.supabase.offline.internal.logging.EngineLogLevel
+import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.DefaultPrimaryKeys
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.PrimaryKeys
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.VersionColumns
@@ -116,15 +118,22 @@ internal fun newGuardedServer(
  * A client of [server] whose [GUARDED_TABLE] is guarded by [VERSION_COLUMN], as an app configures
  * it, with [resolver] as its conflict resolver, and background work idle so only the test's calls
  * run.
+ *
+ * @param queryCacheDao pass one to seed or inspect the cached payloads.
+ * @param engineLogger pass a recording one to read what the client logs.
  */
 internal fun newGuardedClient(
     server: FakeRelationalPostgrestServer,
     resolver: ConflictResolver? = null,
     conflictPolicyTimeout: Duration = 30.seconds,
     supabase: SupabaseClient = server.supabaseClient(),
+    queryCacheDao: FakeQueryCacheDao = FakeQueryCacheDao(),
+    engineLogger: EngineLogger = EngineLogger(null, EngineLogLevel.INFO),
 ): OfflineClient =
     newTestOfflineClient(
         supabase = supabase,
+        queryCacheDao = queryCacheDao,
+        engineLogger = engineLogger,
         config =
             Offline.createConfig {
                 versionColumn(GUARDED_TABLE, VERSION_COLUMN)

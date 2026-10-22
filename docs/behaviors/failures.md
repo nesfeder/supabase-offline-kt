@@ -97,8 +97,10 @@ From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabas
     ```
 
 Retry a write once its cause is fixed (a missing parent row, a policy): it rejoins the queue at the
-end under a new id. Postgres puts the offending values in `details` (a duplicate key's value, for
-one), so show your own words rather than the raw fields.
+end under a new id. A write that was guarded by a version column keeps its base, so its retry is
+checked against the server's row as its first send was: a row that moved meanwhile is a conflict for
+your resolver ([Conflicts](#conflicts)), not an overwrite. Postgres puts the offending values in
+`details` (a duplicate key's value, for one), so show your own words rather than the raw fields.
 
 **Its bounds.** The newest 100 entries of every user together, within 512 K characters. A body
 longer than 16 K characters is not kept, so that entry cannot be retried (`isRetryable` is
@@ -126,7 +128,7 @@ version the device saw, and a row that moved meanwhile is a conflict your resolv
 
 A resolver that answers `Hold`, throws or takes 30 seconds parks the write on
 `conflictedMutations()`, for the app to resolve or dismiss; so does a third send that still finds
-the row moved.
+the row moved. The server's row is laid into the cache while the write waits there.
 
 Everything else keeps the last write wins:
 

@@ -6,6 +6,7 @@ import androidx.sqlite.SQLiteConnection
 import androidx.sqlite.SQLiteDriver
 import androidx.sqlite.execSQL
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
+import kotlinx.serialization.json.JsonPrimitive
 
 /**
  * A `supabase_offline.db` exactly as 0.1.0 leaves it on disk: Room schema version 1, identity hash
@@ -70,6 +71,28 @@ internal object ShippedDatabaseFixture {
     const val DELETE_FILTER_JSON: String =
         """{"mode":"OR","conditions":[{"column":"id","operatorId":"in","value":"(7,8)"},""" +
             """{"column":"status","operatorId":"eq","value":"archived"}]}"""
+
+    /**
+     * The rejected list's reserved row as this build writes it for a guarded UPDATE a policy
+     * refused: the write's base beside it, under `baseVersion` and `baseJson`, so a retry replays
+     * guarded as the write was first sent.
+     */
+    val REJECTED_LIST_JSON: String =
+        """{"version":1,"entries":[{"id":3,"table":"todos","operation":"UPDATE",""" +
+            """"bodyJson":"{\"done\":true}","filterJson":${JsonPrimitive(UPDATE_FILTER_JSON)},""" +
+            """"createdAtMs":1,"baseVersion":"2026-10-18T13:00:27.486123+00:00",""" +
+            """"baseJson":"{\"done\":false,\"updated_at\":\"2026-10-18T13:00:27.486123+00:00\"}",""" +
+            """"rejectedAtMs":2,"message":"The row cannot be changed under the server's current policies"}]}"""
+
+    /**
+     * The same refusal as 0.2.0 wrote it, which kept no base. This build reads it back with none,
+     * and such a retry replays unguarded, as it did there.
+     */
+    val REJECTED_LIST_JSON_WITHOUT_BASE: String =
+        """{"version":1,"entries":[{"id":3,"table":"todos","operation":"UPDATE",""" +
+            """"bodyJson":"{\"done\":true}","filterJson":${JsonPrimitive(UPDATE_FILTER_JSON)},""" +
+            """"createdAtMs":1,"rejectedAtMs":2,""" +
+            """"message":"The row cannot be changed under the server's current policies"}]}"""
 
     /** [UPDATE_FILTER_JSON] decoded. */
     val UPDATE_FILTER: FilterDescriptor =

@@ -17,11 +17,28 @@ All notable changes to this project are recorded in this file. The format follow
 
 ### Changed
 
+- The rejected list keeps a guarded write's base beside each entry, under two new keys
+  (`baseVersion`, `baseJson`), so a retry replays guarded. A list an earlier build wrote reads back
+  without them, and a retry of such an entry replays unguarded, as it did there.
+
 ### Deprecated
 
 ### Removed
 
 ### Fixed
+
+- A rejected write that was guarded by a version column keeps its base when it is retried: the
+  retry checks the server's row as the first send did, so a row another device changed meanwhile is
+  a conflict for the resolver, not an overwrite.
+- A replayed write's returned row moves the base of the writes queued behind it by the same user
+  only. On a shared device, another user's queued write to the same row keeps the version its user
+  saw, so its replay meets the change as a conflict.
+- A write parked on the conflicted list leaves the cache showing the server's row, as the replay
+  read it, instead of the row as the device last read it; and `KeepServer` on a listed entry lays
+  the server's row into the cache, or drops a gone row from it, as the resolver's own `KeepServer`
+  does, then has the lists holding the row fetched again.
+- A sync pass canceled by anything but `clearLocalData()` is no longer reported as a cleared pass
+  with nothing left queued; the cancellation reaches the caller, and the queue stands.
 
 ## [0.2.0] - 2026-10-20
 

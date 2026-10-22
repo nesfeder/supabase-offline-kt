@@ -3,10 +3,14 @@
 package io.github.nesfeder.supabase.offline
 
 import io.github.nesfeder.supabase.offline.internal.OfflineClient
+import io.github.nesfeder.supabase.offline.internal.db.isStaleStamp
+import io.github.nesfeder.supabase.offline.internal.logging.EngineLogLevel
 import io.github.nesfeder.supabase.offline.testdoubles.FIRST_VERSION
+import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
 import io.github.nesfeder.supabase.offline.testdoubles.GUARDED_TABLE
 import io.github.nesfeder.supabase.offline.testdoubles.MOVED_VERSION
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingConflictResolver
+import io.github.nesfeder.supabase.offline.testdoubles.RecordingLogSink
 import io.github.nesfeder.supabase.offline.testdoubles.VERSION_COLUMN
 import io.github.nesfeder.supabase.offline.testdoubles.deleteTask
 import io.github.nesfeder.supabase.offline.testdoubles.newGuardedClient
@@ -23,6 +27,8 @@ import kotlin.test.assertTrue
 import kotlin.time.Instant
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
@@ -184,6 +190,118 @@ class ConflictedMutationsTest {
     }
 
     @Test
+    fun a_held_write_leaves_the_cache_showing_the_servers_row() = runTest {
+        // Given
+        val client = newGuardedClient(server, holding)
+
+        // When — the write is parked, and the list is read from the cache alone
+        client.parkConflictingRename()
+        val cached = client.cachedTasks()
+
+        // Then — neither the device's rename nor the row as the device last read it: the server's
+        assertEquals(listOf(renamedElsewhere), cached)
+        client.close()
+    }
+
+    @Test
+    fun keep_server_lays_the_servers_row_into_the_cache_and_has_it_fetched_again() = runTest {
+        // Given — a parked rename whose cached list still shows the row as the device last read
+        // it, as a list a build before this one parked does
+        val cacheDao = FakeQueryCacheDao()
+        val client = newGuardedClient(server, holding, queryCacheDao = cacheDao)
+        val id = client.parkConflictingRename()
+        val list = cacheDao.allForTable(GUARDED_TABLE).single()
+        cacheDao.seedPayload(
+            GUARDED_TABLE,
+            list.cacheKey,
+            JsonArray(listOf(taskRow(1, "theirs"))).toString(),
+        )
+
+        // When
+        client.resolveConflictedMutation(id, ConflictResolution.KeepServer)
+
+        // Then — the row the entry recorded, and the list is stale, since the row may have moved
+        // since, so a live read fetches it again
+        assertEquals(listOf(renamedElsewhere), client.cachedTasks())
+        assertTrue(isStaleStamp(cacheDao.allForTable(GUARDED_TABLE).single().updatedAt))
+        client.close()
+    }
+
+    @Test
+    fun keep_server_on_an_entry_whose_server_row_was_too_long_to_keep_has_it_fetched_again() =
+        runTest {
+            // Given — the row renamed elsewhere to a title past what the list keeps of a server
+            // row, so the entry holds its version alone; the park laid the row into the cache
+            val cacheDao = FakeQueryCacheDao()
+            val client = newGuardedClient(server, holding, queryCacheDao = cacheDao)
+            server.seed(GUARDED_TABLE, taskRow(1, "theirs"))
+            val id = client.queueWhileOffline(server) { renameTask(1, "mine") }
+            val longElsewhere = taskRow(1, "x".repeat(OVERSIZED_TITLE), version = MOVED_VERSION)
+            server.replaceRow(GUARDED_TABLE, longElsewhere)
+            client.syncPendingMutations()
+            val entry = client.conflictedMutations().first().single()
+
+            // When
+            client.resolveConflictedMutation(id, ConflictResolution.KeepServer)
+
+            // Then — nothing to lay in: the cache keeps the row the park laid in, marked stale
+            assertEquals(null to MOVED_VERSION, entry.server to entry.serverVersion)
+            assertEquals(listOf(longElsewhere), client.cachedTasks())
+            assertTrue(isStaleStamp(cacheDao.allForTable(GUARDED_TABLE).single().updatedAt))
+            client.close()
+        }
+
+    @Test
+    fun keep_server_drops_the_entry_when_the_cache_cannot_be_written_and_says_so() = runTest {
+        // Given — a parked rename, and a cache whose lists cannot be written, as a full disk
+        val cacheDao = FakeQueryCacheDao()
+        val logs = RecordingLogSink()
+        val client =
+            newGuardedClient(
+                server,
+                holding,
+                queryCacheDao = cacheDao,
+                engineLogger = logs.asEngineLogger(),
+            )
+        val id = client.parkConflictingRename()
+        cacheDao.failUpsertOf = { row -> row.table == GUARDED_TABLE }
+
+        // When
+        client.resolveConflictedMutation(id, ConflictResolution.KeepServer)
+
+        // Then — the entry is gone and the failure logged, not thrown at the app
+        assertEquals(emptyList(), client.conflictedMutations().first())
+        assertTrue(
+            logs.entries.any { entry ->
+                entry.level == EngineLogLevel.WARNING &&
+                    entry.message.startsWith("Patching the cache after a conflicted write")
+            },
+            logs.entries.toString(),
+        )
+        client.close()
+    }
+
+    @Test
+    fun keep_server_on_a_row_gone_from_the_server_drops_it_from_the_cache() = runTest {
+        // Given — an update of a row deleted elsewhere, held by the resolver: the cached row
+        // stays while the entry waits, since a gone row and a hidden one look the same
+        val client = newGuardedClient(server, holding)
+        server.seed(GUARDED_TABLE, taskRow(1, "theirs"))
+        val id = client.queueWhileOffline(server) { renameTask(1, "mine") }
+        server.deleteRow(GUARDED_TABLE, "1")
+        client.syncPendingMutations()
+        val whileParked = client.cachedTasks()
+
+        // When
+        client.resolveConflictedMutation(id, ConflictResolution.KeepServer)
+
+        // Then
+        assertEquals(listOf(taskRow(1, "theirs")), whileParked)
+        assertEquals(emptyList(), client.cachedTasks())
+        client.close()
+    }
+
+    @Test
     fun dismissing_an_entry_drops_it() = runTest {
         // Given
         val client = newGuardedClient(server, holding)
@@ -293,6 +411,13 @@ class ConflictedMutationsTest {
     }
 
     private fun titled(title: String): JsonObject = buildJsonObject { put("title", title) }
+
+    /** [GUARDED_TABLE]'s rows as the cache alone serves them. */
+    private suspend fun Offline.cachedTasks(): List<JsonObject> =
+        (Json.parseToJsonElement(
+                from(GUARDED_TABLE).select(readStrategy = ReadStrategy.CacheOnly()).data
+            ) as JsonArray)
+            .map { row -> row as JsonObject }
 
     private companion object {
         const val USER_A = "user-a"

@@ -64,6 +64,8 @@ import io.github.nesfeder.supabase.offline.internal.mutationqueue.SyncStop
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.VersionColumns
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.conflictDecisionOf
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.currentReplayIdentity
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.jsonObjectOrNull
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.pinnedRowKeyOf
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.replayIdentityFor
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.syncFailureOf
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.toConflictedMutation
@@ -75,6 +77,7 @@ import io.github.nesfeder.supabase.offline.internal.postgrest.LiveQueries
 import io.github.nesfeder.supabase.offline.internal.postgrest.OfflineTable
 import io.github.nesfeder.supabase.offline.internal.postgrest.RequestSession
 import io.github.nesfeder.supabase.offline.internal.postgrest.ResponseTrustPolicy
+import io.github.nesfeder.supabase.offline.internal.postgrest.decodeFilterOrNull
 import io.github.nesfeder.supabase.offline.internal.postgrest.encodeFilter
 import io.github.nesfeder.supabase.offline.internal.postgrest.installCommittedDryRunReport
 import io.github.nesfeder.supabase.offline.internal.postgrest.installDryRunCheck
@@ -130,6 +133,7 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.jsonPrimitive
 import okio.FileSystem
 import okio.Path
 import okio.SYSTEM
@@ -850,6 +854,7 @@ internal class OfflineClient(
             val identity = queueIdentityReader.current() ?: return@call
             val entry = mutationQueue.shownConflict(id, identity.storedValue) ?: return@call
             requireResolvable(entry, resolution)
+            val startedAtTick = freshness.tickNow()
             val requeue =
                 mutationQueue.requeueConflict(
                     id,
@@ -860,7 +865,73 @@ internal class OfflineClient(
                 "This conflicted mutation cannot be settled that way"
             }
             if (requeue is ConflictRequeue.Requeued) automaticReplay.requestPass()
+            if (requeue == ConflictRequeue.Dropped) showServerSideOf(entry, startedAtTick)
         }
+
+    /**
+     * Shows the server's side of the conflicted [entry] the app dropped with
+     * [ConflictResolution.KeepServer] in the cache, as the resolver's own `KeepServer` does: the
+     * row the replay read is laid into the cached queries, or the row is dropped from them when the
+     * server had none. The row may have moved while the entry waited, so the queries holding it are
+     * then marked stale, and a live read fetches it again; a row the entry could not keep (too
+     * long) is only marked so. Runs after the queue lock is released, since the patch takes the
+     * table's lock, which precedes the queue's; a failure is logged, since the entry is gone either
+     * way. An entry whose filter pins no row (a guarded replay always pins one) patches nothing.
+     *
+     * @param startedAtTick the tick the resolution started at; a clear since then voids the patch.
+     */
+    private suspend fun showServerSideOf(entry: StoredConflict, startedAtTick: Long) {
+        val table = entry.table
+        val keyFilter = keyFilterOf(entry) ?: return
+        val server = entry.serverRowJson?.let { text -> jsonObjectOrNull(text, EngineJson) }
+        try {
+            if (server != null) {
+                cachePatcher.patchReturnedRows(
+                    table,
+                    JsonObject(emptyMap()),
+                    JsonArray(listOf(server)).toString(),
+                    startedAtTick,
+                )
+            } else if (entry.serverVersion == null) {
+                cachePatcher.patchCachedQueries(
+                    table = table,
+                    operation = MutationOperation.DELETE,
+                    bodyJson = "{}",
+                    filterJson = encodeFilter(keyFilter, EngineJson),
+                    startedAtTick = startedAtTick,
+                )
+            }
+            // As a delete would: the queries that still hold the row, which a dropped row left
+            cachePatcher.markQueriesAWriteMayReach(
+                table = table,
+                operation = MutationOperation.DELETE,
+                bodyJson = "{}",
+                narrowing = keyFilter,
+                startedAtTick = startedAtTick,
+            )
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (failure: Exception) {
+            engineLogger.warning {
+                "Patching the cache after a conflicted write to $table was dropped failed: " +
+                    failure::class.simpleName
+            }
+        }
+    }
+
+    /**
+     * The filter that reads the conflicted [entry]'s one row by its key; `null` when it pins none.
+     */
+    private fun keyFilterOf(entry: StoredConflict): FilterDescriptor? {
+        val filter = decodeFilterOrNull(entry.filterJson, EngineJson) ?: return null
+        val key = pinnedRowKeyOf(filter, primaryKeys.of(entry.table)) ?: return null
+        return FilterDescriptor(
+            conditions =
+                key.map { (column, value) ->
+                    FilterDescriptor.Condition(column, "eq", value.jsonPrimitive.content)
+                }
+        )
+    }
 
     override suspend fun dismissConflictedMutation(id: Long): Unit = operationGate.call {
         val identity = queueIdentityReader.current() ?: return@call

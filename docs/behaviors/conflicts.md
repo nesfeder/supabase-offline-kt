@@ -124,7 +124,9 @@ another write, or when that send may not have run.
 
 **Writes queued one after another do not conflict with each other.** When a guarded write, or a
 write sent at once that asked for its rows back, returns the row, every later queued write to that
-row takes the returned version and columns as its base. A write sent at once without `select()`
+row by the same user takes the returned version and columns as its base. Only the same user's: on a
+shared device, another user's queued write to the row keeps the base its user saw, and its replay
+meets the change as a conflict. A write sent at once without `select()`
 returns no row to forward, so the next write meets an old version; once the first write's answer
 has been patched into the cache, the next write's base holds its values, and it is resent at the
 new version without asking anyone ([below](#the-five-outcomes)). **The exception is a write queued
@@ -253,7 +255,7 @@ flowchart TD
 | `KeepLocal` | The write is sent again, preconditioned on the server's version now: an UPDATE sets its columns over the server's, and the others keep the server's values; a DELETE deletes. On a gone row it cannot apply, so the write is parked |
 | `ConflictResolution.apply(columns)` | These columns are sent instead, preconditioned the same way: for a merge the app works out. Only for an UPDATE of a row still there; otherwise the write is parked. It needs at least one column |
 | `KeepServer` | The write leaves the queue unsent, and the server's row, or its deletion, is laid into the cache |
-| `Hold` | The write is parked on the conflicted list for later, and the pass goes on with the next write |
+| `Hold` | The write is parked on the conflicted list for later, the server's row is laid into the cache, and the pass goes on with the next write |
 
 A resend that finds the row moved again is a new conflict, and the resolver is asked again; a write
 is sent at most three times in one pass, and if the third send still finds the row moved, or an
@@ -313,7 +315,15 @@ precondition the resend on.
   `serverVersion`, and asks for a pass. Its replay is an ordinary guarded replay: when the row comes
   back, the write counts in `syncedCount` alone; when the row has moved again since, the resolver is
   asked, as for any conflict.
-- `resolveConflictedMutation(id, KeepServer)` and `dismissConflictedMutation(id)` drop it.
+- `resolveConflictedMutation(id, KeepServer)` drops it and lays the server's row the entry
+  recorded into the cache, or drops a gone row from it, as the resolver's own `KeepServer` does;
+  the cached lists holding the row are then fetched again when they can be, since the row may have
+  moved while the entry waited. `dismissConflictedMutation(id)` drops the entry alone.
+- While a write is parked, the cached lists show its row as the server had it when the replay read
+  it: the write is on the conflicted list, not laid over the cache, so a read shows neither the
+  device's change nor the row as the device last read it. A write parked because its row was gone
+  leaves the cached row as it was, since a row that is gone and one a policy hides look the same
+  from the device; `KeepServer` on the entry then drops it.
 - `Hold` is refused with `IllegalArgumentException`, as are `Apply` on anything but an UPDATE of a
   row that was there, and `KeepLocal` on a row that was gone or on an entry whose body was too
   large to keep.
@@ -458,8 +468,8 @@ disagrees, since both phones ticked the task done:
 ```
 
 The samples' resolver answers `Hold` for a conflicting title
-([The resolver](#the-resolver) has its code), so the write is parked, and the report's
-`conflicted` holds it:
+([The resolver](#the-resolver) has its code), so the write is parked, the cached list shows
+"Buy almond milk", the server's row, and the report's `conflicted` holds it:
 
 ```json
 {"id": 7, "table": "tasks", "operation": "UPDATE",
