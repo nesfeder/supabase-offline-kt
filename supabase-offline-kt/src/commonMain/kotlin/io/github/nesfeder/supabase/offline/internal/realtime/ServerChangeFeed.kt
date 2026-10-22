@@ -14,16 +14,28 @@ internal sealed interface ServerChangeEvent {
      */
     data object Joined : ServerChangeEvent
 
+    /** A change to one row of [table] in [schema]: what the follower applies, by table. */
+    sealed interface Change : ServerChangeEvent {
+        val table: String
+        val schema: String
+    }
+
     /**
      * A row of [table] in [schema] was inserted or updated; [record] is the whole row as the server
      * sent it.
      */
-    data class Saved(val table: String, val schema: String, val record: JsonObject) :
-        ServerChangeEvent
+    data class Saved(
+        override val table: String,
+        override val schema: String,
+        val record: JsonObject,
+    ) : Change
 
     /** A row of [table] in [schema] was deleted; [oldRecord] carries at least its key. */
-    data class Deleted(val table: String, val schema: String, val oldRecord: JsonObject) :
-        ServerChangeEvent
+    data class Deleted(
+        override val table: String,
+        override val schema: String,
+        val oldRecord: JsonObject,
+    ) : Change
 }
 
 /**

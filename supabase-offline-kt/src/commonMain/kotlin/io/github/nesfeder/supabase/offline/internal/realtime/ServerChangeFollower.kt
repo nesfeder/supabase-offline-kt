@@ -15,6 +15,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -34,6 +35,13 @@ import kotlinx.coroutines.withTimeoutOrNull
  * bounded wait, cut short by an edge; joins that end within [steadyFollow] of one another back off,
  * up to [maxBackoff].
  *
+ * The changes a follow receives wait in a [ChangeBacklog], taken off the feed as they arrive, and
+ * are applied beside it, each table's waiting changes as one patch: a burst from the server costs
+ * one pass over the table's cached queries, not one per change, and a slow patch never holds the
+ * feed. A backlog past [backlogCapacity] is discarded, with every change the applier had taken but
+ * not applied yet, and once the applier is free every watched table is read again instead, as on a
+ * join, with one warning for the episode.
+ *
  * @param scope where the following runs; canceling it leaves the channel.
  * @param tables the tables to follow; none follows nothing.
  * @param feed where the changes come from.
@@ -41,11 +49,12 @@ import kotlinx.coroutines.withTimeoutOrNull
  * @param sessionReady `true` while there is a user to subscribe for; `true` once without Auth.
  * @param networkStatuses the network as the client sees it, as it changes.
  * @param wakeUps the edges that cut a wait short: a reconnection, a settled session.
- * @param apply applies one change to the cache.
+ * @param apply applies one table's changes, in the order they arrived, to the cache.
  * @param markStale marks a table's cached queries stale and has its live readers fetch again.
  * @param initialBackoff the wait after the first channel that ended.
  * @param maxBackoff the longest wait.
  * @param steadyFollow how long a follow must last for the next wait to start over.
+ * @param backlogCapacity how many received changes may wait to be applied.
  */
 internal class ServerChangeFollower(
     private val scope: CoroutineScope,
@@ -55,13 +64,14 @@ internal class ServerChangeFollower(
     private val sessionReady: Flow<Boolean>,
     private val networkStatuses: Flow<NetworkStatus>,
     private val wakeUps: Flow<Unit>,
-    private val apply: suspend (ServerChangeEvent) -> Unit,
+    private val apply: suspend (List<ServerChangeEvent.Change>) -> Unit,
     private val markStale: suspend (table: String, schema: String) -> Unit,
     private val engineLogger: EngineLogger,
     private val initialBackoff: Duration = 1.seconds,
     private val maxBackoff: Duration = 60.seconds,
     private val steadyFollow: Duration = 1.minutes,
     private val timeSource: TimeSource = TimeSource.Monotonic,
+    private val backlogCapacity: Int = BACKLOG_CAPACITY,
 ) {
 
     /** Whether the app wants the subscription; on until it says otherwise. */
@@ -147,52 +157,124 @@ internal class ServerChangeFollower(
         }
     }
 
-    /** Follows once, applying what arrives; returns the failure that ended the channel. */
-    private suspend fun followOnce(): Exception {
+    /**
+     * Follows once, applying what arrives; returns the failure that ended the channel. A join is
+     * handled as it arrives; the changes wait in a backlog that [applyBacklog] drains beside the
+     * collection, and what arrived before the channel ended is still applied.
+     */
+    private suspend fun followOnce(): Exception = coroutineScope {
+        val backlog = ChangeBacklog(backlogCapacity)
+        launch { applyBacklog(backlog) }
         try {
-            feed.follow(tables, defaultSchema()).collect { event -> handle(event) }
-            return ServerChangeFeedEndedException("The Realtime channel ended")
+            feed.follow(tables, defaultSchema()).collect { event -> receive(event, backlog) }
+            ServerChangeFeedEndedException("The Realtime channel ended")
         } catch (cancellation: CancellationException) {
             throw cancellation
         } catch (failure: Exception) {
-            return failure
+            failure
+        } finally {
+            backlog.close()
         }
     }
 
-    private suspend fun handle(event: ServerChangeEvent) {
+    /** Handles [event]: a join at once, a change by way of [backlog]. */
+    private suspend fun receive(event: ServerChangeEvent, backlog: ChangeBacklog) {
         when (event) {
-            ServerChangeEvent.Joined -> {
-                followState.value = RealtimeStatus.Subscribed
-                engineLogger.info {
-                    "Realtime: subscribed to ${tables.size} table(s); their cached queries are " +
-                        "read again"
-                }
-                val defaultSchema = defaultSchema()
-                for (watched in tables) {
-                    markStaleQuietly(watched.table, watched.schema ?: defaultSchema)
-                }
+            ServerChangeEvent.Joined -> joined()
+            is ServerChangeEvent.Change -> backlog.add(event)
+        }
+    }
+
+    /** Reports the channel subscribed, and reads every watched table again: nothing is replayed. */
+    private suspend fun joined() {
+        followState.value = RealtimeStatus.Subscribed
+        engineLogger.info {
+            "Realtime: subscribed to ${tables.size} table(s); their cached queries are read again"
+        }
+        markEveryTableStale()
+    }
+
+    /**
+     * Applies [backlog]'s changes until it is closed and empty: every change waiting, each table's
+     * as one patch in the order they arrived, tables in the order of their first change. A batch
+     * taken before a discard is dropped instead, and a discard is reported once the take is done.
+     */
+    private suspend fun applyBacklog(backlog: ChangeBacklog) {
+        while (true) {
+            val entries = backlog.takeAll()
+            if (entries == null) {
+                reportDiscard(backlog)
+                return
             }
-            is ServerChangeEvent.Saved -> applyQuietly(event, event.table, event.schema)
-            is ServerChangeEvent.Deleted -> applyQuietly(event, event.table, event.schema)
+            val byTable = LinkedHashMap<Pair<String, String>, MutableList<ChangeBacklog.Entry>>()
+            for (entry in entries) {
+                val key = entry.change.table to entry.change.schema
+                byTable.getOrPut(key) { mutableListOf() } += entry
+            }
+            for ((key, batch) in byTable) {
+                // Read per batch: a discard during the last patch voids the batches after it
+                val generation = backlog.currentGeneration
+                val current = batch.filter { entry -> entry.generation == generation }
+                if (current.size < batch.size) backlog.countDropped(batch.size - current.size)
+                if (current.isEmpty()) continue
+                val changes = current.map { entry -> entry.change }
+                applyQuietly(changes, table = key.first, schema = key.second)
+            }
+            reportDiscard(backlog)
         }
     }
 
     /**
-     * Applies [event]; a failure is logged, and the table's cached queries are marked stale so a
-     * live reader fetches what the change would have shown.
+     * Once changes were discarded, reads every watched table again, which brings what they would
+     * have, as a join does, and logs it once: a discard during those marks is folded in, and the
+     * marks are made again for it. Never a change itself.
      */
-    private suspend fun applyQuietly(event: ServerChangeEvent, table: String, schema: String) {
+    private suspend fun reportDiscard(backlog: ChangeBacklog) {
+        var total = 0
+        while (true) {
+            val discarded = backlog.takeDiscarded()
+            if (discarded == 0) break
+            total += discarded
+            markEveryTableStale()
+        }
+        if (total == 0) return
+        val names = tables.joinToString { watched -> watched.qualifiedName() }
+        engineLogger.warning {
+            "Realtime: $total change(s) waited to be applied, more than the $backlogCapacity the " +
+                "client keeps; they are discarded, and the cached queries of $names are read again"
+        }
+    }
+
+    /** `schema.table` when the table names a schema, the table alone otherwise. */
+    private fun WatchedTable.qualifiedName(): String =
+        schema?.let { named -> "$named.$table" } ?: table
+
+    /**
+     * Applies [changes], all of [table]; a failure is logged, and the table's cached queries are
+     * marked stale so a live reader fetches what the changes would have shown.
+     */
+    private suspend fun applyQuietly(
+        changes: List<ServerChangeEvent.Change>,
+        table: String,
+        schema: String,
+    ) {
         try {
-            apply(event)
+            apply(changes)
         } catch (cancellation: CancellationException) {
             throw cancellation
         } catch (failure: Exception) {
             engineLogger.warning {
-                "Realtime: applying a change to $table failed (${failure::class.simpleName}); " +
-                    "its cached queries are marked stale"
+                "Realtime: applying ${changes.size} change(s) to $table failed " +
+                    "(${failure::class.simpleName}); its cached queries are marked stale"
             }
             markStaleQuietly(table, schema)
         }
+    }
+
+    /** Marks every watched table's cached queries stale, each in its own schema. */
+    private suspend fun markEveryTableStale() {
+        val defaultSchema = defaultSchema()
+        for (watched in tables) markStaleQuietly(watched.table, watched.schema ?: defaultSchema)
     }
 
     /** Marks [table]'s cached queries stale; a failure is logged, never thrown. */
@@ -207,5 +289,13 @@ internal class ServerChangeFollower(
                     "(${failure::class.simpleName})"
             }
         }
+    }
+
+    companion object {
+        /**
+         * How many received changes may wait to be applied before the backlog is discarded and the
+         * watched tables read again: past this, a fetch costs less than the patch would.
+         */
+        const val BACKLOG_CAPACITY: Int = 5_000
     }
 }

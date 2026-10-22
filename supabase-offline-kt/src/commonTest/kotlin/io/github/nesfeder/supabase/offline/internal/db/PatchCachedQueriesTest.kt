@@ -7,6 +7,7 @@ package io.github.nesfeder.supabase.offline.internal.db
 import io.github.jan.supabase.postgrest.query.Order
 import io.github.nesfeder.supabase.offline.MutationOperation
 import io.github.nesfeder.supabase.offline.internal.cache.CachePatcher
+import io.github.nesfeder.supabase.offline.internal.cache.ServerRowChange
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 import io.github.nesfeder.supabase.offline.internal.postgrest.encodeFilter
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
@@ -24,6 +25,7 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 
 /**
  * Tests for [CachePatcher.patchCachedQueries] — the online-success overlay path that honors
@@ -651,6 +653,110 @@ class PatchCachedQueriesTest {
         // The whole point of the helper: only `object_cache` is written, never `mutation_cache`.
         assertEquals(0, mutationDao.inserted.size)
     }
+
+    // ── The server's changes, as one batch ───────────────────────────────────
+
+    @Test
+    fun a_batch_of_server_changes_is_applied_in_order() = runTest {
+        // Given — one cached row
+        val queryCacheDao = FakeQueryCacheDao()
+        queryCacheDao.seedPayload("ratings", "sig-A", """[{"id":1,"rating":80}]""")
+        val store = buildStore(queryCacheDao, FakeMutationDao())
+
+        // When — one burst inserts a row, updates it, deletes it, and updates the cached one
+        store.cachePatcher.patchServerChanges(
+            table = "ratings",
+            keyColumns = listOf("id"),
+            changes =
+                listOf(
+                    saved(id = 2, rating = 50),
+                    saved(id = 2, rating = 60),
+                    deleted(id = 2),
+                    saved(id = 1, rating = 90),
+                ),
+        )
+
+        // Then — the new row came and went, and the cached one holds its last value
+        assertEquals(
+            """[{"id":1,"rating":90}]""",
+            queryCacheDao.getRow("ratings", "sig-A")?.payload,
+        )
+    }
+
+    @Test
+    fun a_batch_of_server_changes_updates_each_row_it_names_in_one_write() = runTest {
+        // Given — two cached rows
+        val queryCacheDao = FakeQueryCacheDao()
+        queryCacheDao.seedPayload(
+            "ratings",
+            "sig-A",
+            """[{"id":1,"rating":80},{"id":2,"rating":70}]""",
+        )
+        val store = buildStore(queryCacheDao, FakeMutationDao())
+        val writesBefore = store.queryCacheDao.writesTo("ratings").second
+
+        // When — both change within one burst
+        store.cachePatcher.patchServerChanges(
+            table = "ratings",
+            keyColumns = listOf("id"),
+            changes = listOf(saved(id = 1, rating = 81), saved(id = 2, rating = 71)),
+        )
+
+        // Then — both updated, by one write of the payload
+        assertEquals(
+            """[{"id":1,"rating":81},{"id":2,"rating":71}]""",
+            queryCacheDao.getRow("ratings", "sig-A")?.payload,
+        )
+        assertEquals(1L, store.queryCacheDao.writesTo("ratings").second - writesBefore)
+    }
+
+    @Test
+    fun an_empty_batch_of_server_changes_patches_nothing() = runTest {
+        // Given
+        val queryCacheDao = FakeQueryCacheDao()
+        queryCacheDao.seedPayload("ratings", "sig-A", """[{"id":1,"rating":80}]""")
+        val store = buildStore(queryCacheDao, FakeMutationDao())
+        val writesBefore = store.queryCacheDao.writesTo("ratings").second
+
+        // When
+        store.cachePatcher.patchServerChanges("ratings", listOf("id"), emptyList())
+
+        // Then
+        assertEquals(0L, store.queryCacheDao.writesTo("ratings").second - writesBefore)
+        assertEquals(
+            """[{"id":1,"rating":80}]""",
+            queryCacheDao.getRow("ratings", "sig-A")?.payload,
+        )
+    }
+
+    /** The server's record of the rating [id], saved with [rating]. */
+    private fun saved(id: Int, rating: Int): ServerRowChange =
+        ServerRowChange(
+            record =
+                buildJsonObject {
+                    put("id", id)
+                    put("rating", rating)
+                },
+            keyFilterJson = byId(id),
+            deleted = false,
+        )
+
+    /** The server's record of the rating [id], deleted: its key alone. */
+    private fun deleted(id: Int): ServerRowChange =
+        ServerRowChange(
+            record = buildJsonObject { put("id", id) },
+            keyFilterJson = byId(id),
+            deleted = true,
+        )
+
+    private fun byId(id: Int): String =
+        encodeFilter(
+            FilterDescriptor(
+                conditions =
+                    listOf(FilterDescriptor.Condition("id", operatorId = "eq", value = "$id"))
+            ),
+            json,
+        )
 
     // ── Fixtures ──────────────────────────────────────────────────────────────
 
