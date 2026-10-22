@@ -3,10 +3,19 @@
 package io.github.nesfeder.supabase.offline.internal.storage
 
 import java.io.File
+import java.io.RandomAccessFile
 import okio.Path
 
 internal actual fun markFileUsed(path: Path, epochMillis: Long) {
     File(path.toString()).setLastModified(epochMillis)
+}
+
+/**
+ * `fsync` on the file's own descriptor, opened for reading so a file that is not there is reported
+ * rather than created; what the JDK throws for either is an `IOException`.
+ */
+internal actual fun syncFileToDisk(path: Path) {
+    RandomAccessFile(path.toString(), "r").use { file -> file.fd.sync() }
 }
 
 /**

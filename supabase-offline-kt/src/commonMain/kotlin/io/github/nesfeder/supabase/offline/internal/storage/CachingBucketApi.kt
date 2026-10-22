@@ -120,16 +120,20 @@ internal class CachingBucketApi(
             "This object path cannot be cached on the device: it holds '%', '?' or '#', which go " +
                 "into the request's URL unencoded, so its request can reach another object"
         }
+        require(isCacheableObjectPath(path)) {
+            "This object path cannot be cached on the device: it has a leading '/', an empty, '.' " +
+                "or '..' segment, a '\\' or a control character"
+        }
         val entry =
             cache.entryFor(bucketId, path)
                 ?: throw IllegalArgumentException(
-                    "This object path cannot be cached on the device: it has a leading '/', an empty, '.' " +
-                        "or '..' segment, a '\\' or a control character"
+                    "This object cannot be cached on the device: its bucket id or its path cannot " +
+                        "be mapped onto a file"
                 )
         cache.useCachedCopy(entry)?.let {
             return it
         }
-        val generation = cache.currentGeneration()
+        val start = cache.beginDownload()
         val sentUnsettled = isSessionUnsettled()
         val file = OwnedTemporaryFile()
         try {
@@ -163,17 +167,22 @@ internal class CachingBucketApi(
                     StreamedDownload.Uncacheable ->
                         error("A known cache entry was reported uncacheable")
                 }
-            when (cache.commit(temporary, generation)) {
+            when (cache.commit(temporary, start)) {
                 CommitOutcome.COMMITTED -> file.temporary = null
                 CommitOutcome.CLEARED ->
                     throw IllegalStateException(
                         "Local data was cleared while this file was downloading"
+                    )
+                CommitOutcome.SUPERSEDED ->
+                    throw IllegalStateException(
+                        "The object was written while this file was downloading; ask for it again"
                     )
                 CommitOutcome.FAILED ->
                     throw IOException("The file cache could not store the download")
             }
         } finally {
             file.discard()
+            cache.endDownload(start)
         }
         return cache.useCachedCopy(entry)
             ?: throw IOException("The downloaded file left the cache before it could be returned")
@@ -238,21 +247,25 @@ internal class CachingBucketApi(
             return fetch { options -> options }
         }
         val probe = DownloadRequestProbe(renderImagePath, beforeSend = networkAccess::ensureEnabled)
-        val generation = cache.currentGeneration()
-        val sentUnsettled = isSessionUnsettled()
-        val bytes =
-            try {
-                fetch(probe::wrap)
-            } catch (failure: Exception) {
-                currentCoroutineContext().ensureActive()
-                return recover(path, probe, failure, sentUnsettled) { entry ->
-                    cache.readBytes(entry)
+        val start = cache.beginDownload()
+        try {
+            val sentUnsettled = isSessionUnsettled()
+            val bytes =
+                try {
+                    fetch(probe::wrap)
+                } catch (failure: Exception) {
+                    currentCoroutineContext().ensureActive()
+                    return recover(path, probe, failure, sentUnsettled) { entry ->
+                        cache.readBytes(entry)
+                    }
                 }
+            probe.entryToStore(cache, bucketId, path)?.let { entry ->
+                cache.write(entry, bytes, start)
             }
-        probe.entryToStore(cache, bucketId, path)?.let { entry ->
-            cache.write(entry, bytes, generation)
+            return bytes
+        } finally {
+            cache.endDownload(start)
         }
-        return bytes
     }
 
     /**
@@ -281,7 +294,7 @@ internal class CachingBucketApi(
             return
         }
         val probe = DownloadRequestProbe(renderImagePath, beforeSend = networkAccess::ensureEnabled)
-        val generation = cache.currentGeneration()
+        val start = cache.beginDownload()
         val sentUnsettled = isSessionUnsettled()
         val file = OwnedTemporaryFile()
         try {
@@ -303,11 +316,12 @@ internal class CachingBucketApi(
                 }
             when (download) {
                 is StreamedDownload.Written ->
-                    commitAndStream(file, download.temporary, generation, channel)
+                    commitAndStream(file, download.temporary, start, channel)
                 is StreamedDownload.CacheRefused,
                 StreamedDownload.Uncacheable -> {
-                    // The disk refused the copy (logged), or the variant is unknown: rather than
-                    // fail a good download, fetch it again straight into the caller's channel.
+                    // The disk refused the copy (logged), or the request fetched no whole variant:
+                    // rather than fail a good download, fetch it again straight into the caller's
+                    // channel.
                     fetch(channel, options)
                     return
                 }
@@ -315,6 +329,7 @@ internal class CachingBucketApi(
             channel.flushAndClose()
         } finally {
             file.discard()
+            cache.endDownload(start)
         }
     }
 
@@ -322,10 +337,10 @@ internal class CachingBucketApi(
     private suspend fun commitAndStream(
         file: OwnedTemporaryFile,
         temporary: TemporaryDownload,
-        generation: Long,
+        start: DownloadStart,
         channel: ByteWriteChannel,
     ) {
-        when (cache.commit(temporary, generation)) {
+        when (cache.commit(temporary, start)) {
             CommitOutcome.COMMITTED -> {
                 file.temporary = null
                 if (!cache.copyTo(temporary.entry, channel)) {
@@ -334,6 +349,7 @@ internal class CachingBucketApi(
             }
             // The call's own clean-up discards the file once it has been read
             CommitOutcome.CLEARED,
+            CommitOutcome.SUPERSEDED,
             CommitOutcome.FAILED -> cache.copyFile(temporary.path, channel)
         }
     }

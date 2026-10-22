@@ -48,7 +48,7 @@ class StorageAtomicWriteTest {
         FileSystem.SYSTEM.deleteRecursively(dataDirectory, mustExist = false)
     }
 
-    private fun bucket() =
+    private fun bucket(syncFile: (Path) -> Unit = ::syncFileToDisk) =
         newTestBucketApi(
             delegate = delegate,
             baseDirectory = dataDirectory,
@@ -58,6 +58,7 @@ class StorageAtomicWriteTest {
                     baseDirectory = dataDirectory,
                     store = store,
                     fileSystem = fileSystem,
+                    syncFile = syncFile,
                 ),
         )
 
@@ -129,6 +130,40 @@ class StorageAtomicWriteTest {
         assertTrue(written != target, "the target was written in place")
         assertContentEquals(NEW, FileSystem.SYSTEM.read(target) { readByteArray() })
         assertEquals(listOf(target), regularFiles())
+    }
+
+    @Test
+    fun a_new_copy_is_written_through_to_the_disk_before_it_is_renamed_over_the_target() = runTest {
+        // Given — the sync and the rename are recorded in order
+        val events = mutableListOf<String>()
+        fileSystem.onMove = { source, _ -> events += "move ${source.name}" }
+        delegate.onDownload = { NEW }
+
+        // When
+        bucket(syncFile = { path -> events += "sync ${path.name}" }).downloadAuthenticated(PATH) {}
+
+        // Then — the temporary file was synced, then renamed; a power loss after the rename finds
+        // the bytes on the disk
+        val temporary = fileSystem.sinksOpened.single()
+        assertEquals(listOf("sync ${temporary.name}", "move ${temporary.name}"), events)
+        assertContentEquals(NEW, FileSystem.SYSTEM.read(target) { readByteArray() })
+    }
+
+    @Test
+    fun a_sync_the_platform_refuses_still_caches_the_copy() = runTest {
+        // Given — a file system with no sync
+        delegate.onDownload = { NEW }
+
+        // When
+        val downloaded =
+            bucket(syncFile = { throw okio.IOException("not supported") }).downloadAuthenticated(
+                PATH
+            ) {}
+
+        // Then — cached all the same: the size check on reads covers what a power loss leaves
+        assertContentEquals(NEW, downloaded)
+        assertContentEquals(NEW, FileSystem.SYSTEM.read(target) { readByteArray() })
+        assertContentEquals(NEW, readOffline())
     }
 
     @Test

@@ -13,6 +13,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotEquals
 import kotlin.test.assertNotNull
+import kotlin.test.assertTrue
 import kotlinx.coroutines.test.runTest
 import okio.FileSystem
 import okio.IOException
@@ -91,6 +92,25 @@ class StorageObjectNamesTest {
         // Then
         assertEquals("LONG", downloaded)
         assertEquals("LONG", FileSystem.SYSTEM.read(ensured.path.toPath()) { readUtf8() })
+    }
+
+    @Test
+    fun a_segment_of_a_letter_and_a_colon_still_caches() = runTest {
+        // Given — a name okio would read as a Windows volume letter
+        val name = "u:42/a.png"
+        delegate.onDownload = { "USER".encodeToByteArray() }
+
+        // When
+        val ensured = bucket().ensureCachedFile(name)
+
+        // Then — cached inside the data directory, and served from there
+        assertEquals("USER", FileSystem.SYSTEM.read(ensured.path.toPath()) { readUtf8() })
+        assertTrue(
+            ensured.path.toPath().isStrictlyInside(dataDirectory),
+            "${ensured.path} left the cache",
+        )
+        assertEquals(ensured.path, assertNotNull(bucket().cachedFile(name)).path)
+        assertEquals(1, delegate.downloadInvocations)
     }
 
     @Test

@@ -36,7 +36,11 @@ never fails the download); a "not found" drops the cached copy and is rethrown; 
 is answered from the cached copy, or thrown when there is none. An image transform is cached per
 transform, apart from the original. A channel download streams through a file on disk rather than
 memory, and its answer's status is checked first: an error answer throws as the bytes download
-does, and nothing of it is cached or handed on.
+does, and nothing of it is cached or handed on. A download whose `httpOverride` asks for part of
+the object (a `Range` or `If-Range` header) or none of it (a `HEAD`) is the caller's alone: it is
+never cached, and offline it is not answered from the whole copy. A download still on the wire
+when a write of the same object lands through the offline bucket is handed to its caller but never
+becomes the cached copy.
 
 ## Cached files
 
@@ -59,13 +63,15 @@ From the samples: [TaskPhotoFiles.kt](https://github.com/nesfeder/supabase-offli
 `cachedFile(path)` returns the cached copy, or `null`, and never touches the network;
 `ensureCachedFile(path)` first streams the object to disk when there is no copy. Only an
 untransformed download or `ensureCachedFile` caches the copy these return: a `CachedFile`, the
-cache's own file at an absolute `path`, with `fetchedAt` and `sizeBytes`. Read it or hand it to an
-image loader, but do not move or write it: the cache may delete it when the object is uploaded,
-updated, deleted, moved or copied over through the offline bucket, when the server reports it
-gone, when the cache passes its bound and the file has not been used for 30 seconds, when the cache
-passes to another user, and when local data is cleared. Open it soon, or copy it if it must
-outlive those. **Nothing revalidates a cached file**: compare `fetchedAt` with your own rule, and
-download again when it is too old.
+cache's own file at an absolute `path`, with `fetchedAt` and `sizeBytes`. A moved object's copy
+keeps the `fetchedAt` of the download that made it. Read it or hand it to an image loader, but do
+not move or write it: the cache may delete it when the object is uploaded, updated, deleted, moved
+or copied over through the offline bucket, when the server reports it gone, when the cache passes
+its bound and the file has not been used for 30 seconds, when the cache passes to another user,
+and when local data is cleared. A file whose size on disk is not the one recorded for it, which a
+power loss right after a download can leave, is deleted too, and the object is downloaded again
+when next asked for. Open it soon, or copy it if it must outlive those. **Nothing revalidates a
+cached file**: compare `fetchedAt` with your own rule, and download again when it is too old.
 
 On Android, three helpers give the cached copy in the platform's terms: `ensureLocalUri` and
 `ensureLocalFile` are `ensureCachedFile` as a `Uri` or a `File`, throwing what it throws, and
@@ -318,7 +324,9 @@ refuses it with `IllegalArgumentException`. So does a name holding `%`, `?` or `
 3.6, which puts the name in the URL as written: a `?` or `#` can fetch or overwrite a different
 object (`x?y.png` fetches `x`, and an upload of it writes `x`), and a `%` that does not begin a
 percent-escape (`100%.png`) cannot be put in a URL at all, so every call naming it throws
-`IllegalArgumentException` before anything is sent. Keep these characters out of object names.
+`IllegalArgumentException` before anything is sent. Keep these characters out of object names. A
+segment that starts with a letter and a colon, like `u:42`, is cached, under a hash of the name
+([On-device data](../reference/on-device-data.md#the-files)).
 
 ## Whose files they are
 

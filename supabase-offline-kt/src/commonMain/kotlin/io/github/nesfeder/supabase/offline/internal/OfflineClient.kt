@@ -92,6 +92,7 @@ import io.github.nesfeder.supabase.offline.internal.storage.StorageFileCache
 import io.github.nesfeder.supabase.offline.internal.storage.installDownloadStatusCheck
 import io.github.nesfeder.supabase.offline.internal.storage.markFileUsed
 import io.github.nesfeder.supabase.offline.internal.storage.renderImagePathOf
+import io.github.nesfeder.supabase.offline.internal.storage.syncFileToDisk
 import kotlin.concurrent.atomics.AtomicBoolean
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.time.Clock
@@ -208,6 +209,8 @@ internal class OfflineClient(
     fileSystem: FileSystem = FileSystem.SYSTEM,
     /** Records a use time on one of [fileSystem]'s files. */
     markFileUsed: (Path, Long) -> Unit = ::markFileUsed,
+    /** Writes one of [fileSystem]'s files through to the disk before the cache renames it. */
+    syncFile: (Path) -> Unit = ::syncFileToDisk,
     /** The time the client's reads and file cache see; rows are stamped by [rowClock]. */
     private val clock: Clock = Clock.System,
     /** The clock the cached queries, the queue and the cached files' rows are stamped with. */
@@ -404,6 +407,7 @@ internal class OfflineClient(
             fileSystem = fileSystem,
             nowMillis = { clock.now().toEpochMilliseconds() },
             markUsed = markFileUsed,
+            syncFile = syncFile,
             ioDispatcher = ioDispatcher,
         )
 

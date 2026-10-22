@@ -8,3 +8,6 @@
 # An overridden finding counts as additive. A line without a reason, or one that matches no
 # finding, fails the check, so stale entries cannot pile up. An edit to an exported Room schema can
 # never be overridden. The pull request that follows a release empties this file.
+persisted-contract-changed: supabase-offline-kt/src/commonTest/kotlin/io/github/nesfeder/supabase/offline/internal/storage/CacheFilePathsTest.kt (M)  # adds a test only (#211): a segment of a letter and a colon, which okio resolved outside the base, takes the hashed directory; every mapping the file pinned is unchanged, and nothing was ever cached under such a plain path
+persisted-contract-changed: supabase-offline-kt/src/commonTest/kotlin/io/github/nesfeder/supabase/offline/internal/storage/StorageObjectNameEncodingTest.kt (M)  # the cache's write now takes the download's start instead of a generation (#211); the names and the bytes the test pins are unchanged
+persisted-contract-changed: supabase-offline-kt/src/commonTest/kotlin/io/github/nesfeder/supabase/offline/internal/storage/StorageObjectNamesTest.kt (M)  # adds a test only (#211): ensureCachedFile of a name with a letter-and-colon segment, never cached before; the plain and hashed mappings the file pins are unchanged

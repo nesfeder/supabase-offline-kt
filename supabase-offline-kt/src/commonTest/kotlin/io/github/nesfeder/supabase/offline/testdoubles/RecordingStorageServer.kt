@@ -15,9 +15,14 @@ import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.decodeURLPart
 import io.ktor.http.headersOf
+import io.ktor.utils.io.ByteChannel
+import io.ktor.utils.io.writeFully
 import kotlin.io.encoding.Base64
 import kotlin.io.encoding.ExperimentalEncodingApi
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.io.IOException
 
 /**
@@ -27,7 +32,9 @@ import kotlinx.io.IOException
  *
  * A transformed download answers the transform's query before the original's bytes
  * (`"render?height=64&width=64:" + original`). A missing object answers HTTP 400 with a
- * `statusCode` of 404, which supabase-kt raises as a `NotFoundRestException`.
+ * `statusCode` of 404, which supabase-kt raises as a `NotFoundRestException`. A download with a
+ * `Range` header answers that part of the object with HTTP 206, and a `HEAD` answers with no body,
+ * as Storage does.
  */
 internal class RecordingStorageServer {
 
@@ -58,6 +65,22 @@ internal class RecordingStorageServer {
      * in flight. Complete it to let the requests through.
      */
     var gate: CompletableDeferred<Unit>? = null
+
+    /**
+     * When set, every download reads the object, then waits for it before answering with those
+     * bytes, while every other request goes through: a test can write the object while a download
+     * of its old bytes is in flight.
+     */
+    var downloadGate: CompletableDeferred<Unit>? = null
+
+    /**
+     * When set, a download's body arrives in two parts: its first [firstChunkBytes] bytes at once,
+     * the rest once this completes, so a test can act while the body is still coming in.
+     */
+    var bodyGate: CompletableDeferred<Unit>? = null
+
+    /** How much of a download's body the first part holds while [bodyGate] is set. */
+    var firstChunkBytes: Int = 4
 
     /**
      * When set, every download is refused with this status and Storage's error body for it, as a
@@ -119,12 +142,13 @@ internal class RecordingStorageServer {
 
             segments.take(4) == listOf("storage", "v1", "object", "authenticated") ||
                 segments.take(4) == listOf("storage", "v1", "object", "public") ->
-                download(segments.drop(4), transform = null)
+                download(segments.drop(4), transform = null, request)
 
             segments.take(4) == listOf("storage", "v1", "render", "image") ->
                 download(
                     segments.drop(5),
                     transform = recorded.query.entries.sortedBy { it.key }.joinToString("&"),
+                    request,
                 )
 
             segments.take(5) == listOf("storage", "v1", "object", "upload", "sign") ->
@@ -208,9 +232,10 @@ internal class RecordingStorageServer {
         )
     }
 
-    private fun MockRequestHandleScope.download(
+    private suspend fun MockRequestHandleScope.download(
         bucketAndPath: List<String>,
         transform: String?,
+        request: HttpRequestData,
     ): HttpResponseData {
         downloadRefusal?.let { status ->
             return respond(
@@ -230,14 +255,51 @@ internal class RecordingStorageServer {
                     headers =
                         headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()),
                 )
-        val body =
+        val whole =
             if (transform == null) original else "render?$transform:".encodeToByteArray() + original
-        return respond(
-            content = body,
-            status = HttpStatusCode.OK,
-            headers =
-                headersOf(HttpHeaders.ContentType, ContentType.Application.OctetStream.toString()),
-        )
+        downloadGate?.await()
+        val octetStream =
+            HttpHeaders.ContentType to listOf(ContentType.Application.OctetStream.toString())
+        if (request.method.value == "HEAD") {
+            return respond(
+                content = ByteArray(0),
+                status = HttpStatusCode.OK,
+                headers =
+                    headersOf(octetStream, HttpHeaders.ContentLength to listOf("${whole.size}")),
+            )
+        }
+        val range = request.headers[HttpHeaders.Range]?.removePrefix("bytes=")?.split('-')
+        if (range != null && range.size == 2) {
+            val first = range[0].toInt()
+            val last = range[1].toIntOrNull()?.coerceAtMost(whole.size - 1) ?: (whole.size - 1)
+            return respond(
+                content = whole.copyOfRange(first, last + 1),
+                status = HttpStatusCode.PartialContent,
+                headers =
+                    headersOf(
+                        octetStream,
+                        HttpHeaders.ContentRange to listOf("bytes $first-$last/${whole.size}"),
+                    ),
+            )
+        }
+        val gate = bodyGate
+        if (gate == null) {
+            return respond(
+                content = whole,
+                status = HttpStatusCode.OK,
+                headers = headersOf(octetStream),
+            )
+        }
+        val body = ByteChannel()
+        CoroutineScope(Dispatchers.Default).launch {
+            val split = firstChunkBytes.coerceIn(0, whole.size)
+            body.writeFully(whole, 0, split)
+            body.flush()
+            gate.await()
+            body.writeFully(whole, split, whole.size)
+            body.flushAndClose()
+        }
+        return respond(content = body, status = HttpStatusCode.OK, headers = headersOf(octetStream))
     }
 
     /**

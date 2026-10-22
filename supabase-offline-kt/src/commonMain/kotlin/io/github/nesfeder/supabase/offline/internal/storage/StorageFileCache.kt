@@ -105,6 +105,16 @@ internal class TemporaryDownload(
     val sink: BufferedSink,
 )
 
+/**
+ * Where the cache stood when a download started, from [StorageFileCache.beginDownload]: the clear
+ * generation and the invalidation sequence. [StorageFileCache.commit] refuses a download whose
+ * object was cleared or written since; [StorageFileCache.endDownload] takes it back.
+ *
+ * @property generation the clear generation.
+ * @property sequence the invalidation sequence.
+ */
+internal class DownloadStart(val generation: Long, val sequence: Long)
+
 /** What [StorageFileCache.commit] did with a finished download. */
 internal enum class CommitOutcome {
     /** The file replaced the entry atomically and is tracked. */
@@ -116,6 +126,13 @@ internal enum class CommitOutcome {
      * caller to read and then [discard].
      */
     CLEARED,
+
+    /**
+     * The object was written, deleted or moved through this client while the file downloaded, so
+     * the file may hold the old bytes; it was not kept. The temporary file is left for the caller
+     * to read and then [discard].
+     */
+    SUPERSEDED,
 
     /** The file system refused the move; the temporary file is left for the caller. */
     FAILED,
@@ -157,6 +174,9 @@ internal fun cachedFileRowOf(
  * @param maxSizeBytes the size bound, or `null` for none.
  * @param nowMillis the clock use times and file ages are read from.
  * @param markUsed records a use time on a file.
+ * @param syncFile asks the platform to write a file through to the disk, before it is renamed into
+ *   place; what it throws is logged, and the size check on reads catches a file a power loss cut
+ *   short.
  * @param ioDispatcher where file work runs.
  */
 internal class StorageFileCache(
@@ -169,6 +189,7 @@ internal class StorageFileCache(
     private val fileSystem: FileSystem = FileSystem.SYSTEM,
     private val nowMillis: () -> Long = { Clock.System.now().toEpochMilliseconds() },
     private val markUsed: (Path, Long) -> Unit = ::markFileUsed,
+    private val syncFile: (Path) -> Unit = ::syncFileToDisk,
     private val excludeFromBackup: (Path) -> Boolean = ::excludeFromBackup,
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) {
@@ -177,11 +198,15 @@ internal class StorageFileCache(
     private suspend fun rowOf(bucketId: String, path: String): CachedFileRow? =
         cachedFileDao.getByKey(cachedFileKeyOf(bucketId, path))
 
-    /** Records [file] as the cached copy of [path] in [bucketId], fetched now. */
-    private suspend fun recordRow(bucketId: String, path: String, file: Path, size: Long?) {
-        cachedFileDao.upsert(
-            cachedFileRowOf(bucketId, path, file, size, eTag = null, fetchedAtMillis())
-        )
+    /** Records [file] as the cached copy of [path] in [bucketId], fetched at [fetchedAt]. */
+    private suspend fun recordRow(
+        bucketId: String,
+        path: String,
+        file: Path,
+        size: Long?,
+        fetchedAt: Long = fetchedAtMillis(),
+    ) {
+        cachedFileDao.upsert(cachedFileRowOf(bucketId, path, file, size, eTag = null, fetchedAt))
     }
 
     private val dataDirectory: Path by lazy { dataDirectoryProvider().normalized() }
@@ -196,6 +221,27 @@ internal class StorageFileCache(
 
     /** Bumped by [clear]; a download that started in an earlier generation is never committed. */
     private val generation = AtomicLong(0L)
+
+    /**
+     * Bumped each time an object's copies are dropped ([removeObjectLocked]), so a download that
+     * started before the drop is never committed over it. Guarded by [lock].
+     */
+    private var invalidationSequence = 0L
+
+    /**
+     * Object key → [invalidationSequence] when its copies were last dropped, kept while a download
+     * that started before the drop is still running. Guarded by [lock].
+     */
+    private val invalidatedAt = mutableMapOf<String, Long>()
+
+    /** The downloads in progress, between [beginDownload] and [endDownload]. Guarded by [lock]. */
+    private val runningDownloads = mutableListOf<DownloadStart>()
+
+    /**
+     * The temporary files of downloads in progress, which [clear] leaves on disk for their callers
+     * to read and [discard]. Guarded by [lock].
+     */
+    private val openTemporaryFiles = mutableSetOf<Path>()
 
     /** Entry key → number of reads in progress. Guarded by [lock]. */
     private val pins = mutableMapOf<String, Int>()
@@ -275,15 +321,40 @@ internal class StorageFileCache(
         )
     }
 
-    /** The current generation; capture it before a download starts and pass it to [commit]. */
-    fun currentGeneration(): Long = generation.load()
+    /**
+     * Marks a download as started, before its request is sent, and says where the cache stood: pass
+     * the result to [commit] or [write], and to [endDownload] once the download is over, however it
+     * ends.
+     *
+     * @return the download's start.
+     */
+    suspend fun beginDownload(): DownloadStart = lock.withLock {
+        DownloadStart(generation.load(), invalidationSequence).also { runningDownloads += it }
+    }
+
+    /**
+     * Marks the download that began at [start] as over, committed or not, so the invalidations it
+     * had to see can be forgotten. Runs even for a caller canceled meanwhile.
+     *
+     * @param start the download's start.
+     */
+    suspend fun endDownload(start: DownloadStart) {
+        withContext(NonCancellable) {
+            lock.withLock {
+                runningDownloads.remove(start)
+                pruneInvalidationsLocked()
+            }
+        }
+    }
 
     /**
      * The cached copy of [entry], marked as used, or `null` when it is not cached.
      *
      * The file is [entry]'s own, whatever its row recorded. A row that recorded another path
      * mapping's file is dropped and counts as not cached, as does every entry while the cache is
-     * not the current identity's.
+     * not the current identity's. A file whose size is not the one its row recorded, as a power
+     * loss between the rename and the disk can leave, is dropped with its row and counts as not
+     * cached.
      *
      * @param entry the entry.
      * @return the cached file, reporting the size of the file on disk.
@@ -300,6 +371,10 @@ internal class StorageFileCache(
             val size =
                 fileSystem.metadataOrNull(entry.file)?.takeIf { it.isRegularFile }?.size
                     ?: return@withContext null
+            if (row.sizeBytes != null && row.sizeBytes != size) {
+                withContext(NonCancellable) { lock.withLock { dropTruncatedFileLocked(entry) } }
+                return@withContext null
+            }
             markUsed(entry.file, nowMillis())
             CachedFile(
                 path = entry.file.toString(),
@@ -417,10 +492,11 @@ internal class StorageFileCache(
                 }
                 fileSystem.createDirectories(directory)
                 TemporaryDownload(
-                    entry,
-                    temporary,
-                    fileSystem.sink(temporary, mustCreate = true).buffer(),
-                )
+                        entry,
+                        temporary,
+                        fileSystem.sink(temporary, mustCreate = true).buffer(),
+                    )
+                    .also { openTemporaryFiles += temporary }
             } catch (failure: IOException) {
                 deleteQuietly(temporary)
                 engineLogger.warning {
@@ -434,9 +510,9 @@ internal class StorageFileCache(
      * Writes [bytes] as [entry]'s cached copy. A file-system or database failure is logged, never
      * thrown: the download's bytes are already the caller's.
      *
-     * @param startedInGeneration [currentGeneration] as read before the download started.
+     * @param start the download's [beginDownload].
      */
-    suspend fun write(entry: FileCacheEntry, bytes: ByteArray, startedInGeneration: Long) {
+    suspend fun write(entry: FileCacheEntry, bytes: ByteArray, start: DownloadStart) {
         val temporary = openTemporaryDownload(entry) ?: return
         try {
             withContext(ioDispatcher) { temporary.sink.write(bytes) }
@@ -448,18 +524,19 @@ internal class StorageFileCache(
             }
             return
         }
-        if (commit(temporary, startedInGeneration) != CommitOutcome.COMMITTED) discard(temporary)
+        if (commit(temporary, start) != CommitOutcome.COMMITTED) discard(temporary)
     }
 
     /**
-     * Records [temporary]'s entry, renames the file over the entry's own, then enforces the size
-     * bound. The row goes first, so a database that refuses it leaves the previous copy in place.
+     * Records [temporary]'s entry, writes the file through to the disk, renames it over the entry's
+     * own, then enforces the size bound. The row goes first, so a database that refuses it leaves
+     * the previous copy in place.
      *
-     * @param startedInGeneration [currentGeneration] as read before the download started.
+     * @param start the download's [beginDownload].
      * @return what happened, even to a caller canceled meanwhile; on anything but
      *   [CommitOutcome.COMMITTED] the caller reads, then [discard]s, the temporary file.
      */
-    suspend fun commit(temporary: TemporaryDownload, startedInGeneration: Long): CommitOutcome =
+    suspend fun commit(temporary: TemporaryDownload, start: DownloadStart): CommitOutcome =
         onIoHandingBackItsResult {
             lock.withLock {
                 val entry = temporary.entry
@@ -472,7 +549,7 @@ internal class StorageFileCache(
                     return@withLock CommitOutcome.FAILED
                 }
                 if (
-                    generation.load() != startedInGeneration ||
+                    generation.load() != start.generation ||
                         !ownership.cacheTakesWritesOfCurrentIdentity()
                 ) {
                     engineLogger.info {
@@ -480,12 +557,24 @@ internal class StorageFileCache(
                     }
                     return@withLock CommitOutcome.CLEARED
                 }
+                if (invalidatedSince(entry, start)) {
+                    engineLogger.info {
+                        "Storage download from ${entry.bucketId} finished after the object was written; not caching"
+                    }
+                    return@withLock CommitOutcome.SUPERSEDED
+                }
                 val directory = entry.file.parent
                 if (directory == null || !resolvesInsideDataDirectory(directory)) {
                     engineLogger.warning {
                         "Storage cache refused a directory that resolves outside the cache; not caching"
                     }
                     return@withLock CommitOutcome.FAILED
+                }
+                try {
+                    syncFile(temporary.path)
+                } catch (failure: IOException) {
+                    // The read side's size check catches what a power loss leaves of the file
+                    engineLogger.debug { "Storage cache could not sync a file to disk: $failure" }
                 }
                 val size = fileSystem.metadataOrNull(temporary.path)?.size
                 val previous =
@@ -515,6 +604,7 @@ internal class StorageFileCache(
                     restoreRowLocked(entry, replaced = previous, recordedSize = size)
                     return@withLock CommitOutcome.FAILED
                 }
+                openTemporaryFiles -= temporary.path
                 markUsed(entry.file, nowMillis())
                 try {
                     evictOverLimit(protectedKey = entry.key)
@@ -540,6 +630,7 @@ internal class StorageFileCache(
                 // The file is being thrown away; a failed flush changes nothing.
             }
             deleteQuietly(temporary.path)
+            lock.withLock { openTemporaryFiles -= temporary.path }
         }
     }
 
@@ -574,7 +665,7 @@ internal class StorageFileCache(
                         sourceRow != null &&
                         !sourceRow.recordsOutdatedPath(source)
                 ) {
-                    moveFileLocked(source, destination)
+                    moveFileLocked(source, destination, sourceRow)
                 }
                 removeObjectLocked(fromBucket, from)
             }
@@ -585,6 +676,7 @@ internal class StorageFileCache(
      * Empties the cache for an identity change. Runs [clearDatabase] — the store's own wipe, which
      * removes every storage row — and deletes both cache directories, all under the lock and after
      * bumping the generation, so no download that started before can commit into the emptied cache.
+     * The temporary file of a download still running stays, for its caller to read and [discard].
      *
      * @param clearDatabase the store's wipe.
      */
@@ -595,8 +687,9 @@ internal class StorageFileCache(
                 trackedBytes = null
                 evictionIdleUntilMillis = Long.MIN_VALUE
                 clearDatabase()
-                fileSystem.deleteRecursively(storageDirectory, mustExist = false)
-                fileSystem.deleteRecursively(hashedDirectory, mustExist = false)
+                cacheDirectories().forEach { directory ->
+                    deleteSparingOpenTemporaryFilesLocked(directory)
+                }
                 if (directoriesPrepared) prepareDirectories()
             }
         }
@@ -635,8 +728,15 @@ internal class StorageFileCache(
 
     // A function whose name ends in Locked runs under [lock].
 
-    /** Drops every row and file of the object at [objectPath], its variants included. */
+    /**
+     * Drops every row and file of the object at [objectPath], its variants included, and records
+     * the drop for the downloads of it still running, which may hold the bytes it replaced.
+     */
     private suspend fun removeObjectLocked(bucketId: String, objectPath: String) {
+        invalidationSequence += 1
+        if (runningDownloads.isNotEmpty()) {
+            invalidatedAt[cachedFileKeyOf(bucketId, objectPath)] = invalidationSequence
+        }
         cachedFileDao.forObject(bucketId, objectPath, "$objectPath$VARIANT_SEPARATOR").forEach { row
             ->
             removeRowLocked(row)
@@ -653,6 +753,53 @@ internal class StorageFileCache(
     private suspend fun removeRowLocked(row: CachedFileRow) {
         cachedFileDao.delete(row.key)
         trackedBytes = trackedBytes?.minus(row.sizeBytes ?: 0L)
+    }
+
+    /** Whether [entry]'s object had its copies dropped after the download that began at [start]. */
+    private fun invalidatedSince(entry: FileCacheEntry, start: DownloadStart): Boolean =
+        (invalidatedAt[cachedFileKeyOf(entry.bucketId, entry.objectPath)] ?: Long.MIN_VALUE) >
+            start.sequence
+
+    /**
+     * Forgets the recorded drops no running download can be refused for: those at or before the
+     * oldest running download's start, or all of them once none is running.
+     */
+    private fun pruneInvalidationsLocked() {
+        val oldestStart = runningDownloads.minOfOrNull { it.sequence } ?: invalidationSequence
+        invalidatedAt.values.removeAll { sequence -> sequence <= oldestStart }
+    }
+
+    /**
+     * Drops [entry]'s row and file once a read found the file's size is not the one the row
+     * recorded, unless a commit replaced both meanwhile.
+     */
+    private suspend fun dropTruncatedFileLocked(entry: FileCacheEntry) {
+        val row = rowOf(entry.bucketId, entry.rowPath) ?: return
+        val size = fileSystem.metadataOrNull(entry.file)?.takeIf { it.isRegularFile }?.size
+        if (row.sizeBytes == null || size == null || row.sizeBytes == size) return
+        engineLogger.warning {
+            "Storage cache dropped a file from ${entry.bucketId} whose size is not the one recorded"
+        }
+        removeRowLocked(row)
+        deleteContained(entry.file)
+    }
+
+    /**
+     * Deletes [directory] and everything under it, except the temporary files of downloads still
+     * running and the directories that hold them.
+     */
+    private fun deleteSparingOpenTemporaryFilesLocked(directory: Path) {
+        val spared = openTemporaryFiles.filter { file -> file.isStrictlyInside(directory) }
+        if (spared.isEmpty()) {
+            fileSystem.deleteRecursively(directory, mustExist = false)
+            return
+        }
+        if (!fileSystem.exists(directory)) return
+        val keptDirectories =
+            spared.flatMapTo(mutableSetOf()) { file -> generateSequence(file.parent) { it.parent } }
+        fileSystem.listRecursively(directory).toList().asReversed().forEach { path ->
+            if (path !in spared && path !in keptDirectories) deleteQuietly(path)
+        }
     }
 
     /**
@@ -704,8 +851,15 @@ internal class StorageFileCache(
         deleteContained(recorded)
     }
 
-    /** Moves [source]'s cached file to [destination]'s, recording the destination first. */
-    private suspend fun moveFileLocked(source: FileCacheEntry, destination: FileCacheEntry) {
+    /**
+     * Moves [source]'s cached file to [destination]'s, recording the destination first, with the
+     * fetch time of [sourceRow]: the bytes are the ones fetched then.
+     */
+    private suspend fun moveFileLocked(
+        source: FileCacheEntry,
+        destination: FileCacheEntry,
+        sourceRow: CachedFileRow,
+    ) {
         val directory = destination.file.parent ?: return
         if (!resolvesInsideDataDirectory(source.file) || !resolvesInsideDataDirectory(directory))
             return
@@ -718,6 +872,7 @@ internal class StorageFileCache(
                 path = destination.rowPath,
                 file = destination.file,
                 size = size,
+                fetchedAt = sourceRow.lastFetchedEpochMs,
             )
             trackedBytes = trackedBytes?.plus(size)
         } catch (failure: Exception) {

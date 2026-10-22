@@ -186,15 +186,27 @@ internal class InMemoryFileSystem(private val clock: Clock) : FileSystem() {
         }
     }
 
-    /** Appends every write to the file at [key] at once, as a disk does. */
+    /**
+     * Appends every write to the file at [key] at once, as a disk does. Once the file is deleted
+     * under it, every write succeeds and reaches nothing, as a write to an open descriptor of an
+     * unlinked file does.
+     */
     private inner class AppendingSink(private val key: Path) : Sink {
         private var closed = false
+
+        /** Set once the file was deleted under this sink; the writes since went nowhere. */
+        private var detached = false
 
         override fun write(source: Buffer, byteCount: Long) {
             if (closed) throw IOException("closed")
             val bytes = source.readByteArray(byteCount)
+            if (detached) return
             nodes.update { tree ->
-                val file = tree[key] as? Node.File ?: throw FileNotFoundException("deleted: $key")
+                val file = tree[key] as? Node.File
+                if (file == null) {
+                    detached = true
+                    return@update tree
+                }
                 tree + (key to Node.File(file.bytes + bytes, clock.now().toEpochMilliseconds()))
             }
         }
