@@ -57,6 +57,12 @@ internal interface QueryCacheDao {
     @Query("SELECT * FROM object_cache WHERE table_name = :table AND signature = :cacheKey LIMIT 1")
     fun observe(table: String, cacheKey: String): Flow<CachedQueryRow?>
 
+    /** Whether a row is cached for [table]/[cacheKey], without reading its payload. */
+    @Query(
+        "SELECT EXISTS(SELECT 1 FROM object_cache WHERE table_name = :table AND signature = :cacheKey)"
+    )
+    suspend fun hasRow(table: String, cacheKey: String): Boolean
+
     /**
      * All cached SELECT payloads for [table], across every signature currently observed.
      *

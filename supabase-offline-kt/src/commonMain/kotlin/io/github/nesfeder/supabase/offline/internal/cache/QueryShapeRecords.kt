@@ -65,7 +65,7 @@ internal class QueryShapeRecords(private val queryCacheDao: QueryCacheDao, priva
             perTable[cacheKey] = next
             val record = table to cacheKey
             if (!persist || (recorded && next == existing && record in written)) return
-            if (queryCacheDao.get(table, cacheKey) == null) {
+            if (!queryCacheDao.hasRow(table, cacheKey)) {
                 // The payload is gone: whatever record is on disk goes with it, and the next
                 // payload written for the query writes its record again
                 written -= record
@@ -75,6 +75,20 @@ internal class QueryShapeRecords(private val queryCacheDao: QueryCacheDao, priva
             written += record
         }
     }
+
+    /**
+     * Whether the record on disk of the query cached under [cacheKey] already holds [shape], or the
+     * marker of a shared key, so that [remember] with `persist` would write nothing. A reader asks
+     * this before taking the clear lock for the write, which most reads then skip; [remember]
+     * checks again under the lock, so a record written in between costs nothing but the lock.
+     */
+    suspend fun isRecorded(table: String, cacheKey: String, shape: QueryShape): Boolean =
+        mutex.withLock {
+            val perTable = loadedTable(table)
+            perTable.containsKey(cacheKey) &&
+                (table to cacheKey) in written &&
+                perTable[cacheKey].let { existing -> existing == null || existing == shape }
+        }
 
     /** The shape of the query cached under [cacheKey], or `null` when it is not known. */
     suspend fun shapeOf(table: String, cacheKey: String): QueryShape? = mutex.withLock {

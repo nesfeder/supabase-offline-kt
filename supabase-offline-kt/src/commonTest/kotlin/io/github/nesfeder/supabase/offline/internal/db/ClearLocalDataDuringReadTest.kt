@@ -24,8 +24,9 @@ import kotlinx.coroutines.test.runTest
 /**
  * A read that took its snapshot of the cache before `clearLocalData()` records nothing about its
  * query afterward: the shape record, which holds the query's filter values (a user id, a search),
- * is written under the clear lock and only beside a payload, so a clear in the gap leaves no row of
- * the outgoing user's behind.
+ * is written under the clear lock, so the write and the clear are one step each and a clear that
+ * arrives while the record is being written deletes it with everything else. Each test parks the
+ * read just before its record write, so the interleaving is exact.
  */
 class ClearLocalDataDuringReadTest {
 
@@ -44,11 +45,15 @@ class ClearLocalDataDuringReadTest {
     private val parked = CompletableDeferred<Unit>()
     private val release = CompletableDeferred<Unit>()
 
-    /** Parks the next read of [NOTES]'s payload between the snapshot and what follows it. */
-    private fun parkNextPayloadRead() {
+    /** Seeds the user's notes, and parks the next write of a shape record until [release]. */
+    private fun parkNextShapeRecordWrite() {
         queryCacheDao.seedPayload(NOTES, CACHE_KEY, """[{"id":"n1","user_id":"u-1"}]""")
-        queryCacheDao.onGetSnapshot = { table, _ ->
-            if (table == NOTES && !parked.isCompleted) {
+        queryCacheDao.onUpsert = { row ->
+            if (
+                row.table == RESERVED_TABLE_NAME &&
+                    row.cacheKey.startsWith(QUERY_SHAPE_CACHE_KEY_PREFIX) &&
+                    !parked.isCompleted
+            ) {
                 parked.complete(Unit)
                 release.await()
             }
@@ -62,26 +67,28 @@ class ClearLocalDataDuringReadTest {
             .filter { cacheKey -> cacheKey.startsWith(QUERY_SHAPE_CACHE_KEY_PREFIX) }
 
     @Test
-    fun a_one_shot_read_through_the_clear_leaves_no_shape_record() = runTest {
-        // Given — a read of the user's notes parked after it read the payload
-        parkNextPayloadRead()
+    fun a_clear_during_a_one_shot_reads_record_write_leaves_no_shape_record() = runTest {
+        // Given — a read of the user's notes parked as it writes its record
+        parkNextShapeRecordWrite()
         val read = async { store.queryOverlay.cachedPayloadOverlaid(NOTES, CACHE_KEY, shape) }
         parked.await()
 
-        // When — local data is cleared (sign-out), then the read goes on
-        store.localData.clearLocalData()
+        // When — local data is cleared (sign-out) meanwhile, then the read goes on
+        val clear = async { store.localData.clearLocalData() }
         release.complete(Unit)
         read.await()
+        clear.await()
 
-        // Then — no record of the query, with its filter value, is on disk
+        // Then — the clear waited for the write and took the record with the rows; a write outside
+        // the clear lock would have landed after the delete and stayed
         assertEquals(emptyList(), shapeRecordKeys())
         assertNull(queryCacheDao.getRow(NOTES, CACHE_KEY))
     }
 
     @Test
-    fun a_live_read_through_the_clear_leaves_no_shape_record() = runTest {
-        // Given — a live read of the user's notes parked after it read the payload
-        parkNextPayloadRead()
+    fun a_clear_during_a_live_reads_record_write_leaves_no_shape_record() = runTest {
+        // Given — a live read of the user's notes parked as it writes its record
+        parkNextShapeRecordWrite()
         val read = async {
             store.queryOverlay
                 .servedPayloadFlow(NOTES, CACHE_KEY, shape, MutableStateFlow(Unit))
@@ -90,9 +97,10 @@ class ClearLocalDataDuringReadTest {
         parked.await()
 
         // When
-        store.localData.clearLocalData()
+        val clear = async { store.localData.clearLocalData() }
         release.complete(Unit)
         read.await()
+        clear.await()
 
         // Then
         assertEquals(emptyList(), shapeRecordKeys())

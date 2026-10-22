@@ -420,7 +420,7 @@ internal class QueryOverlay(
      * with a clear: not once local data was cleared, or the cache dropped, since [readTick], when
      * the payload the record would sit beside is gone and the record, with the query's filter
      * values, would outlive it. The shape is then still known in memory, as a live query's is with
-     * no payload.
+     * no payload. A read whose record is already written takes no lock but the records' own.
      */
     private suspend fun rememberUnlessCleared(
         table: String,
@@ -428,6 +428,7 @@ internal class QueryOverlay(
         shape: QueryShape,
         readTick: Long,
     ) {
+        if (queryCache.queryShapes.isRecorded(table, cacheKey, shape)) return
         val written =
             freshness.writeUnlessCleared(readTick) {
                 queryCache.queryShapes.remember(table, cacheKey, shape, persist = true)

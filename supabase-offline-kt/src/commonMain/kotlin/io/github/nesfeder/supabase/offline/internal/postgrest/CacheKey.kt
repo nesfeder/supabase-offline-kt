@@ -126,8 +126,9 @@ private val SEPARATORS = charArrayOf('&', '=', '|')
 private fun String.holdsSeparator(): Boolean = indexOfAny(SEPARATORS) >= 0
 
 /**
- * A 64-bit FNV-1a digest, as sixteen hex digits, of [names] with each one's values and [range],
- * every part prefixed by its length, so parts holding separators are read apart.
+ * A 64-bit FNV-1a digest, as sixteen hex digits, over the UTF-16 code units of [names] with each
+ * one's values and [range], every part prefixed by its length, so parts holding separators are read
+ * apart.
  */
 private fun digestOf(
     names: List<String>,

@@ -59,17 +59,20 @@ import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * Thrown into a reactive read's refresh loop when a response came back under a session the trust
- * policy does not take as the user's, or with a body that is not a list of rows, so the loop keeps
- * trying instead of settling on it.
- *
- * @param reason how the response was answered, after "SELECT table answered".
+ * policy does not take as the user's, so the loop keeps trying instead of settling on it.
  */
-internal class UntrustedResponseException(
-    table: String,
-    reason: String = "under a session that is not settled",
-) : RuntimeException("SELECT $table answered $reason; will retry")
+internal class UntrustedResponseException(table: String) :
+    RuntimeException("SELECT $table answered under a session that is not settled; will retry")
 
-/** The [UntrustedResponseException] reason for a body that is not a list of rows. */
+/**
+ * Thrown into a reactive read's refresh loop when a response was not a list of rows (a proxy's
+ * block page, a server's fallback page, at `200`): a failure, not a wait, so the read reads
+ * [RefreshState.Stalled] by it once the fast retries are spent, and is still retried.
+ */
+internal class NotARowListException(table: String) :
+    RuntimeException("SELECT $table answered $NOT_A_ROW_LIST")
+
+/** How a body that is not a list of rows is described in logs and failures. */
 private const val NOT_A_ROW_LIST = "with something other than a list of rows"
 
 /**
@@ -193,7 +196,9 @@ internal class QueryReader(
             is ReadStrategy.NetworkFirst -> {
                 val retries = retriesFor(cacheAnswers = hasFreshCache(slot, readStrategy.maxAge))
                 try {
-                    fetchWaitingOutRestore(slot, columns, request, retries)
+                    fetchWaitingOutRestore(slot, columns, request, retries) { updatedAt ->
+                        isFresh(fetchedAtOf(updatedAt), readStrategy.maxAge)
+                    }
                 } catch (exception: Exception) {
                     if (!exception.isNetworkOrConnectivityFailure()) throw exception
                     val cached = readCached(slot, readStrategy.maxAge, servesStale = true)
@@ -207,7 +212,13 @@ internal class QueryReader(
                 }
             }
             ReadStrategy.NetworkOnly -> {
-                fetchWaitingOutRestore(slot, columns, request, retriesFor(cacheAnswers = false))
+                fetchWaitingOutRestore(
+                    slot,
+                    columns,
+                    request,
+                    retriesFor(cacheAnswers = false),
+                    cacheServes = null,
+                )
             }
             is ReadStrategy.CacheFirst -> {
                 val cached = readCached(slot, readStrategy.maxAge, servesStale = false)
@@ -244,7 +255,9 @@ internal class QueryReader(
     ): PostgrestResult {
         val retries = retriesFor(cacheAnswers = hasFreshCache(slot, cacheDuration))
         return try {
-            fetchWaitingOutRestore(slot, columns, request, retries)
+            fetchWaitingOutRestore(slot, columns, request, retries) { updatedAt ->
+                isFresh(fetchedAtOf(updatedAt), cacheDuration)
+            }
         } catch (exception: Exception) {
             if (!exception.isNetworkOrConnectivityFailure()) throw exception
             val stale = readCached(slot, cacheDuration, servesStale = true) ?: throw exception
@@ -258,23 +271,30 @@ internal class QueryReader(
      * speak for the user: after the session stops restoring (waiting at most
      * [RESTORE_WINDOW_RETRY_WAITS] backoff steps), or at once when it settled into another identity
      * mid-request. Once the steps run out it returns the last response, which was not cached.
+     *
+     * @param cacheServes whether a cached payload with this fetch stamp answers in the server's
+     *   place when the server's answer is not a list of rows: the strategy's `maxAge`; `null` for a
+     *   read the cache never answers.
      */
     private suspend fun fetchWaitingOutRestore(
         slot: CacheSlot,
         columns: Columns,
         request: SelectRequestBuilder.() -> Unit,
         retries: Retries,
-    ): PostgrestResult = fetchWaitingOutRestoreAnswer(slot, columns, request, retries).result
+        cacheServes: ((updatedAt: Long) -> Boolean)?,
+    ): PostgrestResult =
+        fetchWaitingOutRestoreAnswer(slot, columns, request, retries, cacheServes).result
 
     /**
      * [fetchWaitingOutRestore]'s answer, and whether the cache holds it: `false` when the cache
-     * refused it as not the user's, or as an empty answer it may not take.
+     * refused it as not the user's, as not a list of rows, or as an empty answer it may not take.
      */
     private suspend fun fetchWaitingOutRestoreAnswer(
         slot: CacheSlot,
         columns: Columns,
         request: SelectRequestBuilder.() -> Unit,
         retries: Retries,
+        cacheServes: ((updatedAt: Long) -> Boolean)?,
     ): NetworkAnswer {
         val table = slot.table
         var sessionBefore = requestSession()
@@ -303,13 +323,19 @@ internal class QueryReader(
                     fetched.isEmpty,
                 ) || fetched.outcome == CacheWriteOutcome.WRITTEN
             ) {
-                return NetworkAnswer(overlaidResponse(slot, fetched), fetched.isHeldByTheCache)
+                return NetworkAnswer(
+                    overlaidResponse(slot, fetched, cacheServes),
+                    fetched.isHeldByTheCache,
+                )
             }
             if (stepsTaken == RESTORE_WINDOW_RETRY_WAITS) {
                 engineLogger.warning {
                     "SELECT $table session did not settle after $RESTORE_WINDOW_RETRY_WAITS waits; serving the response uncached"
                 }
-                return NetworkAnswer(overlaidResponse(slot, fetched), wasCached = false)
+                return NetworkAnswer(
+                    overlaidResponse(slot, fetched, cacheServes),
+                    wasCached = false,
+                )
             }
             engineLogger.info {
                 "SELECT $table answered while the session was not settled; waiting for the session"
@@ -616,10 +642,8 @@ internal class QueryReader(
         val fetched =
             fetchAndCache(slot, columns, request, requestSession(), Retries.TRANSPORT_FAILS_FAST)
         if (fetched.wasRefusedAfterClear) throw UntrustedResponseException(slot.table)
-        if (!fetched.isRowList) {
-            engineLogger.info { "SELECT ${slot.table} answered $NOT_A_ROW_LIST; will retry" }
-            throw UntrustedResponseException(slot.table, NOT_A_ROW_LIST)
-        }
+        // A failure, not a wait: the report logs it once, and the loop stalls on it in time
+        if (!fetched.isRowList) throw NotARowListException(slot.table)
         if (
             fetched.outcome == CacheWriteOutcome.REFUSED_OTHER_OWNER ||
                 trustPolicy.refreshRetries(
@@ -716,7 +740,7 @@ internal class QueryReader(
     ): Exception? {
         val retries = retriesFor(cacheAnswers = hasFreshCache(slot, cacheDuration = null))
         return try {
-            val answer = fetchWaitingOutRestoreAnswer(slot, columns, request, retries)
+            val answer = fetchWaitingOutRestoreAnswer(slot, columns, request, retries) { true }
             if (answer.wasCached) null else UntrustedResponseException(slot.table)
         } catch (exception: Exception) {
             if (
@@ -748,12 +772,17 @@ internal class QueryReader(
         var refetchBudget = STALE_RESPONSE_REFETCH_BUDGET
         while (true) {
             val requestStartedAtTick = freshness.tickNow()
-            val response = send(slot, columns, request, retries)
-            engineLogger.debug { "SELECT $table network response: ${response.data}" }
+            val sent = send(slot, columns, request, retries)
+            engineLogger.debug { "SELECT $table network response: ${sent.data}" }
             val sessionAfter = requestSession()
             // Only a list of rows is trusted; an empty one goes through the query cache's empty
-            // guard, a non-empty one through the trust check
-            val isRowList = isRowListResponse(response)
+            // guard, a non-empty one through the trust check. A blank body stands for an empty
+            // list, and is served and stored as one
+            val isRowList = isRowListResponse(sent)
+            val response =
+                if (sent.data.isBlank())
+                    PostgrestResult(EMPTY_JSON_ARRAY, sent.headers, delegate.postgrest)
+                else sent
             val isEmpty = isRowList && isEmptyJsonArrayPayload(response.data)
             val outcome =
                 queryCache.cacheResponse(
@@ -802,12 +831,13 @@ internal class QueryReader(
 
     /**
      * What a one-shot read serves for [fetched]: the server's rows, or the cache when they were
-     * refused as older than a local write, or are not a list of rows and the query is cached, with
-     * pending mutations overlaid.
+     * refused as older than a local write, or when they are not a list of rows and the cache holds
+     * rows [cacheServes] takes (`null` never does), with pending mutations overlaid.
      */
     private suspend fun overlaidResponse(
         slot: CacheSlot,
         fetched: FetchedResponse,
+        cacheServes: ((updatedAt: Long) -> Boolean)?,
     ): PostgrestResult {
         val (table, cacheKey) = slot
         val cached =
@@ -816,11 +846,11 @@ internal class QueryReader(
                     "SELECT $table response still predates a local write; serving cached state"
                 }
                 queryOverlay.cachedPayloadOverlaid(table, cacheKey, slot.shape)
-            } else if (!fetched.isRowList) {
+            } else if (!fetched.isRowList && cacheServes != null) {
                 engineLogger.warning {
                     "SELECT $table answered $NOT_A_ROW_LIST; serving cached state if any"
                 }
-                queryOverlay.cachedPayloadOverlaid(table, cacheKey, slot.shape)
+                queryOverlay.cachedPayloadOverlaid(table, cacheKey, slot.shape, cacheServes)
             } else {
                 null
             }

@@ -57,6 +57,9 @@ internal open class InMemoryQueryCacheDao : QueryCacheDao {
         return slot.asStateFlow().map { it }
     }
 
+    override suspend fun hasRow(table: String, cacheKey: String): Boolean =
+        rows.value.containsKey(table to cacheKey)
+
     override suspend fun allForTable(table: String): List<CachedQueryRow> =
         rows.value.values.filter { it.table == table }
 

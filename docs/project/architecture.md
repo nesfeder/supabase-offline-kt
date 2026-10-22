@@ -762,17 +762,17 @@ followed by the check.
 parameters sorted by name and its range, such as
 `assets?deleted=eq.false&order=updatedAt.desc|range=0-49`, and a table of another schema is named
 `schema.table`. A parameter name or value, or a range, that holds one of the key's separators (`&`,
-`=`, `|`) would read as two parameters, or as a range, and share a key with another query, so such a
-key ends in `|digest=` and a hash of its parts taken apart; every other key is unchanged. The key is
-a fingerprint and is never parsed back, and no query is answered from another's key. What the query
-admits is captured from its request instead, when it is read: its select list, its conditions on
-plain columns and what it asks of the tables it embeds, recorded as a query shape beside the
-payload. The shape, like the queue's capture of a write's filter, reads a column's first value only,
-as supabase-kt sends only that one; a request with two is refused before this point. A shape record
-is written only beside its payload and under the clear lock, so neither a clear nor an eviction
-leaves one behind, and a record of another format (another build's, or one that does not decode) is
-deleted when its table's records are first read, so the next read records the shape this build
-knows.
+`=`, `|`) would read as two parameters, or as a range, and share a key with another query. Such a
+key ends in `|digest=` and a hash of its parts, each read on its own; every other key is unchanged.
+The key is a fingerprint and is never parsed back, and no query is answered from another's key.
+What the query admits is captured from its request instead, when it is read: its select list, its
+conditions on plain columns and what it asks of the tables it embeds, recorded as a query shape
+beside the payload. The shape, like the queue's capture of a write's filter, reads a column's first
+value only, as supabase-kt sends only that one; a request with two is refused before this point. A
+shape record is written only beside its payload and under the clear lock, so neither a clear nor an
+eviction leaves one behind. A record of another format (another build's, or one that does not
+decode) is deleted when its table's records are first read, so the next read records the shape this
+build knows.
 
 **The overlay of pending writes.** What a read serves is the stored payload with the writes it does
 not hold laid on top, oldest first: the current identity's queued writes, and replayed writes newer
@@ -803,10 +803,12 @@ gone (a clear, a drop) is shown `Refreshing` until the read has fetched again.
 the queue lock and the clear lock, in that order, and is not stored when it is older than a change
 to the cache (below), when it started before a clear or a drop, when the cache is another
 identity's, when `responseTrust` does not take the session it went out under, when it is not a JSON
-array of rows under a JSON media type (a proxy's block page, a server's fallback page, at `200`), or
-when it is an empty answer the rule does not take as the server's. A blank body stands for an empty
-list and is stored as `[]`. An answer that is not a list of rows is served as a refusal of trust: a
-reactive read's refresh asks again, and a one-shot read with the query cached is served the cache.
+array of rows under a JSON media type or none (a proxy's block page, a server's fallback page, at
+`200`), or when it is an empty answer the rule does not take as the server's. A blank body stands
+for an empty list, served and stored as `[]`. An answer that is not a list of rows counts as a
+failed attempt: a reactive read's refresh asks again and reads `Stalled` by that cause after the
+fourth in a row, and a `NetworkFirst` or `CacheFirst` read with the query cached within its
+`maxAge` is served the cache.
 
 **Freshness ticks.** Every request reads a tick from a monotonic clock before it goes out. Every
 write that changes the cache itself (an online write's patch, a replayed write, an emptied table)
@@ -819,13 +821,13 @@ reactive read's refresh asks again, and a one-shot read asks again only when the
 restoring or moved during the request, and otherwise returns the server's rows uncached.
 
 **Stale after a write.** A payload's `updated_at` is the time of the response it holds, and a patch
-keeps it. A patch writes over the rows it read, so a list eviction deleted between its read and its
-write, holding no table lock, stays deleted. A write the cache cannot patch exactly (an UPDATE or
-DELETE filtered by something the engine cannot evaluate, an upsert without keys, a write to another
-schema) marks stale the cached queries it may reach, by negating that time, and their live readers
-fetch again. Stale means
-"refresh when you can": `CacheFirst` fetches a stale payload again online and serves it offline
-within its `maxAge`, and `NetworkFirst` and `CacheOnly` serve it within theirs.
+keeps it. A patch writes over the rows it read: eviction holds no table lock, and a list it deleted
+between the patch's read and its write stays deleted. A write the cache cannot patch exactly (an
+UPDATE or DELETE filtered by something the engine cannot evaluate, an upsert without keys, a write
+to another schema) marks stale the cached queries it may reach, by negating that time, and their
+live readers fetch again. Stale means "refresh when you can": `CacheFirst` fetches a stale payload
+again online and serves it offline within its `maxAge`, and `NetworkFirst` and `CacheOnly` serve it
+within theirs.
 
 **Eviction.** After a response of 4 K characters or more, and after every 32nd response, the engine
 sums the payloads' length. Over the bound, it deletes the payloads fetched longest ago, ten at a
@@ -1265,7 +1267,7 @@ What the library promises, each with the tests that pin it:
 | No error answer from Storage is cached as a file. | `ChannelDownloadStatusTest`, `DownloadToFileStatusAndroidTest` |
 | A response whose request started before a write changed the cache, before a clear, or before a change of owner never lands in the cache. | `StaleRefreshWatermarkTest`, `CacheOwnershipTest`, `ClearLocalDataDuringWritesTest`, `StorageClearDuringDownloadTest` |
 | With Auth, one user's cached rows and files are never served to another. | `CacheBelongsToOneIdentityTest`, `CacheOwnershipTest` |
-| Only a JSON array of rows is written to the query cache: a `2xx` answer of another shape or media type is refused, a read with the query cached is served the cached rows, and a reactive read's refresh asks again. | `EmptyResponseGuardTest`, `NonRowListRefreshTest` |
+| Only a JSON array of rows is written to the query cache: a `2xx` answer of another shape or media type is refused, a `NetworkFirst` or `CacheFirst` read with the query cached within its `maxAge` is served the cached rows, and a reactive read's refresh asks again, `Stalled` by that cause after its fast retries. | `EmptyResponseGuardTest`, `NonRowListRefreshTest` |
 | Two different queries never share one cache key, and a list's shape record never outlives its payload or passes for another format's. | `CacheKeyTest`, `CacheKeyFixtureTest`, `QueryShapeRecordsTest`, `PatchAfterEvictionTest`, `ClearLocalDataDuringReadTest` |
 | After `clearLocalData()`, the deleted rows cannot be read back from the database's files once no open read holds its write-ahead log: when the clear returns if none does within a second, otherwise within a few seconds of the read ending while the client is open, or at `close()`. The clear never waits longer, and never fails for it. | `ClearLocalDataAndroidTest`, `ClearLocalDataIosTest`, `DatabaseScrubTest` |
 | Within one process, one database is open in one client at a time. | `OfflinePluginAndroidTest`, `OfflinePluginIosTest`, `IosClientLifecycleTest` |

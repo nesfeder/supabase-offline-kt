@@ -140,9 +140,10 @@ From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabas
   supabase-kt's retries and throws, with no fallback to the cache.
 - **An answer that is not a list of rows** (a `2xx` whose body is not a JSON array, or not JSON: a
   captive portal's sign-in page, a proxy's block page, a self-hosted server's fallback page) is
-  never written to the cache. A read with the query cached is served the cached rows, marked as
-  from the cache; one without is served the body as it came. A reactive read's refresh asks again.
-  A blank `2xx` body is an empty list.
+  never written to the cache. A `NetworkFirst` or `CacheFirst` read with the query cached within
+  its `maxAge` is served the cached rows, marked as from the cache; a `NetworkOnly` read, or one
+  without such rows, is served the body as it came. A reactive read's refresh asks again, and reads
+  `Stalled` after its fast retries if the pages keep coming. A blank `2xx` body is an empty list.
 - **A session without a user id** (no `user`, and a token without `sub`) is not a settled identity
   under the default trust rule: nothing it reads is cached, and a reactive read made with it never
   settles.

@@ -12,6 +12,7 @@ import io.github.nesfeder.supabase.offline.isFromCache
 import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingLogSink
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
+import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
 import io.github.nesfeder.supabase.offline.testdoubles.TestStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
 import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
@@ -22,9 +23,11 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.http.headersOf
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.minutes
 import kotlin.time.ExperimentalTime
 import kotlinx.coroutines.test.runTest
 
@@ -393,6 +396,97 @@ class EmptyResponseGuardTest {
         val cacheOnly = client.from("projects").select(readStrategy = ReadStrategy.CacheOnly())
         assertEquals("""[{"id":"project-1"}]""", cacheOnly.data)
         assertEquals(1, server.requests.count { request -> request.method == "GET" })
+    }
+
+    @Test
+    fun a_blank_body_is_answered_and_stored_as_an_empty_list() = runTest {
+        // Given — nothing cached, and a server (a proxy standing in for PostgREST) answering a
+        // blank body under a settled session
+        val queryCacheDao = FakeQueryCacheDao()
+        val server = RecordingPostgrestServer(answer = { okJson("") })
+        val client =
+            newTestOfflineClient(supabase = server.supabaseClient(), queryCacheDao = queryCacheDao)
+
+        // When
+        val answer = client.from("projects").select(readStrategy = ReadStrategy.NetworkOnly)
+
+        // Then — the caller decodes an empty list, and the cache holds one
+        assertEquals("[]", answer.data)
+        assertEquals("[]", queryCacheDao.getRow("projects", "projects")?.payload)
+    }
+
+    @Test
+    fun a_json_array_under_another_media_type_is_refused() = runTest {
+        // Given — the list cached, and a server answering rows as `text/plain`
+        val queryCacheDao = FakeQueryCacheDao()
+        queryCacheDao.seedPayload("projects", "projects", """[{"id":"project-1"}]""")
+        val server =
+            RecordingPostgrestServer(
+                answer = {
+                    respond(
+                        content = """[{"id":"project-9"}]""",
+                        status = HttpStatusCode.OK,
+                        headers =
+                            headersOf(HttpHeaders.ContentType, ContentType.Text.Plain.toString()),
+                    )
+                }
+            )
+        val client =
+            newTestOfflineClient(supabase = server.supabaseClient(), queryCacheDao = queryCacheDao)
+
+        // When
+        val answer = client.from("projects").select(readStrategy = ReadStrategy.NetworkFirst())
+
+        // Then — not stored, and the read is served the cached rows
+        assertEquals("""[{"id":"project-1"}]""", answer.data)
+        assertTrue(answer.isFromCache)
+        assertEquals(
+            """[{"id":"project-1"}]""",
+            queryCacheDao.getRow("projects", "projects")?.payload,
+        )
+    }
+
+    @Test
+    fun the_fallback_from_a_page_honors_max_age_and_never_answers_network_only() = runTest {
+        // Given — the list cached long ago, and a server answering a page
+        val queryCacheDao = FakeQueryCacheDao()
+        queryCacheDao.seedPayload("projects", "projects", """[{"id":"project-1"}]""", updatedAt = 0)
+        val page = "<!doctype html><html><body>Sign in to the network</body></html>"
+        val server =
+            RecordingPostgrestServer(
+                answer = {
+                    respond(
+                        content = page,
+                        status = HttpStatusCode.OK,
+                        headers =
+                            headersOf(HttpHeaders.ContentType, ContentType.Text.Html.toString()),
+                    )
+                }
+            )
+        val client =
+            newTestOfflineClient(
+                supabase = server.supabaseClient(),
+                queryCacheDao = queryCacheDao,
+                nowMillis = { 10.minutes.inWholeMilliseconds },
+            )
+
+        // When — reads whose strategy may not serve rows that old, or the cache at all
+        val pastMaxAge =
+            client.from("projects").select(readStrategy = ReadStrategy.NetworkFirst(1.minutes))
+        val networkOnly = client.from("projects").select(readStrategy = ReadStrategy.NetworkOnly)
+        val withinMaxAge =
+            client.from("projects").select(readStrategy = ReadStrategy.NetworkFirst(1.minutes))
+
+        // Then — the first two are served the body as it came, as with nothing cached; rows within
+        // `maxAge` are served, and the page was never stored
+        assertEquals(page, pastMaxAge.data)
+        assertFalse(pastMaxAge.isFromCache)
+        assertEquals(page, networkOnly.data)
+        assertEquals(page, withinMaxAge.data)
+        assertEquals(
+            """[{"id":"project-1"}]""",
+            queryCacheDao.getRow("projects", "projects")?.payload,
+        )
     }
 
     @Test
