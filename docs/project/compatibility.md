@@ -199,6 +199,16 @@ row. The library refuses such a list, at the top level or in a group, with
 `IllegalArgumentException` before anything is sent or queued. Match such a pattern with a single
 `like` or `ilike` filter.
 
+**A value with a quote or a backslash in a list or a group.** supabase-kt puts a backslash before
+each `"` and `\` of an `in` element, and of a comparison value inside an `or { }` or `and { }`
+group, and quotes the value only when it also holds one of `,.:()`; PostgREST reads an unquoted
+element or group value with its escapes. `isIn("title", listOf("Say \"hi\""))` sends
+`title=in.(Say \"hi\")`, which matches nothing, while `eq("title", "Say \"hi\"")` at the top level
+is sent as written and matches. The library refuses such an `in` element or group value with
+`IllegalArgumentException` before anything is sent or queued, and moves a write queued before
+0.3.0 with such a value to the rejected list when it comes up for sending. Filter on the value
+with a single top-level filter.
+
 **An app that asks for supabase-kt 3.7 or 3.8 itself** gets it: Gradle picks the higher version,
 so the library's pin is a floor, not a ceiling.
 

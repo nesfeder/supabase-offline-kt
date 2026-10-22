@@ -174,6 +174,10 @@ class EscapedValuesTest {
                     textSearch("body", "a\\b", TextSearchType.NONE)
                     filter("during", FilterOperator.OV, "2026-01-01" to "2026-02-01")
                     filter("labels", FilterOperator.CS, listOf("\"a}b\""))
+                    textSearch("tsv", "x.eq.a\\b", TextSearchType.NONE)
+                    eq("tag", "{a")
+                    eq("slot", "[b")
+                    filter("hour", FilterOperator.SL, "1" to "5")
                 }
             }
         }
@@ -195,7 +199,7 @@ class EscapedValuesTest {
         )
         assertEquals(
             """(note.like(any).{%50\\%%},tags.cs.{a\b},body.fts.a\b,""" +
-                """during.ov.[2026-01-01,2026-02-01],labels.cs.{"a}b"})""",
+                """during.ov.[2026-01-01,2026-02-01],labels.cs.{"a}b"},tsv.fts.x.eq.a\b,tag.eq.{a,slot.eq.[b,hour.sl.(1,5))""",
             server.requests[3].query["or"],
         )
         client.close()

@@ -170,9 +170,13 @@ quotes it only when it also holds one of `,.:()`; PostgREST reads an unquoted el
 as written, so `isIn("title", listOf("Say \"hi\""))` sends `title=in.(Say \"hi\")` and matches
 nothing, while the same `eq` at the top level, sent as written, matches. A read, an update or a
 delete carrying such a value throws `IllegalArgumentException`, naming the column and the operator
-and never the value, before anything is sent, queued or read from the cache. A value beside one of
-`,.:()` goes out quoted, a pattern list is read as an array literal whose backslashes are escapes,
-and a text search query goes out as written, so those are sent. A test pins what supabase-kt sends.
+and never the value, before anything is sent, queued or read from the cache; a write queued by
+0.2.0 with such an `in` element is moved to the rejected list when it comes up for sending, since
+its send would match nothing. A value beside one of `,.:()` goes out quoted, and a pattern list is
+read as an array literal whose backslashes are escapes, so those are sent. Not read, and sent as
+written: a text search query, which `textSearch` sends unescaped and the request cannot tell from
+a `filter` with the same operator, and a string given to `cs`, `cd` or `ov` in a group. A test
+pins what supabase-kt sends.
 
 `ReadStrategy`, for `select`:
 
@@ -1263,7 +1267,7 @@ What the library promises, each with the tests that pin it:
 | On a table with a version column, a queued UPDATE or DELETE that pins one cached row is applied only while the server's row has the version the device saw; a row that moved is never overwritten without the resolver or the defaults deciding, and the device's own earlier writes never read as a conflict. | `MutationBaseCaptureTest`, `GuardedReplayRequestTest`, `GuardedReplayOutcomesTest`, `BaseForwardingTest`, `ConflictPolicyTest`, `ConflictResolverTest` |
 | A read, an update or a delete with two top-level filters on one column is refused before anything is sent or queued, under every strategy, online and offline. | `SameColumnFiltersTest`, `UpstreamRepeatedParameterTest` |
 | A read, an update or a delete with a pattern list the server would read as another list (empty, or a pattern that is empty, `NULL`, edged with white space or holding a brace) is refused before anything is sent or queued, at the top level and in a group, online and offline. | `PatternListsTest`, `UpstreamPatternListTest` |
-| A read, an update or a delete with an `in` element, or a value inside an `or` or `and` group, holding `"` or `\` and none of `,.:()` is refused before anything is sent or queued, at the top level and in a group, online and offline; a value beside one of `,.:()`, a top-level comparison, a pattern list and a text search query are sent as before. | `EscapedValuesTest`, `UpstreamInListEscapingTest` |
+| A read, an update or a delete with an `in` element, or a comparison value inside an `or` or `and` group, holding `"` or `\` and none of `,.:()` is refused before anything is sent or queued, at the top level and in a group, online and offline; a value beside one of `,.:()`, a top-level comparison, a pattern list and a text search query are sent as before. A write queued with such an `in` element by an earlier release is moved to the rejected list when it comes up for sending. | `EscapedValuesTest`, `UpstreamInListEscapingTest`, `RejectedMutationListTest`, `IsDistinctEscapedValueTest` (supabase-kt 3.8) |
 | A `RealtimeFilter` is made only with a shape the server evaluates: a non-empty list for `in`, one value for another operator. | `RealtimeConfigTest`, `UpstreamRealtimeFilterTest` |
 | Each emission of a live read is one view of the cache, the queue and its refresh: no write shows both patched into the cache and still queued, a replayed write never drops out of a list that holds it, and `Idle` comes with the rows its refresh fetched. | `LiveReadConsistencyTest`, `LiveReadSourceOrderTest`, `LiveReadConsistencyAndroidTest`, `LiveReadConsistencyIosTest` |
 | No error answer from Storage is cached as a file. | `ChannelDownloadStatusTest`, `DownloadToFileStatusAndroidTest` |

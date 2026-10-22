@@ -153,8 +153,10 @@ class RealtimeConfigTest {
             }
 
         // Then — the message says what `in` takes, and never the value
-        assertTrue("in" in scalarIn.message.orEmpty(), scalarIn.message)
-        assertTrue("list" in scalarIn.message.orEmpty(), scalarIn.message)
+        assertTrue(
+            "in filter takes a list of values" in scalarIn.message.orEmpty(),
+            scalarIn.message,
+        )
         assertFalse("7d6f0c52" in scalarIn.message.orEmpty(), scalarIn.message)
 
         // When — a list for a comparison, which would be sent as `id=eq.[1]`
@@ -163,9 +165,14 @@ class RealtimeConfigTest {
                 RealtimeFilter("id", FilterOperator.EQ, listOf(1))
             }
 
-        // Then
-        assertTrue("eq" in listEq.message.orEmpty(), listEq.message)
-        assertTrue("one value" in listEq.message.orEmpty(), listEq.message)
+        // Then — as is an array, which supabase-kt would send as its text too
+        assertTrue("eq filter takes one value" in listEq.message.orEmpty(), listEq.message)
+        assertFailsWith<IllegalArgumentException> {
+            RealtimeFilter("id", FilterOperator.EQ, arrayOf(1))
+        }
+        assertFailsWith<IllegalArgumentException> {
+            RealtimeFilter("id", FilterOperator.EQ, intArrayOf(1))
+        }
 
         // When / Then — `in` with no value, and with a set, which supabase-kt sends as its text
         val emptyIn =

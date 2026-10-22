@@ -17,8 +17,8 @@ import io.github.nesfeder.supabase.offline.internal.realtime.REALTIME_FILTER_OPE
  *   supabase-kt sends as a list (any other value, a `Set` included, it sends as the value's text,
  *   which the server refuses).
  * @throws IllegalArgumentException when the column is blank, the operator is one Realtime does not
- *   support, `in` is given anything but a non-empty list, or another operator is given a
- *   collection.
+ *   support, `in` is given anything but a non-empty list, or another operator is given a collection
+ *   or an array.
  */
 public class RealtimeFilter(
     public val column: String,
@@ -36,9 +36,9 @@ public class RealtimeFilter(
             require(value is List<*>) { "A Realtime in filter takes a list of values" }
             require(value.isNotEmpty()) { "A Realtime in filter needs at least one value" }
         } else {
-            require(value !is Collection<*>) {
+            require(!value.isCollectionOrArray()) {
                 "A Realtime ${operator.name.lowercase()} filter takes one value, not a " +
-                    "collection; in takes a list"
+                    "collection or an array; in takes a list"
             }
         }
     }
@@ -55,3 +55,16 @@ public class RealtimeFilter(
     override fun toString(): String =
         "RealtimeFilter(column=$column, operator=${operator.name.lowercase()}, value=$value)"
 }
+
+/** Whether this is a collection or an array, which supabase-kt would send as its text. */
+private fun Any.isCollectionOrArray(): Boolean =
+    this is Collection<*> ||
+        this is Array<*> ||
+        this is IntArray ||
+        this is LongArray ||
+        this is ShortArray ||
+        this is ByteArray ||
+        this is DoubleArray ||
+        this is FloatArray ||
+        this is BooleanArray ||
+        this is CharArray

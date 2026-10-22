@@ -45,7 +45,8 @@ internal fun BridgeRealtimeFilter.toRealtimeFilter(): RealtimeFilter {
             when {
                 list == null ->
                     throw InvalidDescriptionException(
-                        "A Realtime in filter takes values, not a value"
+                        if (single == null) "A Realtime in filter needs values"
+                        else "A Realtime in filter takes values, not a value"
                     )
                 list.isEmpty() ->
                     throw InvalidDescriptionException(

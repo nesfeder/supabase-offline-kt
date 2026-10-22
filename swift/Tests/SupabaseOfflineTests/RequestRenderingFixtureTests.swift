@@ -329,5 +329,11 @@ struct RequestRenderingFixtureTests {
         "a quote beside a comma in an or group is quoted": .chain {
             try await $0.from("todos").select(readStrategy: .networkOnly).or(#"title.eq."Say \"hi\", ok",done.eq.true"#).execute()
         },
+        "a quote in an in list nested in a group is refused": .chain {
+            try await $0.from("todos").select().or(#"and(done.eq.true,title.in.("Say \"hi\""))"#).execute()
+        },
+        "a quote in a single top-level filter is sent as written": .chain {
+            try await $0.from("todos").select(readStrategy: .networkOnly).eq("title", value: "Say \"hi\"").execute()
+        },
     ]
 }

@@ -555,6 +555,22 @@
     {"name": "a quote in an in list is refused", "call": "select", "description": {"v": 1, "table": "todos", "filters": [{"kind": "filter", "column": "title", "operator": "in", "values": ["Say \"hi\"", "ok"]}]}, "error": "INVALID_REQUEST"},
     {"name": "a backslash in an or group is refused", "call": "select", "description": {"v": 1, "table": "todos", "filters": [{"kind": "or", "filters": [{"kind": "filter", "column": "title", "operator": "ilike", "value": "%50\\%%"}, {"kind": "filter", "column": "done", "operator": "eq", "value": "true"}]}]}, "error": "INVALID_REQUEST"},
     {"name": "a quote in an and group is refused", "call": "mutate", "description": {"v": 1, "operation": "delete", "table": "todos", "filters": [{"kind": "and", "filters": [{"kind": "filter", "column": "title", "operator": "eq", "value": "Say \"hi\""}, {"kind": "filter", "column": "title", "operator": "neq", "value": "x"}]}]}, "error": "INVALID_REQUEST"},
+    {"name": "a quote in an in list nested in a group is refused", "call": "select", "description": {"v": 1, "table": "todos", "filters": [{"kind": "or", "filters": [{"kind": "and", "filters": [{"kind": "filter", "column": "done", "operator": "eq", "value": "true"}, {"kind": "filter", "column": "title", "operator": "in", "values": ["Say \"hi\""]}]}]}]}, "error": "INVALID_REQUEST"},
+    {
+      "name": "a quote in a single top-level filter is sent as written",
+      "call": "select",
+      "description": {
+        "v": 1,
+        "table": "todos",
+        "filters": [{"kind": "filter", "column": "title", "operator": "eq", "value": "Say \"hi\""}],
+        "strategy": {"kind": "networkOnly"}
+      },
+      "request": {
+        "method": "GET",
+        "path": "/rest/v1/todos",
+        "query": [["title", "eq.Say \"hi\""], ["select", "*"]]
+      }
+    },
     {
       "name": "a quote beside a comma in an or group is quoted",
       "call": "select",

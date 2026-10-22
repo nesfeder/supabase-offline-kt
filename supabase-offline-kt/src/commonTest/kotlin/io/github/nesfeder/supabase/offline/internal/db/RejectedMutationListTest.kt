@@ -7,6 +7,8 @@ import io.github.nesfeder.supabase.offline.internal.logging.EngineLogLevel
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.MAX_REJECTED_MUTATIONS
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.ServerError
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.SyncStop
+import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
+import io.github.nesfeder.supabase.offline.internal.postgrest.encodeFilter
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingLogSink
@@ -20,6 +22,7 @@ import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
 import io.ktor.http.HttpStatusCode
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
@@ -141,6 +144,67 @@ class RejectedMutationListTest {
         assertEquals("The queued body no longer parses", rejected.message)
         assertTrue(server.requests.isEmpty())
     }
+
+    @Test
+    fun a_filter_value_the_server_would_read_with_its_escapes_is_refused_without_a_request() =
+        runTest {
+            // Given — an UPDATE and a DELETE queued by a release that did not refuse
+            // `isIn("title", listOf("Say \"hi\""))`, their list stored as supabase-kt wrote it,
+            // and a DELETE whose member also holds a period, which goes out quoted and is read as
+            // written
+            fun inList(members: String): String =
+                encodeFilter(
+                    FilterDescriptor(
+                        conditions = listOf(FilterDescriptor.Condition("title", "in", members))
+                    ),
+                    Json,
+                )
+            val misreadUpdate =
+                mutationDao.insert(
+                    MutationRow(
+                        table = TABLE,
+                        operation = MutationOperation.UPDATE.storedName,
+                        bodyJson = """{"done":true}""",
+                        filterJson = inList("""(Say \"hi\")"""),
+                        createdAtMs = 0L,
+                    )
+                )
+            val misreadDelete =
+                mutationDao.insert(
+                    MutationRow(
+                        table = TABLE,
+                        operation = MutationOperation.DELETE.storedName,
+                        bodyJson = "{}",
+                        filterJson = inList("""(ok,Say \"hi\")"""),
+                        createdAtMs = 1L,
+                    )
+                )
+            mutationDao.insert(
+                MutationRow(
+                    table = TABLE,
+                    operation = MutationOperation.DELETE.storedName,
+                    bodyJson = "{}",
+                    filterJson = inList("""("Say \"hi\".")"""),
+                    createdAtMs = 2L,
+                )
+            )
+
+            // When
+            val report = replayer.sync()
+
+            // Then — the first two are refused locally, naming the column and the operator and
+            // never the value, and send nothing; the third is sent as it was queued
+            assertEquals(listOf(misreadUpdate, misreadDelete), report.rejected.map { it.id })
+            report.rejected.forEach { rejected ->
+                assertNull(rejected.serverError)
+                assertTrue("`in`" in rejected.message, rejected.message)
+                assertTrue("`title`" in rejected.message, rejected.message)
+                assertFalse("Say" in rejected.message, rejected.message)
+            }
+            assertEquals(0, store.pendingMutationCount())
+            assertEquals("DELETE", server.requests.single().method)
+            assertEquals("""in.("Say \"hi\".")""", server.requests.single().query["title"])
+        }
 
     @Test
     fun an_unfiltered_update_is_rejected_without_a_request() = runTest {

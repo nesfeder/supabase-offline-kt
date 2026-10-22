@@ -8,37 +8,44 @@ import io.github.jan.supabase.annotations.SupabaseExperimental
 import io.github.jan.supabase.postgrest.query.PostgrestRequestBuilder
 
 /**
- * Refuses an `in` element, or a value inside an `or { }` or `and { }` group, that supabase-kt
- * escapes but does not quote, so the server reads the escapes as the value. supabase-kt 3.6 puts a
- * backslash before each `"` and `\` of such a value and quotes it only when it holds one of
- * `,.:()`; PostgREST reads an unquoted element or group value as written, so `isIn("title",
+ * Refuses an `in` element, or a comparison value inside an `or { }` or `and { }` group, that
+ * supabase-kt escapes but does not quote, so the server reads the escapes as the value. supabase-kt
+ * 3.6 puts a backslash before each `"` and `\` of such a value and quotes it only when it holds one
+ * of `,.:()`; PostgREST reads an unquoted element or group value as written, so `isIn("title",
  * listOf("Say \"hi\""))` goes out as `title=in.(Say \"hi\")` and matches nothing, while the same
- * `eq` at the top level, sent as written, matches. A pattern list is read by the server as an array
- * literal, whose backslashes are escapes, and a text search query goes out as written, so neither
- * is read.
+ * `eq` at the top level, sent as written, matches. Not read: a pattern list and an array literal of
+ * `cs`, `cd` or `ov`, which the server reads as array literals whose backslashes are escapes; a
+ * range; and a text search query, which `textSearch` sends as written and the request cannot tell
+ * from a `filter` with the same operator.
  *
  * @throws IllegalArgumentException naming the column and the operator, never a value.
  */
 internal fun requireReadableEscapedValues(builder: PostgrestRequestBuilder) {
-    builder.params.forEach { (key, values) ->
-        val misread = values.firstNotNullOfOrNull { value -> misreadEscapedValue(key, value) }
-        if (misread != null) {
-            throw IllegalArgumentException(
-                "a value of `${misread.operator}` on `${misread.column}` holds a quote or a " +
-                    "backslash and none of `,.:()`, which supabase-kt escapes but does not quote, " +
-                    "so the server would read the escapes as the value; only a single top-level " +
-                    "filter sends such a value as written"
-            )
-        }
-    }
+    val misread = misreadEscapedValueOf(builder) ?: return
+    throw IllegalArgumentException(
+        "a value of `${misread.operator}` on `${misread.column}` holds a quote or a backslash " +
+            "and none of `,.:()`, which supabase-kt escapes but does not quote, so the server " +
+            "would read the escapes as the value; only a single top-level filter sends such a " +
+            "value as written"
+    )
 }
 
+/**
+ * The first value of [builder]'s request the server would read with its escapes, as
+ * [requireReadableEscapedValues] refuses it, or `null` when every value is read as written.
+ */
+internal fun misreadEscapedValueOf(builder: PostgrestRequestBuilder): MisreadValue? =
+    builder.params.firstNotNullOfOrNull { (key, values) ->
+        values.firstNotNullOfOrNull { value -> misreadEscapedValue(key, value) }
+    }
+
 /** Where a misread value stands: its column and its operator, as supabase-kt writes them. */
-private class MisreadValue(val column: String, val operator: String)
+internal class MisreadValue(val column: String, val operator: String)
 
 /**
  * The operators whose value supabase-kt escapes inside a group, by their request names, and `in`,
- * whose elements it escapes everywhere. A text search's query is left out: `textSearch` sends it as
+ * whose elements it escapes everywhere. `isdistinct` is supabase-kt 3.8's, escaped as `eq` is on an
+ * app that forces that minor. The text search operators are left out: `textSearch` sends a query as
  * written, and the request cannot tell that call from a `filter` with the same operator.
  */
 private val ESCAPED_OPERATORS =
@@ -54,6 +61,7 @@ private val ESCAPED_OPERATORS =
         "match",
         "imatch",
         "is",
+        "isdistinct",
         "in",
         "cs",
         "cd",
@@ -65,11 +73,14 @@ private val ESCAPED_OPERATORS =
         "adj",
     )
 
-/**
- * What ends a group condition whose value opens a literal supabase-kt sends as written: an array or
- * a range of the array operators, or the patterns of a pattern list.
- */
-private val LITERAL_OPENERS = listOf(".cs.", ".cd.", ".ov.", "(all).", "(any).")
+/** Every operator name supabase-kt writes before a value, the text searches included. */
+private val OPERATOR_NAMES = ESCAPED_OPERATORS + setOf("fts", "plfts", "phfts", "wfts")
+
+/** The operators whose list is an array literal, `{a,b}`, sent as written. */
+private val ARRAY_OPERATORS = setOf("cs", "cd", "ov")
+
+/** The operators a pattern list is written with an argument of, `like(all).{a,b}`. */
+private val PATTERN_LIST_OPERATORS = setOf("like", "ilike")
 
 /**
  * The first misread value in parameter [key]'s [value], or `null`. A top-level filter's value is
@@ -109,32 +120,49 @@ private fun hasMisreadElement(text: String, start: Int): Boolean {
 
 /**
  * The first misread value among the conditions of the group [text], `(a.eq.1,or(b.eq.2,…))`, or
- * `null`. Each condition is `column.operator.value`, with `not.` before a negated operator; a
- * backslash outside quotes and literals is supabase-kt's escape in a value it did not quote. A
- * quoted value is read by the server with its escapes, a literal in braces or brackets as written;
- * an `in` list's elements are read as a top-level list's are.
+ * `null`. Each condition is `column.operator.value`, with `not.` before a negated operator and an
+ * argument after some (`like(all)`, `wfts(english)`); a backslash outside quotes and literals is
+ * supabase-kt's escape in a value it did not quote. A quoted value is read by the server with its
+ * escapes; a pattern list or an array literal in braces, and a range in brackets or parentheses, as
+ * written; an `in` list's elements as a top-level list's are.
  */
 private fun misreadInGroup(text: String): MisreadValue? {
     var index = 1
     var conditionStart = 1
     while (index < text.length) {
-        val condition = text.substring(conditionStart, index)
         when (text[index]) {
             '"' -> index = endOfQuoted(text, index)
-            '{' -> index = if (opensLiteral(condition)) endOfBraced(text, index) else index + 1
-            '[' -> index = if (opensLiteral(condition)) endOfBracketed(text, index) else index + 1
+            '{' ->
+                index =
+                    if (opensLiteral(text, conditionStart, index)) endOfBraced(text, index)
+                    else index + 1
+            '[' ->
+                index =
+                    if (opensLiteral(text, conditionStart, index)) endOfClosed(text, index, ']')
+                    else index + 1
             '(' -> {
-                if (condition.endsWith(".in.") && hasMisreadElement(text, index + 1)) {
-                    return MisreadValue(columnOf(condition.dropLast(1)), "in")
+                val condition = text.substring(conditionStart, index)
+                if (condition.endsWith('.')) {
+                    // An `in` list or a range opens: only a list's elements are escaped
+                    val parsed = parseCondition(condition.dropLast(1))
+                    if (parsed?.operator == "in" && hasMisreadElement(text, index + 1)) {
+                        return MisreadValue(parsed.column, "in")
+                    }
+                    conditionStart = ++index
+                } else if (condition.substringAfterLast('.') in OPERATOR_NAMES) {
+                    // An operator's argument, `like(all)` or `wfts(english)`: the condition goes on
+                    index = endOfClosed(text, index, ')')
+                } else {
+                    // A nested group
+                    conditionStart = ++index
                 }
-                conditionStart = ++index
             }
             ',',
             ')' -> conditionStart = ++index
             '\\' -> {
-                val operator = escapedOperatorOf(condition)
-                if (operator != null) {
-                    return MisreadValue(columnOf(condition.substringBeforeLast('.')), operator)
+                val parsed = parseCondition(text.substring(conditionStart, index))
+                if (parsed != null && !parsed.hasArgument && parsed.operator in ESCAPED_OPERATORS) {
+                    return MisreadValue(parsed.column, parsed.operator)
                 }
                 index += 2
             }
@@ -144,25 +172,48 @@ private fun misreadInGroup(text: String): MisreadValue? {
     return null
 }
 
-/** Whether [condition], read up to a brace or bracket, opens a literal sent as written. */
-private fun opensLiteral(condition: String): Boolean = LITERAL_OPENERS.any { opener ->
-    condition.endsWith(opener)
+/** A group condition's column and operator, read up to its value. */
+private class ParsedCondition(
+    val column: String,
+    val operator: String,
+    /** Whether the operator carries an argument, as `like(all)` and `wfts(english)` do. */
+    val hasArgument: Boolean,
+)
+
+/**
+ * The column and operator of [condition], a group condition's text up to or into its value, or
+ * `null` when no operator is found (a nested group's `or`). The column may hold dots, an embedded
+ * table's does, so the operator is the first segment after the first that names one, a `not` before
+ * it skipped; whatever follows the operator is the value, which is never read.
+ */
+private fun parseCondition(condition: String): ParsedCondition? {
+    val segments = condition.split('.')
+    for (index in 1 until segments.size) {
+        val segment = segments[index]
+        if (segment == "not") continue
+        val name = segment.substringBefore('(')
+        if (name !in OPERATOR_NAMES) continue
+        val columnEnd = if (index > 1 && segments[index - 1] == "not") index - 1 else index
+        return ParsedCondition(
+            column = segments.subList(0, columnEnd).joinToString("."),
+            operator = name,
+            hasArgument = segment.length > name.length,
+        )
+    }
+    return null
 }
 
 /**
- * The operator of [condition], the text of a group condition up to a backslash in its value, when
- * it is one whose value supabase-kt escapes; `null` otherwise. The value before the backslash holds
- * no `.` (one would have had the value quoted), so the operator is the segment before the last.
+ * Whether the brace or bracket at [index] opens a literal sent as written: the array literal of an
+ * array operator, or the patterns of a pattern list, whose condition runs from [conditionStart].
  */
-private fun escapedOperatorOf(condition: String): String? {
-    val segments = condition.split('.')
-    if (segments.size < 3) return null
-    return segments[segments.size - 2].takeIf { it in ESCAPED_OPERATORS }
+private fun opensLiteral(text: String, conditionStart: Int, index: Int): Boolean {
+    val condition = text.substring(conditionStart, index)
+    if (!condition.endsWith('.')) return false
+    val parsed = parseCondition(condition.dropLast(1)) ?: return false
+    return parsed.operator in ARRAY_OPERATORS ||
+        (parsed.hasArgument && parsed.operator in PATTERN_LIST_OPERATORS)
 }
-
-/** The column of [conditionWithoutValue], `column.operator` or `column.not.operator`. */
-private fun columnOf(conditionWithoutValue: String): String =
-    conditionWithoutValue.substringBeforeLast('.').removeSuffix(".not")
 
 /**
  * The index just past the `}` closing the brace opening at [start]: an array literal or a pattern
@@ -182,8 +233,8 @@ private fun endOfBraced(text: String, start: Int): Int {
     return text.length
 }
 
-/** The index just past the `]` closing the bracket opening at [start]: a range, sent as written. */
-private fun endOfBracketed(text: String, start: Int): Int {
-    val end = text.indexOf(']', start)
+/** The index just past the next [closing] from [start]: a range, or an operator's argument. */
+private fun endOfClosed(text: String, start: Int, closing: Char): Int {
+    val end = text.indexOf(closing, start)
     return if (end < 0) text.length else end + 1
 }
