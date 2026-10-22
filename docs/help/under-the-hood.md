@@ -16,9 +16,10 @@ app.
   its header shows the runtime's types (`KotlinBase` and others), but nothing in it is supported
   and any of it may change in any release.
 - **The system's SQLite.** The engine uses `libsqlite3.dylib` and the system's C++ runtime, which
-  the package links; it bundles no SQLite of its own.
+  the package links; it bundles no SQLite of its own, where the Kotlin library's iOS artifacts
+  bundle one ([On-device data](../reference/on-device-data.md#where-it-lives)).
 
-The framework ships unsigned in 0.1.0.
+The framework ships unsigned.
 
 ## App size
 

@@ -60,17 +60,31 @@ switch is a gate.
 
 ## Waiting between passes
 
-After an automatic pass stopped on a failure that may pass, the next automatic pass waits 1 s,
-doubling up to 60 s, and at least as long as a `Retry-After` the server sent, up to an hour. The
-network coming back and the session settling end that wait at once and start it again from 1 s,
-but never before a `Retry-After` has passed. A pass you start with `syncPendingMutations()` goes at
-once and moves no wait.
+No timer runs a pass again after one fails. A pass runs only when something asks for one: the
+network coming back, the session settling anew (a sign-in, or Auth refreshing the token), a write
+queued behind pending ones, a write sent, refused or discarded that leaves more queued, a rejected
+write retried, a conflicted write settled with `KeepLocal` or `Apply`, a client without Auth
+opening with writes queued, or your own `syncPendingMutations()` call. Requests made while a pass
+runs are folded into one more. After an automatic pass stopped on a failure that may pass (the
+table [below](#what-happens-to-each-write) says which), the next pass asked for runs no sooner
+than 1 s after the failed one ended, doubling up to 60 s, and at least as long as a `Retry-After`
+the server sent, up to an hour; a pass that ends any other way resets the wait. The network coming
+back and the session settling end that wait at once and start it again from 1 s, but never before
+a `Retry-After` has passed. A pass you start with `syncPendingMutations()` goes at once and moves
+no wait. With `autoSync` off, only the write-path triggers and your call remain.
+
+So time alone never rejects a write PostgREST's schema cache keeps refusing (`PGRST204`,
+`PGRST205`). It is rejected at the tenth refusal counted, and a refusal is counted only 30 seconds
+or more after the last one counted; each comes from the write's own first send or from a pass one
+of the triggers above asked for. That takes at least ten such sends, 30 seconds apart, and between
+them nothing runs.
 
 ## When to call sync
 
-Nothing fires when the app comes to the foreground, and after a failed pass the library's own next
-one may wait a minute, or as long as a `Retry-After`. Call `syncPendingMutations()` then, as the
-samples do (Android from the activity's `onStart`, iOS when the scene's phase becomes `.active`):
+Nothing fires when the app comes to the foreground, and after a failed pass nothing runs another
+until something asks for one, and then not before the wait above has passed. Call
+`syncPendingMutations()` then, as the samples do (Android from the activity's `onStart`, iOS when
+the scene's phase becomes `.active`):
 
 From the samples: [OfflineTasksApplication.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/OfflineTasksApplication.kt) · [AppModel.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/App/AppModel.swift)
 
@@ -110,7 +124,7 @@ sends that token whoever is signed in, so the owner check of
 | --- | --- |
 | It accepts it | Leaves the queue; it stays in the overlay until the cached lists have been fetched again after it |
 | No connection, a `401`, `408`, `429` or any `5xx`, or a failure on the device | Stays queued, and the pass stops; `syncStatus.value.lastSyncError` says why |
-| PostgREST's schema cache does not know the table or a column yet (`PGRST204`, `PGRST205`) | Stays queued, and the pass stops; the tenth such refusal, each at least 30 seconds after the last, rejects it |
+| PostgREST's schema cache does not know the table or a column yet (`PGRST204`, `PGRST205`) | Stays queued, and the pass stops; the tenth refusal counted, each 30 seconds or more after the last and each from the write's own send or a pass a trigger asked for, rejects it ([above](#waiting-between-passes)) |
 | Any other `4xx` | Moves to the rejected list, and the pass goes on |
 | (The library can no longer replay it exactly as it was made) | Moves to the rejected list with no `serverError`, and the pass goes on |
 | No row at the version the device saw, on a table with a version column | One read by key tells the case: already applied or gone (synced), a policy denial (the rejected list), or a moved row, which the resolver settles: resent, dropped or parked on the conflicted list, and the pass goes on ([Conflicts and merging](conflicts.md#the-five-outcomes)) |

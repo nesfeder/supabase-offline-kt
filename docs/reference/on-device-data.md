@@ -22,8 +22,9 @@ Beside the database, SQLite keeps its write-ahead log and its index, `supabase_o
 Android you leave them out of Auto Backup yourself
 ([Project setup](../getting-started/setup.md#backups)).
 
-The database runs on the SQLite the library bundles, so every install, on both platforms, runs
-the same SQLite version.
+The Kotlin library runs the database on the SQLite it bundles, on Android and on iOS, so every
+install of it runs the same SQLite version. The Swift package links the system's SQLite instead and
+bundles none ([Under the hood](../help/under-the-hood.md#what-the-package-holds)).
 
 ## The files
 

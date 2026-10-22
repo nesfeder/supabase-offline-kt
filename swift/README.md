@@ -19,7 +19,7 @@ app's target (and `SupabaseOfflineTesting` to its test target). In a `Package.sw
 
 <!-- not compiled: a line of a package manifest -->
 ```swift
-.package(url: "https://github.com/nesfeder/supabase-offline-swift", .upToNextMinor(from: "0.1.0"))
+.package(url: "https://github.com/nesfeder/supabase-offline-swift", .upToNextMinor(from: "0.2.0"))
 ```
 
 and `.product(name: "SupabaseOffline", package: "supabase-offline-swift")` in your target's

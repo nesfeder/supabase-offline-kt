@@ -191,6 +191,10 @@ jobs:
               build-logic/* | build.gradle.kts | settings.gradle.kts | gradle.properties \
                 | gradle/libs.versions.toml | gradle/wrapper/*)
                 kotlin=true; docs=true ;;
+              # The release script holds the install snippets' check, which the docs job runs
+              # against the tree (docs-check.yml); its self-test runs in static-checks.
+              scripts/release.py)
+                kotlin=true; docs=true ;;
               # scripts/check-spelling.py runs in formatting, on every run.
               .github/* | LICENSE | .gitignore | .editorconfig | .git-blame-ignore-revs \
                 | .kempt.toml | config/license-header* | *.properties.example \

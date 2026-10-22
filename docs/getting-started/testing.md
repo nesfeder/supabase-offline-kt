@@ -26,7 +26,7 @@ From the samples: [FakeSupabaseServer.kt](https://github.com/nesfeder/supabase-o
 kotlin {
     sourceSets {
         commonTest.dependencies {
-            implementation("io.github.nesfeder.supabase-offline:supabase-offline-kt-testing:0.1.0")
+            implementation("io.github.nesfeder.supabase-offline:supabase-offline-kt-testing:0.2.0")
             implementation("io.ktor:ktor-client-mock:3.4.3")
         }
     }
@@ -155,12 +155,14 @@ conflict.
 ## Waiting for the client
 
 The client runs on real time, not the test's virtual clock: `inMemory(clock)` sets the times it
-records, not how long it waits. A refresh or a replay that failed waits a few seconds, then up to a
-minute, before it tries again by itself. To cut that wait, give the client a `networkAvailability`
-flow and turn it `true`, which wakes a waiting refresh, and the replay with `autoSync`, at once;
-`syncPendingMutations()` sends without waiting. Await what you expect (`first { … }` on a flow)
-rather than advancing the test's clock. `syncStatus`'s counts follow the queue shortly after each
-change, so wait for the value you expect there too.
+records, not how long it waits. A refresh that failed tries again by itself after a few seconds,
+then up to a minute; a replay that failed runs again only when something asks for a pass, and no
+sooner than its wait ([Replaying the queue](../behaviors/sync.md#waiting-between-passes)). To cut
+that wait, give the client a `networkAvailability` flow and turn it `true`, which wakes a waiting
+refresh, and the replay with `autoSync`, at once; `syncPendingMutations()` sends without waiting.
+Await what you expect (`first { … }` on a flow) rather than advancing the test's clock.
+`syncStatus`'s counts follow the queue shortly after each change, so wait for the value you expect
+there too.
 
 ## Values for your own test doubles
 

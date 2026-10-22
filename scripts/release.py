@@ -11,7 +11,9 @@ Commands (from the repository root):
         * CHANGELOG.md has a section for X.Y.Z (`## [X.Y.Z] - YYYY-MM-DD`) with at least one entry,
           and no entry is left under `## Unreleased`;
         * the supabase-kt table of docs/project/compatibility.md has a row for X.Y.Z naming the
-          catalog's supabase-kt version.
+          catalog's supabase-kt version;
+        * every install snippet names X.Y.Z (see check-snippets): the pull request that prepares
+          the release moves them with pin-snippets.
   release-version [--github-output FILE]
       Reports VERSION_NAME, and fails unless it is a release version X.Y.Z. The job that tags takes
       the version from its own checkout, never from the job that ran the build and the tests.
@@ -44,7 +46,21 @@ Commands (from the repository root):
       compatibility page an `Unreleased` row, and compat/overrides.txt is emptied of findings. The
       samples move to VERSION: the catalog's supabase-offline, and the iOS project's exact version
       of the Swift package with its Package.resolved pin, at the commit of the package's tag
-      VERSION in its repository (default https://github.com/nesfeder/supabase-offline-swift).
+      VERSION in its repository (default https://github.com/nesfeder/supabase-offline-swift). So
+      would every install snippet (see check-snippets), a safety net: check-version refused any
+      left at the last release.
+  check-snippets
+      Fails unless every install snippet names one version, and that version is the last release
+      (the version the samples take, `supabase-offline` in gradle/libs.versions.toml) or, when
+      VERSION_NAME is a release version X.Y.Z, that release, which the pull request preparing it
+      moves them to with pin-snippets. A snippet is a line of a tracked Markdown file (the README,
+      the Swift package's README and documentation catalog, the site's pages; never CHANGELOG.md,
+      whose history stays) in one of three forms: the Maven coordinates with a version, the
+      catalog entry `supabase-offline = "X.Y.Z"` and `.upToNextMinor(from: "X.Y.Z")`. CI's docs
+      job runs it, and it fails when it finds no snippet at all.
+  pin-snippets VERSION
+      Rewrites every install snippet to VERSION, for the pull request that prepares a release, and
+      prints the files it wrote.
   self-test
       Runs every command against throwaway repositories, with a stand-in for `gh`.
 
@@ -106,6 +122,16 @@ IOS_SAMPLE_PROJECT = "samples/ios/OfflineTasks.xcodeproj/project.pbxproj"
 IOS_SAMPLE_RESOLVED = "samples/ios/OfflineTasks.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved"
 SWIFT_PACKAGE_URL = "https://github.com/nesfeder/supabase-offline-swift"
 SWIFT_PACKAGE_IDENTITY = "supabase-offline-swift"
+# The install snippets a reader copies, in the tracked Markdown files but CHANGELOG.md: the Maven
+# coordinates with a version, the catalog entry docs/getting-started/setup.md shows, and the Swift
+# package's requirement. In each form group 1 is what precedes the version and group 2 the version.
+# They name the last release, as the samples do, or the one a prepare pull request moves them to;
+# next-snapshot moves them with the samples.
+SNIPPET_FORMS = (
+    re.compile(r"(io\.github\.nesfeder\.supabase-offline:supabase-offline-kt(?:-testing)?:)(\d+\.\d+\.\d+)"),
+    re.compile(r'(^[ \t]*supabase-offline[ \t]*=[ \t]*")(\d+\.\d+\.\d+)(?=")', re.MULTILINE),
+    re.compile(r'(\.upToNextMinor\(from: ")(\d+\.\d+\.\d+)(?="\))'),
+)
 BOT_NAME = "github-actions[bot]"
 # GitHub's own address for its Actions bot, which shows the commits under that bot's name.
 BOT_EMAIL = "41898282+github-actions[bot]@users.noreply.github.com"
@@ -222,6 +248,15 @@ def check_version(root: Path, ref: str) -> str:
     if rows[version] != supabase:
         raise ReleaseError(f"the row for {version} in {COMPATIBILITY} names supabase-kt"
                            f" {rows[version]}, but the catalog pins {supabase}")
+    snippets = install_snippets(root, ref)
+    if not snippets:
+        raise ReleaseError(f"no install snippet in the Markdown files at {ref}: a check that sees nothing proves nothing")
+    left = [f"{path}:{line}: {found}" for path, line, found in snippets if found != version]
+    if left:
+        raise ReleaseError(f"{len(left)} install snippet(s) name another version than {version}, which the site built"
+                           " from the tag and the Swift package's README and API reference at it would show:"
+                           f" move them with `python3 scripts/release.py pin-snippets {version}` in the pull"
+                           " request that prepares the release (RELEASING.md):\n  " + "\n  ".join(left))
     return version
 
 
@@ -284,6 +319,57 @@ def check_resume(root: Path, sha: str, repository: str) -> str:
     return version
 
 
+def markdown_files(root: Path, ref: str | None = None) -> list[str]:
+    """The tracked Markdown files but the changelog, where an install snippet can be: the working
+    tree's, or those committed at ref."""
+    listing = (git(root, "ls-tree", "-r", "--name-only", "-z", ref) if ref
+               else git(root, "ls-files", "-z", "--", "*.md"))
+    return sorted(path for path in listing.split("\0") if path.endswith(".md") and path != CHANGELOG)
+
+
+def install_snippets(root: Path, ref: str | None = None) -> list[tuple[str, int, str]]:
+    """Every install snippet of the tracked Markdown files, in the working tree or as committed at
+    ref, as (path, line, version)."""
+    found = []
+    for path in markdown_files(root, ref):
+        text = committed_file(root, ref, path) if ref else (root / path).read_text(encoding="utf-8")
+        for form in SNIPPET_FORMS:
+            for match in form.finditer(text):
+                found.append((path, text.count("\n", 0, match.start()) + 1, match.group(2)))
+    return sorted(found)
+
+
+def released_version(root: Path) -> str:
+    """The last release: the version the samples take, SAMPLE_CATALOG_KEY in the catalog."""
+    version = catalog_version((root / CATALOG).read_text(encoding="utf-8"), SAMPLE_CATALOG_KEY)
+    if not RELEASE_VERSION.match(version):
+        raise ReleaseError(f"`{SAMPLE_CATALOG_KEY}` in {CATALOG} is {version!r}, not a release version X.Y.Z")
+    return version
+
+
+def check_snippets(root: Path) -> tuple[str, str, list[tuple[str, int, str]]]:
+    """Every install snippet names one version, the last release or the release being prepared;
+    returns that version, which of the two it is, and the snippets."""
+    last = released_version(root)
+    prepared = version_name((root / GRADLE_PROPERTIES).read_text(encoding="utf-8"))
+    preparing = bool(RELEASE_VERSION.match(prepared)) and prepared != last
+    snippets = install_snippets(root)
+    if not snippets:
+        raise ReleaseError("no install snippet in the tracked Markdown files: a check that sees nothing proves nothing")
+    expected = (f"{last}, the last release (`{SAMPLE_CATALOG_KEY}` in {CATALOG})"
+                + (f", or {prepared}, the release being prepared" if preparing else ""))
+    listing = "\n  ".join(f"{path}:{line}: {version}" for path, line, version in snippets)
+    remedy = ("the pull request that prepares a release moves them all, or the post-release pull request"
+              " does (RELEASING.md)")
+    versions = sorted({version for _, _, version in snippets})
+    if len(versions) > 1:
+        raise ReleaseError(f"the install snippets name {len(versions)} versions, {', '.join(versions)}, and every"
+                           f" one must name {expected}; {remedy}:\n  {listing}")
+    if versions[0] != last and not (preparing and versions[0] == prepared):
+        raise ReleaseError(f"the install snippets name {versions[0]}, not {expected}; {remedy}:\n  {listing}")
+    return versions[0], "the last release" if versions[0] == last else "the release being prepared", snippets
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Notes and the next development version
 # ─────────────────────────────────────────────────────────────────────────────
@@ -318,7 +404,9 @@ def next_snapshot(root: Path, version: str, swift_commit: str) -> str:
     if current != version:
         raise ReleaseError(f"VERSION_NAME on main is {current}, not {version}: the next version has"
                            " been started already, or the release is not the one on main")
+    snippet_files(root)  # refuses a tree with no install snippet before anything is written
     pin_samples(root, version, swift_commit)
+    pin_snippets(root, version)
     following = next_version(version)
     (root / GRADLE_PROPERTIES).write_text(
         re.sub(r"^VERSION_NAME=\S+\s*$", f"VERSION_NAME={following}", properties, count=1,
@@ -378,6 +466,25 @@ def pin_samples(root: Path, version: str, swift_commit: str) -> None:
     # Xcode's own layout: a two-space indent, " : " after a key, and a final newline.
     (root / IOS_SAMPLE_RESOLVED).write_text(json.dumps(resolved, indent=2, separators=(",", " : ")) + "\n",
                                             encoding="utf-8")
+
+
+def snippet_files(root: Path) -> list[str]:
+    """The files that hold an install snippet; it refuses a tree with none."""
+    paths = sorted({path for path, _, _ in install_snippets(root)})
+    if not paths:
+        raise ReleaseError("no install snippet in the tracked Markdown files to move to the release")
+    return paths
+
+
+def pin_snippets(root: Path, version: str) -> list[str]:
+    """Rewrites every install snippet to version, in a block or in prose; returns the files."""
+    paths = snippet_files(root)
+    for path in paths:
+        text = (root / path).read_text(encoding="utf-8")
+        for form in SNIPPET_FORMS:
+            text = form.sub(lambda match: match.group(1) + version, text)
+        (root / path).write_text(text, encoding="utf-8")
+    return paths
 
 
 def swift_package_commit(root: Path, version: str, swift_package: str) -> str:
@@ -457,6 +564,8 @@ def post_release_body(version: str, following: str, group: str) -> str:
         - `compat/overrides.txt` holds no finding: the overrides {version} shipped with are spent.
         - The samples take {version}: `supabase-offline` in `gradle/libs.versions.toml`, and the iOS
           project's exact version of the Swift package, with its pin in the project's `Package.resolved`.
+        - Every install snippet names {version} (`scripts/release.py check-snippets`): the pull request
+          that prepared the release moved them, and this branch would have moved any left behind.
 
         Before merging, check:
 
@@ -519,7 +628,7 @@ def push_post_release_branch(root: Path, version: str, swift_package: str = SWIF
         git(root, "switch", "--quiet", "--create", branch, "FETCH_HEAD")
         next_snapshot(root, version, swift_commit)
         git(root, "add", GRADLE_PROPERTIES, CHANGELOG, COMPATIBILITY, OVERRIDES, CATALOG, IOS_SAMPLE_PROJECT,
-            IOS_SAMPLE_RESOLVED)
+            IOS_SAMPLE_RESOLVED, *snippet_files(root))
         git(root, "-c", f"user.name={BOT_NAME}", "-c", f"user.email={BOT_EMAIL}", "commit", "--quiet",
             "-m", f"chore(release): start {following} after {version}")
         git(root, "push", "origin", f"HEAD:refs/heads/{branch}")
@@ -569,6 +678,12 @@ Intro.
 ### Fixed
 
 - A fix.
+
+## [0.0.9] - 2026-09-01
+
+### Added
+
+- The first release; the preview was `io.github.nesfeder.supabase-offline:supabase-offline-kt:0.0.8`.
 """
 FIXTURE_COMPATIBILITY = """\
 # Compatibility
@@ -627,8 +742,45 @@ FIXTURE_RESOLVED = """\
   "version" : 3
 }
 """
+# Two pages with install snippets in every form, in a block and in prose, as the pull request that
+# prepares 0.1.0 leaves them, beside versions that are not snippets and must stay.
+SETUP_PAGE = "docs/getting-started/setup.md"
+SWIFT_README = "swift/README.md"
+FIXTURE_SETUP_PAGE = """\
+# Project setup
+
+A patch release (0.0.9 → 0.0.10) only fixes things.
+
+=== "Version catalog"
+
+    ```toml
+    [versions]
+    supabase-offline = "0.1.0"
+    ```
+
+=== "Kotlin DSL"
+
+    ```kotlin
+    implementation("io.github.nesfeder.supabase-offline:supabase-offline-kt:0.1.0")
+    testImplementation("io.github.nesfeder.supabase-offline:supabase-offline-kt-testing:0.1.0")
+    ```
+"""
+FIXTURE_SWIFT_README = """\
+# The package
+
+```swift
+.package(url: "https://github.com/nesfeder/supabase-offline-swift", .upToNextMinor(from: "0.1.0"))
+```
+
+In a manifest, `.upToNextMinor(from: "0.1.0")`; the package needs iOS 16.
+"""
+# The same pages left at the last release, 0.0.9, as the tree stands between releases.
+LEFT_PAGES = {SETUP_PAGE: FIXTURE_SETUP_PAGE.replace('0.1.0"', '0.0.9"'),
+              SWIFT_README: FIXTURE_SWIFT_README.replace('from: "0.1.0"', 'from: "0.0.9"')}
 FIXTURE_FILES = {
     GRADLE_PROPERTIES: "GROUP=io.example.group\nVERSION_NAME=0.1.0\n",
+    SETUP_PAGE: FIXTURE_SETUP_PAGE,
+    SWIFT_README: FIXTURE_SWIFT_README,
     CATALOG: '[versions]\nsupabase-bom = "3.8.0"\nsupabase-offline = "0.0.9"\n\n[libraries]\n'
              'supabase-offline = { module = "io.example.group:lib", version.ref = "supabase-offline" }\n',
     IOS_SAMPLE_PROJECT: FIXTURE_PROJECT,
@@ -828,6 +980,7 @@ def self_test() -> int:
             ("entries left under Unreleased", CHANGELOG, FIXTURE_CHANGELOG.replace("## Unreleased\n\n### Breaking\n", "## Unreleased\n\n### Breaking\n\n- Left behind.\n"), "still has entries"),
             ("no compatibility row", COMPATIBILITY, FIXTURE_COMPATIBILITY.replace("| 0.1.0 |", "| Unreleased |"), "has no row for 0.1.0"),
             ("a compatibility row naming another supabase-kt", COMPATIBILITY, FIXTURE_COMPATIBILITY.replace("3.8.0", "3.7.0"), "names supabase-kt 3.7.0"),
+            ("install snippets left at the last release", SETUP_PAGE, LEFT_PAGES[SETUP_PAGE], f"name another version than 0.1.0, which the site built from the tag and the Swift package's README and API reference at it would show: move them with `python3 scripts/release.py pin-snippets 0.1.0`"),
         ]
         for name, path, content, phrase in cases:
             case = make_repository(work, f"guard-{cases.index((name, path, content, phrase))}", dict(base, **{path: content}))
@@ -838,6 +991,40 @@ def self_test() -> int:
         undated = make_repository(work, "undated", dict(base, **{CHANGELOG: FIXTURE_CHANGELOG.replace("## [0.1.0] - 2026-10-01", "## 0.1.0")}))
         expect(check_version(undated, "HEAD") == "0.1.0", "check-version accepts a heading with no date")
 
+        snippets_at = [(SETUP_PAGE, 9, "0.1.0"), (SETUP_PAGE, 15, "0.1.0"), (SETUP_PAGE, 16, "0.1.0"),
+                       (SWIFT_README, 4, "0.1.0"), (SWIFT_README, 7, "0.1.0")]
+        expect(check_snippets(root) == ("0.1.0", "the release being prepared", snippets_at),
+               "check-snippets finds every form, in a block or in prose, at the release being prepared, VERSION_NAME,"
+               " and leaves the changelog's history and the pages' other versions out")
+        left = make_repository(work, "left-snippets", dict(base, **LEFT_PAGES))
+        expect(check_snippets(left)[:2] == ("0.0.9", "the last release"),
+               "check-snippets accepts the last release, the samples' version, when every snippet names it")
+        mixed = make_repository(work, "mixed-snippets", dict(base, **{SWIFT_README: LEFT_PAGES[SWIFT_README]}))
+        expect(refused(lambda: check_snippets(mixed), "2 versions, 0.0.9, 0.1.0")
+               and refused(lambda: check_snippets(mixed), f"{SWIFT_README}:4: 0.0.9"),
+               "check-snippets refuses snippets that name two versions, listing each by file and line")
+        unprepared = make_repository(work, "unprepared-snippets", dict(base, **{
+            GRADLE_PROPERTIES: "GROUP=io.example.group\nVERSION_NAME=0.2.0-SNAPSHOT\n"}))
+        expect(refused(lambda: check_snippets(unprepared), "name 0.1.0, not 0.0.9, the last release"),
+               "check-snippets refuses a version that is neither the last release nor one being prepared")
+        unreleased = make_repository(work, "unreleased-catalog", dict(base, **{
+            CATALOG: FIXTURE_FILES[CATALOG].replace('supabase-offline = "0.0.9"', 'supabase-offline = "0.1.0-SNAPSHOT"')}))
+        expect(refused(lambda: check_snippets(unreleased), "not a release version"),
+               "check-snippets refuses a catalog whose samples' version is not a release")
+        unsnippeted = make_repository(work, "unsnippeted", {path: content for path, content in base.items()
+                                                            if path not in (SETUP_PAGE, SWIFT_README)})
+        expect(refused(lambda: check_snippets(unsnippeted), "no install snippet")
+               and refused(lambda: check_version(unsnippeted, "HEAD"), "no install snippet"),
+               "check-snippets and check-version refuse a tree with no snippet, the changelog's history not counting")
+        pinned = make_repository(work, "pinned-snippets", dict(base, **LEFT_PAGES))
+        expect(pin_snippets(pinned, "0.1.0") == [SETUP_PAGE, SWIFT_README]
+               and (pinned / SETUP_PAGE).read_text() == FIXTURE_SETUP_PAGE
+               and (pinned / SWIFT_README).read_text() == FIXTURE_SWIFT_README,
+               "pin-snippets moves every install snippet to the release, in a block or in prose, and nothing else")
+        git(pinned, "add", "-A")
+        git(pinned, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-q", "-m", "pin")
+        expect(check_version(pinned, "HEAD") == "0.1.0", "check-version passes once the snippets are pinned")
+
         notes = release_notes(FIXTURE_CHANGELOG, "0.1.0")
         expect(notes == "### Added\n\n- Offline reads.\n- Queued writes.\n\n### Fixed\n\n- A fix.\n",
                "notes keep the section's entries and drop its heading and empty subheadings")
@@ -846,7 +1033,8 @@ def self_test() -> int:
                "the changelog headings are api-compat.py's, Removed included")
         expect(next_version("0.1.0") == "0.2.0-SNAPSHOT" and next_version("1.4.2") == "1.5.0-SNAPSHOT",
                "the next version is the next minor's snapshot")
-        bumped = make_repository(work, "bumped", dict(base, **{CHANGELOG: FIXTURE_CHANGELOG.split("## Unreleased")[0] + "## [0.1.0]" + FIXTURE_CHANGELOG.split("## [0.1.0]")[1]}))
+        bumped_changelog = FIXTURE_CHANGELOG.split("## Unreleased")[0] + "## [0.1.0]" + FIXTURE_CHANGELOG.split("## [0.1.0]")[1]
+        bumped = make_repository(work, "bumped", dict(base, **LEFT_PAGES, **{CHANGELOG: bumped_changelog}))
         swift_commit = "c" * 40
         following = next_snapshot(bumped, "0.1.0", swift_commit)
         changelog = (bumped / CHANGELOG).read_text()
@@ -862,6 +1050,20 @@ def self_test() -> int:
                "next-snapshot empties the overrides and keeps their explanation")
         expect(refused(lambda: next_snapshot(bumped, "0.1.0", swift_commit), "has been started already"),
                "next-snapshot refuses to run twice")
+        expect((bumped / SETUP_PAGE).read_text() == FIXTURE_SETUP_PAGE
+               and (bumped / SWIFT_README).read_text() == FIXTURE_SWIFT_README
+               and "supabase-offline-kt:0.0.8" in changelog,
+               "next-snapshot moves every install snippet left at the last release, in a block or in prose, and nothing else")
+        expect(check_snippets(bumped)[:2] == ("0.1.0", "the last release"),
+               "check-snippets passes after next-snapshot, the samples and the snippets agreeing")
+        prepared = make_repository(work, "prepared", dict(base, **{CHANGELOG: bumped_changelog}))
+        next_snapshot(prepared, "0.1.0", swift_commit)
+        status = git(prepared, "status", "--porcelain")
+        expect(SETUP_PAGE not in status and SWIFT_README not in status and CATALOG in status,
+               "next-snapshot leaves snippets the prepare pull request moved alone")
+        expect(refused(lambda: next_snapshot(unsnippeted, "0.1.0", swift_commit), "no install snippet")
+               and not git(unsnippeted, "status", "--porcelain").strip(),
+               "next-snapshot refuses a tree with no snippet and changes nothing")
         expect((bumped / CATALOG).read_text() == FIXTURE_FILES[CATALOG].replace('supabase-offline = "0.0.9"', 'supabase-offline = "0.1.0"'),
                "next-snapshot moves the Android sample's catalog version to the release, and nothing else")
         expect((bumped / IOS_SAMPLE_PROJECT).read_text() == FIXTURE_PROJECT.replace("version = 0.0.9;", "version = 0.1.0;"),
@@ -906,7 +1108,7 @@ def self_test() -> int:
         # is recorded, so a push that could move a ref fails the self-test.
         recorded = RecordedGit(globals()).__enter__()
         gh_state = install_fake_gh(work)
-        finish = make_repository(work, "finish", base)
+        finish = make_repository(work, "finish", dict(base, **LEFT_PAGES))
         sha = git(finish, "rev-parse", "HEAD").strip()
         commit_change(finish, "README.md", "a later change on main\n")
         git(finish, "push", "-q", "origin", "main")
@@ -950,10 +1152,12 @@ def self_test() -> int:
         expect(bool(pushed) and log.startswith(f"{BOT_NAME} <{BOT_EMAIL}>") and log.strip().endswith(branch_head),
                "the branch's commit is the bot's, on top of main's latest commit")
         changed = set(git(finish, "diff", "--name-only", branch_head, pushed[0] if pushed else "HEAD").split())
-        expect({CATALOG, IOS_SAMPLE_PROJECT, IOS_SAMPLE_RESOLVED} <= changed
-               and changed <= {GRADLE_PROPERTIES, CHANGELOG, COMPATIBILITY, OVERRIDES, CATALOG, IOS_SAMPLE_PROJECT, IOS_SAMPLE_RESOLVED}
-               and f'"{tagged_commit}"' in committed_file(finish, pushed[0] if pushed else "HEAD", IOS_SAMPLE_RESOLVED),
-               "the branch moves the samples too, the iOS pin to the Swift package's tag commit")
+        expect({CATALOG, IOS_SAMPLE_PROJECT, IOS_SAMPLE_RESOLVED, SETUP_PAGE, SWIFT_README} <= changed
+               and changed <= {GRADLE_PROPERTIES, CHANGELOG, COMPATIBILITY, OVERRIDES, CATALOG, IOS_SAMPLE_PROJECT,
+                               IOS_SAMPLE_RESOLVED, SETUP_PAGE, SWIFT_README}
+               and f'"{tagged_commit}"' in committed_file(finish, pushed[0] if pushed else "HEAD", IOS_SAMPLE_RESOLVED)
+               and 'from: "0.1.0"' in committed_file(finish, pushed[0] if pushed else "HEAD", SWIFT_README),
+               "the branch moves the samples and the install snippets too, the iOS pin to the Swift package's tag commit")
         link = message.split("Open its pull request: ", 1)[-1]
         query = urllib.parse.parse_qs(urllib.parse.urlsplit(link).query)
         expect(link.startswith("https://github.com/owner/repo/compare/main...release/0.1.0-next-snapshot?")
@@ -1020,6 +1224,8 @@ def main(argv: list[str]) -> int:
     following = commands.add_parser("next-snapshot")
     following.add_argument("version")
     following.add_argument("--swift-package", default=SWIFT_PACKAGE_URL)
+    commands.add_parser("check-snippets")
+    commands.add_parser("pin-snippets").add_argument("version")
     commands.add_parser("self-test")
     arguments = parser.parse_args(argv)
     root = Path.cwd()
@@ -1055,6 +1261,15 @@ def main(argv: list[str]) -> int:
         elif arguments.command == "next-snapshot":
             swift_commit = swift_package_commit(root, arguments.version, arguments.swift_package)
             print(f"VERSION_NAME is now {next_snapshot(root, arguments.version, swift_commit)}.")
+        elif arguments.command == "check-snippets":
+            version, which, snippets = check_snippets(root)
+            files = len({path for path, _, _ in snippets})
+            print(f"Every install snippet names {version}, {which}: {len(snippets)} in {files} files.")
+        elif arguments.command == "pin-snippets":
+            if not RELEASE_VERSION.match(arguments.version):
+                raise ReleaseError(f"{arguments.version!r} is not a release version X.Y.Z")
+            paths = pin_snippets(root, arguments.version)
+            print(f"Every install snippet names {arguments.version}, in {len(paths)} files:\n  " + "\n  ".join(paths))
     except ReleaseError as error:
         print(f"::error::{error}")
         return 1

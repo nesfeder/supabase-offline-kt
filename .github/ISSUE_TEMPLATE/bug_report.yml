@@ -13,7 +13,7 @@ body:
     attributes:
       label: Library version
       description: The version of supabase-offline-kt, or of the Swift package.
-      placeholder: "0.1.0"
+      placeholder: "0.2.0"
     validations:
       required: true
   - type: input

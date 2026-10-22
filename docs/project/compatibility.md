@@ -23,7 +23,7 @@ Pin the minor you have tested:
 === "Gradle"
 
     ```kotlin
-    implementation("io.github.nesfeder.supabase-offline:supabase-offline-kt:0.1.0")
+    implementation("io.github.nesfeder.supabase-offline:supabase-offline-kt:0.2.0")
     ```
 
     Gradle takes the version you name. If another library in your build asks for a newer
@@ -32,11 +32,11 @@ Pin the minor you have tested:
 === "Swift Package Manager"
 
     ```swift
-    .package(url: "https://github.com/nesfeder/supabase-offline-swift", .upToNextMinor(from: "0.1.0"))
+    .package(url: "https://github.com/nesfeder/supabase-offline-swift", .upToNextMinor(from: "0.2.0"))
     ```
 
-    Use `.upToNextMinor`, not `from:`. SwiftPM's `from: "0.1.0"` accepts every version up to 1.0.0,
-    and so every breaking 0.x minor.
+    Use `.upToNextMinor`, not `from:` on its own, which accepts every version up to 1.0.0, and so
+    every breaking 0.x minor.
 
 ## From 1.0
 

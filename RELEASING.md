@@ -85,17 +85,25 @@ In a pull request, like any other change:
    release checks that everything is in its section.
 3. In `docs/project/compatibility.md`, rename the `Unreleased` row of the supabase-kt table to
    `X.Y.Z`. It must name the supabase-kt version the catalog pins.
-4. Commit, then run the release's own checks locally. Both read committed files only:
+4. Move every install snippet to `X.Y.Z` with `python3 scripts/release.py pin-snippets X.Y.Z`: the
+   Maven coordinates, the catalog entry and the Swift package's `.upToNextMinor(from:)` in
+   `README.md`, `swift/README.md`, the Swift package's documentation catalog and the site's pages.
+   The release refuses a snippet left at the last release (step 5), since the site it builds from
+   the tag, the Swift package's README and its API reference at that tag would all show it. Between
+   releases the snippets name the version the samples take, and CI's docs job fails a pull request
+   whose snippets name anything but that version or the release being prepared
+   (`python3 scripts/release.py check-snippets`).
+5. Commit, then run the release's own checks locally. Both read committed files only:
 
    ```bash
    python3 scripts/release.py check-version
    python3 scripts/api-compat.py check-release
    ```
 
-   The first checks the version, the changelog and the compatibility row, and that no tag `X.Y.Z`
-   exists (run `git fetch --tags` first). The second rates everything since the last release tag
-   and fails when the version is too small for it.
-5. Merge the pull request once `All Green` passes. Merge nothing else until the release is out: the
+   The first checks the version, the changelog, the compatibility row and the install snippets, and
+   that no tag `X.Y.Z` exists (run `git fetch --tags` first). The second rates everything since the
+   last release tag and fails when the version is too small for it.
+6. Merge the pull request once `All Green` passes. Merge nothing else until the release is out: the
    release publishes `main` as it is when the workflow starts.
 
 ## 2. Rehearse: a dry run
@@ -135,7 +143,7 @@ the 0.1.0 release, beside about 20 Linux minutes; a real release takes the same 
 
 1. **Actions → Release → Run workflow**, branch `main`, with **Dry run** cleared.
 2. **verify** (Linux, about 12 minutes, no secrets, no side effects):
-   - `scripts/release.py check-version`, as in step 1.4;
+   - `scripts/release.py check-version`, as in step 1.5;
    - `scripts/api-compat.py check-release`, from a checkout with all history and tags;
    - `check` of both modules, less the iOS simulator suites, which need macOS and ran in the
      release commit's own CI;
@@ -201,7 +209,7 @@ this repository's tag and its GitHub Release with the framework, then the site. 
 package's tag and the GitHub Release, the package exists but its framework's URL does not answer
 yet; finish closes that gap a minute later, or a resume does.
 
-**The framework is not code-signed in 0.1.0.** Apple requires a signature only from the SDKs on
+**The framework is not code-signed.** Apple requires a signature only from the SDKs on
 its list of commonly used third-party SDKs, which this is not. Signing needs a certificate in the
 `framework` job, which would give a secret to the job that runs the build and add a second
 approval. A signature can be added in a later release: Xcode accepts a framework that gains a
@@ -231,10 +239,12 @@ must be signed by the same identity.
    `compat/overrides.txt`. It also moves the sample apps to `X.Y.Z`, since they take the published
    library, not this checkout: `supabase-offline` in `gradle/libs.versions.toml` for the Android
    sample, and for the iOS sample the project's exact version of `supabase-offline-swift` with its
-   pin, the tag's commit, in the project's `Package.resolved`. CI builds both samples on the
-   checkout, so check them as a reader gets them: `./gradlew :samples:android:assembleDebug`
-   without `-PsupabaseOffline.local=true`, and `samples/ios/OfflineTasks.xcodeproj` (the project,
-   not the workspace) resolving the package at `X.Y.Z`. Review it and merge it.
+   pin, the tag's commit, in the project's `Package.resolved`. It would move the install snippets
+   to `X.Y.Z` too, as a safety net: the release refused any left behind (step 1.4), so it finds
+   none to move. CI builds both samples on the checkout, so check them as a reader gets them:
+   `./gradlew :samples:android:assembleDebug` without `-PsupabaseOffline.local=true`, and
+   `samples/ios/OfflineTasks.xcodeproj` (the project, not the workspace) resolving the package at
+   `X.Y.Z`. Review it and merge it.
 6. If the next release is a patch, set that version in the pull request that prepares it.
 
 ## Republish the site
@@ -246,8 +256,8 @@ Swift API reference a Release run built; **Docs publish**, run by hand, builds t
 Kotlin reference from the branch it runs on, has no Swift reference and leaves `/swift/` out.
 
 1. Find the newest release's run: **Actions → Release**, the newest run whose `finish` job ran (a
-   dry run skips it), and take the number at the end of its URL (`…/actions/runs/<id>`). For 0.1.0
-   it is `38309205241`. Use the newest release's: an older run would put an older version's Swift
+   dry run skips it), and take the number at the end of its URL (`…/actions/runs/<id>`). For 0.2.0
+   it is `39426991583`. Use the newest release's: an older run would put an older version's Swift
    API reference on the site.
 2. **Actions → Docs republish → Run workflow**, branch `main`, with that number as
    `release_run_id`.
