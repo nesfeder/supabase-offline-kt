@@ -61,8 +61,7 @@ internal class CachePatcher(
     /**
      * Patches a write the server accepted, or a row it sent, into every cached query of [table]
      * that admits its rows. A live query with no payload gets one; one the patch may leave wrong is
-     * marked stale. Runs under the table's lock, and moves the table's watermark when it changes
-     * the cache.
+     * marked stale. Runs under the table's lock after moving its watermark.
      *
      * @param bodyJson rows for INSERT and UPSERT, the changed columns for UPDATE, `"{}"` for
      *   DELETE.
@@ -202,11 +201,6 @@ internal class CachePatcher(
      * reported. Overlays [writes], in order, on every cached query of [table], creates the payloads
      * live queries without one now admit, and marks stale a query it may leave wrong
      * ([patchMayLeaveWrong]). A cache not the current identity's is left alone.
-     *
-     * The table's watermark moves only when the patch changed a payload, created one, or marked a
-     * query stale: a response in flight cannot describe any of those. A patch that reached nothing,
-     * such as a server record for a row no cached query holds, leaves every in-flight response
-     * current, so a stream of them cannot starve the table's refreshes.
      */
     private suspend fun patchWithWrites(
         table: String,
@@ -217,10 +211,7 @@ internal class CachePatcher(
         if (!ownership.cacheServesCurrentIdentity()) return
         val toFetchAgain = mutableSetOf<String>()
         queryCache.tableWriteLock(table).withLock {
-            // Read before the cache is: a request that started before this tick cannot hold what
-            // the patch writes, so the watermark, if it moves, moves to here
-            val patchTick = freshness.tickNow()
-            var changed = false
+            freshness.advanceLocalWriteWatermark(table)
             val cached = queryCacheDao.allForTable(table)
             val uncachedLive =
                 (liveCacheKeys ?: liveCacheKeysOf(table)) -
@@ -266,10 +257,9 @@ internal class CachePatcher(
                 val stamp = if (wrong) staleStampOf(row.updatedAt) else row.updatedAt
                 val next = row.copy(payload = overlay.encode(patched.visible), updatedAt = stamp)
                 if (!writeUnlessCleared(guardTick, next)) return@withLock
-                changed = true
                 if (wrong) toFetchAgain += row.cacheKey
             }
-            val created =
+            toFetchAgain +=
                 createLivePayloads(
                     table,
                     uncachedLive,
@@ -280,10 +270,6 @@ internal class CachePatcher(
                     batch,
                     keyed,
                 )
-            if (created.wroteAny) changed = true
-            toFetchAgain += created.toFetchAgain
-            if (changed || toFetchAgain.isNotEmpty())
-                freshness.advanceLocalWriteWatermark(table, patchTick)
         }
         if (toFetchAgain.isNotEmpty()) onQueriesMarkedStale(table, toFetchAgain)
     }
@@ -310,11 +296,6 @@ internal class CachePatcher(
         conflictColumnsOf(mutation, primaryKeys)
 
     /**
-     * What [createLivePayloads] did: whether it wrote a payload, and the queries to fetch again.
-     */
-    private class CreatedLivePayloads(val wroteAny: Boolean, val toFetchAgain: Set<String>)
-
-    /**
      * Writes a payload for each of [cacheKeys], queries a live reader observes that have none, of
      * the rows [writes] wrote that the query admits. Nothing is written for a query that would stay
      * empty, and nothing once the cache was cleared or dropped since [guardTick]. A query the rows
@@ -324,6 +305,7 @@ internal class CachePatcher(
      * @param known the rows the table's other queries hold, indexed on first use.
      * @param batch the writes' bodies and filters, read once.
      * @param keyed see [patchMayLeaveWrong].
+     * @return the queries to fetch again.
      */
     private suspend fun createLivePayloads(
         table: String,
@@ -334,9 +316,8 @@ internal class CachePatcher(
         guardTick: Long,
         batch: PatchWrites,
         keyed: KeyedUpdates?,
-    ): CreatedLivePayloads {
+    ): Set<String> {
         val toFetchAgain = mutableSetOf<String>()
-        var wroteAny = false
         for (cacheKey in cacheKeys) {
             // A live query's shape is known while it is read; unknown conditions admit
             val shape = shapes[cacheKey]
@@ -363,13 +344,11 @@ internal class CachePatcher(
                     updatedAt = staleStampOf(nowMillis()),
                 )
             // A created payload is not a network response: it holds no synced mutation
-            if (!writeUnlessCleared(guardTick, row))
-                return CreatedLivePayloads(wroteAny, toFetchAgain)
-            wroteAny = true
+            if (!writeUnlessCleared(guardTick, row)) return toFetchAgain
             if (shape != null)
                 queryCache.queryShapes.remember(table, cacheKey, shape, persist = true)
         }
-        return CreatedLivePayloads(wroteAny, toFetchAgain)
+        return toFetchAgain
     }
 
     /**
@@ -395,9 +374,6 @@ internal class CachePatcher(
      * exclude, and, for an UPDATE, one whose filter may admit a row the write changes. With no
      * [narrowing], every query of the table. The payloads stay, so an offline read still has them.
      *
-     * The table's watermark moves only when a query was reached: a mark that reached nothing leaves
-     * every in-flight response current.
-     *
      * @param narrowing conditions the write's filter includes, all of which a row it reaches meets.
      * @param startedAtTick [CacheFreshness.tickNow] as read when the write started; nothing is
      *   written if the cache was cleared or dropped since, or is not the current identity's.
@@ -416,8 +392,7 @@ internal class CachePatcher(
                 as? JsonObject
         val toFetchAgain = mutableSetOf<String>()
         queryCache.tableWriteLock(table).withLock {
-            // Read before the cache is; see patchWithWrites
-            val markTick = freshness.tickNow()
+            freshness.advanceLocalWriteWatermark(table)
             val shapes = queryCache.queryShapes.shapesOf(table)
             val cached = queryCacheDao.allForTable(table)
             for (row in cached) {
@@ -439,7 +414,6 @@ internal class CachePatcher(
                 toFetchAgain +=
                     liveCacheKeysOf(table) - cached.mapTo(mutableSetOf()) { row -> row.cacheKey }
             }
-            if (toFetchAgain.isNotEmpty()) freshness.advanceLocalWriteWatermark(table, markTick)
         }
         if (toFetchAgain.isNotEmpty()) onQueriesMarkedStale(table, toFetchAgain)
     }

@@ -1236,8 +1236,6 @@ class QueryReaderRecoveryTest {
             collector.cancelAndJoin()
         }
 
-    // ── helpers ─────────────────────────────────────────────────────────────
-
     @Test
     fun a_refresh_refused_as_stale_more_than_once_keeps_asking_until_an_answer_lands() =
         runTest(UnconfinedTestDispatcher()) {
@@ -1305,9 +1303,8 @@ class QueryReaderRecoveryTest {
             )
             assertIs<RefreshState.Refreshing>(reads.last().refresh)
 
-            // When: the loop asks again on its schedule (a shared refresh runs in the live queries'
-            // scope, the background scope here, whose timers only advanceTimeBy reaches); the third
-            // write refuses that one too, and the request after it is answered in peace
+            // When: the loop asks again on its schedule; the third write refuses that one too, and
+            // the request after it is answered in peace
             advanceTimeBy(300)
             runCurrent()
 
@@ -1377,6 +1374,8 @@ class QueryReaderRecoveryTest {
 
             collector.cancelAndJoin()
         }
+
+    // ── helpers ─────────────────────────────────────────────────────────────
 
     private fun buildResolver(
         remoteTable: FakeRemoteTable,

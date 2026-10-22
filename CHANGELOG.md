@@ -23,14 +23,11 @@ All notable changes to this project are recorded in this file. The format follow
 
 ### Fixed
 
-- A reactive read whose refresh was refused twice as older than a local write settled on the stale
-  list and reported `Idle`, so a busy table, or a reconnect with queued writes, could keep a list
-  stale for good; it now keeps asking on its retry schedule until an answer lands, and a
-  `NetworkFirstThenCache` read whose first fetch was refused that way stays `Refreshing` instead of
-  reporting nothing as settled.
-- A server record or Realtime event that reached no cached query still moved its table's freshness
-  mark, refusing every refresh in flight; the mark now moves only for a patch that changes a cached
-  query or marks one stale.
+- A reactive read's refresh asks again, on its retry schedule, for as long as its answers are
+  refused as older than a change to the table, and reads `Refreshing` meanwhile; a
+  `NetworkFirstThenCache` read whose first fetch is refused that way stays `Refreshing` too. Before,
+  the second refusal settled the read on the rows it had and reported `Idle`, so a busy table, or a
+  reconnect with queued writes, could leave a list stale for good.
 - A burst of changes on a followed table, as one statement over a few hundred visible rows sends,
   overflowed the two buffers between the Realtime plugin and the cache, the plugin's own and the
   library's, past about 130 waiting changes, and the newest were dropped without a log or a stale
