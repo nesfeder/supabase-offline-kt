@@ -167,7 +167,8 @@ internal class SupabaseRealtimeFeed(
 
         /**
          * The feed over the Realtime plugin installed in [supabase]. Without the Auth plugin, and
-         * with the client's own token provider, it refreshes each channel's token itself.
+         * with the client's own token provider, it keeps each channel's token current itself,
+         * handing Realtime the token the provider returns.
          *
          * @throws IllegalStateException when the Realtime plugin is not installed.
          */
@@ -186,7 +187,7 @@ internal class SupabaseRealtimeFeed(
                 else
                     RealtimeTokenRefresher(
                         accessToken = provider,
-                        refresh = { supabase.realtime.setAuth() },
+                        refresh = { token -> supabase.realtime.setAuth(token) },
                         clock = clock,
                         engineLogger = engineLogger,
                     )

@@ -359,11 +359,10 @@ class SupabaseRealtimeFeedTest {
     fun without_auth_the_feed_from_the_installed_plugin_refreshes_the_providers_token() =
         runTest(timeout = 2.minutes) {
             withContext(Dispatchers.Default) {
-                // Given — a client with its own token provider and no Auth plugin, whose token
-                // expires sooner than the refresher's lead
+                // Given — a client with its own token provider and no Auth plugin
                 val ownSockets = ScriptedRealtimeWebsocketFactory()
                 val own = newTestSupabaseClient {
-                    accessToken = { jwt(expiresAtSeconds = Clock.System.now().epochSeconds + 30) }
+                    accessToken = { jwt(expiresAtSeconds = Clock.System.now().epochSeconds + 3600) }
                     install(Postgrest)
                     install(Realtime) {
                         websocketFactory = ownSockets
@@ -381,13 +380,13 @@ class SupabaseRealtimeFeedTest {
                 val socket = ownSockets.awaitSocket(0)
                 val join = socket.awaitSent("phx_join")
 
-                // Then — the token is sent again before it expires
+                // Then — the provider's token is handed to the channel
                 withTimeout(10.seconds) {
                     while (logs.entries.none { entry -> "Realtime:" in entry.message }) delay(20)
                 }
                 val said = logs.entries.map { entry -> entry.message }
                 assertTrue(
-                    said.any { message -> "sent the provider's token again" in message },
+                    said.any { message -> "sent the provider's token" in message },
                     "$said",
                 )
                 // When — the collector is canceled before the join was ever answered

@@ -1,12 +1,14 @@
 // Copyright (c) 2026 nesfeder
 // SPDX-License-Identifier: MIT
-@file:OptIn(ExperimentalCoroutinesApi::class)
+@file:OptIn(ExperimentalCoroutinesApi::class, ExperimentalAtomicApi::class)
 
 package io.github.nesfeder.supabase.offline.internal.realtime
 
 import io.github.nesfeder.supabase.offline.NetworkStatus
 import io.github.nesfeder.supabase.offline.RealtimeStatus
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
+import kotlin.concurrent.atomics.AtomicBoolean
+import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
@@ -16,6 +18,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -24,29 +28,41 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * Follows the watched tables' changes on the server while they are wanted, and applies them to the
- * cache: joined while the subscription is on, a user is signed in (or there is no Auth plugin) and
- * the network is not known to be down; left otherwise, and when [scope] ends. Each join reads the
- * watched tables again, since Realtime replays nothing. A channel that ends is joined again after a
- * bounded wait, cut short by an edge; joins that end within [steadyFollow] of one another back off,
- * up to [maxBackoff].
+ * cache: joined while the subscription is on, there is an identity to subscribe for (a signed-in
+ * user, or the one identity of a client without Auth) and the network is not known to be down; left
+ * otherwise, and when [scope] ends. A change of identity, a sign-in as another user included,
+ * leaves the channel and joins it again for the new one; a new session of the same identity changes
+ * nothing. Each join reads the watched tables again, since Realtime replays nothing. A channel that
+ * ends is joined again after a bounded wait, cut short by an edge; joins that end within
+ * [steadyFollow] of one another back off, up to [maxBackoff].
  *
  * The changes a follow receives wait in a [ChangeBacklog], taken off the feed as they arrive, and
  * are applied beside it, each table's waiting changes as one patch: a burst from the server costs
  * one pass over the table's cached queries, not one per change, and a slow patch never holds the
  * feed. A backlog past [backlogCapacity] is discarded, with every change the applier had taken but
  * not applied yet, and once the applier is free every watched table is read again instead, as on a
- * join, with one warning for the episode.
+ * join, with one warning for the episode. A batch is applied only while the inputs still want the
+ * follow it came from: what an earlier user's channel still delivers, once another user has signed
+ * in, is dropped instead of reaching the new user's cache.
+ *
+ * A channel that ends is logged at DEBUG; the warning comes when it is joined again, so an end that
+ * a sign-out, a network known down, the switch or [stop] brought about, which pauses the follow
+ * before the wait is over, leaves no warning. After [stop] the state is final: nothing a channel
+ * still ending reports changes it.
  *
  * @param scope where the following runs; canceling it leaves the channel.
  * @param tables the tables to follow; none follows nothing.
  * @param feed where the changes come from.
  * @param defaultSchema the schema of a table that names none, read at each join.
- * @param sessionReady `true` while there is a user to subscribe for; `true` once without Auth.
+ * @param sessionIdentity the identity to subscribe for, as it changes: `null` while there is none;
+ *   one value, once, without Auth.
  * @param networkStatuses the network as the client sees it, as it changes.
  * @param wakeUps the edges that cut a wait short: a reconnection, a settled session.
  * @param apply applies one table's changes, in the order they arrived, to the cache.
@@ -61,7 +77,7 @@ internal class ServerChangeFollower(
     private val tables: List<WatchedTable>,
     private val feed: ServerChangeFeed,
     private val defaultSchema: () -> String,
-    private val sessionReady: Flow<Boolean>,
+    private val sessionIdentity: Flow<String?>,
     private val networkStatuses: Flow<NetworkStatus>,
     private val wakeUps: Flow<Unit>,
     private val apply: suspend (List<ServerChangeEvent.Change>) -> Unit,
@@ -85,6 +101,12 @@ internal class ServerChangeFollower(
     /** Where the subscription stands, as it changes. */
     val state: StateFlow<RealtimeStatus> = followState.asStateFlow()
 
+    /** Whether [stop] has made the state final. */
+    private val stopped = AtomicBoolean(false)
+
+    /** What the inputs ask for, as last combined; what a follow whose channel ended checks. */
+    private val wantedNow = MutableStateFlow<Wanted>(Wanted.Paused)
+
     /** The following, once started. */
     private var following: Job? = null
 
@@ -99,72 +121,94 @@ internal class ServerChangeFollower(
      * once, so a caller sees it before the channel is left.
      */
     fun setEnabled(enabled: Boolean) {
-        if (!enabled && tables.isNotEmpty()) followState.value = RealtimeStatus.Off
+        if (!enabled && tables.isNotEmpty()) report(RealtimeStatus.Off)
         this.enabled.value = enabled
     }
 
-    /** Records that the client closed: the channel is left with [scope], and the state is final. */
+    /**
+     * Records that the client closed: the channel is left with [scope], and the state is final,
+     * whatever a channel still ending reports after this.
+     */
     fun stop() {
+        stopped.store(true)
         followState.value = RealtimeStatus.Off
     }
 
+    /** Reports [status], unless [stop] has made the state final. */
+    private fun report(status: RealtimeStatus) {
+        followState.update { current -> if (stopped.load()) current else status }
+    }
+
     /** What the inputs ask for. */
-    private enum class Wanted {
-        OFF,
-        PAUSED,
-        FOLLOW,
+    private sealed interface Wanted {
+        data object Off : Wanted
+
+        data object Paused : Wanted
+
+        /** Follow for [identity]; another identity is another follow. */
+        data class Follow(val identity: String) : Wanted
     }
 
     /**
      * Follows while the inputs say so. One distinct answer per change of inputs, so a change that
-     * leaves the answer alone never restarts the channel.
+     * leaves the answer alone never restarts the channel, and a change of identity does.
      */
     private suspend fun keepFollowing() {
-        combine(enabled, sessionReady, networkStatuses) { on, ready, network ->
+        combine(enabled, sessionIdentity, networkStatuses) { on, identity, network ->
                 when {
-                    !on -> Wanted.OFF
-                    !ready ||
+                    !on -> Wanted.Off
+                    identity == null ||
                         network == NetworkStatus.OFFLINE ||
-                        network == NetworkStatus.DISABLED -> Wanted.PAUSED
-                    else -> Wanted.FOLLOW
+                        network == NetworkStatus.DISABLED -> Wanted.Paused
+                    else -> Wanted.Follow(identity)
                 }
             }
+            .onEach { wanted -> wantedNow.value = wanted }
             .distinctUntilChanged()
             .collectLatest { wanted ->
                 when (wanted) {
-                    Wanted.OFF -> followState.value = RealtimeStatus.Off
-                    Wanted.PAUSED -> followState.value = RealtimeStatus.Paused
-                    Wanted.FOLLOW -> followUntilCanceled()
+                    Wanted.Off -> report(RealtimeStatus.Off)
+                    Wanted.Paused -> report(RealtimeStatus.Paused)
+                    is Wanted.Follow -> followUntilCanceled(wanted)
                 }
             }
     }
 
-    /** Follows, and joins again after each channel that ends, until canceled. */
-    private suspend fun followUntilCanceled() {
+    /**
+     * Follows for [wanted]'s identity, and joins again after each channel that ends, until
+     * canceled.
+     */
+    private suspend fun followUntilCanceled(wanted: Wanted.Follow) {
         var backoff = Duration.ZERO
         while (true) {
-            followState.value = RealtimeStatus.Subscribing
+            report(RealtimeStatus.Subscribing)
             val started = timeSource.markNow()
-            val failure = followOnce()
-            followState.value = RealtimeStatus.Stalled(failure)
-            engineLogger.warning {
-                "Realtime: the channel ended (${failure::class.simpleName}); joining again"
-            }
+            val failure = followOnce(wanted)
+            // Canceled as the channel ended: the inputs' next state is the one to report, not
+            // this end
+            currentCoroutineContext().ensureActive()
+            // Inputs that moved on as the channel ended pause the follow in a moment: the end is
+            // theirs, and no stall is reported for it
+            if (wantedNow.value == wanted) report(RealtimeStatus.Stalled(failure))
+            engineLogger.debug { "Realtime: the channel ended (${failure::class.simpleName})" }
             backoff =
                 if (backoff == Duration.ZERO || started.elapsedNow() >= steadyFollow) initialBackoff
                 else minOf(backoff * 2, maxBackoff)
             withTimeoutOrNull(backoff) { wakeUps.first() }
+            engineLogger.warning {
+                "Realtime: the channel ended (${failure::class.simpleName}); joining again"
+            }
         }
     }
 
     /**
-     * Follows once, applying what arrives; returns the failure that ended the channel. A join is
-     * handled as it arrives; the changes wait in a backlog that [applyBacklog] drains beside the
-     * collection, and what arrived before the channel ended is still applied.
+     * Follows once for [wanted], applying what arrives; returns the failure that ended the channel.
+     * A join is handled as it arrives; the changes wait in a backlog that [applyBacklog] drains
+     * beside the collection, and what arrived before the channel ended is still applied.
      */
-    private suspend fun followOnce(): Exception = coroutineScope {
+    private suspend fun followOnce(wanted: Wanted.Follow): Exception = coroutineScope {
         val backlog = ChangeBacklog(backlogCapacity)
-        launch { applyBacklog(backlog) }
+        launch { applyBacklog(wanted, backlog) }
         try {
             feed.follow(tables, defaultSchema()).collect { event -> receive(event, backlog) }
             ServerChangeFeedEndedException("The Realtime channel ended")
@@ -187,7 +231,7 @@ internal class ServerChangeFollower(
 
     /** Reports the channel subscribed, and reads every watched table again: nothing is replayed. */
     private suspend fun joined() {
-        followState.value = RealtimeStatus.Subscribed
+        report(RealtimeStatus.Subscribed)
         engineLogger.info {
             "Realtime: subscribed to ${tables.size} table(s); their cached queries are read again"
         }
@@ -198,8 +242,10 @@ internal class ServerChangeFollower(
      * Applies [backlog]'s changes until it is closed and empty: every change waiting, each table's
      * as one patch in the order they arrived, tables in the order of their first change. A batch
      * taken before a discard is dropped instead, and a discard is reported once the take is done.
+     * So is a batch taken once the inputs no longer ask for [wanted], the follow it came from: an
+     * earlier user's changes never reach the next user's cache.
      */
-    private suspend fun applyBacklog(backlog: ChangeBacklog) {
+    private suspend fun applyBacklog(wanted: Wanted.Follow, backlog: ChangeBacklog) {
         while (true) {
             val entries = backlog.takeAll()
             if (entries == null) {
@@ -218,6 +264,13 @@ internal class ServerChangeFollower(
                 if (current.size < batch.size) backlog.countDropped(batch.size - current.size)
                 if (current.isEmpty()) continue
                 val changes = current.map { entry -> entry.change }
+                if (wantedNow.value != wanted) {
+                    engineLogger.debug {
+                        "Realtime: ${changes.size} change(s) to ${key.first} arrived on a " +
+                            "channel that is being left; they are dropped"
+                    }
+                    continue
+                }
                 applyQuietly(changes, table = key.first, schema = key.second)
             }
             reportDiscard(backlog)

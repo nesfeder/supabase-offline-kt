@@ -42,9 +42,13 @@ The channel is joined while three things hold, and left as soon as one stops:
 | the subscription is on, which it is at start | `disableRealtime()` is called |
 
 It is joined again as soon as every condition holds again, and left for good at `close()`. A
+sign-in as another user, with or without a sign-out first, leaves the channel and joins it again as
+the new user, who reads the named tables again; a new session of the same user changes nothing. A
 channel the server refuses, or closes, is joined again after a wait that starts at a second and
 doubles up to a minute, and is cut short by a reconnection or a sign-in; a follow that lasted a
-minute starts the wait over. Nothing is joined when no table is named.
+minute starts the wait over. The log says so as a warning when the channel is joined again, not
+when it ended because of a sign-out, the network or `close()`. Nothing is joined when no table is
+named.
 
 `realtimeStatus` says where the channel stands, as one value to draw a row of the Sync screen from:
 
@@ -100,12 +104,13 @@ From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabas
 ### Without the Auth plugin
 
 A client without Auth joins the channel with the token its own provider returns at the join, and
-the library refreshes the channel's token itself a minute before that token's `exp`, through the
-same provider, so a long session is not closed by the server when the token expires. What it cannot
-see is a change of user: an iOS app, whose core has no Auth plugin, brackets a sign-in or sign-out
-with `disableRealtime()` and `enableRealtime()`, as the iOS sample's `applyLiveUpdates()` above
-does, so the channel is joined again as the new user. A Kotlin app with Auth installed needs
-nothing: the plugin follows the session.
+the library keeps the channel's token current itself: it asks the provider again a minute before
+the token's `exp`, and more often as the expiry nears, and sends the channel any token the provider
+returns that expires later, as soon as it does, so a long session is not closed by the server when
+the token expires. What it cannot see is a change of user: an iOS app, whose core has no Auth
+plugin, brackets a sign-in or sign-out with `disableRealtime()` and `enableRealtime()`, as the iOS
+sample's `applyLiveUpdates()` above does, so the channel is joined again as the new user. A Kotlin
+app with Auth installed needs nothing: the plugin follows the session.
 
 ## Manual control
 

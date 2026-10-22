@@ -458,10 +458,9 @@ internal class OfflineClient(
                 tables = watchedTables,
                 feed = serverChangeFeed,
                 defaultSchema = ::defaultSchema,
-                sessionReady =
-                    authPluginOrNull()?.sessionStatus?.map { status ->
-                        status is SessionStatus.Authenticated
-                    } ?: flowOf(true),
+                sessionIdentity =
+                    authPluginOrNull()?.sessionStatus?.map(::followIdentityFor)
+                        ?: flowOf(QueueIdentity.Anonymous.storedValue),
                 networkStatuses = networkAccess.statusChanges,
                 wakeUps = wakeUps,
                 apply = ::applyServerChanges,
@@ -500,6 +499,16 @@ internal class OfflineClient(
     /** The PostgREST plugin's default schema, `public` without the plugin. */
     private fun defaultSchema(): String =
         supabaseClient.pluginManager.getPluginOrNull(Postgrest)?.config?.defaultSchema ?: "public"
+
+    /**
+     * The identity the channel is joined for under [status], the one the cache belongs to: `null`
+     * while there is no user to subscribe for, so a change of user restarts the follow and a new
+     * session of the same user does not. A session that names no user is followed as one identity
+     * of its own; the cache is not served to it.
+     */
+    private fun followIdentityFor(status: SessionStatus): String? =
+        if (status !is SessionStatus.Authenticated) null
+        else replayIdentityFor(status)?.storedValue ?: UNNAMED_USER_FOLLOW_IDENTITY
 
     /**
      * Applies the changes the feed reported to one table, in the order they arrived, as one patch,
@@ -1331,6 +1340,9 @@ internal class OfflineClient(
 
         /** How many times that wait doubles: at most 64 times [STATUS_RETRY_WAIT]. */
         const val STATUS_RETRY_DOUBLINGS: Int = 6
+
+        /** The identity the channel is joined for under a session that names no user. */
+        private const val UNNAMED_USER_FOLLOW_IDENTITY: String = "user:"
     }
 
     private fun ensurePostgrestInstalled() {
