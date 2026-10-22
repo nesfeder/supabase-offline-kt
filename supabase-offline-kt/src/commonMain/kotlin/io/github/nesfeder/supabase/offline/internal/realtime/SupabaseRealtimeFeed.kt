@@ -23,9 +23,11 @@ import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.ProducerScope
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.buffer
 import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -49,6 +51,11 @@ internal const val REALTIME_NOT_INSTALLED_MESSAGE: String =
  * from the server, or a socket that dropped. supabase-kt's own rejoin leaves the channel before it
  * joins again, which ends the feed too, so every join is the follower's, on a fresh channel with a
  * fresh token.
+ *
+ * Nothing a burst sends is lost: each table's `postgresChangeFlow` is buffered without limit, which
+ * supabase-kt's `callbackFlow` takes as its own buffer, so the `trySend` behind it cannot drop a
+ * change once 64 wait; so is the feed's own flow, between those and its collector. The follower
+ * bounds what waits, in its backlog.
  *
  * @param tokenRefresher keeps the channel's token current for a client without Auth, or `null` when
  *   Auth, or supabase-kt itself, does.
@@ -74,10 +81,14 @@ internal class SupabaseRealtimeFeed(
             for (watched in tables) {
                 val schema = watched.schema ?: defaultSchema
                 val changes =
-                    channel.postgresChangeFlow<PostgresAction>(schema) {
-                        table = watched.table
-                        watched.filter?.let { filter(it.column, it.operator, it.value) }
-                    }
+                    channel
+                        .postgresChangeFlow<PostgresAction>(schema) {
+                            table = watched.table
+                            watched.filter?.let { filter(it.column, it.operator, it.value) }
+                        }
+                        // Fused into supabase-kt's callbackFlow: its channel, not one after
+                        // it, so its trySend never finds the buffer full
+                        .buffer(Channel.UNLIMITED)
                 launch(start = CoroutineStart.UNDISPATCHED) {
                     changes.collect { action ->
                         action.toEvent(watched.table, schema)?.let { event -> send(event) }
@@ -92,6 +103,7 @@ internal class SupabaseRealtimeFeed(
             withContext(NonCancellable) { leave(realtime, channel) }
         }
     }
+        .buffer(Channel.UNLIMITED)
 
     /**
      * Sends [ServerChangeEvent.Joined] each time the channel subscribes, and fails the feed once a

@@ -29,6 +29,9 @@ import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.ClosedReceiveChannelException
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
@@ -49,8 +52,8 @@ import kotlinx.serialization.json.putJsonObject
 /**
  * The feed over supabase-kt's real Realtime plugin, driven through a scripted websocket: the join
  * names each table with its schema and filter, a subscribed channel reports joined and then each
- * change as sent, a refused join ends the feed, a close from the server ends it too, and a canceled
- * collector leaves the channel.
+ * change as sent, a burst of changes reaches a slow collector whole and in order, a refused join
+ * ends the feed, a close from the server ends it too, and a canceled collector leaves the channel.
  */
 class SupabaseRealtimeFeedTest {
 
@@ -167,6 +170,68 @@ class SupabaseRealtimeFeedTest {
                     )
                 )
                 socket.awaitDisconnected()
+            }
+            supabase.close()
+        }
+
+    @Test
+    fun a_burst_of_changes_reaches_a_slow_collector_whole_and_in_order() =
+        runTest(timeout = 2.minutes) {
+            withContext(Dispatchers.Default) {
+                // Given — joined, with a collector that takes 5 ms over each change, as one that
+                // patches the cache does
+                val joined = Channel<Unit>(Channel.CONFLATED)
+                val arrived = MutableStateFlow<List<String>>(emptyList())
+                val collecting = launch {
+                    feed.follow(tables, "public").collect { event ->
+                        when (event) {
+                            ServerChangeEvent.Joined -> joined.send(Unit)
+                            is ServerChangeEvent.Saved -> {
+                                delay(5.milliseconds)
+                                val id = event.record["id"]?.jsonPrimitive?.content ?: "?"
+                                arrived.update { ids -> ids + id }
+                            }
+                            is ServerChangeEvent.Deleted -> Unit
+                        }
+                    }
+                }
+                val socket = sockets.awaitSocket(0)
+                val join = socket.awaitSent("phx_join")
+                val bindings =
+                    assertNotNull(
+                        join.payload["config"]?.jsonObject?.get("postgres_changes")?.jsonArray
+                    )
+                socket.answer(joinTaken(join, bindings))
+                withTimeout(10.seconds) { joined.receive() }
+
+                // When — one statement's worth of changes, sent within milliseconds
+                val ids = List(BURST) { index -> "t$index" }
+                for (id in ids) {
+                    socket.answer(
+                        change(
+                            join.topic,
+                            ids = listOf(1),
+                            data = insert(buildJsonObject { put("id", id) }),
+                        )
+                    )
+                }
+
+                // Then — every change arrives, in the order sent
+                val complete =
+                    withTimeoutOrNull(30.seconds) { arrived.first { got -> got.size == BURST } }
+                val got = complete ?: arrived.value
+                assertEquals(BURST, got.size, "${got.size} of $BURST changes arrived")
+                assertEquals(ids, got)
+                collecting.cancelAndJoin()
+                val leave = socket.awaitSent("phx_leave")
+                socket.answer(
+                    RealtimeMessage(
+                        leave.topic,
+                        "phx_reply",
+                        buildJsonObject { put("status", "ok") },
+                        leave.ref,
+                    )
+                )
             }
             supabase.close()
         }
@@ -442,5 +507,10 @@ class SupabaseRealtimeFeedTest {
                 leave.ref,
             )
         )
+    }
+
+    private companion object {
+        /** How many changes one statement over a few hundred visible rows sends. */
+        const val BURST = 500
     }
 }
