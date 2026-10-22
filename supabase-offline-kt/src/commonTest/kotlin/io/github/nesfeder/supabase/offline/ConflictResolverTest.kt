@@ -35,6 +35,8 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
@@ -247,12 +249,14 @@ class ConflictResolverTest {
         // When
         val report = client.syncPendingMutations()
 
-        // Then
+        // Then — parked, and the cached list shows the server's title, not the device's rename,
+        // under the version the device saw
         val parked = report.conflicted.single()
         assertEquals(id to MOVED_VERSION, parked.id to parked.serverVersion)
         assertEquals(setOf("title"), parked.conflictingColumns)
         assertEquals(0 to 0, report.syncedCount to report.remainingCount)
         assertEquals(renamedElsewhere, server.rows(GUARDED_TABLE).single())
+        assertEquals(listOf(taskRow(1, "elsewhere")), client.cachedTasks())
         client.close()
     }
 
@@ -288,6 +292,24 @@ class ConflictResolverTest {
         // Then
         assertEquals(MOVED_VERSION, report.conflicted.single().serverVersion)
         assertEquals(0, client.pendingMutationCount())
+        client.close()
+    }
+
+    @Test
+    fun keep_local_on_a_row_gone_from_the_server_parks_the_write() = runTest {
+        // Given — the resolver would resend, but there is no row to resend against
+        val client = newGuardedClient(server, resolver)
+        client.queueRename()
+        server.deleteRow(GUARDED_TABLE, "1")
+        resolver.answer = { ConflictResolution.KeepLocal }
+
+        // When
+        val report = client.syncPendingMutations()
+
+        // Then — nothing resurrected, and the cached row stays as the device last read it
+        assertNull(report.conflicted.single().serverVersion)
+        assertEquals(emptyList(), server.rows(GUARDED_TABLE))
+        assertEquals(listOf(taskRow(1, "theirs")), client.cachedTasks())
         client.close()
     }
 
@@ -470,6 +492,13 @@ class ConflictResolverTest {
     }
 
     private val keyOfTaskOne: JsonObject = buildJsonObject { put("id", "1") }
+
+    /** [GUARDED_TABLE]'s rows as the cache alone serves them. */
+    private suspend fun Offline.cachedTasks(): List<JsonObject> =
+        (Json.parseToJsonElement(
+                from(GUARDED_TABLE).select(readStrategy = ReadStrategy.CacheOnly()).data
+            ) as JsonArray)
+            .map { row -> row as JsonObject }
 
     private fun titled(title: String): JsonObject = buildJsonObject { put("title", title) }
 

@@ -17,6 +17,9 @@ All notable changes to this project are recorded in this file. The format follow
 
 ### Changed
 
+- The rejected list keeps a guarded write's base in each guarded entry, under two new keys
+  (`baseVersion`, `baseJson`), so a retry replays guarded. A list an earlier build wrote reads back
+  without them, and a retry of such an entry replays unguarded, as it did there.
 - An object whose bucket id or path has a segment that starts with a letter and a colon
   (`u:42/a.png`) is stored under `storage-hashed/`, like every other name that cannot be stored
   verbatim. Nothing was cached under its plain path before, so no file already on a device moves.
@@ -27,6 +30,65 @@ All notable changes to this project are recorded in this file. The format follow
 
 ### Fixed
 
+- A reactive read's refresh asks again, on its retry schedule, for as long as its answers are
+  refused as older than a change to the table, and reads `Refreshing` meanwhile; a
+  `NetworkFirstThenCache` read whose first fetch is refused that way stays `Refreshing` too. Before,
+  the second refusal settled the read on the rows it had and reported `Idle`, so a busy table, or a
+  reconnect with queued writes, could leave a list stale for good.
+- A burst of changes on a followed table, as one statement over a few hundred visible rows sends,
+  overflowed the two buffers between the Realtime plugin and the cache, the plugin's own and the
+  library's, past about 130 waiting changes, and the newest were dropped without a log or a stale
+  mark, so a row could keep an older value until the next join or fetch; every change is now kept,
+  and a backlog of more than 5,000 waiting changes across the named tables is discarded as a whole,
+  with the tables read again as on a join and one warning logged.
+- Each change a followed table received was applied as its own pass over the table's cached
+  queries, so a burst ran far behind the connection; the changes waiting for a table are now
+  applied as one pass, in the order the server sent them.
+- A one-shot read made while a stored session's token refresh has failed waits for the session,
+  as it does while one restores. supabase-kt sends the anon key meanwhile, and tries the refresh
+  again every ten seconds by default; the read returned the anon key's answer, empty under
+  row-level security, as the server's. When the session does not settle within the wait, a
+  `NetworkFirst` read with the query cached, or a `CacheFirst` read of a list marked stale, serves
+  the cached rows rather than that answer. A `NetworkFirstThenCache` read waits the same way
+  before its first emission. A read answered after the session settled asks again at once.
+- A read of a shape the cache cannot hold (`single()`, `maybeSingle()`, `head`, a `count`, …)
+  waits for a session that is restoring, or whose refresh failed, before it is sent. It went out
+  at once on the anon key, where a detail screen's `single()` failed with `PGRST116` and a `count`
+  read 0 at cold start.
+- A cached list whose shape record the library could not read (one another build wrote, or one
+  that did not decode) admitted every row of its table into the list, for good; the record is now
+  replaced by the one the next read records.
+- A write patched into a table while the cache was being trimmed could bring back a list the
+  trimming had just removed; a patch now changes only the lists still there. A read of the cache
+  that overlapped `clearLocalData()` could leave a record of its query's filter values behind; such
+  a record is now written only beside the rows it describes, and never after a clear.
+- A `2xx` answer that was not a list of rows (a captive portal's sign-in page, a proxy's block page,
+  a self-hosted server's fallback page) replaced the cached list, and every offline read of the
+  query then failed to decode it. Such an answer is no longer written: a `NetworkFirst` or
+  `CacheFirst` read with the query cached within its `maxAge` is served the cached rows, and a
+  reactive read's refresh asks again, `Stalled` by that cause after its fast retries. A blank
+  answer is an empty list, served and stored as `[]`.
+- Two different queries could share one cache key when a filter value held `&`, `=` or `|`, and be
+  served each other's rows offline. Such a query's key now ends in a digest of its parts; every
+  other key is unchanged. Such a query's rows cached before the upgrade are not found; it is fetched
+  again once, and the old rows stay until evicted.
+- A rejected write that was guarded by a version column keeps its base when it is retried: the
+  retry checks the server's row as the first send did, so a row another device changed meanwhile is
+  a conflict for the resolver, not an overwrite.
+- A replayed write's returned row moves the base of the writes queued behind it by the same user
+  only. On a shared device, another user's queued write to the same row keeps the version its user
+  saw, so its replay meets the change as a conflict.
+- A write parked on the conflicted list leaves the cached row showing the server's values for the
+  columns the replay read, instead of the values the device last read. The row keeps the version
+  the device saw, as it now does after the resolver's `KeepServer` too, so a later write to it
+  still meets the move instead of applying over another device's change to a column the replay
+  did not read.
+- `KeepServer` on a listed entry drops a gone row from the cache, or lays the columns the entry
+  recorded into the cached row while that row is still as the device saw it before the write, as
+  the resolver's own `KeepServer` does; the lists holding the row are then fetched again.
+- A sync pass canceled by anything but `clearLocalData()` (a cancellation the transport threw) is
+  no longer reported as a cleared pass with nothing left queued. It reports a failure on the
+  device, the writes stay queued, and the library's own passes go on.
 - A download of a Storage object that was still on the wire when an upload, update, delete, move,
   copy or resumable upload of the same object landed no longer becomes the cached copy: the caller
   gets the bytes it asked for, and the next read downloads the new ones. `ensureCachedFile`

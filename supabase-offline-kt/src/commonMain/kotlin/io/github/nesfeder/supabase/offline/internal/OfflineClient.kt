@@ -33,8 +33,10 @@ import io.github.nesfeder.supabase.offline.internal.cache.LocalData
 import io.github.nesfeder.supabase.offline.internal.cache.QueryCache
 import io.github.nesfeder.supabase.offline.internal.cache.QueryCacheLimits
 import io.github.nesfeder.supabase.offline.internal.cache.QueryOverlay
+import io.github.nesfeder.supabase.offline.internal.cache.ServerRowChange
 import io.github.nesfeder.supabase.offline.internal.cache.ShownQueueCounts
 import io.github.nesfeder.supabase.offline.internal.cache.buildCacheComponents
+import io.github.nesfeder.supabase.offline.internal.cache.keyOf
 import io.github.nesfeder.supabase.offline.internal.cache.monotonicTickSource
 import io.github.nesfeder.supabase.offline.internal.db.CachedFileDao
 import io.github.nesfeder.supabase.offline.internal.db.DatabaseScrub
@@ -51,6 +53,7 @@ import io.github.nesfeder.supabase.offline.internal.mutationqueue.ConflictPolicy
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.ConflictRequeue
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.DefaultConflictPolicy
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.DefaultPrimaryKeys
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.GONE_REASON
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueue
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueueReplayer
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.NoVersionColumns
@@ -64,17 +67,21 @@ import io.github.nesfeder.supabase.offline.internal.mutationqueue.SyncStop
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.VersionColumns
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.conflictDecisionOf
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.currentReplayIdentity
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.jsonObjectOrNull
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.pinnedRowKeyOf
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.replayIdentityFor
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.syncFailureOf
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.toConflictedMutation
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.toPendingMutation
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.toRejectedMutation
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.versionTextOf
 import io.github.nesfeder.supabase.offline.internal.network.NetworkAccess
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 import io.github.nesfeder.supabase.offline.internal.postgrest.LiveQueries
 import io.github.nesfeder.supabase.offline.internal.postgrest.OfflineTable
 import io.github.nesfeder.supabase.offline.internal.postgrest.RequestSession
 import io.github.nesfeder.supabase.offline.internal.postgrest.ResponseTrustPolicy
+import io.github.nesfeder.supabase.offline.internal.postgrest.decodeFilterOrNull
 import io.github.nesfeder.supabase.offline.internal.postgrest.encodeFilter
 import io.github.nesfeder.supabase.offline.internal.postgrest.installCommittedDryRunReport
 import io.github.nesfeder.supabase.offline.internal.postgrest.installDryRunCheck
@@ -131,6 +138,7 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.jsonPrimitive
 import okio.FileSystem
 import okio.Path
 import okio.SYSTEM
@@ -468,7 +476,7 @@ internal class OfflineClient(
                     } ?: flowOf(true),
                 networkStatuses = networkAccess.statusChanges,
                 wakeUps = wakeUps,
-                apply = ::applyServerChange,
+                apply = ::applyServerChanges,
                 markStale = ::markCachedQueriesStale,
                 engineLogger = engineLogger,
             )
@@ -506,17 +514,41 @@ internal class OfflineClient(
         supabaseClient.pluginManager.getPluginOrNull(Postgrest)?.config?.defaultSchema ?: "public"
 
     /**
-     * Applies a change the feed reported through the same path an app's [applyServerRecord] or
-     * [applyServerDelete] takes; nothing once the client is closing.
+     * Applies the changes the feed reported to one table, in the order they arrived, as one patch,
+     * through the path an app's [applyServerRecord] or [applyServerDelete] takes; a change whose
+     * record cannot be located is logged and left out, as there. Nothing once the client is
+     * closing.
+     *
+     * @param changes at least one, all of one table and schema.
      */
-    private suspend fun applyServerChange(event: ServerChangeEvent) {
+    private suspend fun applyServerChanges(changes: List<ServerChangeEvent.Change>) {
         if (operationGate.isClosed) return
-        when (event) {
-            is ServerChangeEvent.Saved ->
-                applyServerRecord(event.table, event.record, primaryKeys = null, event.schema)
-            is ServerChangeEvent.Deleted ->
-                applyServerDelete(event.table, event.oldRecord, primaryKeys = null, event.schema)
-            ServerChangeEvent.Joined -> Unit
+        val first = changes.first()
+        operationGate.call {
+            val cachedTable = cachedTableOf(first.table, first.schema)
+            val keyColumns = primaryKeys.of(cachedTable)
+            val located = changes.mapNotNull { change ->
+                when (change) {
+                    is ServerChangeEvent.Saved ->
+                        locateServerRow(
+                            "applyServerRecord",
+                            change.table,
+                            change.record,
+                            keyColumns,
+                            deleted = false,
+                        )
+                    is ServerChangeEvent.Deleted ->
+                        locateServerRow(
+                            "applyServerDelete",
+                            change.table,
+                            change.oldRecord,
+                            keyColumns,
+                            deleted = true,
+                        )
+                }
+            }
+            if (located.isNotEmpty())
+                cachePatcher.patchServerChanges(cachedTable, keyColumns, located)
         }
     }
 
@@ -854,6 +886,7 @@ internal class OfflineClient(
             val identity = queueIdentityReader.current() ?: return@call
             val entry = mutationQueue.shownConflict(id, identity.storedValue) ?: return@call
             requireResolvable(entry, resolution)
+            val startedAtTick = freshness.tickNow()
             val requeue =
                 mutationQueue.requeueConflict(
                     id,
@@ -864,7 +897,100 @@ internal class OfflineClient(
                 "This conflicted mutation cannot be settled that way"
             }
             if (requeue is ConflictRequeue.Requeued) automaticReplay.requestPass()
+            if (requeue == ConflictRequeue.Dropped)
+                showServerSideOf(entry, identity.storedValue, startedAtTick)
         }
+
+    /**
+     * Shows the server's side of the conflicted [entry] the app dropped with
+     * [ConflictResolution.KeepServer] in the cache, as the resolver's own `KeepServer` does. A row
+     * gone from the server is dropped from the cached queries. A row the replay read is laid in,
+     * without its version, only while the cached row still carries the entry's base version: the
+     * row as the device saw it before the write, which an entry a build before this one parked left
+     * there; a cached row at any other version was fetched, or laid in, since the entry was made,
+     * and is left as it is. Either way the queries holding the row are then marked stale, so a live
+     * read fetches it again: the row may have moved while the entry waited. Runs after the queue
+     * lock is released, since the patch takes the table's lock, which precedes the queue's; a
+     * failure is logged, since the entry is gone either way. An entry whose filter pins no row (a
+     * guarded replay always pins one) patches nothing.
+     *
+     * @param identity the stored value of the identity resolving, whose cache the row is read from.
+     * @param startedAtTick the tick the resolution started at; a clear since then voids the patch.
+     */
+    private suspend fun showServerSideOf(
+        entry: StoredConflict,
+        identity: String,
+        startedAtTick: Long,
+    ) {
+        val table = entry.table
+        val keyColumns = primaryKeys.of(table)
+        val filter = decodeFilterOrNull(entry.filterJson, EngineJson) ?: return
+        val pinned = pinnedRowKeyOf(filter, keyColumns) ?: return
+        val keyFilter =
+            FilterDescriptor(
+                conditions =
+                    pinned.map { (column, value) ->
+                        FilterDescriptor.Condition(column, "eq", value.jsonPrimitive.content)
+                    }
+            )
+        val versionColumn = mutationQueue.versionColumns.of(table)
+        val server = entry.serverRowJson?.let { text -> jsonObjectOrNull(text, EngineJson) }
+        try {
+            if (entry.serverVersion == null && entry.message == GONE_REASON) {
+                cachePatcher.patchCachedQueries(
+                    table = table,
+                    operation = MutationOperation.DELETE,
+                    bodyJson = "{}",
+                    filterJson = encodeFilter(keyFilter, EngineJson),
+                    startedAtTick = startedAtTick,
+                )
+            } else if (
+                server != null &&
+                    versionColumn != null &&
+                    entry.baseVersion != null &&
+                    cachedVersionOf(table, pinned, keyColumns, versionColumn, identity) ==
+                        entry.baseVersion
+            ) {
+                cachePatcher.patchReturnedRows(
+                    table,
+                    JsonObject(emptyMap()),
+                    JsonArray(listOf(JsonObject(server - versionColumn))).toString(),
+                    startedAtTick,
+                )
+            }
+            // As a delete would: the queries that still hold the row, which a dropped row left
+            cachePatcher.markQueriesAWriteMayReach(
+                table = table,
+                operation = MutationOperation.DELETE,
+                bodyJson = "{}",
+                narrowing = keyFilter,
+                startedAtTick = startedAtTick,
+            )
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (failure: Exception) {
+            engineLogger.warning {
+                "Patching the cache after a conflicted write to $table was dropped failed: " +
+                    failure::class.simpleName
+            }
+        }
+    }
+
+    /**
+     * The version the newest cached row of [table] with the key [pinned] carries, in [identity]'s
+     * cache, as text; `null` when no cached list holds the row with [versionColumn].
+     */
+    private suspend fun cachedVersionOf(
+        table: String,
+        pinned: JsonObject,
+        keyColumns: List<String>,
+        versionColumn: String,
+        identity: String,
+    ): String? {
+        val key = keyOf(pinned, keyColumns) ?: return null
+        val row = queryOverlay.cachedRowHolding(table, key, versionColumn, identity) ?: return null
+        return versionTextOf(row[versionColumn])
+    }
 
     override suspend fun dismissConflictedMutation(id: Long): Unit = operationGate.call {
         val identity = queueIdentityReader.current() ?: return@call
@@ -1108,21 +1234,10 @@ internal class OfflineClient(
     ): Unit = operationGate.call {
         val cachedTable = cachedTableOf(table, schema)
         val keyColumns = primaryKeys ?: this.primaryKeys.of(cachedTable)
-        val filterJson = primaryKeyFilterJson(record, keyColumns)
-        if (filterJson == null) {
-            engineLogger.warning {
-                "applyServerRecord($table): dropping record — primary key(s) $keyColumns " +
-                    "absent or non-primitive"
-            }
-            return@call
-        }
-        cachePatcher.patchCachedQueries(
-            table = cachedTable,
-            operation = MutationOperation.UPSERT,
-            bodyJson = JsonArray(listOf(record)).toString(),
-            filterJson = filterJson,
-            onConflict = keyColumns.joinToString(separator = ","),
-        )
+        val change =
+            locateServerRow("applyServerRecord", table, record, keyColumns, deleted = false)
+                ?: return@call
+        cachePatcher.patchServerChanges(cachedTable, keyColumns, listOf(change))
     }
 
     override suspend fun applyServerDelete(
@@ -1133,20 +1248,32 @@ internal class OfflineClient(
     ): Unit = operationGate.call {
         val cachedTable = cachedTableOf(table, schema)
         val keyColumns = primaryKeys ?: this.primaryKeys.of(cachedTable)
-        val filterJson = primaryKeyFilterJson(oldRecord, keyColumns)
+        val change =
+            locateServerRow("applyServerDelete", table, oldRecord, keyColumns, deleted = true)
+                ?: return@call
+        cachePatcher.patchServerChanges(cachedTable, keyColumns, listOf(change))
+    }
+
+    /**
+     * [record] as [CachePatcher.patchServerChanges] takes it, located by [keyColumns]; `null`,
+     * logged under [call] without the record, when a key column is absent or non-primitive, so the
+     * caller drops an unlocatable record instead of patching the wrong rows.
+     */
+    private fun locateServerRow(
+        call: String,
+        table: String,
+        record: JsonObject,
+        keyColumns: List<String>,
+        deleted: Boolean,
+    ): ServerRowChange? {
+        val filterJson = primaryKeyFilterJson(record, keyColumns)
         if (filterJson == null) {
             engineLogger.warning {
-                "applyServerDelete($table): dropping record — primary key(s) $keyColumns " +
-                    "absent or non-primitive"
+                "$call($table): dropping record — primary key(s) $keyColumns absent or non-primitive"
             }
-            return@call
+            return null
         }
-        cachePatcher.patchCachedQueries(
-            table = cachedTable,
-            operation = MutationOperation.DELETE,
-            bodyJson = "{}",
-            filterJson = filterJson,
-        )
+        return ServerRowChange(record, filterJson, deleted)
     }
 
     /**

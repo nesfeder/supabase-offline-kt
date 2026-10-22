@@ -519,6 +519,54 @@ class GuardedReplayOutcomesTest {
         assertEquals(JsonPrimitive("elsewhere"), server.rows(GUARDED_TABLE).single()["title"])
     }
 
+    @Test
+    fun a_row_the_server_holds_without_a_version_is_parked_and_laid_into_the_cache() = runTest {
+        // Given — the server's row lost its version (its trigger gone, say), so no send can be
+        // preconditioned on it
+        queueRenameOfTaskOne()
+        server.replaceRow(GUARDED_TABLE, JsonObject(taskRow(1, "unversioned") - VERSION_COLUMN))
+
+        // When
+        val report = replayer().sync()
+
+        // Then — parked without asking anyone, and the read shows the row as the server has it
+        val parked = report.conflicted.single()
+        assertEquals(
+            "The server's row has no version to check this write against",
+            parked.message,
+        )
+        assertNull(parked.serverVersion)
+        assertEquals(emptyList(), policy.cases)
+        assertEquals(JsonPrimitive("unversioned"), cachedRows().single()["title"])
+        assertEquals(0, store.pendingMutationCount())
+    }
+
+    @Test
+    fun a_retried_rejection_replays_with_the_guard_it_was_refused_with() = runTest {
+        // Given — a rename a policy refused, on the rejected list; the policy is fixed, and the
+        // task was renamed elsewhere meanwhile
+        queueRenameOfTaskOne()
+        server.hidesRowsFromWrite = { request -> request.method == "PATCH" }
+        val refused = replayer().sync().rejected.single()
+        server.hidesRowsFromWrite = null
+        server.replaceRow(GUARDED_TABLE, taskRow(1, "renamed elsewhere", version = MOVED_VERSION))
+        server.recorder.requests.clear()
+
+        // When — the app retries it, and a pass runs
+        store.mutationQueue.retryRejectedMutation(refused.id, identity = null)
+        val report = replayer().sync()
+
+        // Then — sent against the version the device saw, as its first send was, so the move is
+        // met as a conflict and the resolver asked; its default resends over the server's row
+        assertEquals("eq.$FIRST_VERSION", server.requests.first().query[VERSION_COLUMN])
+        assertEquals(listOf("PATCH", "GET", "PATCH"), server.requests.map { it.method })
+        val moved = assertIs<ConflictCase.Moved>(policy.cases.single())
+        assertEquals(setOf("title"), moved.conflictingColumns)
+        assertEquals(1 to 1, report.syncedCount to report.conflictsResolvedCount)
+        assertEquals(JsonPrimitive("mine"), server.rows(GUARDED_TABLE).single()["title"])
+        assertEquals(emptyList(), store.mutationQueue.rejectedList.rejections())
+    }
+
     private fun titledLike(id: Int): FilterDescriptor =
         FilterDescriptor(
             conditions =

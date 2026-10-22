@@ -134,6 +134,7 @@ internal fun buildCacheComponents(
             queryCacheDao = countingQueryCacheDao,
             json = EngineJson,
             queryCache = queryCache,
+            freshness = freshness,
             mutationQueue = mutationQueue,
             ownership = cacheOwnership,
             primaryKeys = primaryKeys,

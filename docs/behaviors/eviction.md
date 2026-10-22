@@ -35,7 +35,8 @@ The lists fetched longest ago, by the time the server sent them; a list a write 
 its place by that time too. Up to 500 lists a live reader shows are kept whatever their age, and
 the oldest list nobody reads goes in their place, so a reader never drops to "no data". Past 500
 live lists, or for a reader that starts while a pass is deleting, a list a reader needs can go: a
-`CacheFirstThenNetwork` reader then fetches it again, and a `CacheOnly` reader shows no data.
+`CacheFirstThenNetwork` reader then fetches it again, and a `CacheOnly` reader shows no data. A
+write patched into the table while a pass runs changes the lists still there and brings none back.
 
 SQLite keeps the pages a delete frees for its next writes, so the database file does not shrink
 when lists are evicted, and it can be larger than the bound; `clearLocalData()` rewrites the

@@ -97,13 +97,19 @@ From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabas
     ```
 
 Retry a write once its cause is fixed (a missing parent row, a policy): it rejoins the queue at the
-end under a new id. Postgres puts the offending values in `details` (a duplicate key's value, for
-one), so show your own words rather than the raw fields.
+end under a new id. A write that was guarded by a version column keeps its base, so its retry is
+checked against the server's row as its first send was: a row whose columns the write sets moved
+meanwhile is a conflict for your resolver, and one moved on other columns only is resent without
+asking ([Conflicts](#conflicts)); neither is an overwrite. Postgres puts the offending values in
+`details` (a duplicate key's value, for one), so show your own words rather than the raw fields.
 
 **Its bounds.** The newest 100 entries of every user together, within 512 K characters. A body
 longer than 16 K characters is not kept, so that entry cannot be retried (`isRetryable` is
-`false`); the server's message, details and hint are kept to 4 K characters each. When the list is
-full the oldest entries go, and their writes are lost: nothing reports the loss yet.
+`false`); the server's message, details and hint are kept to 4 K characters each. A guarded
+write's base row (the columns it sets, as the device saw them) longer than 16 K characters is not
+kept either, logged at `WARNING`: the retry is guarded by its version alone, so any move of the
+row is a conflict for your resolver, with a base that holds only the version. When the list is full
+the oldest entries go, and their writes are lost: nothing reports the loss yet.
 
 ## Conflicts
 
@@ -126,7 +132,8 @@ version the device saw, and a row that moved meanwhile is a conflict your resolv
 
 A resolver that answers `Hold`, throws or takes 30 seconds parks the write on
 `conflictedMutations()`, for the app to resolve or dismiss; so does a third send that still finds
-the row moved.
+the row moved. While the write waits there, the cached row shows the server's values for the
+columns the replay read, when it read one, under the version the device saw.
 
 Everything else keeps the last write wins:
 

@@ -39,7 +39,8 @@ internal enum class CacheWriteOutcome {
 
     /**
      * The response came back under a session the read's trust policy does not take as speaking for
-     * the current identity, such as one still restoring, so nothing of it was written.
+     * the current identity, such as one still restoring, or its body is not a JSON array of rows (a
+     * proxy's block page, a server's fallback page), so nothing of it was written.
      */
     REFUSED_UNTRUSTED,
 
@@ -123,6 +124,8 @@ internal class QueryCache(
      * Writes a network SELECT's [payload] for [table]/[cacheKey] unless a guard refuses it (see
      * [CacheWriteOutcome]); with a start tick it holds the mutations synced so far. The guards and
      * the write are one step under the table's lock, the queue lock and the clear lock, in order.
+     * Only a JSON array is written: a blank body stands for an empty list and is stored as `[]`,
+     * and a body of any other shape is refused as untrusted.
      *
      * @param authoritativeEmpty whether an empty [payload] is the server's real answer (signed in).
      * @param requestStartedAtTick the request's start tick, or `null` for none: never stale.
@@ -138,6 +141,8 @@ internal class QueryCache(
         shape: QueryShape? = null,
     ): CacheWriteOutcome {
         requireUserTable(table)
+        // A blank body stands for an empty list and is stored as one, so a read is served a list
+        val rows = if (payload.isBlank()) EMPTY_JSON_ARRAY else payload
         // Before the locks: telling the identity may read the stored session. A drop that lands
         // between here and the write is caught by its tick below.
         val ownedByCurrentIdentity = ownership.cacheTakesWritesOfCurrentIdentity()
@@ -168,13 +173,16 @@ internal class QueryCache(
                             freshness.isStaleRelativeToLocalWrite(table, requestStartedAtTick) ->
                                 CacheWriteOutcome.REFUSED_STALE
 
-                            !isTrusted -> CacheWriteOutcome.REFUSED_UNTRUSTED
+                            // Not a list of rows: a block page or a fallback page at 200 would
+                            // replace a list with a body no read decodes
+                            !isTrusted || !isJsonArrayPayload(rows) ->
+                                CacheWriteOutcome.REFUSED_UNTRUSTED
 
                             // Nothing about this emptiness is known to describe the signed-in
                             // user's data, so it is never written — not over cached rows, and not
                             // into a cold or already-empty slot where it would become the answer
                             // every later cache-first read is served.
-                            !authoritativeEmpty && isEmptyJsonArrayPayload(payload) ->
+                            !authoritativeEmpty && isEmptyJsonArrayPayload(rows) ->
                                 CacheWriteOutcome.REFUSED_EMPTY
 
                             else -> {
@@ -185,7 +193,7 @@ internal class QueryCache(
                                     CachedQueryRow(
                                         table = table,
                                         cacheKey = cacheKey,
-                                        payload = payload,
+                                        payload = rows,
                                         updatedAt = nowMillis(),
                                         syncedThrough =
                                             if (requestStartedAtTick != null)
@@ -205,7 +213,7 @@ internal class QueryCache(
             }
 
         // Outside the table lock: eviction takes its own mutex and scans every table.
-        if (outcome == CacheWriteOutcome.WRITTEN && shouldEnforceSizeAfterWrite(payload)) {
+        if (outcome == CacheWriteOutcome.WRITTEN && shouldEnforceSizeAfterWrite(rows)) {
             evictOverBudget()
         }
         return outcome

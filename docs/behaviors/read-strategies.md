@@ -127,17 +127,26 @@ From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabas
 - **Two filters on one column** are refused with an `IllegalArgumentException` before anything is
   sent, since supabase-kt would send only the first: see
   [Coming from supabase-kt](../getting-started/migrating.md#two-filters-on-one-column).
-- **While a stored session restores**, supabase-kt sends requests on the anon key, which row-level
-  security can answer with fewer rows, or none, so nothing such a request returns is cached. A
-  read the cache can answer for the stored user sends nothing; one that needs the server waits for
-  the session to settle, a few seconds at most, and asks again. If it never settles, the read
-  returns the anon key's answer uncached, with a warning; a `NetworkFirst` read with the query
-  cached returns that answer too, not the cached rows.
+- **While a stored session restores, or after its token refresh failed** (supabase-kt tries the
+  refresh again, every ten seconds by default), supabase-kt sends requests on the anon key, which
+  row-level security can answer with fewer rows, or none, so nothing such a request returns is
+  cached. A read the cache can answer for the stored user sends nothing. A list read that needs
+  the server waits for the session to settle, a few seconds at most, and asks again; a read of a
+  shape the cache cannot hold (`single()`, a `count`, …) waits the same way before it is sent. If
+  the session never settles, a `NetworkFirst` read with the query cached, or a `CacheFirst` read of
+  a list marked stale, serves the cached rows, with a warning; with nothing cached, or under
+  `NetworkOnly`, the read returns the anon key's answer uncached, with a warning.
 - **An expired session offline.** A `NetworkFirst` read throws supabase-kt's
   `TokenExpiredException`, since supabase-kt cannot refresh the token, instead of serving the
   cache; `CacheFirst` and `CacheOnly` reads the cache can answer send nothing and are served.
 - **A server that answers `503` for good** is not offline: a `NetworkFirst` read waits out
   supabase-kt's retries and throws, with no fallback to the cache.
+- **An answer that is not a list of rows** (a `2xx` whose body is not a JSON array, or not JSON: a
+  captive portal's sign-in page, a proxy's block page, a self-hosted server's fallback page) is
+  never written to the cache. A `NetworkFirst` or `CacheFirst` read with the query cached within
+  its `maxAge` is served the cached rows, marked as from the cache; a `NetworkOnly` read, or one
+  without such rows, is served the body as it came. A reactive read's refresh asks again, and reads
+  `Stalled` after its fast retries if the pages keep coming. A blank `2xx` body is an empty list.
 - **A session without a user id** (no `user`, and a token without `sub`) is not a settled identity
   under the default trust rule: nothing it reads is cached, and a reactive read made with it never
   settles.
@@ -160,23 +169,28 @@ strategy that sent the request throws it. **Known down**: the connectivity monit
 is unavailable; the read is still sent, once, with supabase-kt's retries off. **Warm / cold**: the
 query's rows are cached / are not. **Session restoring**: the Auth plugin is still loading a stored
 session, so a request goes out on the anon key, and under the default trust rule nothing it returns
-is written to the cache. **Overlay**: the writes still queued, and those replayed but not yet seen
-in a response, laid over what a read returns.
+is written to the cache. **Session refresh failed**: the stored session expired and supabase-kt
+could not refresh it (it tries again, every ten seconds by default), so a request goes out on the
+anon key too. **Overlay**: the writes still queued, and those replayed but not yet seen in a
+response, laid over what a read returns.
 
 | Condition | `NetworkOnly` | `NetworkFirst(maxAge)` | `CacheFirst(maxAge)` | `CacheOnly(maxAge)` |
 |---|---|---|---|---|
 | **Online** | The server's rows with the overlay; written to the cache. | As `NetworkOnly`. | A cached payload within `maxAge`: that payload with the overlay, no request. Otherwise as `NetworkOnly`. Age is the time of the last response: a local write does not refresh it. A payload marked stale — an accepted write may have changed rows it cannot show — is fetched again. | The cached payload with the overlay; never a request. |
 | **Offline, warm** | Throws the connectivity failure, after supabase-kt's own retries (four attempts, 7 s with the default `maxRetries`); in one attempt while the network is known down. | The cached payload with the overlay, at once, marked stale or not: one attempt, no retry wait. Older than `maxAge`: throws. A 503 or 520 is still retried on supabase-kt's schedule. | Within `maxAge`: the cached payload, no request; marked stale, the request fails and the payload is served. Older than `maxAge`: throws. | The cached payload with the overlay, marked stale or not. Older than `maxAge`: `CacheMissException`. |
 | **Offline, cold** | Throws the connectivity failure, after supabase-kt's retries; in one attempt while the network is known down. | Throws the connectivity failure, after supabase-kt's retries (four attempts, 7 s); in one attempt while the network is known down. | Throws the connectivity failure. | `CacheMissException`; no request. |
-| **Session restoring** | Sends, then waits for the session (300, 900 and 2,400 ms, woken early when it settles) and asks again. Settled as the stored user: the user's answer, cached. Settled signed out: the anonymous answer; the rows cached for the last user are dropped and never served. Never settles: the last answer, uncached. | As `NetworkOnly`. | Warm with the stored user's cache: the cached payload, no request. Cold, or no stored user: as `NetworkOnly`. | The cached payload, no request. |
+| **Session restoring** | Sends, then waits for the session (300, 900 and 2,400 ms, woken early when it settles) and asks again. Settled as the stored user: the user's answer, cached. Settled signed out: the anonymous answer; the rows cached for the last user are dropped and never served. Never settles: the last answer, uncached. | As `NetworkOnly`; never settles with the query cached within `maxAge`: the cached payload with the overlay, marked stale or not. | A payload of the stored user's within `maxAge`, not marked stale: that payload, no request. Otherwise as `NetworkOnly`; never settles with a payload marked stale within `maxAge`: that payload with the overlay. | The cached payload, no request. |
+| **Session refresh failed** | As **Session restoring**, the wait woken early when the refresh lands. | As **Session restoring**. | As **Session restoring**. | The cached payload, no request. |
 
 **A read of another shape.** `single()`, `maybeSingle()` (supabase-kt 3.8), `head`, a `count`
 (with rows or without), `csv()`, `geojson()`, `stripNulls()` and `explain()` do not return a plain
 list, so their answer is neither stored nor overlaid. Under every strategy but `CacheOnly` such a
 read goes to the network, and offline throws as `NetworkOnly` does; under `CacheOnly` it sends
-nothing and throws `CacheMissException`. On supabase-kt 3.8, `maybeSingle()` with no row returns
-supabase-kt's empty result at once, even while the session restores. The shape is read from the
-request supabase-kt builds, before anything is sent; a read whose request cannot be built (no
-token to be had) fails as sending it would, and is never answered from the list.
+nothing and throws `CacheMissException`. While the session restores, or after its refresh failed,
+it waits for the session as a list read does (300, 900 and 2,400 ms, woken early when the session
+settles), then is sent once, settled or not: on supabase-kt 3.8, `maybeSingle()` with no row then
+returns supabase-kt's empty result. The shape is read from the request supabase-kt builds, before
+anything is sent; a read whose request cannot be built (no token to be had) fails as sending it
+would, and is never answered from the list.
 
 **The request lambda and schemas.**

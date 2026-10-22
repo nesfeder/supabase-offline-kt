@@ -6,6 +6,7 @@ import androidx.sqlite.SQLiteConnection
 import androidx.sqlite.SQLiteDriver
 import androidx.sqlite.execSQL
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
+import kotlinx.serialization.json.JsonPrimitive
 
 /**
  * A `supabase_offline.db` exactly as 0.1.0 leaves it on disk: Room schema version 1, identity hash
@@ -70,6 +71,20 @@ internal object ShippedDatabaseFixture {
     const val DELETE_FILTER_JSON: String =
         """{"mode":"OR","conditions":[{"column":"id","operatorId":"in","value":"(7,8)"},""" +
             """{"column":"status","operatorId":"eq","value":"archived"}]}"""
+
+    /**
+     * The rejected list's reserved row as 0.2.0 writes one refused UPDATE whose body was too long
+     * to keep, every optional key set: no base, since that build kept none. This build reads it
+     * back with none, and a retry of such an entry replays unguarded, as it did there.
+     */
+    val REJECTED_LIST_JSON_WITHOUT_BASE: String =
+        """{"version":1,"entries":[{"id":3,"table":"todos","operation":"UPDATE","bodyJson":"",""" +
+            """"filterJson":${JsonPrimitive(UPDATE_FILTER_JSON)},"createdAtMs":1,""" +
+            """"defaultToNull":false,"onConflict":"id","ignoreDuplicates":false,"owner":"user:u-1",""" +
+            """"rejectedAtMs":2,"message":"new row violates row-level security policy",""" +
+            """"serverError":{"status":403,"code":"42501",""" +
+            """"message":"new row violates row-level security policy","details":"d","hint":"h"},""" +
+            """"bodyOmittedChars":17000}],"droppedCount":1}"""
 
     /** [UPDATE_FILTER_JSON] decoded. */
     val UPDATE_FILTER: FilterDescriptor =
