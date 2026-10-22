@@ -61,6 +61,14 @@ internal class UntrustedResponseException(table: String) :
     RuntimeException("SELECT $table answered under a session that is not settled; will retry")
 
 /**
+ * Thrown into a reactive read's refresh loop when the cache refused a response as older than the
+ * table's last local write, and the one follow-up request was refused too: the loop keeps asking on
+ * its schedule instead of settling on a cache the server has not confirmed.
+ */
+internal class StaleResponseException(table: String) :
+    RuntimeException("SELECT $table answered before the table's last local write; will retry")
+
+/**
  * One network SELECT and what became of it.
  *
  * @property response what the server answered.
@@ -84,6 +92,10 @@ private data class FetchedResponse(
     val wasRefusedAfterClear: Boolean
         get() = outcome == CacheWriteOutcome.REFUSED_AFTER_CLEAR
 
+    /** Whether the cache refused the response as older than the table's last local write. */
+    val wasRefusedStale: Boolean
+        get() = outcome == CacheWriteOutcome.REFUSED_STALE
+
     /**
      * Whether the cache holds this answer, or a newer local write it was refused for: not when it
      * was refused as not the user's, as another identity's, or as an empty it may not take.
@@ -100,8 +112,14 @@ private data class FetchedResponse(
  *
  * @property result what the caller is answered with.
  * @property wasCached whether the cache holds it, so a reactive read showing the cache shows it.
+ * @property wasRefusedStale whether the cache kept a newer local write instead: it holds something,
+ *   but not the server's answer.
  */
-private class NetworkAnswer(val result: PostgrestResult, val wasCached: Boolean)
+private class NetworkAnswer(
+    val result: PostgrestResult,
+    val wasCached: Boolean,
+    val wasRefusedStale: Boolean = false,
+)
 
 /**
  * Answers one-shot and reactive SELECTs from the network, the query cache, or both, as the read
@@ -279,7 +297,11 @@ internal class QueryReader(
                     fetched.isEmpty,
                 ) || fetched.outcome == CacheWriteOutcome.WRITTEN
             ) {
-                return NetworkAnswer(overlaidResponse(slot, fetched), fetched.isHeldByTheCache)
+                return NetworkAnswer(
+                    overlaidResponse(slot, fetched),
+                    fetched.isHeldByTheCache,
+                    fetched.wasRefusedStale,
+                )
             }
             if (window.isSpent) return unsettledAnswer(slot, fetched, cacheWhenUnsettled)
             engineLogger.info {
@@ -515,24 +537,27 @@ internal class QueryReader(
                 },
                 refreshRequests = liveQueries.refreshRequestsFor(slot.table, slot.cacheKey),
                 networkAccess = networkAccess,
-                isWaiting = ::isWaitingForTheSession,
+                isWaiting = ::isAWait,
             )
         return snapshotsOf(payloads)
     }
 
     /**
      * Whether a refresh's failure is a wait, not a fault: the answer came under a session still
-     * settling, or the client is closing. The refresh is retried as for any failure, but reports
-     * [RefreshState.Refreshing] (or [RefreshState.Paused]), never [RefreshState.Stalled].
+     * settling, or before the table's last local write, or the client is closing. The refresh is
+     * retried as for any failure, but reports [RefreshState.Refreshing] (or [RefreshState.Paused]),
+     * never [RefreshState.Stalled].
      */
-    private fun isWaitingForTheSession(failure: Exception): Boolean =
-        failure is UntrustedResponseException || failure is TransportClosedException
+    private fun isAWait(failure: Exception): Boolean =
+        failure is UntrustedResponseException ||
+            failure is StaleResponseException ||
+            failure is TransportClosedException
 
     /**
      * Logs a reactive read's refresh failures that are not the network's, which the retry that
      * follows would otherwise hide: the first of a kind, and again each time the kind changes,
-     * never one per attempt. A connectivity failure, or a wait for the session, is expected and
-     * shows in the read's refresh state instead.
+     * never one per attempt. A connectivity failure, or a wait, is expected and shows in the read's
+     * refresh state instead.
      */
     private inner class RefreshFailureReport(private val table: String) {
         /** The kind last logged since the last success; `null` after one. */
@@ -546,8 +571,7 @@ internal class QueryReader(
             } catch (cancellation: CancellationException) {
                 throw cancellation
             } catch (failure: Exception) {
-                val expected =
-                    failure.isNetworkOrConnectivityFailure() || isWaitingForTheSession(failure)
+                val expected = failure.isNetworkOrConnectivityFailure() || isAWait(failure)
                 if (!expected && failure::class != lastLogged) {
                     lastLogged = failure::class
                     engineLogger.warning {
@@ -659,8 +683,10 @@ internal class QueryReader(
      * The refresh of a reactive read: a network SELECT written through to the cache. A response the
      * trust policy does not take as settled, one the cache refused while it passed to another
      * identity, or one that left before local data was cleared, throws
-     * [UntrustedResponseException], so the loop asks again: the read shows the cache as it is now.
-     * A transport failure fails at once: the loop is what retries it.
+     * [UntrustedResponseException]; one still refused as older than a local write after the one
+     * follow-up request throws [StaleResponseException]. Either way the loop asks again, on its
+     * schedule, and the read shows the cache as it is now. A transport failure fails at once: the
+     * loop is what retries it.
      */
     private suspend fun refreshFromNetwork(
         slot: CacheSlot,
@@ -670,6 +696,12 @@ internal class QueryReader(
         val fetched =
             fetchAndCache(slot, columns, request, requestSession(), Retries.TRANSPORT_FAILS_FAST)
         if (fetched.wasRefusedAfterClear) throw UntrustedResponseException(slot.table)
+        if (fetched.wasRefusedStale) {
+            engineLogger.info {
+                "SELECT ${slot.table} response still predates a local write; will retry"
+            }
+            throw StaleResponseException(slot.table)
+        }
         if (
             fetched.outcome == CacheWriteOutcome.REFUSED_OTHER_OWNER ||
                 trustPolicy.refreshRetries(
@@ -733,21 +765,21 @@ internal class QueryReader(
                 },
                 refreshRequests = liveQueries.refreshRequestsFor(slot.table, slot.cacheKey),
                 networkAccess = networkAccess,
-                isWaiting = ::isWaitingForTheSession,
+                isWaiting = ::isAWait,
             )
         emitAll(snapshotsOf(payloads))
     }
 
     /**
      * How a network-first read reports a cache its bootstrap could not confirm because of [cause]:
-     * paused when the network is known down, refreshing while the session settles, otherwise
-     * stalled by it.
+     * paused when the network is known down, refreshing while the session settles or while the
+     * answer predates a local write, otherwise stalled by it.
      */
     private fun waitingStateFor(cause: Exception): RefreshState =
         when {
             cause.isNetworkOrConnectivityFailure() && networkAccess.isKnownUnavailable ->
                 RefreshState.Paused
-            isWaitingForTheSession(cause) -> RefreshState.Refreshing
+            isAWait(cause) -> RefreshState.Refreshing
             else -> RefreshState.Stalled(cause)
         }
 
@@ -756,8 +788,9 @@ internal class QueryReader(
      * cached payload, at once, as a one-shot `NetworkFirst` read does; with none cached, or on a
      * server's own error, it fails the flow.
      *
-     * @return why the cache it leaves is not the server's answer — the transport failure, or an
-     *   answer the cache did not take as the user's — or `null` when it is.
+     * @return why the cache it leaves is not the server's answer — the transport failure, an answer
+     *   the cache did not take as the user's, or one it refused as older than a local write — or
+     *   `null` when it is.
      */
     private suspend fun bootstrapFromNetwork(
         slot: CacheSlot,
@@ -767,7 +800,12 @@ internal class QueryReader(
         val retries = retriesFor(cacheAnswers = hasFreshCache(slot, cacheDuration = null))
         return try {
             val answer = fetchWaitingOutRestoreAnswer(slot, columns, request, retries)
-            if (answer.wasCached) null else UntrustedResponseException(slot.table)
+            when {
+                // A newer local write kept the cache; what it holds is not the server's answer
+                answer.wasRefusedStale -> StaleResponseException(slot.table)
+                answer.wasCached -> null
+                else -> UntrustedResponseException(slot.table)
+            }
         } catch (exception: Exception) {
             if (
                 !exception.isNetworkOrConnectivityFailure() ||
@@ -781,9 +819,10 @@ internal class QueryReader(
 
     /**
      * Sends the SELECT and offers its response to the cache, which refuses one that could roll back
-     * a newer local write (then this asks once more, since that request starts after the write),
-     * one that left before local data was cleared, an untrusted one, and an empty one that is not
-     * authoritative. A written one retires the synced mutations every cached query now holds.
+     * a newer local write (then this asks once more, since that request starts after the write; a
+     * reactive read's loop keeps asking after that), one that left before local data was cleared,
+     * an untrusted one, and an empty one that is not authoritative. A written one retires the
+     * synced mutations every cached query now holds.
      */
     private suspend fun fetchAndCache(
         slot: CacheSlot,

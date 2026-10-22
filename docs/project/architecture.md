@@ -800,10 +800,12 @@ identity's, when `responseTrust` does not take the session it went out under, or
 empty answer the rule does not take as the server's.
 
 **Freshness ticks.** Every request reads a tick from a monotonic clock before it goes out. Every
-write that changes the cache itself (an online write's patch, a replayed write, an emptied table)
-advances its table's watermark, and a clear or a drop moves its own. A queued write moves none: the
-overlay lays it over whatever response lands. A response whose request started before its table's
-watermark is refused, since it cannot describe that write, and the reader asks again. One
+write that changes the cache itself (an online write's patch, a replayed write, a server record or
+Realtime event applied to the table, an emptied table) advances its table's watermark, and a clear
+or a drop moves its own. A queued write moves none: the overlay lays it over whatever response
+lands. A response whose request started before its table's watermark is refused, since it cannot
+describe that write, and the reader asks again: a reactive read's refresh once at once and then on
+its retry schedule until an answer lands, a one-shot read once more before it serves the cache. One
 whose request started before a clear is refused and not asked again, since it may carry the cleared
 session's token. One that started before the cache was dropped for a new owner is not written: a
 reactive read's refresh asks again, and a one-shot read asks again only when the session was

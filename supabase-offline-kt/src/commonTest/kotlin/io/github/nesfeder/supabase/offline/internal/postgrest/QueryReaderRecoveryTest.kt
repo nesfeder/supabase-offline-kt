@@ -1274,6 +1274,145 @@ class QueryReaderRecoveryTest {
             collector.cancelAndJoin()
         }
 
+    @Test
+    fun a_refresh_refused_as_stale_more_than_once_keeps_asking_until_an_answer_lands() =
+        runTest(UnconfinedTestDispatcher()) {
+            // Given: the cache is primed with the server's row, and a server whose next three
+            // answers each arrive after a write landed on the table while the request was out, as a
+            // replayed write or a Realtime record does on a busy table
+            val postgrest = testPostgrest()
+            val serverIds = mutableListOf("project-1")
+            fun payloadOf(ids: List<String>): String =
+                ids.joinToString(",", "[", "]") { id -> """{"id":"$id"}""" }
+            var networkCalls = 0
+            var writesLeft = 3
+            val queryCacheDao = FakeQueryCacheDao()
+            val store = buildStore(queryCacheDao)
+            val remoteTable =
+                FakeRemoteTable(
+                    table = "projects",
+                    postgrest = postgrest,
+                    onSelect = {
+                        networkCalls++
+                        // The answer is the server as it was when the request went out
+                        val answer = payloadOf(serverIds)
+                        if (networkCalls > 1 && writesLeft > 0) {
+                            writesLeft--
+                            val id = "project-$networkCalls"
+                            store.cachePatcher.patchCachedQueries(
+                                table = "projects",
+                                operation = MutationOperation.INSERT,
+                                bodyJson = """[{"id":"$id"}]""",
+                                filterJson = null,
+                                defaultToNull = true,
+                            )
+                            serverIds += id
+                        }
+                        postgrestResultOf(answer, postgrest)
+                    },
+                )
+            val resolver = buildResolver(remoteTable, backgroundScope, store = store)
+            val primingCollector = launch {
+                resolver
+                    .selectAsFlow(Columns.ALL, FlowReadStrategy.CacheFirstThenNetwork) {}
+                    .collect {}
+            }
+            advanceUntilIdle()
+            primingCollector.cancelAndJoin()
+            // Let the single-flight share tear down so the next subscription refreshes for real.
+            advanceUntilIdle()
+            assertEquals(1, networkCalls)
+
+            // When: a new subscription's refresh goes out, and its response and its one follow-up
+            // request's are both refused as older than the write that landed meanwhile
+            val reads = mutableListOf<QuerySnapshot>()
+            val collector = launch {
+                resolver
+                    .selectAsFlow(Columns.ALL, FlowReadStrategy.CacheFirstThenNetwork) {}
+                    .collect { read -> reads += read }
+            }
+            runCurrent()
+
+            // Then: the read reports the refresh still under way, not settled on the cache
+            assertEquals(3, networkCalls, "the refresh and its one follow-up request were sent")
+            assertTrue(
+                reads.none { read -> read.refresh is RefreshState.Idle },
+                "two refusals must not settle the refresh to Idle",
+            )
+            assertIs<RefreshState.Refreshing>(reads.last().refresh)
+
+            // When: the loop asks again on its schedule; the third write refuses that one too, and
+            // the request after it is answered in peace
+            advanceTimeBy(300)
+            runCurrent()
+
+            // Then: the refresh kept asking until the server's answer landed, and settled on it
+            assertEquals(5, networkCalls, "one more refusal, one follow-up request, one answer")
+            val settled = reads.last()
+            assertIs<RefreshState.Idle>(settled.refresh)
+            assertEquals(payloadOf(serverIds), settled.result?.data)
+            assertFalse(settled.isFromCache)
+            assertTrue(
+                reads
+                    .filter { read -> read.refresh is RefreshState.Idle }
+                    .all { read -> read.result?.data == payloadOf(serverIds) },
+                "Idle was reported only with the server's answer",
+            )
+
+            collector.cancelAndJoin()
+        }
+
+    @Test
+    fun a_network_first_bootstrap_refused_as_stale_keeps_refreshing_instead_of_settling() =
+        runTest(UnconfinedTestDispatcher()) {
+            // Given: nothing cached, and a write that lands on the table while each of the
+            // bootstrap's first two requests is out, as a replay does: the cache refuses both
+            val postgrest = testPostgrest()
+            var networkCalls = 0
+            val store = buildStore()
+            val remoteTable =
+                FakeRemoteTable(
+                    table = "projects",
+                    postgrest = postgrest,
+                    onSelect = {
+                        networkCalls++
+                        if (networkCalls <= 2)
+                            store.freshness.advanceLocalWriteWatermark("projects")
+                        postgrestResultOf(freshPayload, postgrest)
+                    },
+                )
+            val resolver = buildResolver(remoteTable, backgroundScope, store = store)
+
+            // When: a NetworkFirstThenCache subscription starts
+            val reads = mutableListOf<QuerySnapshot>()
+            val collector = launch {
+                resolver
+                    .selectAsFlow(Columns.ALL, FlowReadStrategy.NetworkFirstThenCache) {}
+                    .collect { read -> reads += read }
+            }
+            runCurrent()
+
+            // Then: with nothing the server confirmed, the read says it is still refreshing; it
+            // never reports no data as settled
+            assertEquals(2, networkCalls, "the bootstrap and its one follow-up request were sent")
+            assertTrue(reads.isNotEmpty(), "the read reports its state while it waits")
+            assertTrue(
+                reads.none { read -> read.result == null && read.refresh is RefreshState.Idle },
+                "no data and Idle together would read as an empty table the server confirmed",
+            )
+            assertIs<RefreshState.Refreshing>(reads.last().refresh)
+
+            // When: the loop asks again on its schedule
+            advanceUntilIdle()
+
+            // Then: the server's rows land and the read settles
+            assertEquals(3, networkCalls)
+            assertEquals(freshPayload, reads.last().result?.data)
+            assertIs<RefreshState.Idle>(reads.last().refresh)
+
+            collector.cancelAndJoin()
+        }
+
     // ── helpers ─────────────────────────────────────────────────────────────
 
     private fun buildResolver(
