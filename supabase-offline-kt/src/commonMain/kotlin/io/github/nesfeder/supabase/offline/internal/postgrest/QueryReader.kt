@@ -281,26 +281,15 @@ internal class QueryReader(
             ) {
                 return NetworkAnswer(overlaidResponse(slot, fetched), fetched.isHeldByTheCache)
             }
-            if (window.isSpent) {
-                val cached = cacheWhenUnsettled()
-                if (cached != null) {
-                    engineLogger.warning {
-                        "SELECT $table session did not settle after $RESTORE_WINDOW_RETRY_WAITS waits; serving the cache"
-                    }
-                    return NetworkAnswer(cached, wasCached = true)
-                }
-                engineLogger.warning {
-                    "SELECT $table session did not settle after $RESTORE_WINDOW_RETRY_WAITS waits; serving the response uncached"
-                }
-                return NetworkAnswer(overlaidResponse(slot, fetched), wasCached = false)
-            }
+            if (window.isSpent) return unsettledAnswer(slot, fetched, cacheWhenUnsettled)
             engineLogger.info {
                 "SELECT $table answered while the session was not settled; waiting for the session"
             }
             sessionBefore =
                 if (isUnsettledStoredSession(fetched.sessionBefore)) {
                     // Waiting is cheap; a request sent while the session is still not settled would
-                    // come back the same
+                    // come back the same. Once the steps are spent, the one request the caller is
+                    // owed goes out, and is answered as it is
                     window.awaitSettledSession()
                 } else {
                     // It settled into another identity mid-request: ask again as that one
@@ -311,10 +300,33 @@ internal class QueryReader(
     }
 
     /**
+     * What a one-shot read answers when the session did not settle within the restore window:
+     * [cacheWhenUnsettled]'s payload, from the cache, or [fetched], the last response, uncached.
+     */
+    private suspend fun unsettledAnswer(
+        slot: CacheSlot,
+        fetched: FetchedResponse,
+        cacheWhenUnsettled: suspend () -> PostgrestResult?,
+    ): NetworkAnswer {
+        val cached = cacheWhenUnsettled()
+        if (cached != null) {
+            engineLogger.warning {
+                "SELECT ${slot.table} session did not settle after $RESTORE_WINDOW_RETRY_WAITS waits; serving the cache"
+            }
+            return NetworkAnswer(cached, wasCached = true)
+        }
+        engineLogger.warning {
+            "SELECT ${slot.table} session did not settle after $RESTORE_WINDOW_RETRY_WAITS waits; serving the response uncached"
+        }
+        return NetworkAnswer(overlaidResponse(slot, fetched), wasCached = false)
+    }
+
+    /**
      * The bounded wait a read gives a stored session that is restoring, or whose refresh failed, to
      * settle: [RESTORE_WINDOW_RETRY_WAITS] backoff steps (300, 900 and 2,400 ms), each cut short by
      * a [wakeUps] edge, which the session settling emits. One per read; a read that asks again at
-     * once, as another identity, spends a step too, so it asks a bounded number of times.
+     * once, the session having settled since or as another identity, spends a step too, so every
+     * pass through the read spends one and the read asks a bounded number of times.
      */
     private inner class RestoreWindow {
         private var stepsTaken = 0
@@ -330,12 +342,16 @@ internal class QueryReader(
 
         /**
          * Waits, a step at a time, while the session is restoring or its refresh has failed, until
-         * it settles or the steps are spent.
+         * it settles or the steps are spent; a session already settled spends a step at once.
          *
          * @return the session now.
          */
         suspend fun awaitSettledSession(): RequestSession {
             var session = requestSession()
+            if (!isUnsettledStoredSession(session)) {
+                step()
+                return session
+            }
             while (isUnsettledStoredSession(session) && !isSpent) {
                 stepsTaken++
                 awaitRestoreWindowBackoff(refreshBackoff(stepsTaken))

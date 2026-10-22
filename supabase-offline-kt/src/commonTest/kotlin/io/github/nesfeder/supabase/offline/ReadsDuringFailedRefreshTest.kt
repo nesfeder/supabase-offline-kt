@@ -19,9 +19,11 @@ import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.TOKEN_ENDPOINT
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
+import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.postgrestError
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
 import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
 import io.github.nesfeder.supabase.offline.testdoubles.testJwt
+import io.ktor.http.HttpStatusCode
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -76,6 +78,15 @@ class ReadsDuringFailedRefreshTest {
                     when {
                         // The Auth server cannot be reached: the refresh fails, and is retried
                         request.table == TOKEN_ENDPOINT -> connectivityFailure()
+                        // A single object: the user's row, or PostgREST's "no rows" on the anon key
+                        request.accept.orEmpty().startsWith(OBJECT) ->
+                            if (mine) okJson(ONE_ROW)
+                            else
+                                postgrestError(
+                                    HttpStatusCode.NotAcceptable,
+                                    code = "PGRST116",
+                                    message = "no rows",
+                                )
                         // The user's token sees the user's rows; the anon key sees none
                         else -> okJson(if (mine) USER_ROWS else "[]")
                     }
@@ -124,8 +135,16 @@ class ReadsDuringFailedRefreshTest {
         request.method == "GET"
     }
 
+    /** The requests that reached the table: the Auth plugin's refresh attempts are recorded too. */
+    private fun RecordingPostgrestServer.sentToTheTable() = requests.filter { request ->
+        request.table == TABLE
+    }
+
     private fun warnings(): List<String> =
         logs.entriesAt(EngineLogLevel.WARNING).map { entry -> entry.message }
+
+    /** How many warnings logged so far say [text]; the sink is shared by a test's clients. */
+    private fun warningsSaying(text: String): Int = warnings().count { message -> text in message }
 
     @Test
     fun a_read_that_needs_the_network_waits_for_the_refresh_and_takes_the_users_answer() = runTest {
@@ -186,7 +205,7 @@ class ReadsDuringFailedRefreshTest {
 
                 // Then — it is still waiting (300, 900 and 2,400 ms)
                 assertTrue(!read.isCompleted, "the read returned before the wait ran out")
-                assertTrue(server.reads() >= 1, "the read sent nothing")
+                assertEquals(1, server.reads())
 
                 // When — the wait runs out
                 advanceTimeBy(1.seconds)
@@ -200,10 +219,7 @@ class ReadsDuringFailedRefreshTest {
                     queryCacheDao.rowsOf(TABLE).map { row -> row.payload },
                     "the anon key's answer replaced the cache",
                 )
-                assertTrue(
-                    warnings().any { message -> "serving the cache" in message },
-                    "got ${warnings()}",
-                )
+                assertEquals(1, warningsSaying("serving the cache"), "got ${warnings()}")
             }
         }
 
@@ -243,6 +259,7 @@ class ReadsDuringFailedRefreshTest {
                 queryCacheDao.deleteAll()
                 withFailedRefresh { (server, items, _) ->
                     // When — the refresh does not land within the wait
+                    val warned = warningsSaying("serving the response uncached")
                     val read = async { items.select(readStrategy = strategy) }
                     advanceTimeBy(5.seconds)
                     runCurrent()
@@ -256,11 +273,112 @@ class ReadsDuringFailedRefreshTest {
                         queryCacheDao.rowsOf(TABLE).isEmpty(),
                         "$strategy stored the anon key's answer",
                     )
-                    assertTrue(
-                        warnings().any { message -> "serving the response uncached" in message },
+                    assertEquals(
+                        warned + 1,
+                        warningsSaying("serving the response uncached"),
                         "$strategy: got ${warnings()}",
                     )
                 }
+            }
+        }
+
+    @Test
+    fun a_single_read_waits_for_the_refresh_and_is_sent_once_as_the_user() = runTest {
+        // Given — a session whose refresh failed, and a detail screen's read
+        withFailedRefresh { failed ->
+            val (server, items, _) = failed
+
+            // When — the read starts while the refresh is failing
+            val read = async {
+                items.select(readStrategy = ReadStrategy.NetworkFirst()) {
+                    filter { eq("id", 1) }
+                    single()
+                }
+            }
+            advanceTimeBy(1.seconds)
+            runCurrent()
+
+            // Then — it waits, and nothing was sent on the anon key
+            assertTrue(!read.isCompleted, "the read returned while the refresh was failing")
+            assertEquals(0, server.sentToTheTable().size)
+
+            // When — the refresh lands within the wait
+            failed.refreshLands()
+            runCurrent()
+
+            // Then — at once, the user's row from one request with the user's token
+            assertTrue(read.isCompleted, "the read did not wake when the session settled")
+            assertEquals(ONE_ROW, read.await().data)
+            assertEquals(1, server.sentToTheTable().size)
+            assertTrue(
+                server.sentToTheTable().single().authorization.orEmpty().contains(testJwt(USER)),
+                "the read was sent on the anon key",
+            )
+        }
+    }
+
+    @Test
+    fun a_network_first_reactive_read_waits_for_the_refresh_before_it_emits() = runTest {
+        // Given — the user's list cached, and a session whose refresh failed
+        queryCacheDao.seedPayload(table = TABLE, cacheKey = TABLE, payload = USER_ROWS)
+        withFailedRefresh { failed ->
+            val (server, items, _) = failed
+
+            // When — the read starts while the refresh is failing
+            val first = async {
+                items.selectAsFlow(readStrategy = FlowReadStrategy.NetworkFirstThenCache).first()
+            }
+            advanceTimeBy(1.seconds)
+            runCurrent()
+
+            // Then — nothing emitted yet: the anon key's answer is not shown as the user's
+            assertTrue(!first.isCompleted, "the read emitted while the refresh was failing")
+            assertEquals(1, server.reads())
+
+            // When — the refresh lands within the wait
+            failed.refreshLands()
+            runCurrent()
+
+            // Then — at once, the user's rows, settled
+            assertTrue(first.isCompleted, "the read did not wake when the session settled")
+            assertEquals(USER_ROWS, first.await().result?.data)
+            assertEquals(RefreshState.Idle, first.await().refresh)
+            assertEquals(
+                listOf(USER_ROWS),
+                queryCacheDao.rowsOf(TABLE).map { row -> row.payload },
+            )
+        }
+    }
+
+    @Test
+    fun a_network_first_reactive_read_shows_the_cache_refreshing_when_the_refresh_does_not_land() =
+        runTest {
+            // Given — the user's list cached, and a session whose refresh failed
+            queryCacheDao.seedPayload(table = TABLE, cacheKey = TABLE, payload = USER_ROWS)
+            withFailedRefresh { (server, items, _) ->
+                // When — the refresh does not land within the wait
+                val first = async {
+                    items
+                        .selectAsFlow(readStrategy = FlowReadStrategy.NetworkFirstThenCache)
+                        .first()
+                }
+                advanceTimeBy(3.seconds)
+                runCurrent()
+                assertTrue(!first.isCompleted, "the read emitted before the wait ran out")
+                advanceTimeBy(1.seconds)
+                runCurrent()
+
+                // Then — the cached rows, from the cache, still refreshing: waiting for the
+                // session is not a failure, and the anon key's answer replaced nothing
+                val snapshot = first.await()
+                assertEquals(USER_ROWS, snapshot.result?.data)
+                assertTrue(snapshot.isFromCache, "the cached rows were shown as the server's")
+                assertEquals(RefreshState.Refreshing, snapshot.refresh)
+                assertEquals(
+                    listOf(USER_ROWS),
+                    queryCacheDao.rowsOf(TABLE).map { row -> row.payload },
+                    "the anon key's answer replaced the cache",
+                )
             }
         }
 
@@ -286,6 +404,8 @@ class ReadsDuringFailedRefreshTest {
         const val TABLE = "todos"
         const val USER = "u-1"
         const val USER_ROWS = """[{"id":1,"title":"mine"}]"""
+        const val ONE_ROW = """{"id":1,"title":"mine"}"""
+        const val OBJECT = "application/vnd.pgrst.object+json"
 
         /** The stored user's session, [expiresInSeconds] from now; negative for one expired. */
         fun sessionOf(expiresInSeconds: Long): UserSession =

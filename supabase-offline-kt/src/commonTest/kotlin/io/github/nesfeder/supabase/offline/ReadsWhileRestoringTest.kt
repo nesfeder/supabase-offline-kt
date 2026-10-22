@@ -304,10 +304,14 @@ class ReadsWhileRestoringTest {
 
                     // When — the session settles as the user
                     sessions.release()
-                    advanceTimeBy(5.seconds)
                     runCurrent()
 
-                    // Then — one request, with the user's token, and the user's answer, not stored
+                    // Then — at once, one request, with the user's token, and the user's answer,
+                    // not stored
+                    assertTrue(
+                        read.isCompleted,
+                        "$name via $strategy did not wake when the session settled",
+                    )
                     assertEquals(usersAnswer, read.await().data, "$name via $strategy")
                     assertEquals(1, server.requests.size, "$name via $strategy")
                     assertTrue(
@@ -399,10 +403,10 @@ class ReadsWhileRestoringTest {
 
         // When — the session settles as the user
         sessions.release()
-        advanceTimeBy(5.seconds)
         runCurrent()
 
-        // Then — the user's row, from one request with the user's token
+        // Then — at once, the user's row, from one request with the user's token
+        assertTrue(first.isCompleted, "the read did not wake when the session settled")
         assertEquals(ONE_ROW, first.await().result?.data)
         assertEquals(1, server.requests.size)
         assertTrue(server.requests.single().authorization.orEmpty().contains(testJwt("u-1")))

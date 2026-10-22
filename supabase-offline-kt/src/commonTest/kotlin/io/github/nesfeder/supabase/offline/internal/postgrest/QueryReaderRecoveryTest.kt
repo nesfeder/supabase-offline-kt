@@ -750,6 +750,44 @@ class QueryReaderRecoveryTest {
         }
 
     @Test
+    fun one_shot_read_answered_after_the_session_settled_asks_again_at_once() =
+        runTest(UnconfinedTestDispatcher()) {
+            // Given: the session finishes restoring while the first request is on the wire, so its
+            // answer is the anon key's, and the session is settled by the time it is looked at
+            val postgrest = testPostgrest()
+            var authState: RequestSession = RequestSession.Restoring
+            var networkCalls = 0
+            val remoteTable =
+                FakeRemoteTable(
+                    table = "plans",
+                    postgrest = postgrest,
+                    onSelect = {
+                        networkCalls++
+                        if (networkCalls == 1) {
+                            authState = SIGNED_IN
+                            postgrestResultOf("[]", postgrest)
+                        } else {
+                            postgrestResultOf(freshPayload, postgrest)
+                        }
+                    },
+                )
+            val resolver =
+                buildResolver(
+                    remoteTable = remoteTable,
+                    scope = backgroundScope,
+                    authState = { authState },
+                )
+
+            // When
+            val oneShot = resolver.select(Columns.ALL, ReadStrategy.NetworkFirst()) {}
+
+            // Then: asked again at once as the user, with no ladder step slept
+            assertEquals(freshPayload, oneShot.data)
+            assertEquals(2, networkCalls, "the settled session was asked at once")
+            assertEquals(0L, currentTime, "no ladder step was slept")
+        }
+
+    @Test
     fun one_shot_restore_window_empty_still_retries_when_a_pending_mutation_masks_it() =
         runTest(UnconfinedTestDispatcher()) {
             // Given: a queued offline INSERT. Its overlay makes the payload the caller is served

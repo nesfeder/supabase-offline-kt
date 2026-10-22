@@ -141,7 +141,7 @@ private fun isChangeOfUser(before: RequestSession, after: RequestSession): Boole
 /**
  * Whether [session] belongs to a stored user whose token is not on the wire: restoring, or after a
  * failed refresh. Its requests carry the anon key until it settles: once the store has answered, or
- * once supabase-kt's retry of the refresh, ten seconds apart, lands.
+ * once supabase-kt's retry of the refresh, ten seconds apart by default, lands.
  */
 internal fun isUnsettledStoredSession(session: RequestSession): Boolean =
     session is RequestSession.Restoring || session is RequestSession.RefreshFailed

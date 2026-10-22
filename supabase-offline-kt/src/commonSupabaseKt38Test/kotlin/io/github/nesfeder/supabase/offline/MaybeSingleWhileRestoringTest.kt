@@ -99,10 +99,10 @@ class MaybeSingleWhileRestoringTest {
 
         // When — the session settles as the user
         sessions.release()
-        advanceTimeBy(5.seconds)
         runCurrent()
 
-        // Then — upstream's empty result, from one request carrying the user's token
+        // Then — at once, upstream's empty result, from one request carrying the user's token
+        assertTrue(read.isCompleted, "the read did not wake when the session settled")
         assertEquals("", read.await().data)
         assertEquals(1, server.requests.size)
         assertTrue(
