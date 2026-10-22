@@ -5,6 +5,7 @@ package io.github.nesfeder.supabase.offline.internal.storage
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import okio.Path.Companion.toPath
@@ -104,6 +105,29 @@ class CacheFilePathsTest {
             path ->
             assertTrue(isCacheableObjectPath(path), "refused \"$path\"")
         }
+    }
+
+    @Test
+    fun a_segment_that_reads_as_a_volume_letter_is_stored_inside_the_base() {
+        // Given — okio takes "a:1.png" for a Windows volume letter and resolves it on its own,
+        // outside the bucket's directory; such a name is stored under its hash instead
+        val result = assertNotNull(objectFilePathOrNull(baseDir, "b", "x/a:1.png"))
+        val bucketResult = assertNotNull(objectFilePathOrNull(baseDir, "c:", "file.txt"))
+
+        // When / Then
+        assertTrue(result.isStrictlyInside(baseDir), "$result left the base")
+        assertEquals(baseDir / "storage-hashed", result.parent)
+        assertTrue(bucketResult.isStrictlyInside(baseDir), "$bucketResult left the base")
+        assertEquals(baseDir / "storage-hashed", bucketResult.parent)
+        assertFalse(isPlainName("u:42/a.png"))
+        assertFalse(isPlainName("C:"))
+        // A colon anywhere else is a plain name, with its verbatim file
+        assertTrue(isPlainName("x/12:30.png"))
+        assertTrue(isPlainName("ab:c"))
+        assertEquals(
+            "/base/storage/b/x/12:30.png",
+            objectFilePathOrNull(baseDir, "b", "x/12:30.png").toString(),
+        )
     }
 
     @Test

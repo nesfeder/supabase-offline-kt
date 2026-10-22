@@ -46,6 +46,8 @@ private fun Offline.Config.openInMemoryClient(
         prepareFileCacheDirectories = false,
         fileSystem = fileSystem,
         markFileUsed = fileSystem::markUsed,
+        // Nothing of an in-memory file system reaches a disk, so there is nothing to write through
+        syncFile = {},
         clock = clock,
     )
 }

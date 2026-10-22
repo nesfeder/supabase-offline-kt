@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.mutationqueue
 
+import io.github.nesfeder.supabase.offline.testdoubles.FIRST_VERSION
 import io.github.nesfeder.supabase.offline.testdoubles.FakeRelationalPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.GUARDED_CACHE_KEY
 import io.github.nesfeder.supabase.offline.testdoubles.GUARDED_TABLE
@@ -145,14 +146,16 @@ class ConflictPolicyTest {
         // When
         val report = sync()
 
-        // Then
+        // Then — the server's title, under the version the device saw: the read brought the
+        // write's columns only, so the row keeps its version until a read brings the whole row,
+        // and a later write to it still meets the move
         assertEquals(0 to 1, report.syncedCount to report.conflictsKeptServerCount)
         assertEquals(0, store.pendingMutationCount())
         val cached =
             store.queryOverlay.overlaidPayloadFlow(GUARDED_TABLE, GUARDED_CACHE_KEY).first()
         val row = (Json.parseToJsonElement(cached.orEmpty()) as JsonArray).single() as JsonObject
         assertEquals(JsonPrimitive("elsewhere"), row["title"])
-        assertEquals(JsonPrimitive(MOVED_VERSION), row[VERSION_COLUMN])
+        assertEquals(JsonPrimitive(FIRST_VERSION), row[VERSION_COLUMN])
     }
 
     @Test

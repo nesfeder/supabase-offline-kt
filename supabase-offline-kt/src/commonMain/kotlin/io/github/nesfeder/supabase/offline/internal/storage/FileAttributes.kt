@@ -12,6 +12,15 @@ import okio.Path
 internal expect fun markFileUsed(path: Path, epochMillis: Long)
 
 /**
+ * Asks the platform to write the file at [path] through to the disk, so that a power loss right
+ * after the rename that follows does not leave the file empty or cut short.
+ *
+ * @param path the file, closed and whole.
+ * @throws okio.IOException when the file cannot be opened or the platform refuses to sync it.
+ */
+internal expect fun syncFileToDisk(path: Path)
+
+/**
  * Asks the platform to leave [path], a file or a whole directory, out of device backups. A restore
  * then never brings one user's cache and unsent writes to another device.
  *

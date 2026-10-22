@@ -36,12 +36,15 @@ class OfflineBucketApiCacheMaintenanceTest {
     private lateinit var delegate: FakeBucketApi
     private lateinit var api: CachingBucketApi
 
+    /** The clock the cache rows are stamped from. */
+    private var rowClockMillis: Long = FETCHED_AT_MILLIS
+
     @BeforeTest
     fun setUp() {
         baseDir =
             FileSystem.SYSTEM_TEMPORARY_DIRECTORY /
                 "supabase-offline-bucket-maintenance-${Random.nextLong()}"
-        store = newTestStore()
+        store = newTestStore(nowMillis = { rowClockMillis })
         delegate = FakeBucketApi(bucketId = BUCKET)
         api = newTestBucketApi(delegate = delegate, baseDirectory = baseDir, store = store)
     }
@@ -97,6 +100,26 @@ class OfflineBucketApiCacheMaintenanceTest {
         assertNotNull(dstRow)
         assertTrue(FileSystem.SYSTEM.exists(dstRow.localPath.toPath()))
         assertFalse(FileSystem.SYSTEM.exists(srcPath))
+    }
+
+    @Test
+    fun move_keepsTheSourcesFetchTime() = runTest {
+        // Given — cached at one time, moved a minute later
+        val from = "foo_move_time_src.jpg"
+        val to = "foo_move_time_dst.jpg"
+        primeCache(from, "move-me".encodeToByteArray())
+        rowClockMillis = FETCHED_AT_MILLIS + 60_000L
+
+        // When
+        api.move(from = from, to = to, destinationBucket = null)
+
+        // Then — the moved copy holds the bytes fetched at the source's time, and says so
+        val dstRow = assertNotNull(store.getStorageByKey(BUCKET, to))
+        assertEquals(FETCHED_AT_MILLIS, dstRow.lastFetchedEpochMs)
+        assertEquals(
+            FETCHED_AT_MILLIS,
+            assertNotNull(api.cachedFile(to)).fetchedAt.toEpochMilliseconds(),
+        )
     }
 
     @Test
@@ -157,5 +180,6 @@ class OfflineBucketApiCacheMaintenanceTest {
 
     private companion object {
         const val BUCKET = "test-bucket"
+        const val FETCHED_AT_MILLIS = 1_727_000_000_000L
     }
 }

@@ -25,7 +25,8 @@ import kotlinx.coroutines.flow.update
 internal class FakeQueryCacheDao : InMemoryQueryCacheDao() {
 
     /**
-     * Number of `upsert` writes that have occurred — exposed for write-amplification assertions.
+     * Number of `upsert` writes, and payload updates that changed a row, that have occurred —
+     * exposed for write-amplification assertions.
      */
     var writes: Int = 0
         private set
@@ -142,6 +143,22 @@ internal class FakeQueryCacheDao : InMemoryQueryCacheDao() {
         check(failUpsertOf?.invoke(row) != true) { "Scripted write failure" }
         writes++
         super.upsert(row)
+    }
+
+    override suspend fun updatePayload(
+        table: String,
+        cacheKey: String,
+        payload: String,
+        updatedAt: Long,
+    ): Int {
+        // A patch's write meets the hooks an upsert does, with the row as it would be written
+        getRow(table, cacheKey)?.copy(payload = payload, updatedAt = updatedAt)?.let { row ->
+            onUpsert?.invoke(row)
+            check(failUpsertOf?.invoke(row) != true) { "Scripted write failure" }
+        }
+        val changed = super.updatePayload(table, cacheKey, payload, updatedAt)
+        writes += changed
+        return changed
     }
 
     override suspend fun totalPayloadBytes(): Long =

@@ -92,8 +92,10 @@ private fun isCacheableSegment(segment: String): Boolean =
 
 /**
  * Whether [name], a bucket or an object path, is stored under its own name: printable ASCII short
- * enough for every file system. Other names could reach the disk folded or truncated, so they are
- * hashed; case is not folded, since device app storage is case-sensitive.
+ * enough for every file system, with no segment that reads as a Windows volume letter (`u:42`),
+ * which okio resolves as an absolute path. Other names could reach the disk folded, truncated or
+ * outside the cache, so they are hashed; case is not folded, since device app storage is
+ * case-sensitive.
  *
  * @param name the bucket identifier or object path, already known to be cacheable.
  * @return `true` when it is stored verbatim.
@@ -101,7 +103,13 @@ private fun isCacheableSegment(segment: String): Boolean =
 internal fun isPlainName(name: String): Boolean =
     name.length <= MAX_PLAIN_PATH_BYTES &&
         name.all { character -> character in ' '..'~' } &&
-        name.split('/').all { segment -> segment.length <= MAX_PLAIN_SEGMENT_BYTES }
+        name.split('/').all { segment ->
+            segment.length <= MAX_PLAIN_SEGMENT_BYTES && !segment.readsAsAVolumeLetter()
+        }
+
+/** Whether okio's `Path` takes this segment for a volume letter: an ASCII letter and a `:`. */
+private fun String.readsAsAVolumeLetter(): Boolean =
+    length >= 2 && this[1] == ':' && (this[0] in 'a'..'z' || this[0] in 'A'..'Z')
 
 /**
  * The cache file of an untransformed object: `<data>/storage/<bucket>/<object path>` for a plain
