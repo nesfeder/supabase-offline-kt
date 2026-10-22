@@ -1,11 +1,11 @@
 name: Docs check
 
-# Strict build, link checks, and the built site uploaded as the `docs-site` artifact so it can be
-# downloaded and previewed, with the Kotlin API reference built and placed at site/api/kotlin/ as
-# docs-publish.yml does it (the Swift one is a release's, and is left out). Nothing is published:
-# publishing is docs-publish.yml, which CI never calls. ci.yml calls this workflow when the
-# documentation changed and folds its result into the single required `All Green` check; the
-# pages' spelling is checked by ci.yml's formatting job, on every run.
+# Strict build, link checks, the install snippets' version, and the built site uploaded as the
+# `docs-site` artifact so it can be downloaded and previewed, with the Kotlin API reference built
+# and placed at site/api/kotlin/ as docs-publish.yml does it (the Swift one is a release's, and is
+# left out). Nothing is published: publishing is docs-publish.yml, which CI never calls. ci.yml
+# calls this workflow when the documentation changed and folds its result into the single required
+# `All Green` check; the pages' spelling is checked by ci.yml's formatting job, on every run.
 
 on:
   workflow_call:
@@ -78,6 +78,16 @@ jobs:
         run: |
           python3 scripts/check-swift-doc-listings.py --self-test
           python3 scripts/check-swift-doc-listings.py
+
+      # Every install snippet a reader copies (the README's, the Swift package's README and
+      # documentation catalog, the site's pages) names one version: the last release, which the
+      # samples take in the version catalog, or the release a pull request is preparing. The
+      # post-release pull request moves them with the samples (RELEASING.md). The release script's
+      # self-test, which covers the check, runs first.
+      - name: Check the install snippets
+        run: |
+          python3 scripts/release.py self-test
+          python3 scripts/release.py check-snippets
 
       - name: Upload the built site for preview
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}

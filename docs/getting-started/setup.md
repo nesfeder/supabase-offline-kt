@@ -24,7 +24,7 @@ The library is on Maven Central, which needs no credentials. Add it to the share
 
     ```toml
     [versions]
-    supabase-offline = "0.1.0"
+    supabase-offline = "0.2.0"
 
     [libraries]
     supabase-offline = { module = "io.github.nesfeder.supabase-offline:supabase-offline-kt", version.ref = "supabase-offline" }
@@ -46,7 +46,7 @@ The library is on Maven Central, which needs no credentials. Add it to the share
     kotlin {
         sourceSets {
             commonMain.dependencies {
-                implementation("io.github.nesfeder.supabase-offline:supabase-offline-kt:0.1.0")
+                implementation("io.github.nesfeder.supabase-offline:supabase-offline-kt:0.2.0")
             }
         }
     }

@@ -25,10 +25,10 @@ only the artifact itself:
     kotlin {
         sourceSets {
             commonMain.dependencies {
-                implementation("io.github.nesfeder.supabase-offline:supabase-offline-kt:0.1.0")
+                implementation("io.github.nesfeder.supabase-offline:supabase-offline-kt:0.2.0")
             }
             commonTest.dependencies {
-                implementation("io.github.nesfeder.supabase-offline:supabase-offline-kt-testing:0.1.0")
+                implementation("io.github.nesfeder.supabase-offline:supabase-offline-kt-testing:0.2.0")
             }
         }
     }
@@ -38,8 +38,8 @@ only the artifact itself:
 
     ```kotlin
     dependencies {
-        implementation("io.github.nesfeder.supabase-offline:supabase-offline-kt:0.1.0")
-        testImplementation("io.github.nesfeder.supabase-offline:supabase-offline-kt-testing:0.1.0")
+        implementation("io.github.nesfeder.supabase-offline:supabase-offline-kt:0.2.0")
+        testImplementation("io.github.nesfeder.supabase-offline:supabase-offline-kt-testing:0.2.0")
     }
     ```
 
@@ -47,7 +47,7 @@ only the artifact itself:
 
     ```swift
     dependencies: [
-        .package(url: "https://github.com/nesfeder/supabase-offline-swift", .upToNextMinor(from: "0.1.0")),
+        .package(url: "https://github.com/nesfeder/supabase-offline-swift", .upToNextMinor(from: "0.2.0")),
     ],
     targets: [
         .target(name: "App", dependencies: [.product(name: "SupabaseOffline", package: "supabase-offline-swift")]),
