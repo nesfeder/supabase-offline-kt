@@ -23,6 +23,31 @@ All notable changes to this project are recorded in this file. The format follow
 
 ### Fixed
 
+- A reactive read's refresh asks again, on its retry schedule, for as long as its answers are
+  refused as older than a change to the table, and reads `Refreshing` meanwhile; a
+  `NetworkFirstThenCache` read whose first fetch is refused that way stays `Refreshing` too. Before,
+  the second refusal settled the read on the rows it had and reported `Idle`, so a busy table, or a
+  reconnect with queued writes, could leave a list stale for good.
+- A burst of changes on a followed table, as one statement over a few hundred visible rows sends,
+  overflowed the two buffers between the Realtime plugin and the cache, the plugin's own and the
+  library's, past about 130 waiting changes, and the newest were dropped without a log or a stale
+  mark, so a row could keep an older value until the next join or fetch; every change is now kept,
+  and a backlog of more than 5,000 waiting changes across the named tables is discarded as a whole,
+  with the tables read again as on a join and one warning logged.
+- Each change a followed table received was applied as its own pass over the table's cached
+  queries, so a burst ran far behind the connection; the changes waiting for a table are now
+  applied as one pass, in the order the server sent them.
+- A one-shot read made while a stored session's token refresh has failed waits for the session,
+  as it does while one restores. supabase-kt sends the anon key meanwhile, and tries the refresh
+  again every ten seconds by default; the read returned the anon key's answer, empty under
+  row-level security, as the server's. When the session does not settle within the wait, a
+  `NetworkFirst` read with the query cached, or a `CacheFirst` read of a list marked stale, serves
+  the cached rows rather than that answer. A `NetworkFirstThenCache` read waits the same way
+  before its first emission. A read answered after the session settled asks again at once.
+- A read of a shape the cache cannot hold (`single()`, `maybeSingle()`, `head`, a `count`, …)
+  waits for a session that is restoring, or whose refresh failed, before it is sent. It went out
+  at once on the anon key, where a detail screen's `single()` failed with `PGRST116` and a `count`
+  read 0 at cold start.
 - A cached list whose shape record the library could not read (one another build wrote, or one
   that did not decode) admitted every row of its table into the list, for good; the record is now
   replaced by the one the next read records.

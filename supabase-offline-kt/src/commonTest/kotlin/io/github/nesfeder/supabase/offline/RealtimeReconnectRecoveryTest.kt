@@ -148,6 +148,58 @@ class RealtimeReconnectRecoveryTest {
             client.close()
         }
 
+    @Test
+    fun a_joins_re_read_keeps_asking_while_other_users_deletes_arrive_and_lands_when_they_stop() =
+        runTest(timeout = 2.minutes) {
+            onRealThreads {
+                // Given — a live list showing the server's row, a row only the server has, and a
+                // server that takes a while to answer
+                val list = RecordedLiveList(client, TABLE)
+                list.await { seen -> seen.titles == listOf("Milk") && !seen.isFromCache }
+                server.seed(TABLE, row("b", "Eggs"))
+                server.answerDelayMillis = 200
+                val readsBefore = server.readsOf(TABLE)
+
+                // When — the channel joins while other users' deletes arrive faster than the server
+                // answers (Realtime sends every delete to every subscriber), each a change to the
+                // table that an answer already in flight cannot describe
+                val follow = feed.awaitFollow(0)
+                val deletes = launch {
+                    var n = 0
+                    while (true) {
+                        follow.deleted(TABLE, row("theirs-${n++}", "Theirs"))
+                        delay(50)
+                    }
+                }
+                follow.join()
+                delay(2_500)
+
+                // Then — every answer so far was refused, and the read kept asking instead of
+                // settling on the rows it had
+                val seenWhileDeleting = list.count
+                assertTrue(server.readsOf(TABLE) >= readsBefore + 3, "the re-read kept asking")
+
+                // When — the deletes stop
+                deletes.cancelAndJoin()
+
+                // Then — the next answer lands, and nothing settled before it
+                list.await { seen -> seen.titles == listOf("Milk", "Eggs") && !seen.isFromCache }
+                val seen = list.stop()
+                assertTrue(
+                    seen.take(seenWhileDeleting).none { it.titles?.contains("Eggs") == true },
+                    "no answer landed while the deletes kept arriving",
+                )
+                // A stale mark shows as the cache for a moment before the loop reports Refreshing,
+                // so what is pinned is where the read stood when the deletes stopped
+                assertEquals(
+                    RefreshState.Refreshing,
+                    seen[seenWhileDeleting - 1].refresh,
+                    "the read was still refreshing, not settled on the cache",
+                )
+            }
+            client.close()
+        }
+
     /** A cache-only live list of [table]: the titles of each emission, in order. */
     private class CacheOnlyList(client: Offline, table: String) {
         private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)

@@ -24,7 +24,7 @@ From the samples: [LibraryMappings.kt](https://github.com/nesfeder/supabase-offl
 | State | Meaning | What to show |
 | --- | --- | --- |
 | `Idle` | No refresh is running or waiting: the last one succeeded, or the read does not refresh | Nothing |
-| `Refreshing` | A refresh is running, is about to be tried again soon after a failure, or waits for a session that is still settling | A quiet progress mark, if anything |
+| `Refreshing` | A refresh is running, is about to be tried again soon after a failure, waits for a session that is still settling, or asks again because its answer predated a local write | A quiet progress mark, if anything |
 | `Paused` | The refresh waits for the network, which the library knows to be unavailable. Nothing is failing | "Offline": the rows are the device's |
 | `Stalled(cause)` | The refresh keeps failing while the network is believed to be up. It is still tried, at most a minute apart | "Can't reach the server": the rows are the device's |
 
@@ -70,10 +70,14 @@ user.
 ## An old answer never replaces a newer write
 
 Every request reads a tick from a monotonic clock before it goes out, and every write that changes
-the cache moves its table's mark forward. An answer whose request left before the table's last
-change is refused, since it cannot hold that change, and the refresh asks again. One that left
-before `clearLocalData()` is refused and not asked again, since it may carry the cleared session's
-token; one that left before the cache passed to a new owner is not written, and the refresh asks
-again. An answer that is not a list of rows (a sign-in page or a block page at `200`) is not
-written either, and counts as a failed attempt: the refresh asks again on its schedule, and reads
-`Stalled` by that cause after the fourth in a row.
+the cache moves its table's mark forward: a write made online, a replayed one, and a server record
+or Realtime event applied to the table. An answer whose request left before the table's last change
+is refused, since it cannot hold that change. A reactive read then asks again, once at once and
+after that on its retry schedule, reading `Refreshing` meanwhile, until an answer lands; on a table
+that changes at least once per round trip, that takes as long as the changes keep coming. A one-shot
+read asks once more and then serves the cache, or the server's rows uncached when nothing is cached.
+One that left before `clearLocalData()` is refused and not asked again, since it may carry the
+cleared session's token; one that left before the cache passed to a new owner is not written, and
+the refresh asks again. An answer that is not a list of rows (a sign-in page or a block page at
+`200`) is not written either, and counts as a failed attempt: the refresh asks again on its schedule,
+and reads `Stalled` by that cause after the fourth in a row.

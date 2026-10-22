@@ -23,6 +23,7 @@ import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.concurrent.atomics.decrementAndFetch
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -151,10 +152,56 @@ internal class CachePatcher(
     }
 
     /**
+     * Patches the rows the server reported changed into the cached queries of [table], as
+     * [patchCachedQueries] does for each: a saved row as an UPSERT on [keyColumns] that places it
+     * by its key, a deleted one as a DELETE by its key; all of [changes], in order, in one pass
+     * over the table's payloads under one hold of its lock. A burst of changes costs one patch, and
+     * a row's last change is what the cache shows. The table's watermark moves as for any patch.
+     *
+     * @param keyColumns the table's primary key, which every change's filter names.
+     */
+    suspend fun patchServerChanges(
+        table: String,
+        keyColumns: List<String>,
+        changes: List<ServerRowChange>,
+    ) {
+        requireUserTable(table)
+        if (changes.isEmpty()) return
+        val guardTick = freshness.tickNow()
+        val onConflict = keyColumns.joinToString(separator = ",")
+        val writes = changes.map { change ->
+            if (change.deleted) {
+                MutationRow(
+                    id = nextPatchId(),
+                    table = table,
+                    operation = MutationOperation.DELETE.storedName,
+                    bodyJson = "{}",
+                    filterJson = change.keyFilterJson,
+                    createdAtMs = nowMillis(),
+                    syncedAtMs = null,
+                )
+            } else {
+                MutationRow(
+                    id = nextPatchId(),
+                    table = table,
+                    operation = MutationOperation.UPSERT.storedName,
+                    bodyJson = JsonArray(listOf(change.record)).toString(),
+                    filterJson = change.keyFilterJson,
+                    createdAtMs = nowMillis(),
+                    syncedAtMs = null,
+                    onConflict = onConflict,
+                )
+            }
+        }
+        patchWithWrites(table, writes, liveCacheKeys = null, guardTick)
+    }
+
+    /**
      * The patch itself, over writes already built: [patchCachedQueries] builds one from a write,
-     * [patchReturnedRows] one per returned row. Overlays [writes], in order, on every cached query
-     * of [table], creates the payloads live queries without one now admit, and marks stale a query
-     * it may leave wrong ([patchMayLeaveWrong]). A cache not the current identity's is left alone.
+     * [patchReturnedRows] one per returned row, [patchServerChanges] one per change the server
+     * reported. Overlays [writes], in order, on every cached query of [table], creates the payloads
+     * live queries without one now admit, and marks stale a query it may leave wrong
+     * ([patchMayLeaveWrong]). A cache not the current identity's is left alone.
      */
     private suspend fun patchWithWrites(
         table: String,
@@ -412,3 +459,18 @@ internal class CachePatcher(
         }
     }
 }
+
+/**
+ * A row the server reported changed, located by its primary key, for
+ * [CachePatcher.patchServerChanges].
+ *
+ * @property record the row as the server sent it: the whole row for one saved, at least its key for
+ *   one deleted.
+ * @property keyFilterJson the encoded [FilterDescriptor] that finds the row by its key.
+ * @property deleted whether the row was deleted; otherwise it was inserted or updated.
+ */
+internal class ServerRowChange(
+    val record: JsonObject,
+    val keyFilterJson: String,
+    val deleted: Boolean,
+)
