@@ -1,6 +1,6 @@
 // Copyright (c) 2026 nesfeder
 // SPDX-License-Identifier: MIT
-@file:OptIn(OfflineInternal::class)
+@file:OptIn(OfflineInternal::class, ExperimentalCoroutinesApi::class)
 
 package io.github.nesfeder.supabase.offline.internal.testing
 
@@ -13,6 +13,8 @@ import io.github.nesfeder.supabase.offline.ReadStrategy
 import io.github.nesfeder.supabase.offline.RealtimeFilter
 import io.github.nesfeder.supabase.offline.RealtimeStatus
 import io.github.nesfeder.supabase.offline.RealtimeTable
+import io.github.nesfeder.supabase.offline.internal.realtime.ServerChangeEvent
+import io.github.nesfeder.supabase.offline.internal.realtime.WatchedTable
 import io.github.nesfeder.supabase.offline.offline
 import io.github.nesfeder.supabase.offline.testdoubles.TEST_SUPABASE_KEY
 import io.github.nesfeder.supabase.offline.testdoubles.TEST_SUPABASE_URL
@@ -22,15 +24,19 @@ import io.ktor.client.engine.mock.respondOk
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
+import kotlin.test.assertNotNull
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
@@ -40,7 +46,8 @@ import kotlinx.serialization.json.put
 /**
  * The gated hook behind the testing artifact's `FakeRealtime`: each channel the client opens
  * reaches the test with the tables the configuration named, what the test reports on it is applied,
- * and a channel the test fails or ends stalls the client, which joins again.
+ * and a channel the test fails or ends stalls the client, which joins again. A channel built with a
+ * capacity drops what it cannot hold, as supabase-kt 3.6.0's does, and counts it.
  */
 class ScriptedRealtimeTest {
 
@@ -116,6 +123,34 @@ class ScriptedRealtimeTest {
             channels.receiveWithin()
             supabase.close()
             assertEquals(RealtimeStatus.Off, offline.realtimeStatus.value)
+        }
+
+    @Test
+    fun a_channel_with_a_capacity_drops_what_it_cannot_hold_and_counts_it() =
+        runTest(timeout = 2.minutes) {
+            // Given — a channel that holds two events beyond the one its waiting collector takes
+            // at once, and that collector not running again until told
+            var opened: ScriptedRealtimeChannel? = null
+            val feed = scriptedServerChangeFeed(capacity = 2) { channel -> opened = channel }
+            val events = mutableListOf<String>()
+            val collecting = backgroundScope.launch {
+                feed.follow(listOf(WatchedTable("tasks")), "public").collect { event ->
+                    events += (event as? ServerChangeEvent.Saved)?.record?.get("id").toString()
+                }
+            }
+            runCurrent()
+            val channel = assertNotNull(opened)
+
+            // When — four rows are reported before the collector runs
+            for (id in listOf("t1", "t2", "t3", "t4")) {
+                channel.saved("tasks", null, buildJsonObject { put("id", id) })
+            }
+
+            // Then — the fourth was dropped, and counted; the first three are delivered
+            assertEquals(1, channel.droppedCount)
+            runCurrent()
+            assertEquals(listOf("\"t1\"", "\"t2\"", "\"t3\""), events)
+            collecting.cancel()
         }
 
     @Test

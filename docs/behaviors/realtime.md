@@ -66,6 +66,11 @@ each named table on every join, so a channel that drops and rejoins often refetc
 backoff above bounds how often a refused join does. A one-shot read is not fetched again by the
 join; it takes its strategy's path when the app reads it next.
 
+Between joins, the changes a table receives are applied as they arrive, those waiting together as
+one patch of its cached queries; a burst the device cannot keep up with, more than 5,000 changes
+waiting, is discarded as a whole and the named tables are read again as on a join, with one warning
+in the log that says how many and which tables.
+
 ## The status and the switch
 
 `disableRealtime()` leaves the channel at once and joins none until `enableRealtime()`, which joins

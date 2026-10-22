@@ -28,8 +28,9 @@ import kotlinx.serialization.json.put
 
 /**
  * The changes a feed reports reach the cached queries through the same path as an app's
- * `applyServerRecord` and `applyServerDelete`, in the order they were sent, in the table's own
- * schema; and an echo of the user's own write meets the overlay as a replayed write's answer does.
+ * `applyServerRecord` and `applyServerDelete`, in the order they were sent, a table's waiting
+ * changes as one patch, in the table's own schema; and an echo of the user's own write meets the
+ * overlay as a replayed write's answer does.
  */
 class RealtimeApplyOrderingTest {
 
@@ -52,6 +53,54 @@ class RealtimeApplyOrderingTest {
 
             // Then — the list holds the new row as last updated, and the old one is gone
             cache.awaitPayload(TABLE, """[{"id":"t2","title":"Eggs, large"}]""")
+            client.close()
+        }
+
+    @Test
+    fun a_batch_that_inserts_updates_and_deletes_one_row_ends_with_the_row_gone() =
+        runTest(timeout = 2.minutes) {
+            // Given — one cached list of the table, and the channel joined
+            val cache = FakeQueryCacheDao()
+            cache.seedPayload(TABLE, CACHE_KEY, ROWS)
+            val client = newWatchingClient(cache, listOf(WatchedTable(TABLE)))
+            val follow = feed.awaitFollow(0)
+            follow.join()
+
+            // When — a row is inserted, updated and deleted within one burst, and the old row is
+            // then renamed, so the list shows when the burst has been applied
+            follow.saved(TABLE, row("t2", "Eggs"))
+            follow.saved(TABLE, row("t2", "Eggs, large"))
+            follow.deleted(TABLE, buildJsonObject { put("id", "t2") })
+            follow.saved(TABLE, row("t1", "Oat milk"))
+
+            // Then — the old row renamed, and no trace of the new one
+            cache.awaitPayload(TABLE, """[{"id":"t1","title":"Oat milk"}]""")
+            client.close()
+        }
+
+    @Test
+    fun a_batch_of_updates_to_two_rows_ends_with_both_updated() =
+        runTest(timeout = 2.minutes) {
+            // Given — two cached rows
+            val cache = FakeQueryCacheDao()
+            cache.seedPayload(
+                TABLE,
+                CACHE_KEY,
+                """[{"id":"t1","title":"Milk"},{"id":"t2","title":"Eggs"}]""",
+            )
+            val client = newWatchingClient(cache, listOf(WatchedTable(TABLE)))
+            val follow = feed.awaitFollow(0)
+            follow.join()
+
+            // When — both change within one burst
+            follow.saved(TABLE, row("t1", "Oat milk"))
+            follow.saved(TABLE, row("t2", "Duck eggs"))
+
+            // Then
+            cache.awaitPayload(
+                TABLE,
+                """[{"id":"t1","title":"Oat milk"},{"id":"t2","title":"Duck eggs"}]""",
+            )
             client.close()
         }
 

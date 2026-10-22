@@ -31,6 +31,14 @@ All notable changes to this project are recorded in this file. The format follow
 - A server record or Realtime event that reached no cached query still moved its table's freshness
   mark, refusing every refresh in flight; the mark now moves only for a patch that changes a cached
   query or marks one stale.
+- A burst of changes on a followed table, as one statement over a few hundred visible rows sends,
+  overflowed the Realtime plugin's buffers past about 130 waiting changes, and the newest were
+  dropped without a log or a stale mark, so a row could keep an older value until the next join or
+  fetch; every change is now kept, and a backlog of more than 5,000 waiting changes is discarded as
+  a whole, with the named tables read again as on a join and one warning logged.
+- Each change a followed table received was applied as its own pass over the table's cached
+  queries, so a burst ran far behind the connection; the changes waiting for a table are now
+  applied as one pass, in the order the server sent them.
 
 ## [0.2.0] - 2026-10-20
 
