@@ -26,9 +26,9 @@ import kotlinx.serialization.json.JsonObject
  * the test reports on it until it ends. One is made for each follow the client starts; the
  * `supabase-offline-kt-testing` artifact's `FakeRealtime` drives it.
  *
- * The channel holds every reported event for the client, unless built with a capacity: then one
- * reported while that many wait is dropped, as the Realtime plugin of supabase-kt 3.6.0 drops a
- * change once 64 wait, and counted in `droppedCount`.
+ * The channel holds as many reported events for the client as its capacity, unlimited for the
+ * testing artifact: one reported while that many wait is dropped, as the Realtime plugin of
+ * supabase-kt 3.6.0 drops a change once 64 wait, and counted in `droppedCount`.
  *
  * @property tables the tables the client follows through this channel.
  * @property defaultSchema the schema of a table that names none.
@@ -39,7 +39,7 @@ public class ScriptedRealtimeChannel
 internal constructor(
     public val tables: List<RealtimeTable>,
     public val defaultSchema: String,
-    capacity: Int = Channel.UNLIMITED,
+    capacity: Int,
 ) {
 
     private val events = Channel<ServerChangeEvent>(capacity)
@@ -120,7 +120,7 @@ public fun Offline.Config.followServerChangesThrough(onChannel: (ScriptedRealtim
  * [capacity] reported events for the client: [onChannel] receives each channel before anything is
  * delivered on it.
  */
-@OfflineInternal
+@OptIn(OfflineInternal::class)
 internal fun scriptedServerChangeFeed(
     capacity: Int = Channel.UNLIMITED,
     onChannel: (ScriptedRealtimeChannel) -> Unit,

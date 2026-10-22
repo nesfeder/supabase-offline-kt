@@ -38,8 +38,9 @@ import kotlinx.coroutines.withTimeoutOrNull
  * The changes a follow receives wait in a [ChangeBacklog], taken off the feed as they arrive, and
  * are applied beside it, each table's waiting changes as one patch: a burst from the server costs
  * one pass over the table's cached queries, not one per change, and a slow patch never holds the
- * feed. A backlog past [backlogCapacity] is discarded, and every watched table is read again
- * instead, as on a join.
+ * feed. A backlog past [backlogCapacity] is discarded, with every change the applier had taken but
+ * not applied yet, and once the applier is free every watched table is read again instead, as on a
+ * join, with one warning for the episode.
  *
  * @param scope where the following runs; canceling it leaves the channel.
  * @param tables the tables to follow; none follows nothing.
@@ -180,10 +181,7 @@ internal class ServerChangeFollower(
     private suspend fun receive(event: ServerChangeEvent, backlog: ChangeBacklog) {
         when (event) {
             ServerChangeEvent.Joined -> joined()
-            is ServerChangeEvent.Change -> {
-                val discarded = backlog.add(event)
-                if (discarded > 0) backlogDiscarded(discarded)
-            }
+            is ServerChangeEvent.Change -> backlog.add(event)
         }
     }
 
@@ -197,35 +195,59 @@ internal class ServerChangeFollower(
     }
 
     /**
-     * Logs that [count] waiting changes were discarded, and reads every watched table again, which
-     * brings what they would have, as a join does. Never a change itself.
-     */
-    private suspend fun backlogDiscarded(count: Int) {
-        engineLogger.warning {
-            "Realtime: $count change(s) waited to be applied, more than the $backlogCapacity the " +
-                "client keeps; they are discarded, and the cached queries of " +
-                "${tables.joinToString { watched -> watched.table }} are read again"
-        }
-        markEveryTableStale()
-    }
-
-    /**
      * Applies [backlog]'s changes until it is closed and empty: every change waiting, each table's
-     * as one patch in the order they arrived, tables in the order of their first change.
+     * as one patch in the order they arrived, tables in the order of their first change. A batch
+     * taken before a discard is dropped instead, and a discard is reported once the take is done.
      */
     private suspend fun applyBacklog(backlog: ChangeBacklog) {
         while (true) {
-            val changes = backlog.takeAll() ?: return
-            val byTable =
-                LinkedHashMap<Pair<String, String>, MutableList<ServerChangeEvent.Change>>()
-            for (change in changes) {
-                byTable.getOrPut(change.table to change.schema) { mutableListOf() } += change
+            val entries = backlog.takeAll()
+            if (entries == null) {
+                reportDiscard(backlog)
+                return
+            }
+            val byTable = LinkedHashMap<Pair<String, String>, MutableList<ChangeBacklog.Entry>>()
+            for (entry in entries) {
+                val key = entry.change.table to entry.change.schema
+                byTable.getOrPut(key) { mutableListOf() } += entry
             }
             for ((key, batch) in byTable) {
-                applyQuietly(batch, table = key.first, schema = key.second)
+                // Read per batch: a discard during the last patch voids the batches after it
+                val generation = backlog.currentGeneration
+                val current = batch.filter { entry -> entry.generation == generation }
+                if (current.size < batch.size) backlog.countDropped(batch.size - current.size)
+                if (current.isEmpty()) continue
+                val changes = current.map { entry -> entry.change }
+                applyQuietly(changes, table = key.first, schema = key.second)
             }
+            reportDiscard(backlog)
         }
     }
+
+    /**
+     * Once changes were discarded, reads every watched table again, which brings what they would
+     * have, as a join does, and logs it once: a discard during those marks is folded in, and the
+     * marks are made again for it. Never a change itself.
+     */
+    private suspend fun reportDiscard(backlog: ChangeBacklog) {
+        var total = 0
+        while (true) {
+            val discarded = backlog.takeDiscarded()
+            if (discarded == 0) break
+            total += discarded
+            markEveryTableStale()
+        }
+        if (total == 0) return
+        val names = tables.joinToString { watched -> watched.qualifiedName() }
+        engineLogger.warning {
+            "Realtime: $total change(s) waited to be applied, more than the $backlogCapacity the " +
+                "client keeps; they are discarded, and the cached queries of $names are read again"
+        }
+    }
+
+    /** `schema.table` when the table names a schema, the table alone otherwise. */
+    private fun WatchedTable.qualifiedName(): String =
+        schema?.let { named -> "$named.$table" } ?: table
 
     /**
      * Applies [changes], all of [table]; a failure is logged, and the table's cached queries are

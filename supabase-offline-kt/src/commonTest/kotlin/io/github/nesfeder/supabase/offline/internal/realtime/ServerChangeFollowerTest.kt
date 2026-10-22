@@ -32,6 +32,7 @@ import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.yield
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
@@ -284,65 +285,121 @@ class ServerChangeFollowerTest {
         }
 
     @Test
-    fun a_backlog_past_the_cap_is_discarded_and_every_table_is_read_again_once() = runTest {
-        // Given — following two tables with a cap of ten, joined, and an apply held on its first
-        // batch
-        val release = CompletableDeferred<Unit>()
+    fun a_backlog_past_the_cap_is_discarded_with_what_was_taken_and_every_table_read_again_once() =
+        runTest {
+            // Given — following two tables with a cap of ten, joined, and an apply that holds
+            // audit's batch
+            val release = CompletableDeferred<Unit>()
+            val scope = newScope()
+            val follower =
+                newFollower(
+                    scope,
+                    tables = listOf(WatchedTable(TABLE), WatchedTable("audit", schema = "app")),
+                    backlogCapacity = 10,
+                ) { changes ->
+                    if (changes.first().table == "audit") release.await()
+                    applied += changes
+                }
+            sessionReady.emit(true)
+            follower.start()
+            runCurrent()
+            val follow = feed.follows.value.single()
+            follow.join()
+            runCurrent()
+            staled.clear()
+
+            // When — an audit change and a tasks change are taken together, so the applier sits
+            // in audit's batch with the tasks change in hand, and more changes than the cap arrive
+            follow.saved("audit", row("a1"), schema = "app")
+            follow.saved(TABLE, row("taken"))
+            runCurrent()
+            repeat(11) { index ->
+                follow.saved(
+                    TABLE,
+                    buildJsonObject {
+                        put("id", "t$index")
+                        put("title", PRIVATE)
+                    },
+                )
+            }
+            runCurrent()
+
+            // Then — nothing is marked or logged while the applier is held: the re-read must
+            // follow what it applies, not race it
+            assertEquals(emptyList(), staled)
+            assertEquals(emptyList(), logs.entriesAt(EngineLogLevel.WARNING))
+
+            // When — audit's batch goes through
+            release.complete(Unit)
+            runCurrent()
+
+            // Then — the tasks change taken before the discard is never applied, each table is
+            // marked stale once, and one warning names the count, the tables with their schema,
+            // and nothing of a record
+            assertEquals<List<List<ServerChangeEvent.Change>>>(
+                listOf(listOf(ServerChangeEvent.Saved("audit", "app", row("a1")))),
+                applied,
+            )
+            assertEquals(listOf(TABLE to SCHEMA, "audit" to "app"), staled)
+            val warning = logs.entriesAt(EngineLogLevel.WARNING).single().message
+            assertTrue("12 change(s)" in warning, warning)
+            assertTrue("$TABLE, app.audit" in warning, warning)
+            assertTrue(PRIVATE !in warning, warning)
+
+            // When — a change arrives after the discard
+            follow.saved(TABLE, row("after"))
+            runCurrent()
+
+            // Then — it is applied, and nothing more is marked or logged
+            assertEquals(
+                listOf(ServerChangeEvent.Saved(TABLE, SCHEMA, row("after"))),
+                applied.last(),
+            )
+            assertEquals(2, staled.size)
+            assertEquals(1, logs.entriesAt(EngineLogLevel.WARNING).size)
+            assertEquals(RealtimeStatus.Subscribed, follower.state.value)
+            scope.cancel()
+        }
+
+    @Test
+    fun discards_during_the_re_read_are_folded_into_one_warning_and_marked_again() = runTest {
+        // Given — a cap of two, and a mark that, once armed, reports a further overflow while it
+        // runs
         val scope = newScope()
+        lateinit var follow: FakeServerChangeFeed.Follow
+        var armed = false
         val follower =
             newFollower(
                 scope,
-                tables = listOf(WatchedTable(TABLE), WatchedTable("audit", schema = "app")),
-                backlogCapacity = 10,
-            ) { changes ->
-                release.await()
-                applied += changes
-            }
+                backlogCapacity = 2,
+                markStale = { table, schema ->
+                    staled += table to schema
+                    if (armed) {
+                        armed = false
+                        repeat(3) { index -> follow.saved(TABLE, row("more$index")) }
+                        // The collector takes them while the mark is under way
+                        yield()
+                    }
+                },
+            )
         sessionReady.emit(true)
         follower.start()
         runCurrent()
-        val follow = feed.follows.value.single()
+        follow = feed.follows.value.single()
         follow.join()
         runCurrent()
         staled.clear()
-        follow.saved(TABLE, row("held"))
+        armed = true
+
+        // When — one overflow, whose re-read meets another
+        repeat(3) { index -> follow.saved(TABLE, row("t$index")) }
         runCurrent()
 
-        // When — more changes than the cap arrive while that batch is applied
-        repeat(11) { index ->
-            follow.saved(
-                TABLE,
-                buildJsonObject {
-                    put("id", "t$index")
-                    put("title", PRIVATE)
-                },
-            )
-        }
-        runCurrent()
-
-        // Then — they are discarded: each table is marked stale once, and one warning names the
-        // count and the tables, nothing of a record
-        assertEquals(listOf(TABLE to SCHEMA, "audit" to "app"), staled)
+        // Then — marked twice, one warning with both counts, nothing applied from either burst
+        assertEquals(listOf(TABLE to SCHEMA, TABLE to SCHEMA), staled)
         val warning = logs.entriesAt(EngineLogLevel.WARNING).single().message
-        assertTrue("11 change(s)" in warning, warning)
-        assertTrue(TABLE in warning && "audit" in warning, warning)
-        assertTrue(PRIVATE !in warning, warning)
-
-        // When — the held batch goes through, and a change arrives after the discard
-        release.complete(Unit)
-        runCurrent()
-        follow.saved(TABLE, row("after"))
-        runCurrent()
-
-        // Then — the held change and the later one were applied, nothing in between
-        assertEquals<List<List<ServerChangeEvent.Change>>>(
-            listOf(
-                listOf(ServerChangeEvent.Saved(TABLE, SCHEMA, row("held"))),
-                listOf(ServerChangeEvent.Saved(TABLE, SCHEMA, row("after"))),
-            ),
-            applied,
-        )
-        assertEquals(RealtimeStatus.Subscribed, follower.state.value)
+        assertTrue("6 change(s)" in warning, warning)
+        assertEquals(emptyList(), applied)
         scope.cancel()
     }
 

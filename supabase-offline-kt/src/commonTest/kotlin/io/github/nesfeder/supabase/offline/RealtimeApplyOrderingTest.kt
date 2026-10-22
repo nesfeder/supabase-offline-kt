@@ -3,9 +3,12 @@
 package io.github.nesfeder.supabase.offline
 
 import io.github.nesfeder.supabase.offline.internal.OfflineClient
+import io.github.nesfeder.supabase.offline.internal.logging.EngineLogLevel
+import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
 import io.github.nesfeder.supabase.offline.internal.realtime.WatchedTable
 import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeServerChangeFeed
+import io.github.nesfeder.supabase.offline.testdoubles.RecordingLogSink
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.postgrestError
@@ -14,6 +17,7 @@ import io.ktor.http.HttpStatusCode
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
+import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.Dispatchers
@@ -101,6 +105,35 @@ class RealtimeApplyOrderingTest {
                 TABLE,
                 """[{"id":"t1","title":"Oat milk"},{"id":"t2","title":"Duck eggs"}]""",
             )
+            client.close()
+        }
+
+    @Test
+    fun a_record_without_its_key_inside_a_batch_is_dropped_and_logged_and_the_rest_applied() =
+        runTest(timeout = 2.minutes) {
+            // Given — one cached row, and the logs recorded
+            val logs = RecordingLogSink()
+            val cache = FakeQueryCacheDao()
+            cache.seedPayload(TABLE, CACHE_KEY, ROWS)
+            val client =
+                newWatchingClient(cache, listOf(WatchedTable(TABLE)), logs = logs.asEngineLogger())
+            val follow = feed.awaitFollow(0)
+            follow.join()
+
+            // When — a burst holds a row the cache can place, one without its key, and another
+            follow.saved(TABLE, row("t2", "Eggs"))
+            follow.saved(TABLE, buildJsonObject { put("title", PRIVATE) })
+            follow.saved(TABLE, row("t3", "Tea"))
+
+            // Then — both rows with a key are in the list, and the other was logged without its
+            // values
+            cache.awaitPayload(
+                TABLE,
+                """[{"id":"t1","title":"Milk"},{"id":"t2","title":"Eggs"},{"id":"t3","title":"Tea"}]""",
+            )
+            val visible = logs.entries.filter { it.level >= EngineLogLevel.INFO }.map { it.message }
+            assertTrue(visible.any { "dropping record" in it }, "$visible")
+            assertTrue(visible.none { PRIVATE in it }, "$visible")
             client.close()
         }
 
@@ -228,10 +261,12 @@ class RealtimeApplyOrderingTest {
         cache: FakeQueryCacheDao,
         tables: List<WatchedTable>,
         server: RecordingPostgrestServer = RecordingPostgrestServer(answer = { okJson(ROWS) }),
+        logs: EngineLogger = EngineLogger(null, EngineLogLevel.INFO),
     ): OfflineClient =
         newTestOfflineClient(
             supabase = server.supabaseClient(),
             queryCacheDao = cache,
+            engineLogger = logs,
             watchedTables = tables,
             serverChangeFeed = feed,
         )
@@ -269,5 +304,8 @@ class RealtimeApplyOrderingTest {
         const val TABLE = "tasks"
         const val CACHE_KEY = "tasks?select=*"
         const val ROWS = """[{"id":"t1","title":"Milk"}]"""
+
+        /** A value no log may carry. */
+        const val PRIVATE = "someone@example.com"
     }
 }

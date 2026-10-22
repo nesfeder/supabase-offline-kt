@@ -156,8 +156,7 @@ internal class CachePatcher(
      * [patchCachedQueries] does for each: a saved row as an UPSERT on [keyColumns] that places it
      * by its key, a deleted one as a DELETE by its key; all of [changes], in order, in one pass
      * over the table's payloads under one hold of its lock. A burst of changes costs one patch, and
-     * a row's last change is what the cache shows. The watermark moves as for any patch: only when
-     * the pass changed something.
+     * a row's last change is what the cache shows. The table's watermark moves as for any patch.
      *
      * @param keyColumns the table's primary key, which every change's filter names.
      */

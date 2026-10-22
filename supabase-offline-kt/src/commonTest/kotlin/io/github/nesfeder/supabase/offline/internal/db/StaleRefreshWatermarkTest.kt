@@ -449,40 +449,6 @@ class StaleRefreshWatermarkTest {
     }
 
     @Test
-    fun a_batch_of_server_records_that_reaches_no_cached_query_leaves_the_watermark_alone() =
-        runTest {
-            // Given — nothing cached for the table, no live query of it, and a refresh out at
-            // tick 10
-            val queryCacheDao = FakeQueryCacheDao()
-            var tick = 10L
-            val store = buildStore(queryCacheDao, tick = { tick })
-            val requestStartedAtTick = store.freshness.tickNow()
-
-            // When — a burst of server records for the table is applied as one patch while the
-            // request is out: it reaches nothing
-            tick = 20L
-            store.cachePatcher.patchServerChanges(
-                table = "projects",
-                keyColumns = listOf("id"),
-                changes = (2..4).map { number -> serverRecord("project-$number") },
-            )
-
-            // And — the response lands
-            tick = 30L
-            val outcome =
-                store.queryCache.cacheResponse(
-                    table = "projects",
-                    cacheKey = "sig-A",
-                    payload = oneProject,
-                    requestStartedAtTick = requestStartedAtTick,
-                )
-
-            // Then — it is written: a patch that changed nothing could not have made it stale
-            assertEquals(CacheWriteOutcome.WRITTEN, outcome)
-            assertEquals(oneProject, queryCacheDao.getRow("projects", "sig-A")?.payload)
-        }
-
-    @Test
     fun a_batch_of_server_records_that_reaches_a_cached_query_moves_the_watermark() = runTest {
         // Given — a cached list, and a refresh of it out at tick 10
         val queryCacheDao = FakeQueryCacheDao()
