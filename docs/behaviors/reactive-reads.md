@@ -156,8 +156,9 @@ A server's own error (4xx or 5xx) is a refresh failure for `CacheFirstThenNetwor
 
 A read of a shape the cache cannot hold (`single()`, a `count`, `csv()`, …; see the
 [one-shot matrix](read-strategies.md#behavior-matrix)) emits the network's answer once, `Idle`,
-and completes; offline it fails. Under `CacheOnly` it fails at once with `CacheMissException` and
-sends nothing.
+and completes; offline it fails. While the session restores, or after its refresh failed, it waits
+for the session first, as a one-shot read does. Under `CacheOnly` it fails at once with
+`CacheMissException` and sends nothing.
 
 A collector slow to take each value is not handed every list in between: under
 `CacheFirstThenNetwork` it gets the latest, under the other two a few superseded lists at most. It

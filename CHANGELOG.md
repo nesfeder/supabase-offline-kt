@@ -23,6 +23,17 @@ All notable changes to this project are recorded in this file. The format follow
 
 ### Fixed
 
+- A one-shot read made while a stored session's token refresh has failed (supabase-kt sends the
+  anon key meanwhile, and tries the refresh again every ten seconds) waits for the session as it
+  does while one restores, instead of returning the anon key's answer, empty under row-level
+  security, as the server's. When the session does not settle within the wait, a `NetworkFirst`
+  read with the query cached, or a `CacheFirst` read of a list marked stale, serves the cached rows
+  rather than that answer.
+- A read of a shape the cache cannot hold (`single()`, `maybeSingle()`, `head`, a `count`, …)
+  waits for a session that is restoring, or whose refresh failed, before it is sent, as a list read
+  does, instead of going out at once on the anon key, where a detail screen's `single()` failed
+  with `PGRST116` and a `count` read 0 at cold start.
+
 ## [0.2.0] - 2026-10-20
 
 ### Breaking

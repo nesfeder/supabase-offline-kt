@@ -807,7 +807,8 @@ watermark is refused, since it cannot describe that write, and the reader asks a
 whose request started before a clear is refused and not asked again, since it may carry the cleared
 session's token. One that started before the cache was dropped for a new owner is not written: a
 reactive read's refresh asks again, and a one-shot read asks again only when the session was
-restoring or moved during the request, and otherwise returns the server's rows uncached.
+restoring, or its refresh had failed, or it moved during the request, and otherwise returns the
+server's rows uncached.
 
 **Stale after a write.** A payload's `updated_at` is the time of the response it holds, and a patch
 keeps it. A write the cache cannot patch exactly (an UPDATE or DELETE filtered by something the

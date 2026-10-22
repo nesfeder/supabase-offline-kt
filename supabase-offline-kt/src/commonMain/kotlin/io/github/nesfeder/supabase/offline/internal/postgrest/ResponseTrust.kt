@@ -117,16 +117,18 @@ internal enum class ResponseTrustPolicy {
 
     /**
      * Whether a one-shot read that got an untrusted response asks again once the session has moved:
-     * after it stops restoring, whatever the response held, or at once when it settled into another
-     * identity during the request (under the authenticated-only rule, another user).
+     * after it stops restoring or its failed refresh lands, whatever the response held, or at once
+     * when it settled into another identity during the request (under the authenticated-only rule,
+     * another user). A request that went out with the user's token is not asked again when the
+     * refresh fails while it is on the wire: its answer is the user's.
      */
     fun oneShotAsksAgain(before: RequestSession, after: RequestSession, isEmpty: Boolean): Boolean =
         when (this) {
             SETTLED_SESSION ->
-                before is RequestSession.Restoring ||
+                isUnsettledStoredSession(before) ||
                     (settledIdentityOf(after) != null && after != before)
             AUTHENTICATED_SESSION_ONLY ->
-                before is RequestSession.Restoring || isChangeOfUser(before, after)
+                isUnsettledStoredSession(before) || isChangeOfUser(before, after)
         }
 }
 
@@ -138,7 +140,8 @@ private fun isChangeOfUser(before: RequestSession, after: RequestSession): Boole
 
 /**
  * Whether [session] belongs to a stored user whose token is not on the wire: restoring, or after a
- * failed refresh.
+ * failed refresh. Its requests carry the anon key until it settles: once the store has answered, or
+ * once supabase-kt's retry of the refresh, ten seconds apart, lands.
  */
-private fun isUnsettledStoredSession(session: RequestSession): Boolean =
+internal fun isUnsettledStoredSession(session: RequestSession): Boolean =
     session is RequestSession.Restoring || session is RequestSession.RefreshFailed
