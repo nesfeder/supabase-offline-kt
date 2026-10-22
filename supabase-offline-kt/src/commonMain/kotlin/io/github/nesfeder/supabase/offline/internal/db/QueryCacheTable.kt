@@ -121,6 +121,25 @@ internal interface QueryCacheDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun upsert(row: CachedQueryRow)
 
+    /**
+     * Sets the payload and fetch stamp of the row cached for [table]/[cacheKey], when there is one,
+     * keeping its [CachedQueryRow.syncedThrough]. A patch of a cached query writes through this,
+     * never [upsert]: eviction holds no table lock, and an upsert would bring back a list it
+     * deleted between the patch's read and its write.
+     *
+     * @return `1` when the row changed, `0` when no payload is cached under the key.
+     */
+    @Query(
+        "UPDATE object_cache SET payload = :payload, updated_at = :updatedAt " +
+            "WHERE table_name = :table AND signature = :cacheKey"
+    )
+    suspend fun updatePayload(
+        table: String,
+        cacheKey: String,
+        payload: String,
+        updatedAt: Long,
+    ): Int
+
     @Query("DELETE FROM object_cache WHERE table_name = :table AND signature = :cacheKey")
     suspend fun delete(table: String, cacheKey: String)
 

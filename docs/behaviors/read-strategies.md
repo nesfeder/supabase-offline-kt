@@ -138,6 +138,11 @@ From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabas
   cache; `CacheFirst` and `CacheOnly` reads the cache can answer send nothing and are served.
 - **A server that answers `503` for good** is not offline: a `NetworkFirst` read waits out
   supabase-kt's retries and throws, with no fallback to the cache.
+- **An answer that is not a list of rows** (a `2xx` whose body is not a JSON array, or not JSON: a
+  captive portal's sign-in page, a proxy's block page, a self-hosted server's fallback page) is
+  never written to the cache. A read with the query cached is served the cached rows, marked as
+  from the cache; one without is served the body as it came. A reactive read's refresh asks again.
+  A blank `2xx` body is an empty list.
 - **A session without a user id** (no `user`, and a token without `sub`) is not a settled identity
   under the default trust rule: nothing it reads is cached, and a reactive read made with it never
   settles.

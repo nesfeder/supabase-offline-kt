@@ -4,15 +4,27 @@
 
 package io.github.nesfeder.supabase.offline.internal.db
 
+import io.github.nesfeder.supabase.offline.ReadStrategy
 import io.github.nesfeder.supabase.offline.internal.cache.CacheWriteOutcome
 import io.github.nesfeder.supabase.offline.internal.cache.QueryCache
+import io.github.nesfeder.supabase.offline.internal.logging.EngineLogLevel
+import io.github.nesfeder.supabase.offline.isFromCache
 import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
+import io.github.nesfeder.supabase.offline.testdoubles.RecordingLogSink
+import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.TestStore
+import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
 import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
+import io.ktor.client.engine.mock.respond
+import io.ktor.http.ContentType
+import io.ktor.http.HttpHeaders
+import io.ktor.http.HttpStatusCode
+import io.ktor.http.headersOf
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 import kotlin.time.ExperimentalTime
 import kotlinx.coroutines.test.runTest
 
@@ -35,6 +47,9 @@ import kotlinx.coroutines.test.runTest
  * (every matching row deleted, e.g. from another device, or the user genuinely has no rows). An
  * attributed empty writes into a cold slot too, which is how a legitimately-empty first read still
  * seeds the cache for collectors.
+ *
+ * Only a JSON array is ever written: a blank body is stored as `[]`, and a body of another shape or
+ * media type (a proxy's block page at `200`) is refused, so a read served the cache can decode it.
  */
 class EmptyResponseGuardTest {
 
@@ -278,6 +293,134 @@ class EmptyResponseGuardTest {
         // Then — the cache row is removed; the empty-clobber guard only protects against
         // implicit empty SELECT responses, not explicit deletes
         assertNull(queryCacheDao.getRow("ratings", "sig-A"))
+    }
+
+    @Test
+    fun an_authoritative_blank_body_is_stored_as_an_empty_list() = runTest {
+        // Given — cache holds a non-empty payload
+        val queryCacheDao = FakeQueryCacheDao()
+        queryCacheDao.seedPayload("projects", "sig-A", """[{"id":"project-1"}]""")
+        val store = buildStore(queryCacheDao)
+
+        // When — a signed-in refresh returns a whitespace-only body (a proxy's stand-in for `[]`)
+        val outcome =
+            store.queryCache.cacheResponse(
+                table = "projects",
+                cacheKey = "sig-A",
+                payload = "   ",
+                authoritativeEmpty = true,
+            )
+
+        // Then — the empty list is what is stored, and what a read is served
+        assertEquals(CacheWriteOutcome.WRITTEN, outcome)
+        assertEquals("[]", queryCacheDao.getRow("projects", "sig-A")?.payload)
+        val read = store.queryOverlay.cachedPayloadOverlaid("projects", "sig-A")
+        assertEquals("[]", read?.overlay?.payload)
+    }
+
+    @Test
+    fun a_body_that_is_not_a_json_array_is_refused_as_untrusted() = runTest {
+        // Given — cache holds the user's rows
+        val queryCacheDao = FakeQueryCacheDao()
+        queryCacheDao.seedPayload("projects", "sig-A", """[{"id":"project-1"}]""")
+        val store = buildStore(queryCacheDao)
+
+        // When — a proxy's block page, and a JSON object, come back at 200
+        val outcomes =
+            listOf("<!doctype html><html><body>Blocked</body></html>", """{"message":"blocked"}""")
+                .map { body ->
+                    store.queryCache.cacheResponse(
+                        table = "projects",
+                        cacheKey = "sig-A",
+                        payload = body,
+                        authoritativeEmpty = true,
+                    )
+                }
+
+        // Then — neither is written, and the rows stay
+        assertEquals(
+            listOf(CacheWriteOutcome.REFUSED_UNTRUSTED, CacheWriteOutcome.REFUSED_UNTRUSTED),
+            outcomes,
+        )
+        assertEquals("""[{"id":"project-1"}]""", queryCacheDao.getRow("projects", "sig-A")?.payload)
+        assertEquals(0, queryCacheDao.writes)
+    }
+
+    @Test
+    fun a_200_html_page_leaves_the_cached_rows_in_place_and_reads_are_served_them() = runTest {
+        // Given — the list cached, and a server (a captive portal, say) answering every request
+        // with an HTML page at 200
+        val queryCacheDao = FakeQueryCacheDao()
+        queryCacheDao.seedPayload("projects", "projects", """[{"id":"project-1"}]""")
+        val server =
+            RecordingPostgrestServer(
+                answer = {
+                    respond(
+                        content = "<!doctype html><html><body>Sign in to the network</body></html>",
+                        status = HttpStatusCode.OK,
+                        headers =
+                            headersOf(HttpHeaders.ContentType, ContentType.Text.Html.toString()),
+                    )
+                }
+            )
+        val logger = RecordingLogSink()
+        val client =
+            newTestOfflineClient(
+                supabase = server.supabaseClient(),
+                queryCacheDao = queryCacheDao,
+                engineLogger = logger.asEngineLogger(EngineLogLevel.WARNING),
+            )
+
+        // When — a network-first read gets the page
+        val networkFirst =
+            client.from("projects").select(readStrategy = ReadStrategy.NetworkFirst())
+
+        // Then — the page is not stored; the read falls back to the cached rows, and a cache-only
+        // read still has them; the warning names the table and nothing of the page
+        assertEquals("""[{"id":"project-1"}]""", networkFirst.data)
+        assertTrue(networkFirst.isFromCache)
+        val warnings = logger.entriesAt(EngineLogLevel.WARNING).map { entry -> entry.message }
+        assertEquals(
+            listOf(
+                "SELECT projects answered with something other than a list of rows; serving cached state if any"
+            ),
+            warnings,
+        )
+        assertEquals(
+            """[{"id":"project-1"}]""",
+            queryCacheDao.getRow("projects", "projects")?.payload,
+        )
+        val cacheOnly = client.from("projects").select(readStrategy = ReadStrategy.CacheOnly())
+        assertEquals("""[{"id":"project-1"}]""", cacheOnly.data)
+        assertEquals(1, server.requests.count { request -> request.method == "GET" })
+    }
+
+    @Test
+    fun a_json_array_under_the_json_media_type_with_a_charset_is_stored() = runTest {
+        // Given — nothing cached, and PostgREST's own answer, `application/json; charset=utf-8`
+        val queryCacheDao = FakeQueryCacheDao()
+        val server =
+            RecordingPostgrestServer(
+                answer = {
+                    respond(
+                        content = """[{"id":"project-1"}]""",
+                        status = HttpStatusCode.OK,
+                        headers =
+                            headersOf(HttpHeaders.ContentType, "application/json; charset=utf-8"),
+                    )
+                }
+            )
+        val client =
+            newTestOfflineClient(supabase = server.supabaseClient(), queryCacheDao = queryCacheDao)
+
+        // When
+        client.from("projects").select(readStrategy = ReadStrategy.NetworkOnly)
+
+        // Then
+        assertEquals(
+            """[{"id":"project-1"}]""",
+            queryCacheDao.getRow("projects", "projects")?.payload,
+        )
     }
 
     private fun buildStore(

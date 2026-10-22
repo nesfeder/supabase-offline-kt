@@ -23,6 +23,7 @@ import io.github.nesfeder.supabase.offline.internal.cache.QueryCache
 import io.github.nesfeder.supabase.offline.internal.cache.QueryOverlay
 import io.github.nesfeder.supabase.offline.internal.cache.ServedPayload
 import io.github.nesfeder.supabase.offline.internal.cache.isEmptyJsonArrayPayload
+import io.github.nesfeder.supabase.offline.internal.cache.isJsonArrayPayload
 import io.github.nesfeder.supabase.offline.internal.db.fetchedAtOf
 import io.github.nesfeder.supabase.offline.internal.db.isStaleStamp
 import io.github.nesfeder.supabase.offline.internal.isNetworkOrConnectivityFailure
@@ -30,7 +31,10 @@ import io.github.nesfeder.supabase.offline.internal.logging.EngineLogLevel
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueue
 import io.github.nesfeder.supabase.offline.internal.network.NetworkAccess
+import io.ktor.http.BadContentTypeFormatException
+import io.ktor.http.ContentType
 import io.ktor.http.Headers
+import io.ktor.http.HttpHeaders
 import kotlin.reflect.KClass
 import kotlin.time.Clock
 import kotlin.time.Duration
@@ -55,10 +59,18 @@ import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * Thrown into a reactive read's refresh loop when a response came back under a session the trust
- * policy does not take as the user's, so the loop keeps trying instead of settling on it.
+ * policy does not take as the user's, or with a body that is not a list of rows, so the loop keeps
+ * trying instead of settling on it.
+ *
+ * @param reason how the response was answered, after "SELECT table answered".
  */
-internal class UntrustedResponseException(table: String) :
-    RuntimeException("SELECT $table answered under a session that is not settled; will retry")
+internal class UntrustedResponseException(
+    table: String,
+    reason: String = "under a session that is not settled",
+) : RuntimeException("SELECT $table answered $reason; will retry")
+
+/** The [UntrustedResponseException] reason for a body that is not a list of rows. */
+private const val NOT_A_ROW_LIST = "with something other than a list of rows"
 
 /**
  * One network SELECT and what became of it.
@@ -68,6 +80,8 @@ internal class UntrustedResponseException(table: String) :
  * @property sessionAfter the session when it answered.
  * @property outcome what the cache did with it.
  * @property receivedAtMillis when it arrived, by the reader's clock.
+ * @property isRowList whether the body is a list of rows the cache may hold; see
+ *   [isRowListResponse].
  */
 private data class FetchedResponse(
     val response: PostgrestResult,
@@ -75,10 +89,11 @@ private data class FetchedResponse(
     val sessionAfter: RequestSession,
     val outcome: CacheWriteOutcome,
     val receivedAtMillis: Long,
+    val isRowList: Boolean,
 ) {
-    /** Whether the server's own body held no rows. */
+    /** Whether the server's own body held no rows: an empty list, not a body of another shape. */
     val isEmpty: Boolean
-        get() = isEmptyJsonArrayPayload(response.data)
+        get() = isRowList && isEmptyJsonArrayPayload(response.data)
 
     /** Whether the response was refused because local data was cleared while it was in flight. */
     val wasRefusedAfterClear: Boolean
@@ -94,6 +109,26 @@ private data class FetchedResponse(
                 outcome == CacheWriteOutcome.REFUSED_STALE ||
                 outcome == CacheWriteOutcome.REFUSED_AFTER_CLEAR
 }
+
+/**
+ * Whether [response] is a list of rows the cache may hold: a JSON array, or a blank body standing
+ * for an empty one, under a JSON media type or none. A proxy's block page, or a self-hosted
+ * server's fallback page, answers `200` with HTML; stored, it would replace a cached list with a
+ * body no read decodes, and offline every read of the query would fail on it.
+ */
+private fun isRowListResponse(response: PostgrestResult): Boolean {
+    val contentType = response.headers[HttpHeaders.ContentType]
+    if (contentType != null && !isJsonMediaType(contentType)) return false
+    return response.data.isBlank() || isJsonArrayPayload(response.data)
+}
+
+/** Whether [contentType] names JSON, whatever its parameters; a malformed value does not. */
+private fun isJsonMediaType(contentType: String): Boolean =
+    try {
+        ContentType.parse(contentType).match(ContentType.Application.Json)
+    } catch (_: BadContentTypeFormatException) {
+        false
+    }
 
 /**
  * A network read's answer, as a caller gets it.
@@ -581,6 +616,10 @@ internal class QueryReader(
         val fetched =
             fetchAndCache(slot, columns, request, requestSession(), Retries.TRANSPORT_FAILS_FAST)
         if (fetched.wasRefusedAfterClear) throw UntrustedResponseException(slot.table)
+        if (!fetched.isRowList) {
+            engineLogger.info { "SELECT ${slot.table} answered $NOT_A_ROW_LIST; will retry" }
+            throw UntrustedResponseException(slot.table, NOT_A_ROW_LIST)
+        }
         if (
             fetched.outcome == CacheWriteOutcome.REFUSED_OTHER_OWNER ||
                 trustPolicy.refreshRetries(
@@ -693,8 +732,9 @@ internal class QueryReader(
     /**
      * Sends the SELECT and offers its response to the cache, which refuses one that could roll back
      * a newer local write (then this asks once more, since that request starts after the write),
-     * one that left before local data was cleared, an untrusted one, and an empty one that is not
-     * authoritative. A written one retires the synced mutations every cached query now holds.
+     * one that left before local data was cleared, an untrusted one, one that is not a list of rows
+     * ([isRowListResponse]), and an empty one that is not authoritative. A written one retires the
+     * synced mutations every cached query now holds.
      */
     private suspend fun fetchAndCache(
         slot: CacheSlot,
@@ -711,9 +751,10 @@ internal class QueryReader(
             val response = send(slot, columns, request, retries)
             engineLogger.debug { "SELECT $table network response: ${response.data}" }
             val sessionAfter = requestSession()
-            val isEmpty = isEmptyJsonArrayPayload(response.data)
-            // An empty response goes through the query cache's empty guard, a non-empty one through
-            // the trust check
+            // Only a list of rows is trusted; an empty one goes through the query cache's empty
+            // guard, a non-empty one through the trust check
+            val isRowList = isRowListResponse(response)
+            val isEmpty = isRowList && isEmptyJsonArrayPayload(response.data)
             val outcome =
                 queryCache.cacheResponse(
                     table = table,
@@ -723,8 +764,9 @@ internal class QueryReader(
                         trustPolicy.mayCache(sessionBefore, sessionAfter, isEmpty = true),
                     requestStartedAtTick = requestStartedAtTick,
                     isTrusted =
-                        isEmpty ||
-                            trustPolicy.mayCache(sessionBefore, sessionAfter, isEmpty = false),
+                        isRowList &&
+                            (isEmpty ||
+                                trustPolicy.mayCache(sessionBefore, sessionAfter, isEmpty = false)),
                     shape = slot.shape,
                 )
             when (outcome) {
@@ -747,13 +789,21 @@ internal class QueryReader(
                     mutationQueue.retireCoveredSyncedMutations(table, requestStartedAtTick)
                 else -> Unit
             }
-            return FetchedResponse(response, sessionBefore, sessionAfter, outcome, nowMillis())
+            return FetchedResponse(
+                response,
+                sessionBefore,
+                sessionAfter,
+                outcome,
+                nowMillis(),
+                isRowList,
+            )
         }
     }
 
     /**
      * What a one-shot read serves for [fetched]: the server's rows, or the cache when they were
-     * refused as older than a local write, with pending mutations overlaid.
+     * refused as older than a local write, or are not a list of rows and the query is cached, with
+     * pending mutations overlaid.
      */
     private suspend fun overlaidResponse(
         slot: CacheSlot,
@@ -764,6 +814,11 @@ internal class QueryReader(
             if (fetched.outcome == CacheWriteOutcome.REFUSED_STALE) {
                 engineLogger.warning {
                     "SELECT $table response still predates a local write; serving cached state"
+                }
+                queryOverlay.cachedPayloadOverlaid(table, cacheKey, slot.shape)
+            } else if (!fetched.isRowList) {
+                engineLogger.warning {
+                    "SELECT $table answered $NOT_A_ROW_LIST; serving cached state if any"
                 }
                 queryOverlay.cachedPayloadOverlaid(table, cacheKey, slot.shape)
             } else {

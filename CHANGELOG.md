@@ -23,6 +23,22 @@ All notable changes to this project are recorded in this file. The format follow
 
 ### Fixed
 
+- A cached list whose shape record the library could not read (one another build wrote, or one
+  that did not decode) admitted every row of its table into the list, for good; the record is now
+  replaced by the one the next read records.
+- A write patched into a table while the cache was being trimmed could bring back a list the
+  trimming had just removed; a patch now changes only the lists still there. A read taking its
+  snapshot as `clearLocalData()` ran could leave a record of its query's filter values behind; the
+  record is now written under the same guard as the rows.
+- A `2xx` answer that was not a list of rows (a captive portal's sign-in page, a proxy's block page,
+  a self-hosted server's fallback page) replaced the cached list, and every offline read of the
+  query then failed to decode it. Such an answer is no longer written: a read with the query cached
+  is served the cached rows, and a reactive read's refresh asks again. A blank answer is stored as
+  an empty list.
+- Two different queries could share one cache key when a filter value held `&`, `=` or `|`, and be
+  served each other's rows offline. Such a query's key now ends in a digest of its parts; every
+  other key is unchanged.
+
 ## [0.2.0] - 2026-10-20
 
 ### Breaking

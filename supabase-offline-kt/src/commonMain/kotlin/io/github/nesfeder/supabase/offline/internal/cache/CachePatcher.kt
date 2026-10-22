@@ -31,7 +31,8 @@ import kotlinx.serialization.json.jsonPrimitive
  * Patches an online write into the cached queries of its table: the rows the server accepted or
  * returned are laid into every query that admits them, a live query with no payload gets one, and a
  * query the patch may leave wrong is marked stale and fetched again. Holds no lock of its own: it
- * writes under the table's write lock, each payload under the clear lock.
+ * writes under the table's write lock, each payload under the clear lock, and over the row it read,
+ * so a list eviction deleted meanwhile (eviction holds no table lock) stays deleted.
  *
  * @param liveCacheKeysOf a table's queries with a live reader, which a patch may give a payload.
  * @param onQueriesMarkedStale told of the queries a write marked stale, so their live readers fetch
@@ -209,8 +210,12 @@ internal class CachePatcher(
                 // data, and one it may leave wrong is stale
                 val stamp = if (wrong) staleStampOf(row.updatedAt) else row.updatedAt
                 val next = row.copy(payload = overlay.encode(patched.visible), updatedAt = stamp)
-                if (!writeUnlessCleared(guardTick, next)) return@withLock
-                if (wrong) toFetchAgain += row.cacheKey
+                when (patchUnlessCleared(guardTick, next)) {
+                    PatchWrite.CLEARED -> return@withLock
+                    // Evicted since the snapshot: a patch never brings a deleted list back
+                    PatchWrite.GONE -> continue
+                    PatchWrite.CHANGED -> if (wrong) toFetchAgain += row.cacheKey
+                }
             }
             toFetchAgain +=
                 createLivePayloads(
@@ -296,10 +301,15 @@ internal class CachePatcher(
                     payload = overlay.encode(created),
                     updatedAt = staleStampOf(nowMillis()),
                 )
-            // A created payload is not a network response: it holds no synced mutation
-            if (!writeUnlessCleared(guardTick, row)) return toFetchAgain
-            if (shape != null)
-                queryCache.queryShapes.remember(table, cacheKey, shape, persist = true)
+            // A created payload is not a network response: it holds no synced mutation. Its shape
+            // record is written with it, under the one guard, so no clear parts the two
+            val written =
+                freshness.writeUnlessCleared(guardTick) {
+                    queryCacheDao.upsert(row)
+                    if (shape != null)
+                        queryCache.queryShapes.remember(table, cacheKey, shape, persist = true)
+                }
+            if (!written) return toFetchAgain
         }
         return toFetchAgain
     }
@@ -360,7 +370,7 @@ internal class CachePatcher(
                 toFetchAgain += row.cacheKey
                 if (isStaleStamp(row.updatedAt)) continue
                 val next = row.copy(updatedAt = staleStampOf(row.updatedAt))
-                if (!writeUnlessCleared(startedAtTick, next)) return@withLock
+                if (patchUnlessCleared(startedAtTick, next) == PatchWrite.CLEARED) return@withLock
             }
             // A live query with nothing cached may gain the rows an UPDATE changes
             if (patch != null) {
@@ -371,7 +381,34 @@ internal class CachePatcher(
         if (toFetchAgain.isNotEmpty()) onQueriesMarkedStale(table, toFetchAgain)
     }
 
-    /** Writes [row] unless the cache was cleared or dropped since [guardTick]. */
-    private suspend fun writeUnlessCleared(guardTick: Long, row: CachedQueryRow): Boolean =
-        freshness.writeUnlessCleared(guardTick) { queryCacheDao.upsert(row) }
+    /** What became of a patch's write of a cached payload; see [patchUnlessCleared]. */
+    private enum class PatchWrite {
+        /** The cached row was changed. */
+        CHANGED,
+
+        /** No row to change: eviction took the list between the patch's read and its write. */
+        GONE,
+
+        /** A clear or drop since the guard tick voided the write, and the patch with it. */
+        CLEARED,
+    }
+
+    /**
+     * Writes [row]'s payload and stamp over the row cached for its query, unless the cache was
+     * cleared or dropped since [guardTick], or the row is gone: a patch changes the lists the cache
+     * holds and never brings back one eviction deleted, which holds no table lock.
+     */
+    private suspend fun patchUnlessCleared(guardTick: Long, row: CachedQueryRow): PatchWrite {
+        var changed = 0
+        val written =
+            freshness.writeUnlessCleared(guardTick) {
+                changed =
+                    queryCacheDao.updatePayload(row.table, row.cacheKey, row.payload, row.updatedAt)
+            }
+        return when {
+            !written -> PatchWrite.CLEARED
+            changed == 0 -> PatchWrite.GONE
+            else -> PatchWrite.CHANGED
+        }
+    }
 }

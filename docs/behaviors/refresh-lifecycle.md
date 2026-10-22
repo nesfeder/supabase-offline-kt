@@ -74,4 +74,5 @@ the cache moves its table's mark forward. An answer whose request left before th
 change is refused, since it cannot hold that change, and the refresh asks again. One that left
 before `clearLocalData()` is refused and not asked again, since it may carry the cleared session's
 token; one that left before the cache passed to a new owner is not written, and the refresh asks
-again.
+again. An answer that is not a list of rows (a sign-in page or a block page at `200`) is not
+written either: the refresh stays `Refreshing` and asks again.
