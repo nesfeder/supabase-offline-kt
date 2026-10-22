@@ -467,8 +467,8 @@ internal class QueryReader(
     /**
      * Logs a reactive read's refresh failures that are not the network's, which the retry that
      * follows would otherwise hide: the first of a kind, and again each time the kind changes,
-     * never one per attempt. A connectivity failure, or a wait for the session, is expected and
-     * shows in the read's refresh state instead.
+     * never one per attempt. A connectivity failure, or a wait, is expected and shows in the read's
+     * refresh state instead.
      */
     private inner class RefreshFailureReport(private val table: String) {
         /** The kind last logged since the last success; `null` after one. */
