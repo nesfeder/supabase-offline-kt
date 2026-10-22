@@ -551,6 +551,32 @@
     {"name": "an empty group is refused", "call": "select", "description": {"v": 1, "table": "todos", "filters": [{"kind": "or", "filters": []}]}, "error": "INVALID_REQUEST"},
     {"name": "an empty group inside a group is refused", "call": "select", "description": {"v": 1, "table": "todos", "filters": [{"kind": "and", "filters": [{"kind": "filter", "column": "a", "operator": "eq", "value": "1"}, {"kind": "or", "filters": []}]}]}, "error": "INVALID_REQUEST"},
     {"name": "two filters on one column at the top level are refused", "call": "select", "description": {"v": 1, "table": "people", "filters": [{"kind": "filter", "column": "age", "operator": "gte", "value": "18"}, {"kind": "filter", "column": "age", "operator": "lt", "value": "65"}]}, "error": "INVALID_REQUEST"},
-    {"name": "a text search after a filter on its column is refused", "call": "select", "description": {"v": 1, "table": "notes", "filters": [{"kind": "and", "filters": [{"kind": "filter", "column": "tsv", "operator": "neq", "value": "x"}, {"kind": "textSearch", "column": "tsv", "query": "cat"}]}]}, "error": "INVALID_REQUEST"}
+    {"name": "a text search after a filter on its column is refused", "call": "select", "description": {"v": 1, "table": "notes", "filters": [{"kind": "and", "filters": [{"kind": "filter", "column": "tsv", "operator": "neq", "value": "x"}, {"kind": "textSearch", "column": "tsv", "query": "cat"}]}]}, "error": "INVALID_REQUEST"},
+    {"name": "a quote in an in list is refused", "call": "select", "description": {"v": 1, "table": "todos", "filters": [{"kind": "filter", "column": "title", "operator": "in", "values": ["Say \"hi\"", "ok"]}]}, "error": "INVALID_REQUEST"},
+    {"name": "a backslash in an or group is refused", "call": "select", "description": {"v": 1, "table": "todos", "filters": [{"kind": "or", "filters": [{"kind": "filter", "column": "title", "operator": "ilike", "value": "%50\\%%"}, {"kind": "filter", "column": "done", "operator": "eq", "value": "true"}]}]}, "error": "INVALID_REQUEST"},
+    {"name": "a quote in an and group is refused", "call": "mutate", "description": {"v": 1, "operation": "delete", "table": "todos", "filters": [{"kind": "and", "filters": [{"kind": "filter", "column": "title", "operator": "eq", "value": "Say \"hi\""}, {"kind": "filter", "column": "title", "operator": "neq", "value": "x"}]}]}, "error": "INVALID_REQUEST"},
+    {
+      "name": "a quote beside a comma in an or group is quoted",
+      "call": "select",
+      "description": {
+        "v": 1,
+        "table": "todos",
+        "filters": [
+          {
+            "kind": "or",
+            "filters": [
+              {"kind": "filter", "column": "title", "operator": "eq", "value": "Say \"hi\", ok"},
+              {"kind": "filter", "column": "done", "operator": "eq", "value": "true"}
+            ]
+          }
+        ],
+        "strategy": {"kind": "networkOnly"}
+      },
+      "request": {
+        "method": "GET",
+        "path": "/rest/v1/todos",
+        "query": [["or", "(title.eq.\"Say \\\"hi\\\", ok\",done.eq.true)"], ["select", "*"]]
+      }
+    }
   ]
 }

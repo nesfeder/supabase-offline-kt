@@ -317,5 +317,17 @@ struct RequestRenderingFixtureTests {
         "an empty group inside a group is refused": .chain {
             try await $0.from("todos").select().or("a.eq.1,or()").execute()
         },
+        "a quote in an in list is refused": .chain {
+            try await $0.from("todos").select().in("title", values: ["Say \"hi\"", "ok"]).execute()
+        },
+        "a backslash in an or group is refused": .chain {
+            try await $0.from("todos").select().or(#"title.ilike.%50\%%,done.eq.true"#).execute()
+        },
+        "a quote in an and group is refused": .chain {
+            try await $0.from("todos").delete().eq("title", value: "Say \"hi\"").neq("title", value: "x").execute()
+        },
+        "a quote beside a comma in an or group is quoted": .chain {
+            try await $0.from("todos").select(readStrategy: .networkOnly).or(#"title.eq."Say \"hi\", ok",done.eq.true"#).execute()
+        },
     ]
 }

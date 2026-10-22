@@ -13,9 +13,12 @@ import io.github.nesfeder.supabase.offline.internal.realtime.REALTIME_FILTER_OPE
  * @property column the column compared.
  * @property operator the comparison: `eq`, `neq`, `gt`, `gte`, `lt`, `lte` or `in`, the operators
  *   Realtime supports.
- * @property value what the column is compared with; for `in`, a list of values.
- * @throws IllegalArgumentException when the column is blank, or the operator is one Realtime does
- *   not support.
+ * @property value what the column is compared with; for `in`, a non-empty `List` of values, which
+ *   supabase-kt sends as a list (any other value, a `Set` included, it sends as the value's text,
+ *   which the server refuses).
+ * @throws IllegalArgumentException when the column is blank, the operator is one Realtime does not
+ *   support, `in` is given anything but a non-empty list, or another operator is given a
+ *   collection.
  */
 public class RealtimeFilter(
     public val column: String,
@@ -28,6 +31,15 @@ public class RealtimeFilter(
         require(operator in REALTIME_FILTER_OPERATORS) {
             "Realtime filters support eq, neq, gt, gte, lt, lte and in, not " +
                 operator.name.lowercase()
+        }
+        if (operator == FilterOperator.IN) {
+            require(value is List<*>) { "A Realtime in filter takes a list of values" }
+            require(value.isNotEmpty()) { "A Realtime in filter needs at least one value" }
+        } else {
+            require(value !is Collection<*>) {
+                "A Realtime ${operator.name.lowercase()} filter takes one value, not a " +
+                    "collection; in takes a list"
+            }
         }
     }
 

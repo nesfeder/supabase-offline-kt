@@ -23,6 +23,17 @@ All notable changes to this project are recorded in this file. The format follow
 
 ### Fixed
 
+- An `in` element, or a value inside an `or { }` or `and { }` group, that holds `"` or `\` and
+  none of `,.:()` is refused with `IllegalArgumentException` before anything is sent or queued, in
+  a read, an update or a delete, and by the Swift package's core: supabase-kt escapes such a value
+  but does not quote it, so the server read the escapes as the value and the request matched
+  nothing, while a queued row with that value showed offline and vanished on the next refresh. A
+  single top-level filter sends the value as written.
+- `RealtimeFilter` refuses, when made, an `in` without a non-empty list and another operator with a
+  collection, and the Swift package's core refuses a filter that sets both forms or the wrong one:
+  such a filter was sent as `owner=in.<id>` or `id=eq.[1]`, the server refused the join, and the
+  channel stalled and retried forever.
+
 ## [0.2.0] - 2026-10-20
 
 ### Breaking

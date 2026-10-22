@@ -21,10 +21,13 @@ internal fun RealtimeTables.name(tables: List<BridgeRealtimeTable>) {
 }
 
 /**
- * This filter as the library takes it.
+ * This filter as the library takes it: `in` takes `values`, every other operator `value`, as the
+ * server evaluates them (`owner=in.(a,b)`, never `owner=in.a` or `id=eq.[1]`).
  *
- * @throws InvalidDescriptionException when the operator is not one the library's filters name, or
- *   neither a value nor values is given; the library refuses an operator Realtime cannot evaluate.
+ * @throws InvalidDescriptionException when the operator is not one the library's filters name, when
+ *   both a value and values are given or neither, when `in` is given a value or no values, or when
+ *   another operator is given values; the library refuses an operator Realtime cannot evaluate. The
+ *   message never carries a value.
  */
 internal fun BridgeRealtimeFilter.toRealtimeFilter(): RealtimeFilter {
     val comparison =
@@ -32,8 +35,31 @@ internal fun BridgeRealtimeFilter.toRealtimeFilter(): RealtimeFilter {
             ?: throw InvalidDescriptionException(
                 "A Realtime filter's operator must be eq, neq, gt, gte, lt, lte or in, not $operatorName"
             )
+    val single = value
+    val list = values
+    if (single != null && list != null) {
+        throw InvalidDescriptionException("A Realtime filter takes a value or values, not both")
+    }
     val compared: Any =
-        values ?: value ?: throw InvalidDescriptionException("A Realtime filter needs a value")
+        if (comparison == FilterOperator.IN) {
+            when {
+                list == null ->
+                    throw InvalidDescriptionException(
+                        "A Realtime in filter takes values, not a value"
+                    )
+                list.isEmpty() ->
+                    throw InvalidDescriptionException(
+                        "A Realtime in filter needs at least one value"
+                    )
+                else -> list
+            }
+        } else {
+            single
+                ?: throw InvalidDescriptionException(
+                    if (list == null) "A Realtime filter needs a value"
+                    else "A Realtime $operatorName filter takes one value, not values"
+                )
+        }
     return RealtimeFilter(column, comparison, compared)
 }
 

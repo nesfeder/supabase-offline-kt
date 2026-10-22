@@ -37,9 +37,11 @@ Import `io.github.nesfeder.supabase.offline.offline`. Storage works the same way
   once that the server refuses throws, as it does in supabase-kt. The library adds three of its
   own: `MutationNotQueueableException`, for a write the queue cannot hold that cannot be sent (its
   `cause` is supabase-kt's connectivity failure); `NetworkDisabledException`, while network access
-  is off; and `IllegalArgumentException`, for two top-level filters on one column or a pattern
-  list the server would misread. Test for being
-  offline with `isNetworkOrConnectivityFailure()`, not by catching `HttpRequestException`.
+  is off; and `IllegalArgumentException`, for two top-level filters on one column, a pattern
+  list the server would misread, or an `in` element or group value holding `"` or `\` and none of
+  `,.:()`, which supabase-kt would send escaped but unquoted
+  ([Supported features](../reference/supported-features.md#postgrest)). Test for being offline with
+  `isNetworkOrConnectivityFailure()`, not by catching `HttpRequestException`.
 
 The offline choices are named parameters with defaults, placed before the trailing lambda:
 `readStrategy` on reads, `mutationStrategy` on writes. You add them only where you want something

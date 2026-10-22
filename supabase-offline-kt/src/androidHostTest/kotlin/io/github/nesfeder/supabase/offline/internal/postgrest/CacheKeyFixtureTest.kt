@@ -104,12 +104,18 @@ internal suspend fun storedCacheKeyOf(case: CacheKeyFixtureCase): String {
 }
 
 /**
- * The fixture's queries the library refuses before sending, each with two values for one top-level
- * parameter, which supabase-kt would send only the first of: two filters on one column, and a raw
- * parameter given two values.
+ * The fixture's queries the library refuses before sending: two with two values for one top-level
+ * parameter, which supabase-kt would send only the first of (two filters on one column, and a raw
+ * parameter given two values), and an `in` list with a member holding a quote or a backslash and
+ * none of `,.:()`, which supabase-kt escapes but does not quote, so the server would read the
+ * escapes as the member. Their keys stay pinned for the day the refusal is lifted.
  */
 private val REFUSED_CASES: List<String> =
-    listOf("two_filters_on_one_column", "raw_param_two_values")
+    listOf(
+        "two_filters_on_one_column",
+        "raw_param_two_values",
+        "in_members_with_quote_backslash_and_unicode",
+    )
 
 /** Whether this call list, or a call nested in it (an `or` group's), is named one of [names]. */
 private fun JsonElement.namesAnyCall(names: Set<String>): Boolean =
