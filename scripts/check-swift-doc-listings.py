@@ -16,7 +16,7 @@ the line before the block says which:
 
     <!-- not compiled: a line of a package manifest -->
     ```swift
-    .package(url: "https://github.com/nesfeder/supabase-offline-swift", .upToNextMinor(from: "0.1.0"))
+    .package(url: "https://github.com/nesfeder/supabase-offline-swift", .upToNextMinor(from: "X.Y.Z"))
     ```
 
 A section is marked in its source as the docs site's snippet extension marks one, so the site's

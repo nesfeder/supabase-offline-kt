@@ -85,13 +85,14 @@ In a pull request, like any other change:
    release checks that everything is in its section.
 3. In `docs/project/compatibility.md`, rename the `Unreleased` row of the supabase-kt table to
    `X.Y.Z`. It must name the supabase-kt version the catalog pins.
-4. Move every install snippet to `X.Y.Z`: the Maven coordinates, the catalog entry and the Swift
-   package's `.upToNextMinor(from:)` in `README.md`, `swift/README.md`, the Swift package's
-   documentation catalog and the site's pages. `python3 scripts/release.py check-snippets` lists
-   them, and CI's docs job fails a pull request whose snippets name anything but one version: the
-   last release, which the samples take, or the release being prepared. Moved here, `X.Y.Z` is on
-   the site the release builds from its tag and in the Swift package's README at its tag; the
-   post-release pull request moves them if they were left.
+4. Move every install snippet to `X.Y.Z` with `python3 scripts/release.py pin-snippets X.Y.Z`: the
+   Maven coordinates, the catalog entry and the Swift package's `.upToNextMinor(from:)` in
+   `README.md`, `swift/README.md`, the Swift package's documentation catalog and the site's pages.
+   The release refuses a snippet left at the last release (step 5), since the site it builds from
+   the tag, the Swift package's README and its API reference at that tag would all show it. Between
+   releases the snippets name the version the samples take, and CI's docs job fails a pull request
+   whose snippets name anything but that version or the release being prepared
+   (`python3 scripts/release.py check-snippets`).
 5. Commit, then run the release's own checks locally. Both read committed files only:
 
    ```bash
@@ -99,9 +100,9 @@ In a pull request, like any other change:
    python3 scripts/api-compat.py check-release
    ```
 
-   The first checks the version, the changelog and the compatibility row, and that no tag `X.Y.Z`
-   exists (run `git fetch --tags` first). The second rates everything since the last release tag
-   and fails when the version is too small for it.
+   The first checks the version, the changelog, the compatibility row and the install snippets, and
+   that no tag `X.Y.Z` exists (run `git fetch --tags` first). The second rates everything since the
+   last release tag and fails when the version is too small for it.
 6. Merge the pull request once `All Green` passes. Merge nothing else until the release is out: the
    release publishes `main` as it is when the workflow starts.
 
@@ -208,7 +209,7 @@ this repository's tag and its GitHub Release with the framework, then the site. 
 package's tag and the GitHub Release, the package exists but its framework's URL does not answer
 yet; finish closes that gap a minute later, or a resume does.
 
-**The framework is not code-signed in 0.1.0.** Apple requires a signature only from the SDKs on
+**The framework is not code-signed.** Apple requires a signature only from the SDKs on
 its list of commonly used third-party SDKs, which this is not. Signing needs a certificate in the
 `framework` job, which would give a secret to the job that runs the build and add a second
 approval. A signature can be added in a later release: Xcode accepts a framework that gains a
@@ -238,16 +239,12 @@ must be signed by the same identity.
    `compat/overrides.txt`. It also moves the sample apps to `X.Y.Z`, since they take the published
    library, not this checkout: `supabase-offline` in `gradle/libs.versions.toml` for the Android
    sample, and for the iOS sample the project's exact version of `supabase-offline-swift` with its
-   pin, the tag's commit, in the project's `Package.resolved`. With them it moves every install
-   snippet to `X.Y.Z` if the pull request that prepared the release left them (step 1.4): the
-   snippets name the version the samples take, or the release a prepare pull request moved them
-   to, and CI's docs job fails on any other (`python3 scripts/release.py check-snippets`), so
-   nothing else moves them. CI builds both samples on the checkout, so check them as a reader gets
-   them: `./gradlew :samples:android:assembleDebug` without `-PsupabaseOffline.local=true`, and
+   pin, the tag's commit, in the project's `Package.resolved`. It would move the install snippets
+   to `X.Y.Z` too, as a safety net: the release refused any left behind (step 1.4), so it finds
+   none to move. CI builds both samples on the checkout, so check them as a reader gets them:
+   `./gradlew :samples:android:assembleDebug` without `-PsupabaseOffline.local=true`, and
    `samples/ios/OfflineTasks.xcodeproj` (the project, not the workspace) resolving the package at
-   `X.Y.Z`. Review it and merge it. If the snippets were left, the site the release built from its
-   tag still names the release before in them: once this pull request is merged,
-   [republish the site](#republish-the-site) with the release's run id.
+   `X.Y.Z`. Review it and merge it.
 6. If the next release is a patch, set that version in the pull request that prepares it.
 
 ## Republish the site

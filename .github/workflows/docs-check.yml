@@ -81,9 +81,8 @@ jobs:
 
       # Every install snippet a reader copies (the README's, the Swift package's README and
       # documentation catalog, the site's pages) names one version: the last release, which the
-      # samples take in the version catalog, or the release a pull request is preparing. The
-      # post-release pull request moves them with the samples (RELEASING.md). The release script's
-      # self-test, which covers the check, runs first.
+      # samples take in the version catalog, or the release the pull request preparing it moved
+      # them to (RELEASING.md). The release script's self-test, which covers the check, runs first.
       - name: Check the install snippets
         run: |
           python3 scripts/release.py self-test

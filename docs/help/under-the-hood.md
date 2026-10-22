@@ -19,7 +19,7 @@ app.
   the package links; it bundles no SQLite of its own, where the Kotlin library's iOS artifacts
   bundle one ([On-device data](../reference/on-device-data.md#where-it-lives)).
 
-The framework ships unsigned in 0.1.0.
+The framework ships unsigned.
 
 ## App size
 

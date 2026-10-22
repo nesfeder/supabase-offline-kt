@@ -1,7 +1,7 @@
 # Architecture
 
-This page describes supabase-offline-kt as 0.1.0 ships it: the public API in full, how the engine
-behind it works, the decisions that shaped both, and what the library promises. The
+This page describes supabase-offline-kt as its newest release ships it: the public API in full, how
+the engine behind it works, the decisions that shaped both, and what the library promises. The
 [Behaviors](../behaviors/index.md) pages hold the case-by-case tables; this page is the map.
 
 ## What it is
@@ -386,14 +386,15 @@ waits however many requests arrive:
 | The session settles into a user with writes queued | Yes |
 | The network comes back: the monitor or the app's `networkAvailability` turns `true`, or `enableNetwork()` is called, and then the network is reachable and the session settled into a user with writes queued | Yes |
 | A client without Auth opens with writes an earlier run left queued (its session is settled from the start, so no other trigger fires for them): one pass | Yes |
-| A write is queued behind an earlier one; a write sent, refused or discarded leaves writes queued behind it; a rejected write is retried | No |
+| A write is queued behind an earlier one; a write sent, refused or discarded leaves writes queued behind it; a rejected write is retried; a conflicted write is settled with `KeepLocal` or `Apply` | No |
 
 The last row runs whatever `autoSync` says. With write-ahead, an online write returns `Queued`
 whenever anything of its user waits ahead of it, and only these passes send it; without them it
-would wait for the app with nothing to show for it. After an automatic pass that stopped on a
-failure that may pass, the next automatic pass waits 1 s, doubling up to 60 s, and at least as long
-as a `Retry-After` the server sent, up to an hour. The session settling and the network coming back
-end that wait at once and start it again from 1 s, but never before a `Retry-After` has passed. No
+would wait for the app with nothing to show for it. No timer runs a pass again: after an automatic
+pass that stopped on a failure that may pass, the next pass a trigger asks for runs no sooner than
+1 s after it ended, doubling up to 60 s, and at least as long as a `Retry-After` the server sent,
+up to an hour. The session settling and the network coming back end that wait at once and start it
+again from 1 s, but never before a `Retry-After` has passed. No
 automatic pass runs while network access is off. While the monitor says offline, an automatic pass
 still runs, since a monitor can be wrong, until one fails for want of a connection: after that, none
 runs and none grows the wait until the monitor stops saying offline, the session settles anew, or
@@ -551,7 +552,7 @@ not yet sent go out.
 
 | Marker | Level | What it marks |
 | --- | --- | --- |
-| `@OfflineExperimental` | Error | API whose shape may still change in a minor release. Using it needs `@OptIn(OfflineExperimental::class)`, and it is left out of the API records and the compatibility checks, so it may change without a changelog line. Nothing in 0.1.0 carries it. |
+| `@OfflineExperimental` | Error | API whose shape may still change in a minor release. Using it needs `@OptIn(OfflineExperimental::class)`, and it is left out of the API records and the compatibility checks, so it may change without a changelog line. No released API carries it. |
 | `@OfflineInternal` | Error | What the library keeps for itself: implementing `Offline` or `OfflineBucketApi`, and the hooks the testing artifact calls. It is not part of the supported API and may change in any release. |
 
 ### The testing artifact
@@ -1265,9 +1266,9 @@ What it does not do yet, or does only so far:
 
 | Limit | Planned |
 | --- | --- |
-| Rejected entries dropped from a full list are not reported anywhere public: an app lets its user dismiss or retry each entry, so the list stays short. | Not in 0.1.0; a count is additive later |
-| Nothing fires when the app comes to the foreground: a resume starts a pass only when Auth refreshes the session on it, and a reconnect starts one through the network trigger. An app calls `syncPendingMutations()` as it comes to the foreground. | Not in 0.1.0; a trigger is additive later |
-| Each request is cached on its own: offline, a read never answered online has nothing, even when another cached read of the table holds its rows. Read a detail from the list a screen already reads. | Not in 0.1.0; additive later |
+| Rejected entries dropped from a full list are not reported anywhere public: an app lets its user dismiss or retry each entry, so the list stays short. | Not yet; a count is additive later |
+| Nothing fires when the app comes to the foreground: a resume starts a pass only when Auth refreshes the session on it, and a reconnect starts one through the network trigger. An app calls `syncPendingMutations()` as it comes to the foreground. | Not yet; a trigger is additive later |
+| Each request is cached on its own: offline, a read never answered online has nothing, even when another cached read of the table holds its rows. Read a detail from the list a screen already reads. | Not yet; additive later |
 | The refusal of two top-level filters on one column cannot see a second top-level `or` group, or a text search after a filter on its column, which replace what came before and leave one value. Put those conditions in one group. | No change planned |
 | On a hosted project a dry run commits, unless the project lets a request choose the rollback. | No change planned |
 | An upload does not seed the file cache, so a file uploaded just before going offline is not available offline: the bytes are the caller's, and caching them needs a size and ownership policy. | 0.2.0 |

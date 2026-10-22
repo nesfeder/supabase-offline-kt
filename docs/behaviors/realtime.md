@@ -46,15 +46,17 @@ channel the server refuses, or closes, is joined again after a wait that starts 
 doubles up to a minute, and is cut short by a reconnection or a sign-in; a follow that lasted a
 minute starts the wait over. Nothing is joined when no table is named.
 
-A Kotlin app that keeps channels of its own beside the plugin's, for broadcast or presence, should
-install the plugin with `install(Realtime) { maxAttempts = 1 }`. On an error reply supabase-kt
-3.6.0 rejoins the channel from inside the socket's read loop: it waits 2 s, sends a leave, and then
-waits for an `UNSUBSCRIBED` that only that same loop could read. With the plugin's channel alone
-this costs nothing: the plugin removes its channel, and the disconnect that follows cancels the
-stuck loop. With an app channel present nothing disconnects, the loop stays stuck until the
-heartbeat timeout and the reconnect delay have passed, and the app's channels receive nothing
-meanwhile. `maxAttempts = 1` also ends supabase-kt's own rejoin for the app's channels, which the
-wait above never covered: the app joins them again itself.
+A Kotlin app that keeps channels of its own beside this one, for broadcast, presence or changes of
+its own, should install supabase-kt's Realtime plugin with `install(Realtime) { maxAttempts = 1 }`.
+On an error reply supabase-kt 3.6.0 rejoins the channel from inside the socket's read loop: it
+waits 2 s, sends a leave, and then waits for an `UNSUBSCRIBED` that only that same loop could read.
+With the named tables' channel alone this costs nothing: the library removes its channel, and the
+disconnect that follows cancels the stuck loop. With an app channel present nothing disconnects,
+the loop stays stuck until the heartbeat timeout and the reconnect delay have passed, and the
+app's channels receive nothing meanwhile. `maxAttempts = 1` also ends supabase-kt's rejoin after an
+error reply for the app's channels, which the wait above never covered: such a channel turns
+`UNSUBSCRIBED`, and the app subscribes it again itself. After a socket reconnection supabase-kt
+still rejoins every channel.
 
 `realtimeStatus` says where the channel stands, as one value to draw a row of the Sync screen from:
 
@@ -172,7 +174,7 @@ configured as `schema.table`, or `id`.
 - **The publication.** A table missing from `supabase_realtime` is joined without complaint and
   sends nothing.
 - **Broadcast and presence** are not covered: keep them on supabase-kt's, or supabase-swift's, own
-  channels. A Kotlin app that does sets `maxAttempts = 1` on the Realtime plugin
+  channels. A Kotlin app that does sets `maxAttempts = 1` on supabase-kt's Realtime plugin
   ([The lifecycle](#the-lifecycle)).
 - **supabase-kt's pin.** The library is built on supabase-kt 3.6 partly because of Realtime: 3.7.0
   and 3.8.0 carry a Realtime crash ([why 3.6](../project/compatibility.md#why-36-not-38)).
