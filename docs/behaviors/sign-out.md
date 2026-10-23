@@ -20,7 +20,8 @@ client stays usable.
 - A replay pass running at that moment is canceled first, and nothing queued is sent once the
   clear has begun.
 - A write already on the wire is neither applied to the cache nor queued when it answers. A
-  Storage download in flight may still hand its bytes to its caller, but they are not cached.
+  Storage download in flight may still hand its bytes to its caller, but they are not cached: it
+  keeps its temporary file until it ends, then deletes it.
 - A live read open through the clear that refreshes (any strategy but `CacheOnly`) fetches again:
   at once online, and once the network is back offline (`Paused` meanwhile).
 - Keeping the deleted rows out of the database's files is best effort. The database is rewritten

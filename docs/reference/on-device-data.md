@@ -30,9 +30,13 @@ bundles none ([Under the hood](../help/under-the-hood.md#what-the-package-holds)
 
 A downloaded object is stored at `storage/<bucket>/<object path>` under the files directory, when
 its bucket and path are short printable names. Any other name, and every image-transform variant,
-is stored under `storage-hashed/`, in a file named by a hash of its key. A download is written to
-a temporary file first and moved into place whole; a temporary file a crash left behind is
-deleted once it is more than a day old.
+is stored under `storage-hashed/`, in a file named by a hash of its key. So is a name with a
+segment that starts with a letter and a colon, like `u:42`, which a path library would read as a
+Windows drive. A download is written to a temporary file first, written through to the disk, and
+moved into place whole; a temporary file a crash left behind is deleted once it is more than a day
+old. The row records the file's size. A file whose size differs from its row, which a power loss
+right after a download can leave, is not served: it is deleted with its row, and the object is
+downloaded again when next asked for.
 
 ## The database
 
