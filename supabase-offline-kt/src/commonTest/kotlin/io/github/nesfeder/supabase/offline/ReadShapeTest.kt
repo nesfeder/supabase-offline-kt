@@ -35,10 +35,11 @@ import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.test.runTest
 
 /**
- * Reads whose response is not a JSON array of rows — `single()`, `maybeSingle()` (supabase-kt 3.8
- * on), `head`, a `count`, `csv()`, `geojson()`, `stripNulls()` and `explain()` — bypass the cache:
- * they go to the network, their response is not stored, they never share the slot of the list read
- * with the same filters, and offline they fail as a network-only read does.
+ * Reads whose response is not a JSON array of rows — `head`, a `count`, `csv()`, `geojson()`,
+ * `stripNulls()` and `explain()` — bypass the cache: they go to the network, their response is not
+ * stored, they never share the slot of the list read with the same filters, and offline they fail
+ * as a network-only read does. `single()` and `maybeSingle()` (supabase-kt 3.8 on) are cached as
+ * their list, one row long: `CachedSingleTest`.
  */
 class ReadShapeTest {
 
@@ -85,14 +86,6 @@ class ReadShapeTest {
     /** Each read shape the cache cannot hold, with what the server answers it. */
     private val shapes: List<Triple<String, SelectRequestBuilder.() -> Unit, String>> =
         listOf<Triple<String, SelectRequestBuilder.() -> Unit, String>>(
-            Triple(
-                "single",
-                {
-                    filter { eq("list_id", "A") }
-                    single()
-                },
-                ONE_ROW,
-            ),
             Triple(
                 "head",
                 {
@@ -142,6 +135,22 @@ class ReadShapeTest {
                 },
                 PLAN_BODY,
             ),
+        )
+
+    /**
+     * The single-object reads, `single()` and on 3.8 `maybeSingle()`: cached as their list, one row
+     * long (`CachedSingleTest`), but never answered from a list the request could not be built for.
+     */
+    private val singleObjectShapes: List<Triple<String, SelectRequestBuilder.() -> Unit, String>> =
+        listOf<Triple<String, SelectRequestBuilder.() -> Unit, String>>(
+            Triple(
+                "single",
+                {
+                    filter { eq("list_id", "A") }
+                    single()
+                },
+                ONE_ROW,
+            )
         ) + maybeSingleReadShapes(oneRow = ONE_ROW)
 
     private val listOfA: SelectRequestBuilder.() -> Unit = { filter { eq("list_id", "A") } }
@@ -347,7 +356,7 @@ class ReadShapeTest {
                         coordinatorScope = idleCoroutineScope(),
                     )
                     .from(TABLE)
-            shapes
+            (shapes + singleObjectShapes)
                 .filter { (name, _, _) -> name in listOf("single", "maybeSingle", "head", "count") }
                 .forEach { (name, request, _) ->
                     // When

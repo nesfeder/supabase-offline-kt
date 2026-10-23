@@ -65,7 +65,29 @@ class ReadShapeProbeContractTest {
                         order("id", Order.ASCENDING)
                         limit(5)
                     },
-                ReadShape.Uncacheable("a single object (single(), maybeSingle())") to { single() },
+                ReadShape.SingleObject to { single() },
+                ReadShape.SingleObject to
+                    {
+                        filter { eq("id", 1) }
+                        order("id", Order.ASCENDING)
+                        limit(1)
+                        single()
+                    },
+                ReadShape.Uncacheable(OBJECT_ANOTHER_WAY) to
+                    {
+                        single()
+                        stripNulls()
+                    },
+                ReadShape.Uncacheable("a query plan (explain())") to
+                    {
+                        single()
+                        explain()
+                    },
+                ReadShape.Uncacheable(OBJECT_ANOTHER_WAY) to
+                    {
+                        single()
+                        headers.append("Accept", "text/csv")
+                    },
                 ReadShape.Uncacheable("a HEAD request") to { head = true },
                 ReadShape.Uncacheable("a read with a row count") to { count(Count.EXACT) },
                 ReadShape.Uncacheable("another media type (csv(), geojson())") to { csv() },
@@ -75,7 +97,9 @@ class ReadShapeProbeContractTest {
                         stripNulls()
                     },
                 ReadShape.Uncacheable("a query plan (explain())") to { explain() },
-                ReadShape.Uncacheable("a single object (single(), maybeSingle())") to
+                // The app's own Accept header comes after the client's JSON type, which the server
+                // takes first: not a single object as single() asks for one
+                ReadShape.Uncacheable(OBJECT_ANOTHER_WAY) to
                     {
                         headers.append("Accept", "application/vnd.pgrst.object+json")
                     },
@@ -350,5 +374,11 @@ class ReadShapeProbeContractTest {
         // Then — the check that stops before the network was never retried, and sent nothing
         assertTrue(waited < 400.milliseconds, "the read waited $waited for retries")
         assertEquals(1, onTheTestClock.requests.size)
+    }
+
+    private companion object {
+        /** The kind of a single object asked for in a way the cache cannot hold. */
+        const val OBJECT_ANOTHER_WAY =
+            "a single object asked for another way (stripNulls(), an Accept header)"
     }
 }

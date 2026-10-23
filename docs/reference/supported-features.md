@@ -23,8 +23,9 @@ Reached through `supabase.offline.from(table)` or `from(schema, table)`.
 | --- | --- |
 | `select` of a list of rows | **Cached**, under its query: filters, order, columns, `limit`, `range`. The user's queued writes are laid over every answer |
 | `selectAsFlow` of a list of rows | **Cached**, and emitted again as the cached rows change; refreshed from the server as its strategy says |
-| `select` of another shape: `single()`, `head`, a `count` (with rows or without), `csv()`, `geojson()`, `stripNulls()`, `explain()` | **Passed through**, never stored. Under `CacheOnly`, refused with `CacheMissException` |
-| `selectAsFlow` of another shape | The server's answer, emitted once; offline the flow fails |
+| `select` with `single()` | **Cached** as its list, one row long, under the key of the list read with the same query. Offline, answered from that list when it holds exactly one row, the user's queued writes laid over it; with no row or several it fails as with nothing cached, and under `CacheOnly` throws `CacheMissException` |
+| `select` of another shape: `head`, a `count` (with rows or without), `csv()`, `geojson()`, `stripNulls()`, `explain()` | **Passed through**, never stored. Under `CacheOnly`, refused with `CacheMissException` |
+| `selectAsFlow` of another shape, `single()` included | The server's answer, emitted once; offline the flow fails. A `single()` answer is cached as a one-shot read's is |
 | `insert`, `upsert` (`QueueIfOffline`) | **Queued**, with `onConflict`, `ignoreDuplicates` and `defaultToNull` kept for the replay. `select()` brings the server's rows back when the write is sent at once |
 | `update`, `delete` (`QueueIfOffline`) with a filter the queue can record | **Queued**. The queue records filters on the table's own columns, joined as AND, with any of supabase-kt's operators |
 | `update`, `delete` with a filter the queue cannot record | **Sent directly**: no filter, an `or { }` or `and { }` group, a negated filter (`filterNot`), an embedded table's column, `limit`, `order` or `offset`. Offline, `MutationNotQueueableException` |

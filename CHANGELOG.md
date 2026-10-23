@@ -65,6 +65,12 @@ All notable changes to this project are recorded in this file. The format follow
   says it is fresh), as a replay of the same write always has; a later pass sends it. A caller
   that relied on the exception to show an error now gets `Queued`. A `500` from the database is
   still thrown.
+- `single()` is cached as its list, one row long, under the key of the list read with the same
+  query, through the guards a list response passes. Offline, or when the network fails,
+  `NetworkFirst`, `CacheFirst` and `CacheOnly` answer it from that list when it holds exactly one
+  row, with the queued writes laid over it; no row or several fail as before. It was never cached,
+  so a detail screen had nothing offline. `maybeSingle()` on supabase-kt 3.8 is cached the same
+  way, and offline answers only its one row, never `null`.
 
 ### Deprecated
 
