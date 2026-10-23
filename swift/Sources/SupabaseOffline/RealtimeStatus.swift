@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: MIT
 import SupabaseOfflineCore
 
-/// Where the client stands with the channel that keeps ``SupabaseOfflineClient/Config/realtimeTables``
-/// current.
+/// Where the client stands with the channel that keeps one of ``SupabaseOfflineClient/Config/realtimeTables``
+/// current, or with all of them, summed up.
 public enum RealtimeStatus: Sendable {
 
     /// No table is named, ``SupabaseOfflineClient/disableRealtime()`` was called, or the client is
@@ -46,6 +46,17 @@ extension RealtimeStatus: Equatable {
 }
 
 extension RealtimeStatus {
+
+    /// Each of `tables` with the status the core reports for it, matched by name and schema; a
+    /// table the core reports nothing for reads as ``off``.
+    static func byTable(_ tables: [RealtimeTable], core statuses: [BridgeRealtimeTableStatus]) -> [RealtimeTable: RealtimeStatus] {
+        var byTable: [RealtimeTable: RealtimeStatus] = [:]
+        for table in tables {
+            let reported = statuses.first { $0.table == table.table && $0.schema == table.schema }
+            byTable[table] = reported.map { RealtimeStatus(core: $0.status) } ?? .off
+        }
+        return byTable
+    }
 
     /// The status the core reports; a state this release does not know reads as ``off``.
     init(core status: BridgeRealtimeStatus) {

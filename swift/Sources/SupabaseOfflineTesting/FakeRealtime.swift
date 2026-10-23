@@ -93,16 +93,30 @@ public final class FakeRealtime: @unchecked Sendable {
         try reported(relay.reportDelete(table: table, oldRecord: try Self.text(of: oldRecord), schema: schema))
     }
 
-    /// Ends the joined channel as a server that refuses the join or closes the channel would: the
-    /// client's `SupabaseOfflineClient.realtimeStatus` reads `stalled`, with `message` as the
-    /// cause's, and the client joins again after a short wait.
+    /// Ends every joined channel as a server that refuses the joins or closes the channels would:
+    /// the client's `SupabaseOfflineClient.realtimeStatus` reads `stalled`, with `message` as the
+    /// cause's, and the client joins each table again after a short wait.
     public func failChannel(message: String = "The channel was refused") {
         relay.failChannel(message: message)
     }
 
-    /// Ends the joined channel as a lost socket would: the client joins again after a short wait.
+    /// Ends every joined channel as a lost socket would: the client joins each table again after a
+    /// short wait.
     public func dropChannel() {
         relay.dropChannel()
+    }
+
+    /// Ends the channel of `table` alone, as a server that refuses that table's binding would: its
+    /// entry in `SupabaseOfflineClient.realtimeTableStatus` reads `stalled`, with `message` as the
+    /// cause's, the other tables stay joined and keep receiving reports, and the client joins
+    /// `table` again after a short wait.
+    ///
+    /// - Parameters:
+    ///   - table: The table's name.
+    ///   - message: Why the server refused it.
+    ///   - schema: The table's schema; `nil` for the default schema.
+    public func failTable(table: String, message: String = "The table's binding was refused", schema: String? = nil) {
+        relay.failTable(table: table, message: message, schema: schema)
     }
 
     /// Throws the core's refusal of a report, when there is one.

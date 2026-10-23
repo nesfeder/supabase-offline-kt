@@ -226,6 +226,7 @@ public abstract interface class io/github/nesfeder/supabase/offline/Offline : io
 	public fun get (Ljava/lang/String;)Lio/github/nesfeder/supabase/offline/OfflinePostgrestQueryBuilder;
 	public fun get (Ljava/lang/String;Ljava/lang/String;)Lio/github/nesfeder/supabase/offline/OfflinePostgrestQueryBuilder;
 	public abstract fun getRealtimeStatus ()Lkotlinx/coroutines/flow/StateFlow;
+	public abstract fun getRealtimeTableStatus ()Lkotlinx/coroutines/flow/StateFlow;
 	public abstract fun getStorage ()Lio/github/nesfeder/supabase/offline/OfflineStorage;
 	public abstract fun getSyncStatus ()Lkotlinx/coroutines/flow/StateFlow;
 	public abstract fun pendingMutationCount (Ljava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;

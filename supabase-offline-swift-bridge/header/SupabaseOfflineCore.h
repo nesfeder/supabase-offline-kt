@@ -6,7 +6,7 @@
 #import <Foundation/NSString.h>
 #import <Foundation/NSValue.h>
 
-@class NSData, SOCBridgeAccessTokenCallback, SOCBridgeCachedFile, SOCBridgeCancellable, SOCBridgeClient, SOCBridgeClientCompanion, SOCBridgeClientOptions, SOCBridgeClientOptionsCompanion, SOCBridgeConflict, SOCBridgeConflictAnswer, SOCBridgeConflictDecision, SOCBridgeConflictedMutation, SOCBridgeError, SOCBridgeErrorKind, SOCBridgeFakeRealtime, SOCBridgeHttpRequest, SOCBridgeHttpResponder, SOCBridgeInMemoryStore, SOCBridgeLogLevel, SOCBridgeMutationOperation, SOCBridgeMutationResult, SOCBridgeNetworkStatus, SOCBridgeOpenResult, SOCBridgePendingMutation, SOCBridgeQueryResult, SOCBridgeQuerySnapshot, SOCBridgeRealtimeFilter, SOCBridgeRealtimeStatus, SOCBridgeRealtimeStatusKind, SOCBridgeRealtimeTable, SOCBridgeRefreshKind, SOCBridgeRefreshState, SOCBridgeRejectedMutation, SOCBridgeServerError, SOCBridgeStorage, SOCBridgeStringResult, SOCBridgeSyncReport, SOCBridgeSyncStatus, SOCBridgeSyncStopKind, SOCBridgeSyncStopReason, SOCBridgeTesting, SOCKotlinArray<T>, SOCKotlinEnum<E>, SOCKotlinEnumCompanion;
+@class NSData, SOCBridgeAccessTokenCallback, SOCBridgeCachedFile, SOCBridgeCancellable, SOCBridgeClient, SOCBridgeClientCompanion, SOCBridgeClientOptions, SOCBridgeClientOptionsCompanion, SOCBridgeConflict, SOCBridgeConflictAnswer, SOCBridgeConflictDecision, SOCBridgeConflictedMutation, SOCBridgeError, SOCBridgeErrorKind, SOCBridgeFakeRealtime, SOCBridgeHttpRequest, SOCBridgeHttpResponder, SOCBridgeInMemoryStore, SOCBridgeLogLevel, SOCBridgeMutationOperation, SOCBridgeMutationResult, SOCBridgeNetworkStatus, SOCBridgeOpenResult, SOCBridgePendingMutation, SOCBridgeQueryResult, SOCBridgeQuerySnapshot, SOCBridgeRealtimeFilter, SOCBridgeRealtimeStatus, SOCBridgeRealtimeStatusKind, SOCBridgeRealtimeTable, SOCBridgeRealtimeTableStatus, SOCBridgeRefreshKind, SOCBridgeRefreshState, SOCBridgeRejectedMutation, SOCBridgeServerError, SOCBridgeStorage, SOCBridgeStringResult, SOCBridgeSyncReport, SOCBridgeSyncStatus, SOCBridgeSyncStopKind, SOCBridgeSyncStopReason, SOCBridgeTesting, SOCKotlinArray<T>, SOCKotlinEnum<E>, SOCKotlinEnumCompanion;
 
 @protocol SOCBridgeAccessTokenProvider, SOCBridgeClock, SOCBridgeConflictResolver, SOCBridgeFakeServer, SOCBridgeLogSink, SOCKotlinComparable, SOCKotlinIterator;
 
@@ -263,6 +263,13 @@ __attribute__((swift_name("BridgeClient")))
 - (SOCBridgeRealtimeStatus *)currentRealtimeStatus __attribute__((swift_name("currentRealtimeStatus()")));
 
 /**
+ * Where each table [BridgeClientOptions.realtimeTables] names stands now, on its own channel,
+ * in the order they were named; empty without named tables. A failure to read it is reported as
+ * no table, which the package reads as every table off.
+ */
+- (NSArray<SOCBridgeRealtimeTableStatus *> *)currentRealtimeTableStatuses __attribute__((swift_name("currentRealtimeTableStatuses()")));
+
+/**
  * The sync status now, without waiting. Reading it cannot fail in the library; should it fail
  * here, the failure arrives as the returned status's [BridgeSyncStatus.lastSyncError].
  */
@@ -325,6 +332,12 @@ __attribute__((swift_name("BridgeClient")))
  * with `null`, when the client closes.
  */
 - (SOCBridgeCancellable *)observeRealtimeStatusOnStatus:(void (^)(SOCBridgeRealtimeStatus *))onStatus onCompletion:(void (^)(SOCBridgeError * _Nullable))onCompletion __attribute__((swift_name("observeRealtimeStatus(onStatus:onCompletion:)")));
+
+/**
+ * Each table's status as it changes, starting with the current ones; [onCompletion] fires once,
+ * with `null`, when the client closes.
+ */
+- (SOCBridgeCancellable *)observeRealtimeTableStatusesOnStatuses:(void (^)(NSArray<SOCBridgeRealtimeTableStatus *> *))onStatuses onCompletion:(void (^)(SOCBridgeError * _Nullable))onCompletion __attribute__((swift_name("observeRealtimeTableStatuses(onStatuses:onCompletion:)")));
 
 /** [rejectedMutations] as the list changes; [onCompletion] fires once, when it ends. */
 - (SOCBridgeCancellable *)observeRejectedMutationsOnMutations:(void (^)(NSArray<SOCBridgeRejectedMutation *> *))onMutations onCompletion:(void (^)(SOCBridgeError * _Nullable))onCompletion __attribute__((swift_name("observeRejectedMutations(onMutations:onCompletion:)")));
@@ -777,14 +790,25 @@ __attribute__((swift_name("BridgeFakeRealtime")))
  */
 + (instancetype)new __attribute__((availability(swift, unavailable, message="use object initializers instead")));
 
-/** Ends the joined channel as a lost socket: the client joins again after a short wait. */
+/**
+ * Ends every joined channel as a lost socket: the client joins each again after a short wait.
+ */
 - (void)dropChannel __attribute__((swift_name("dropChannel()")));
 
 /**
- * Ends the joined channel as a server that refuses the join or closes the channel: the client
- * reports the channel stalled, with [message], and joins again after a short wait.
+ * Ends every joined channel as a server that refuses the joins or closes the channels: the
+ * client reports the channels stalled, with [message], and joins each again after a short wait.
  */
 - (void)failChannelMessage:(NSString *)message __attribute__((swift_name("failChannel(message:)")));
+
+/**
+ * Ends the channel of [table] alone as a server that refuses that table's binding: the client
+ * reports that table stalled, with [message], keeps the other tables joined, and joins [table]
+ * again after a short wait.
+ *
+ * @param schema the table's schema, or `null` for the client's default schema.
+ */
+- (void)failTableTable:(NSString *)table message:(NSString *)message schema:(NSString * _Nullable)schema __attribute__((swift_name("failTable(table:message:schema:)")));
 
 /**
  * Reports a row of [table] deleted on the server.
@@ -1145,6 +1169,22 @@ __attribute__((swift_name("BridgeRealtimeTable")))
 - (instancetype)initWithTable:(NSString *)table schema:(NSString * _Nullable)schema filter:(SOCBridgeRealtimeFilter * _Nullable)filter __attribute__((swift_name("init(table:schema:filter:)"))) __attribute__((objc_designated_initializer));
 @property (readonly) SOCBridgeRealtimeFilter * _Nullable filter __attribute__((swift_name("filter")));
 @property (readonly) NSString * _Nullable schema __attribute__((swift_name("schema")));
+@property (readonly) NSString *table __attribute__((swift_name("table")));
+@end
+
+
+/**
+ * Where one table the client keeps current through Realtime stands, on its own channel.
+ *
+ * @property table the table's name, as [BridgeClientOptions.realtimeTables] names it.
+ * @property schema its schema as named there, or `null` for the client's default schema.
+ * @property status where the table's channel stands.
+ */
+__attribute__((objc_subclassing_restricted))
+__attribute__((swift_name("BridgeRealtimeTableStatus")))
+@interface SOCBridgeRealtimeTableStatus : SOCBase
+@property (readonly) NSString * _Nullable schema __attribute__((swift_name("schema")));
+@property (readonly) SOCBridgeRealtimeStatus *status __attribute__((swift_name("status")));
 @property (readonly) NSString *table __attribute__((swift_name("table")));
 @end
 

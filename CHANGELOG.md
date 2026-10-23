@@ -67,6 +67,24 @@ All notable changes to this project are recorded in this file. The format follow
   whose record does not meet it is dropped and counted in `droppedReportCount`, and a delete
   reaches the client whatever the filter. Before, every report to a followed table reached the
   client, so a test could see a change a device never receives.
+- `realtimeTableStatus` says where each table named in `realtime { }` stands, keyed and ordered as
+  named, beside `realtimeStatus`; the Swift package reads it as a `RealtimeTableStatusSequence` of
+  `[RealtimeTable: RealtimeStatus]`. `FakeRealtime.failTable` refuses one table in a test, in both
+  testing artifacts.
+
+### Changed
+
+- Each table named in `realtime { }` is followed on a channel of its own, so a table the server
+  refuses, such as one whose filter names a column a migration renamed, stalls and is joined again
+  alone while the others keep receiving, and each join reads only its own table again. Before, one
+  refused binding ended the shared channel: every named table lost its changes, and each retry read
+  every table again. `realtimeStatus` sums the tables up: `Stalled` while any table is, with the
+  first one's cause, otherwise `Subscribing` while any join is in flight, and `Subscribed` once
+  every table is joined. With supabase-kt's default `maxAttempts`, a refusal still drops the other
+  tables' channels for a moment, as their socket is closed to end the rejoin supabase-kt runs in
+  its read loop; `install(Realtime) { maxAttempts = 1 }` keeps them joined throughout.
+  `FakeRealtime.failChannel` and `dropChannel` end every table's channel.
+
 - The rejected list keeps a guarded write's base in each guarded entry, under two new keys
   (`baseVersion`, `baseJson`), so a retry replays guarded. A list an earlier build wrote reads back
   without them, and a retry of such an entry replays unguarded, as it did there.
@@ -122,8 +140,8 @@ All notable changes to this project are recorded in this file. The format follow
   overflowed the two buffers between the Realtime plugin and the cache, the plugin's own and the
   library's, past about 130 waiting changes, and the newest were dropped without a log or a stale
   mark, so a row could keep an older value until the next join or fetch; every change is now kept,
-  and a backlog of more than 5,000 waiting changes across the named tables is discarded as a whole,
-  with the tables read again as on a join and one warning logged.
+  and a backlog of more than 5,000 waiting changes of one table is discarded as a whole, with that
+  table read again as on a join and one warning logged.
 - Each change a followed table received was applied as its own pass over the table's cached
   queries, so a burst ran far behind the connection; the changes waiting for a table are now
   applied as one pass, in the order the server sent them.

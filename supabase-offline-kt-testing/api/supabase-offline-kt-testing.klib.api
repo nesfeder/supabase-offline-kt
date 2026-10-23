@@ -18,6 +18,7 @@ final class io.github.nesfeder.supabase.offline.testing/FakeRealtime { // io.git
 
     final fun dropChannel() // io.github.nesfeder.supabase.offline.testing/FakeRealtime.dropChannel|dropChannel(){}[0]
     final fun failChannel(kotlin/Throwable) // io.github.nesfeder.supabase.offline.testing/FakeRealtime.failChannel|failChannel(kotlin.Throwable){}[0]
+    final fun failTable(kotlin/String, kotlin/Throwable, kotlin/String? = ...) // io.github.nesfeder.supabase.offline.testing/FakeRealtime.failTable|failTable(kotlin.String;kotlin.Throwable;kotlin.String?){}[0]
     final fun reportDelete(kotlin/String, kotlinx.serialization.json/JsonObject, kotlin/String? = ...) // io.github.nesfeder.supabase.offline.testing/FakeRealtime.reportDelete|reportDelete(kotlin.String;kotlinx.serialization.json.JsonObject;kotlin.String?){}[0]
     final fun reportInsert(kotlin/String, kotlinx.serialization.json/JsonObject, kotlin/String? = ...) // io.github.nesfeder.supabase.offline.testing/FakeRealtime.reportInsert|reportInsert(kotlin.String;kotlinx.serialization.json.JsonObject;kotlin.String?){}[0]
     final fun reportUpdate(kotlin/String, kotlinx.serialization.json/JsonObject, kotlin/String? = ...) // io.github.nesfeder.supabase.offline.testing/FakeRealtime.reportUpdate|reportUpdate(kotlin.String;kotlinx.serialization.json.JsonObject;kotlin.String?){}[0]

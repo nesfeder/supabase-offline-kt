@@ -73,16 +73,29 @@ public class BridgeFakeRealtime {
         reporting(oldRecord) { row -> fake.reportDelete(table, row, schema) }
 
     /**
-     * Ends the joined channel as a server that refuses the join or closes the channel: the client
-     * reports the channel stalled, with [message], and joins again after a short wait.
+     * Ends every joined channel as a server that refuses the joins or closes the channels: the
+     * client reports the channels stalled, with [message], and joins each again after a short wait.
      */
     public fun failChannel(message: String) {
         fake.failChannel(IllegalStateException(message))
     }
 
-    /** Ends the joined channel as a lost socket: the client joins again after a short wait. */
+    /**
+     * Ends every joined channel as a lost socket: the client joins each again after a short wait.
+     */
     public fun dropChannel() {
         fake.dropChannel()
+    }
+
+    /**
+     * Ends the channel of [table] alone as a server that refuses that table's binding: the client
+     * reports that table stalled, with [message], keeps the other tables joined, and joins [table]
+     * again after a short wait.
+     *
+     * @param schema the table's schema, or `null` for the client's default schema.
+     */
+    public fun failTable(table: String, message: String, schema: String?) {
+        fake.failTable(table, IllegalStateException(message), schema)
     }
 
     private inline fun reporting(text: String, report: (JsonObject) -> Unit): BridgeError? =

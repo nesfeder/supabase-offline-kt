@@ -415,11 +415,26 @@ public interface Offline : SupabasePlugin<Offline.Config> {
     @Throws(Throwable::class) public suspend fun enableNetwork()
 
     /**
-     * Where the plugin stands with the channel that keeps the tables [Config.realtime] named
-     * current, as it changes: [RealtimeStatus.Off] when none is named. It never throws. At [close]
-     * it takes [RealtimeStatus.Off], the channel having been left, and changes no more.
+     * Where the plugin stands with the channels that keep the tables [Config.realtime] named
+     * current, as it changes: [realtimeTableStatus] summed up as one value, to draw one row of a
+     * sync screen from. [RealtimeStatus.Stalled] while any table is, with the cause of the first
+     * named; otherwise [RealtimeStatus.Subscribing] while any join is in flight;
+     * [RealtimeStatus.Subscribed] once every table is joined. [RealtimeStatus.Off] when none is
+     * named. It never throws. At [close] it takes [RealtimeStatus.Off], the channels having been
+     * left, and changes no more.
      */
     public val realtimeStatus: StateFlow<RealtimeStatus>
+
+    /**
+     * Where each table [Config.realtime] named stands, as it changes: one entry per table, keyed as
+     * the configuration names it, in that order. Each table is followed on a channel of its own, so
+     * a table the server refuses, such as one whose filter names a column a migration renamed,
+     * reads [RealtimeStatus.Stalled] alone and is joined again on its own schedule, while the
+     * others stay [RealtimeStatus.Subscribed]. Off, paused and switched off apply to every table at
+     * once. Empty when no table is named. It never throws, and at [close] every table takes
+     * [RealtimeStatus.Off].
+     */
+    public val realtimeTableStatus: StateFlow<Map<RealtimeTable, RealtimeStatus>>
 
     /**
      * Leaves the Realtime channel and joins none until [enableRealtime]: an app's own switch for

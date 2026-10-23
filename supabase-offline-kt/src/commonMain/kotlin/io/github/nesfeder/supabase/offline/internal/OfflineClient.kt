@@ -22,6 +22,7 @@ import io.github.nesfeder.supabase.offline.OfflinePostgrestQueryBuilder
 import io.github.nesfeder.supabase.offline.OfflineStorage
 import io.github.nesfeder.supabase.offline.PendingMutation
 import io.github.nesfeder.supabase.offline.RealtimeStatus
+import io.github.nesfeder.supabase.offline.RealtimeTable
 import io.github.nesfeder.supabase.offline.RejectedMutation
 import io.github.nesfeder.supabase.offline.ServerError
 import io.github.nesfeder.supabase.offline.SyncReport
@@ -521,6 +522,9 @@ internal class OfflineClient(
 
     override val realtimeStatus: StateFlow<RealtimeStatus> =
         serverChangeFollower?.state ?: MutableStateFlow(RealtimeStatus.Off)
+
+    override val realtimeTableStatus: StateFlow<Map<RealtimeTable, RealtimeStatus>> =
+        serverChangeFollower?.tableState ?: MutableStateFlow(emptyMap())
 
     init {
         if (prepareFileCacheDirectories) fileCache.prepareDirectories()

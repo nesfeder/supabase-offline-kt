@@ -245,9 +245,10 @@ install(Offline) {
 }
 ```
 
-The channel is joined while a user is signed in (or Auth is not installed) and the network is not
-known down, left otherwise and at `close()`, and every join reads the named tables again, since
-Realtime replays nothing. `realtimeStatus` says where it stands, and `disableRealtime()` and
+Each table's channel is joined while a user is signed in (or Auth is not installed) and the
+network is not known down, left otherwise and at `close()`, and every join reads the table again,
+since Realtime replays nothing; a table the server refuses stalls alone. `realtimeStatus` sums up
+where they stand, `realtimeTableStatus` says it for each table, and `disableRealtime()` and
 `enableRealtime()` are the app's own switch, not kept across clients; see
 [Applying Realtime events](../behaviors/realtime.md).
 

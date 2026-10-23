@@ -395,6 +395,12 @@ property RealtimeTable.filter | let filter: RealtimeFilter?
 init RealtimeTable.init(_:schema:filter:) | init(_ table: String, schema: String? = nil, filter: RealtimeFilter? = nil)
 property RealtimeTable.schema | let schema: String?
 property RealtimeTable.table | let table: String
+struct RealtimeTableStatusSequence | struct RealtimeTableStatusSequence
+typealias RealtimeTableStatusSequence.Element | typealias Element = [RealtimeTable : RealtimeStatus]
+struct RealtimeTableStatusSequence.Iterator | struct Iterator
+method RealtimeTableStatusSequence.Iterator.next() | mutating func next() async throws -> RealtimeTableStatusSequence.Element?
+method RealtimeTableStatusSequence.makeAsyncIterator() | func makeAsyncIterator() -> RealtimeTableStatusSequence.Iterator
+property RealtimeTableStatusSequence.value | var value: [RealtimeTable : RealtimeStatus] { get }
 enum RefreshState | enum RefreshState
 func.op RefreshState.==(_:_:) | static func == (lhs: RefreshState, rhs: RefreshState) -> Bool
 enum.case RefreshState.idle | case idle
@@ -473,6 +479,7 @@ method SupabaseOfflineClient.pendingMutationCount(table:) | func pendingMutation
 method SupabaseOfflineClient.pendingMutationCountSequence(table:) | func pendingMutationCountSequence(table: String? = nil) -> PendingMutationCountSequence
 method SupabaseOfflineClient.pendingMutations(table:) | func pendingMutations(table: String? = nil) -> PendingMutationSequence
 property SupabaseOfflineClient.realtimeStatus | var realtimeStatus: RealtimeStatusSequence { get }
+property SupabaseOfflineClient.realtimeTableStatus | var realtimeTableStatus: RealtimeTableStatusSequence { get }
 method SupabaseOfflineClient.rejectedMutationList() | func rejectedMutationList() async throws -> [RejectedMutation]
 method SupabaseOfflineClient.rejectedMutations() | func rejectedMutations() -> RejectedMutationSequence
 method SupabaseOfflineClient.resolveConflictedMutation(id:resolution:) | func resolveConflictedMutation(id: Int64, resolution: ConflictResolution) async throws
@@ -686,6 +693,9 @@ conformance RealtimeStatusSequence.Iterator | _Concurrency.AsyncIteratorProtocol
 conformance RealtimeTable | Swift.Equatable
 conformance RealtimeTable | Swift.Hashable
 conformance RealtimeTable | Swift.Sendable
+conformance RealtimeTableStatusSequence | Swift.Sendable
+conformance RealtimeTableStatusSequence | _Concurrency.AsyncSequence
+conformance RealtimeTableStatusSequence.Iterator | _Concurrency.AsyncIteratorProtocol
 conformance RefreshState | Swift.Equatable
 conformance RefreshState | Swift.Sendable
 conformance RejectedMutation | Swift.Equatable

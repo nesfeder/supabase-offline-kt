@@ -124,10 +124,10 @@ way.
 A test of an app that names tables in `realtime { }` gives the in-memory client a `FakeRealtime`
 in place of a Realtime channel, so `install(Realtime)` is not needed. The client joins the fake's
 channel as it would Realtime's (signed in or without Auth, the network not known down, the
-subscription on). `subscribedTables` says which tables it follows as soon as it opens a channel,
-and `joinCount` moves once it has handled the join: it has reported `Subscribed` and asked for the
-named tables' cached queries to be read again, since nothing is replayed. Wait for `joinCount`
-before reporting a change, or the join may be handled after it.
+subscription on). `subscribedTables` says which tables it follows as soon as it opens their
+channels, and `joinCount` moves once it has handled a join: it has reported `Subscribed` and asked
+for the joined tables' cached queries to be read again, since nothing is replayed. Wait for
+`joinCount` before reporting a change, or the join may be handled after it.
 
 Each report reaches the cached queries as `applyServerRecord` and `applyServerDelete` apply a
 record, as Realtime would send it. A report to a table nothing follows is dropped and counted in
@@ -135,8 +135,11 @@ record, as Realtime would send it. A report to a table nothing follows is droppe
 `RealtimeFilter`, which the server evaluates before it sends: numbers are compared as numbers,
 other values as text, and a missing or `null` column meets no filter. A delete reaches the client
 whatever the filter, as Realtime sends a delete to every subscriber of the table.
-`failChannel(cause)` ends the channel as a server that refuses it would, and `dropChannel()` as a
-lost socket: `realtimeStatus` reads `Stalled`, and the client joins again after a short wait.
+`failChannel(cause)` ends every table's channel as a server that refuses them would, and
+`dropChannel()` as a lost socket: `realtimeStatus` reads `Stalled`, and the client joins again
+after a short wait. `failTable(table, cause)` refuses one table alone, as a server refuses a
+binding: its entry in `realtimeTableStatus` reads `Stalled` while the other tables stay joined
+and keep receiving reports.
 
 The `MockEngine` plays the server, and the fake only the channel. The client reads the named tables
 from the engine on every join, and reads a query again after a change that met a read in flight or

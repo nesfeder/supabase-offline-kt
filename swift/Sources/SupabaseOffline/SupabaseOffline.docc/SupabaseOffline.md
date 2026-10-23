@@ -102,6 +102,7 @@ your test scripts: see <doc:TestingYourApp>.
 ### Realtime
 
 - ``RealtimeStatusSequence``
+- ``RealtimeTableStatusSequence``
 - ``RealtimeStatus``
 
 ### Errors

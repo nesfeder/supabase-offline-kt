@@ -3,8 +3,8 @@
 package io.github.nesfeder.supabase.offline
 
 /**
- * Where the plugin stands with the channel that keeps the tables `realtime { }` named current
- * ([Offline.realtimeStatus]).
+ * Where the plugin stands with the channel that keeps a table `realtime { }` named current
+ * ([Offline.realtimeTableStatus]), or with all of them, summed up ([Offline.realtimeStatus]).
  *
  * The set is closed: these five cases are every state the channel can be in, so a `when` over them
  * stays exhaustive.

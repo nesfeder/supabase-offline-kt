@@ -6,6 +6,7 @@ package io.github.nesfeder.supabase.offline.internal.realtime
 
 import io.github.nesfeder.supabase.offline.NetworkStatus
 import io.github.nesfeder.supabase.offline.RealtimeStatus
+import io.github.nesfeder.supabase.offline.RealtimeTable
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
 import kotlin.concurrent.atomics.AtomicBoolean
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
@@ -38,20 +39,25 @@ import kotlinx.coroutines.withTimeoutOrNull
  * cache: joined while the subscription is on, there is an identity to subscribe for (a signed-in
  * user, or the one identity of a client without Auth) and the network is not known to be down; left
  * otherwise, and when [scope] ends. A change of identity, a sign-in as another user included,
- * leaves the channel and joins it again for the new one; a new session of the same identity changes
- * nothing. Each join reads the watched tables again, since Realtime replays nothing. A channel that
- * ends is joined again after a bounded wait, cut short by an edge; joins that end within
- * [steadyFollow] of one another back off, up to [maxBackoff].
+ * leaves the channels and joins them again for the new one; a new session of the same identity
+ * changes nothing.
+ *
+ * Each table is followed on a channel of its own, so a binding the server refuses (a filter on a
+ * column a migration renamed, a table missing from the publication) ends that table's channel
+ * alone: the others keep receiving. Each join reads its table again, since Realtime replays
+ * nothing. A channel that ends is joined again after a bounded wait, cut short by an edge; joins of
+ * a table that end within [steadyFollow] of one another back off, up to [maxBackoff], each table on
+ * its own. [tableState] says where each table stands, and [state] sums them up.
  *
  * The changes a follow receives wait in a [ChangeBacklog], taken off the feed as they arrive, and
- * are applied beside it, each table's waiting changes as one patch: a burst from the server costs
- * one pass over the table's cached queries, not one per change, and a slow patch never holds the
- * feed. A backlog past [backlogCapacity] is discarded, with every change the applier had taken but
- * not applied yet, and once the applier is free every watched table is read again instead, as on a
- * join, with one warning for the episode. A batch is applied only while the inputs still want the
- * follow it came from and the session is still its identity's, read fresh: what an earlier user's
- * channel still delivers, once another user has signed in, is dropped instead of reaching the new
- * user's cache, and [apply] is told the identity so the cache can refuse it under its own lock.
+ * are applied beside it, the waiting ones as one patch: a burst from the server costs one pass over
+ * the table's cached queries, not one per change, and a slow patch never holds the feed. A backlog
+ * past [backlogCapacity] is discarded, with every change the applier had taken but not applied yet,
+ * and once the applier is free the table is read again instead, as on a join, with one warning for
+ * the episode. A batch is applied only while the inputs still want the follow it came from and the
+ * session is still its identity's, read fresh: what an earlier user's channel still delivers, once
+ * another user has signed in, is dropped instead of reaching the new user's cache, and [apply] is
+ * told the identity so the cache can refuse it under its own lock.
  *
  * A channel that ends is logged at DEBUG; the warning comes when it is joined again, so an end that
  * a sign-out, a network known down, the switch or [stop] brought about, which pauses the follow
@@ -74,7 +80,7 @@ import kotlinx.coroutines.withTimeoutOrNull
  * @param initialBackoff the wait after the first channel that ended.
  * @param maxBackoff the longest wait.
  * @param steadyFollow how long a follow must last for the next wait to start over.
- * @param backlogCapacity how many received changes may wait to be applied.
+ * @param backlogCapacity how many received changes of one table may wait to be applied.
  */
 internal class ServerChangeFollower(
     private val scope: CoroutineScope,
@@ -98,12 +104,22 @@ internal class ServerChangeFollower(
     /** Whether the app wants the subscription; on until it says otherwise. */
     private val enabled = MutableStateFlow(true)
 
+    /** Each table as the configuration names it, in [tables]' order: the keys of [tableState]. */
+    private val named: List<RealtimeTable> = tables.map { watched -> watched.toRealtimeTable() }
+
+    /** Where each table stands: the one record both [tableState] and [state] are read from. */
+    private val tableStates =
+        MutableStateFlow<Map<RealtimeTable, RealtimeStatus>>(everyTable(RealtimeStatus.Paused))
+
     private val followState =
         MutableStateFlow<RealtimeStatus>(
             if (tables.isEmpty()) RealtimeStatus.Off else RealtimeStatus.Paused
         )
 
-    /** Where the subscription stands, as it changes. */
+    /** Where each table stands, as it changes, in the order the tables were named. */
+    val tableState: StateFlow<Map<RealtimeTable, RealtimeStatus>> = tableStates.asStateFlow()
+
+    /** Where the subscription stands, as it changes: [tableState] summed up ([aggregateOf]). */
     val state: StateFlow<RealtimeStatus> = followState.asStateFlow()
 
     /** Whether [stop] has made the state final. */
@@ -126,24 +142,57 @@ internal class ServerChangeFollower(
      * once, so a caller sees it before the channel is left.
      */
     fun setEnabled(enabled: Boolean) {
-        if (!enabled && tables.isNotEmpty()) report(RealtimeStatus.Off)
+        if (!enabled && tables.isNotEmpty()) reportEveryTable(RealtimeStatus.Off)
         this.enabled.value = enabled
     }
 
     /**
-     * Records that the client closed: the channel is left with [scope], and the state is final,
+     * Records that the client closed: the channels are left with [scope], and the state is final,
      * whatever a channel still ending reports after this.
      */
     fun stop() {
         stopped.store(true)
+        tableStates.value = everyTable(RealtimeStatus.Off)
         followState.value = RealtimeStatus.Off
     }
 
-    /** Reports [status], unless [stop] has made the state final. */
-    private fun report(status: RealtimeStatus) {
-        followState.update { current -> if (stopped.load()) current else status }
-        // A stop between the check and the write: its Off stands, whatever landed after it
-        if (stopped.load()) followState.value = RealtimeStatus.Off
+    /** Every table at [status], in the order they were named. */
+    private fun everyTable(status: RealtimeStatus): Map<RealtimeTable, RealtimeStatus> =
+        named.associateWith {
+            status
+        }
+
+    /** Reports every table at [status], unless [stop] has made the state final. */
+    private fun reportEveryTable(status: RealtimeStatus) {
+        publish { everyTable(status) }
+    }
+
+    /** Reports [table] at [status], unless [stop] has made the state final. */
+    private fun report(table: RealtimeTable, status: RealtimeStatus) {
+        publish { current -> current + (table to status) }
+    }
+
+    /**
+     * Writes [change] into the tables' statuses, then the sum of them into [state], again until
+     * what it summed is still the latest: a table that changed meanwhile has its own writer, which
+     * sums again after it, so the sum read last is always that of the latest statuses. After [stop]
+     * nothing changes but to [RealtimeStatus.Off].
+     */
+    private fun publish(
+        change: (Map<RealtimeTable, RealtimeStatus>) -> Map<RealtimeTable, RealtimeStatus>
+    ) {
+        tableStates.update { current -> if (stopped.load()) current else change(current) }
+        while (true) {
+            // A stop between the check and the write: its Off stands, whatever landed after it
+            if (stopped.load()) {
+                tableStates.value = everyTable(RealtimeStatus.Off)
+                followState.value = RealtimeStatus.Off
+                return
+            }
+            val statuses = tableStates.value
+            followState.value = aggregateOf(statuses)
+            if (tableStates.value === statuses) return
+        }
     }
 
     /** What the inputs ask for. */
@@ -174,50 +223,79 @@ internal class ServerChangeFollower(
             .distinctUntilChanged()
             .collectLatest { wanted ->
                 when (wanted) {
-                    Wanted.Off -> report(RealtimeStatus.Off)
-                    Wanted.Paused -> report(RealtimeStatus.Paused)
+                    Wanted.Off -> reportEveryTable(RealtimeStatus.Off)
+                    Wanted.Paused -> reportEveryTable(RealtimeStatus.Paused)
                     is Wanted.Follow -> followUntilCanceled(wanted)
                 }
             }
     }
 
     /**
-     * Follows for [wanted]'s identity, and joins again after each channel that ends, until
-     * canceled.
+     * Follows every table for [wanted]'s identity, each on a channel of its own, until canceled.
+     * Every table reads as joining at once, so none reads as paused while another's join is in
+     * flight.
      */
     private suspend fun followUntilCanceled(wanted: Wanted.Follow) {
-        var backoff = Duration.ZERO
-        while (true) {
-            report(RealtimeStatus.Subscribing)
-            val started = timeSource.markNow()
-            val failure = followOnce(wanted)
-            // Canceled as the channel ended: the inputs' next state is the one to report, not
-            // this end
-            currentCoroutineContext().ensureActive()
-            // Inputs that moved on as the channel ended pause the follow in a moment: the end is
-            // theirs, and no stall is reported for it
-            if (wantedNow.value == wanted) report(RealtimeStatus.Stalled(failure))
-            engineLogger.debug { "Realtime: the channel ended (${failure::class.simpleName})" }
-            backoff =
-                if (backoff == Duration.ZERO || started.elapsedNow() >= steadyFollow) initialBackoff
-                else minOf(backoff * 2, maxBackoff)
-            withTimeoutOrNull(backoff) { wakeUps.first() }
-            engineLogger.warning {
-                "Realtime: the channel ended (${failure::class.simpleName}); joining again"
+        reportEveryTable(RealtimeStatus.Subscribing)
+        coroutineScope {
+            tables.zip(named) { watched, table ->
+                launch { followTableUntilCanceled(wanted, watched, table) }
             }
         }
     }
 
     /**
-     * Follows once for [wanted], applying what arrives; returns the failure that ended the channel.
-     * A join is handled as it arrives; the changes wait in a backlog that [applyBacklog] drains
-     * beside the collection, and what arrived before the channel ended is still applied.
+     * Follows [watched], named [table], for [wanted]'s identity, and joins it again after each
+     * channel that ends, until canceled; its waits are its own.
      */
-    private suspend fun followOnce(wanted: Wanted.Follow): Exception = coroutineScope {
+    private suspend fun followTableUntilCanceled(
+        wanted: Wanted.Follow,
+        watched: WatchedTable,
+        table: RealtimeTable,
+    ) {
+        var backoff = Duration.ZERO
+        while (true) {
+            report(table, RealtimeStatus.Subscribing)
+            val started = timeSource.markNow()
+            val failure = followOnce(wanted, watched, table)
+            // Canceled as the channel ended: the inputs' next state is the one to report, not
+            // this end
+            currentCoroutineContext().ensureActive()
+            // Inputs that moved on as the channel ended pause the follow in a moment: the end is
+            // theirs, and no stall is reported for it
+            if (wantedNow.value == wanted) report(table, RealtimeStatus.Stalled(failure))
+            engineLogger.debug {
+                "Realtime: the channel ended for ${watched.qualifiedName()} " +
+                    "(${failure::class.simpleName})"
+            }
+            backoff =
+                if (backoff == Duration.ZERO || started.elapsedNow() >= steadyFollow) initialBackoff
+                else minOf(backoff * 2, maxBackoff)
+            withTimeoutOrNull(backoff) { wakeUps.first() }
+            engineLogger.warning {
+                "Realtime: the channel ended for ${watched.qualifiedName()} " +
+                    "(${failure::class.simpleName}); joining again"
+            }
+        }
+    }
+
+    /**
+     * Follows [watched], named [table], once for [wanted], applying what arrives; returns the
+     * failure that ended its channel. A join is handled as it arrives; the changes wait in a
+     * backlog that [applyBacklog] drains beside the collection, and what arrived before the channel
+     * ended is still applied.
+     */
+    private suspend fun followOnce(
+        wanted: Wanted.Follow,
+        watched: WatchedTable,
+        table: RealtimeTable,
+    ): Exception = coroutineScope {
         val backlog = ChangeBacklog(backlogCapacity)
-        launch { applyBacklog(wanted, backlog) }
+        launch { applyBacklog(wanted, watched, backlog) }
         try {
-            feed.follow(tables, defaultSchema()).collect { event -> receive(event, backlog) }
+            feed.follow(listOf(watched), defaultSchema()).collect { event ->
+                receive(event, watched, table, backlog)
+            }
             ServerChangeFeedEndedException("The Realtime channel ended")
         } catch (cancellation: CancellationException) {
             throw cancellation
@@ -228,36 +306,45 @@ internal class ServerChangeFollower(
         }
     }
 
-    /** Handles [event]: a join at once, a change by way of [backlog]. */
-    private suspend fun receive(event: ServerChangeEvent, backlog: ChangeBacklog) {
+    /** Handles [event] of [watched]'s channel: a join at once, a change by way of [backlog]. */
+    private suspend fun receive(
+        event: ServerChangeEvent,
+        watched: WatchedTable,
+        table: RealtimeTable,
+        backlog: ChangeBacklog,
+    ) {
         when (event) {
-            ServerChangeEvent.Joined -> joined()
+            ServerChangeEvent.Joined -> joined(watched, table)
             is ServerChangeEvent.Change -> backlog.add(event)
         }
     }
 
-    /** Reports the channel subscribed, and reads every watched table again: nothing is replayed. */
-    private suspend fun joined() {
-        report(RealtimeStatus.Subscribed)
+    /** Reports [table] subscribed, and reads it again: nothing is replayed. */
+    private suspend fun joined(watched: WatchedTable, table: RealtimeTable) {
+        report(table, RealtimeStatus.Subscribed)
         engineLogger.info {
-            "Realtime: subscribed to ${tables.size} table(s); their cached queries are read again"
+            "Realtime: subscribed to ${watched.qualifiedName()}; its cached queries are read again"
         }
-        markEveryTableStale()
+        markStaleQuietly(watched)
     }
 
     /**
-     * Applies [backlog]'s changes until it is closed and empty: every change waiting, each table's
-     * as one patch in the order they arrived, tables in the order of their first change. A batch
-     * taken before a discard is dropped instead, and a discard is reported once the take is done.
-     * So is a batch taken once the inputs no longer ask for [wanted], the follow it came from, or
-     * the session is no longer its identity's: an earlier user's changes never reach the next
-     * user's cache.
+     * Applies [backlog]'s changes, those [watched]'s channel delivered, until it is closed and
+     * empty: every change waiting, each table's as one patch in the order they arrived, tables in
+     * the order of their first change. A batch taken before a discard is dropped instead, and a
+     * discard is reported once the take is done. So is a batch taken once the inputs no longer ask
+     * for [wanted], the follow it came from, or the session is no longer its identity's: an earlier
+     * user's changes never reach the next user's cache.
      */
-    private suspend fun applyBacklog(wanted: Wanted.Follow, backlog: ChangeBacklog) {
+    private suspend fun applyBacklog(
+        wanted: Wanted.Follow,
+        watched: WatchedTable,
+        backlog: ChangeBacklog,
+    ) {
         while (true) {
             val entries = backlog.takeAll()
             if (entries == null) {
-                reportDiscard(backlog)
+                reportDiscard(watched, backlog)
                 return
             }
             val byTable = LinkedHashMap<Pair<String, String>, MutableList<ChangeBacklog.Entry>>()
@@ -281,28 +368,28 @@ internal class ServerChangeFollower(
                 }
                 applyQuietly(wanted.identity, changes, table = key.first, schema = key.second)
             }
-            reportDiscard(backlog)
+            reportDiscard(watched, backlog)
         }
     }
 
     /**
-     * Once changes were discarded, reads every watched table again, which brings what they would
-     * have, as a join does, and logs it once: a discard during those marks is folded in, and the
-     * marks are made again for it. Never a change itself.
+     * Once changes of [watched] were discarded, reads it again, which brings what they would have,
+     * as a join does, and logs it once: a discard during that mark is folded in, and the mark is
+     * made again for it. Never a change itself.
      */
-    private suspend fun reportDiscard(backlog: ChangeBacklog) {
+    private suspend fun reportDiscard(watched: WatchedTable, backlog: ChangeBacklog) {
         var total = 0
         while (true) {
             val discarded = backlog.takeDiscarded()
             if (discarded == 0) break
             total += discarded
-            markEveryTableStale()
+            markStaleQuietly(watched)
         }
         if (total == 0) return
-        val names = tables.joinToString { watched -> watched.qualifiedName() }
         engineLogger.warning {
-            "Realtime: $total change(s) waited to be applied, more than the $backlogCapacity the " +
-                "client keeps; they are discarded, and the cached queries of $names are read again"
+            "Realtime: $total change(s) to ${watched.qualifiedName()} waited to be applied, more " +
+                "than the $backlogCapacity the client keeps; they are discarded, and its cached " +
+                "queries are read again"
         }
     }
 
@@ -333,10 +420,9 @@ internal class ServerChangeFollower(
         }
     }
 
-    /** Marks every watched table's cached queries stale, each in its own schema. */
-    private suspend fun markEveryTableStale() {
-        val defaultSchema = defaultSchema()
-        for (watched in tables) markStaleQuietly(watched.table, watched.schema ?: defaultSchema)
+    /** Marks [watched]'s cached queries stale, in its own schema. */
+    private suspend fun markStaleQuietly(watched: WatchedTable) {
+        markStaleQuietly(watched.table, watched.schema ?: defaultSchema())
     }
 
     /** Marks [table]'s cached queries stale; a failure is logged, never thrown. */
@@ -355,9 +441,25 @@ internal class ServerChangeFollower(
 
     companion object {
         /**
-         * How many received changes may wait to be applied before the backlog is discarded and the
-         * watched tables read again: past this, a fetch costs less than the patch would.
+         * How many received changes of one table may wait to be applied before its backlog is
+         * discarded and the table read again: past this, a fetch costs less than the patch would.
          */
         const val BACKLOG_CAPACITY: Int = 5_000
+
+        /**
+         * The tables' statuses summed up, as one value: a stall of any table, the first in the
+         * order they were named, before a join in flight, before a pause, before off; subscribed
+         * only once every table is. No table is [RealtimeStatus.Off].
+         */
+        fun aggregateOf(statuses: Map<RealtimeTable, RealtimeStatus>): RealtimeStatus {
+            val all = statuses.values
+            return all.firstOrNull { status -> status is RealtimeStatus.Stalled }
+                ?: when {
+                    RealtimeStatus.Subscribing in all -> RealtimeStatus.Subscribing
+                    RealtimeStatus.Paused in all -> RealtimeStatus.Paused
+                    all.isEmpty() || RealtimeStatus.Off in all -> RealtimeStatus.Off
+                    else -> RealtimeStatus.Subscribed
+                }
+        }
     }
 }
