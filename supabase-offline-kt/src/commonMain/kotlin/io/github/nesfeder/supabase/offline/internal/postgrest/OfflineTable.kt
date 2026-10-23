@@ -543,12 +543,13 @@ internal class OfflineTable(
     /**
      * Sends or queues one write. `OnlineOnly` sends it and nothing else. `QueueIfOffline` saves it
      * to the mutation queue first and sends it at once only at the head of its identity's queue:
-     * accepted, it is `Applied`; unanswered or answered `503`/`520`, so that it may not have run,
-     * it stays `Queued`; refused, it leaves the queue and the failure is thrown; behind other
-     * mutations, it waits and a pass is requested. A write the queue cannot hold faithfully — a dry
-     * run, one it cannot classify, a filter it cannot record, an unknown identity — is sent
-     * directly and never queued. The request lambda runs up to three times: built once for the
-     * schema, the queue capture and the cache patch, once to tell a dry run and once to send.
+     * accepted, it is `Applied`; unanswered, or answered with what a replay keeps queued too (a
+     * `503` or `429`, say), it stays `Queued`; refused, it leaves the queue and the failure is
+     * thrown; behind other mutations, it waits and a pass is requested. A write the queue cannot
+     * hold faithfully — a dry run, one it cannot classify, a filter it cannot record, an unknown
+     * identity — is sent directly and never queued. The request lambda runs up to three times:
+     * built once for the schema, the queue capture and the cache patch, once to tell a dry run and
+     * once to send.
      *
      * @param perform Sends the write on the handle it is given: this builder's, or one the dry-run
      *   check reads it on.

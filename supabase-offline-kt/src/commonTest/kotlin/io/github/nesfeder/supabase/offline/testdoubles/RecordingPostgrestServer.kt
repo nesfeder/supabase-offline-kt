@@ -173,6 +173,18 @@ internal class RecordingPostgrestServer(
                     headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()),
             )
 
+        /**
+         * An answer from a gateway in front of PostgREST, such as a load balancer or Cloudflare:
+         * [status] with an HTML page instead of PostgREST's error body, which supabase-kt raises as
+         * a `PostgrestRestException` carrying that status and no code.
+         */
+        fun MockRequestHandleScope.gatewayError(status: HttpStatusCode): HttpResponseData =
+            respond(
+                content = "<html><body>${status.value} ${status.description}</body></html>",
+                status = status,
+                headers = headersOf(HttpHeaders.ContentType, ContentType.Text.Html.toString()),
+            )
+
         /** A transport failure: the request never reaches a server. */
         fun connectivityFailure(): Nothing = throw IOException("network unreachable")
 

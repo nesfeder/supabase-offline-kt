@@ -5,6 +5,7 @@ package io.github.nesfeder.supabase.offline.testdoubles
 import io.github.nesfeder.supabase.offline.internal.db.CachedQueryRow
 import io.github.nesfeder.supabase.offline.internal.db.MutationDao
 import io.github.nesfeder.supabase.offline.internal.db.MutationRow
+import io.github.nesfeder.supabase.offline.internal.db.PendingGuardedMutation
 import io.github.nesfeder.supabase.offline.internal.db.QueryCacheDao
 import io.github.nesfeder.supabase.offline.internal.testing.InMemoryMutationDao
 import io.github.nesfeder.supabase.offline.internal.testing.InMemoryQueryCacheDao
@@ -283,6 +284,22 @@ internal class FakeMutationDao : InMemoryMutationDao() {
         beforeTableRead?.invoke(table)
         pendingListReads++
         return super.pendingForTable(table)
+    }
+
+    /**
+     * How many times a base forward read the later guarded writes of a table: their filters and
+     * bases, never a body or an unguarded row.
+     */
+    var guardedBaseReads: Int = 0
+        private set
+
+    override suspend fun pendingGuardedAfter(
+        table: String,
+        afterId: Long,
+        owner: String?,
+    ): List<PendingGuardedMutation> {
+        guardedBaseReads++
+        return super.pendingGuardedAfter(table, afterId, owner)
     }
 
     override suspend fun allForTable(table: String): List<MutationRow> {
