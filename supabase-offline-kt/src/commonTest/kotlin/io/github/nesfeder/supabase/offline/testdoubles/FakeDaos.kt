@@ -5,11 +5,11 @@ package io.github.nesfeder.supabase.offline.testdoubles
 import io.github.nesfeder.supabase.offline.internal.db.CachedQueryRow
 import io.github.nesfeder.supabase.offline.internal.db.MutationDao
 import io.github.nesfeder.supabase.offline.internal.db.MutationRow
+import io.github.nesfeder.supabase.offline.internal.db.PayloadLength
+import io.github.nesfeder.supabase.offline.internal.db.PendingGuardedMutation
 import io.github.nesfeder.supabase.offline.internal.db.QueryCacheDao
 import io.github.nesfeder.supabase.offline.internal.testing.InMemoryMutationDao
 import io.github.nesfeder.supabase.offline.internal.testing.InMemoryQueryCacheDao
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.update
 
 /*
@@ -31,30 +31,9 @@ internal class FakeQueryCacheDao : InMemoryQueryCacheDao() {
     var writes: Int = 0
         private set
 
-    /** Cumulative number of rows removed by [deleteOldestPayloadRows] — for eviction assertions. */
+    /** Cumulative number of rows removed by [deletePayloads] — for eviction assertions. */
     var evictedRows: Int = 0
         private set
-
-    /**
-     * Number of times [deleteOldestPayloadRows] has been invoked — for iteration-cap assertions.
-     */
-    var deleteCallCount: Int = 0
-        private set
-
-    /**
-     * When non-null, [totalPayloadBytes] returns this fixed value instead of summing the live rows.
-     * Lets eviction tests reproduce the pathological "measured size never drops below the limit"
-     * condition that the eviction loop's progress guard and iteration cap defend against.
-     */
-    var fixedTotalPayloadBytes: Long? = null
-
-    /**
-     * When non-null, [deleteOldestPayloadRows] reports this many deleted rows without touching the
-     * backing map. Combined with [fixedTotalPayloadBytes], this holds the measured size pinned
-     * above the limit while every delete claims progress, exercising the hard iteration-cap
-     * backstop.
-     */
-    var forcedDeleteCount: Int? = null
 
     /**
      * Runs inside [allForTable], with the table, after its snapshot is taken and before it is
@@ -99,6 +78,7 @@ internal class FakeQueryCacheDao : InMemoryQueryCacheDao() {
                 updatedAt = updatedAt,
             )
         rows.update { current -> current + ((table to cacheKey) to row) }
+        assignRowId(table to cacheKey)
     }
 
     /** Look up a row without going through the suspend contract. */
@@ -113,18 +93,6 @@ internal class FakeQueryCacheDao : InMemoryQueryCacheDao() {
         onGetSnapshot?.invoke(table, cacheKey)
         return row
     }
-
-    /**
-     * Runs before [observe] hands each row to its collector, as a slow change notification would; a
-     * test delays it so a reader hears of a payload change after other changes. `null` hands it on
-     * at once.
-     */
-    var beforeObservedRowDelivered: (suspend (table: String, cacheKey: String) -> Unit)? = null
-
-    override fun observe(table: String, cacheKey: String): Flow<CachedQueryRow?> =
-        super.observe(table, cacheKey).onEach {
-            beforeObservedRowDelivered?.invoke(table, cacheKey)
-        }
 
     override suspend fun allForTable(table: String): List<CachedQueryRow> {
         val snapshot = super.allForTable(table)
@@ -161,18 +129,70 @@ internal class FakeQueryCacheDao : InMemoryQueryCacheDao() {
         return changed
     }
 
-    override suspend fun totalPayloadBytes(): Long =
-        fixedTotalPayloadBytes ?: super.totalPayloadBytes()
-
-    override suspend fun deleteOldestPayloadRows(limit: Int, keptCacheKeys: List<String>): Int {
-        deleteCallCount++
-        forcedDeleteCount?.let { forced ->
-            evictedRows += forced
-            return forced
-        }
-        val deleted = super.deleteOldestPayloadRows(limit, keptCacheKeys)
+    override suspend fun deletePayloads(
+        table: String,
+        rowIds: List<Long>,
+        fetchedAtOrBefore: Long,
+    ): Int {
+        val deleted = super.deletePayloads(table, rowIds, fetchedAtOrBefore)
         evictedRows += deleted
         return deleted
+    }
+}
+
+/**
+ * [delegate], counting what an eviction pass and a patch cost the table: each read of every
+ * payload's length (a sum, or the listing in eviction order), each delete statement of a pass, and
+ * each transaction. A test asserts the counts, and may hold a pass at [afterPayloadLengthsRead].
+ */
+internal class PayloadScanCountingDao(private val delegate: QueryCacheDao) :
+    QueryCacheDao by delegate {
+
+    /** How many times every payload's length was summed ([totalPayloadBytes]). */
+    var payloadSums: Int = 0
+        private set
+
+    /** How many times every payload's length was listed ([payloadLengthsOldestFirst]). */
+    var payloadLengthReads: Int = 0
+        private set
+
+    /** How many delete statements eviction passes ran ([deletePayloads]). */
+    var evictionDeletes: Int = 0
+        private set
+
+    /** How many transactions were run ([runInTransaction]). */
+    var transactions: Int = 0
+        private set
+
+    /** Runs after each listing of the payloads' lengths, before it is returned. */
+    var afterPayloadLengthsRead: (suspend () -> Unit)? = null
+
+    override suspend fun totalPayloadBytes(): Long {
+        payloadSums++
+        return delegate.totalPayloadBytes()
+    }
+
+    override suspend fun payloadLengthsOldestFirst(
+        keptCacheKeys: List<String>
+    ): List<PayloadLength> {
+        payloadLengthReads++
+        val lengths = delegate.payloadLengthsOldestFirst(keptCacheKeys)
+        afterPayloadLengthsRead?.invoke()
+        return lengths
+    }
+
+    override suspend fun deletePayloads(
+        table: String,
+        rowIds: List<Long>,
+        fetchedAtOrBefore: Long,
+    ): Int {
+        evictionDeletes++
+        return delegate.deletePayloads(table, rowIds, fetchedAtOrBefore)
+    }
+
+    override suspend fun runInTransaction(block: suspend () -> Unit) {
+        transactions++
+        delegate.runInTransaction(block)
     }
 }
 
@@ -285,6 +305,22 @@ internal class FakeMutationDao : InMemoryMutationDao() {
         return super.pendingForTable(table)
     }
 
+    /**
+     * How many times a base forward read the later guarded writes of a table: their filters and
+     * bases, never a body or an unguarded row.
+     */
+    var guardedBaseReads: Int = 0
+        private set
+
+    override suspend fun pendingGuardedAfter(
+        table: String,
+        afterId: Long,
+        owner: String?,
+    ): List<PendingGuardedMutation> {
+        guardedBaseReads++
+        return super.pendingGuardedAfter(table, afterId, owner)
+    }
+
     override suspend fun allForTable(table: String): List<MutationRow> {
         beforeTableRead?.invoke(table)
         tableListReadCounts[table] = (tableListReadCounts[table] ?: 0) + 1
@@ -359,5 +395,25 @@ internal class FakeDeleteAllFailingMutationDao(real: MutationDao) : MutationDao 
 internal class FakeDeleteAllFailingQueryCacheDao(real: QueryCacheDao) : QueryCacheDao by real {
     override suspend fun deleteAll() {
         error("Scripted failure of the object-cache delete")
+    }
+}
+
+/**
+ * A real [QueryCacheDao], Room's in the on-disk tests, whose second payload write ([updatePayload])
+ * fails, as a full disk would part-way through a patch. A test checks with it that a patch failing
+ * part-way changes nothing on disk.
+ */
+internal class FakeSecondPayloadWriteFailingQueryCacheDao(private val real: QueryCacheDao) :
+    QueryCacheDao by real {
+    private var payloadWrites = 0
+
+    override suspend fun updatePayload(
+        table: String,
+        cacheKey: String,
+        payload: String,
+        updatedAt: Long,
+    ): Int {
+        if (++payloadWrites == 2) error("Scripted failure of the second payload write")
+        return real.updatePayload(table, cacheKey, payload, updatedAt)
     }
 }

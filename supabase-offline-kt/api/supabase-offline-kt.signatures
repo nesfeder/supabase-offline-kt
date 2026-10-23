@@ -44,6 +44,7 @@ io.github.nesfeder.supabase.offline: fun RealtimeTables.table(table: String, sch
 io.github.nesfeder.supabase.offline: suspend fun (OfflineBucketApi).ensureLocalFile(path: String, isPublic: Boolean = …)  // androidMain
 io.github.nesfeder.supabase.offline: suspend fun (OfflineBucketApi).ensureLocalPath(path: String, isPublic: Boolean = …)  // iosMain
 io.github.nesfeder.supabase.offline: suspend fun (OfflineBucketApi).ensureLocalUri(path: String, isPublic: Boolean = …)  // androidMain
+io.github.nesfeder.supabase.offline: suspend fun (OfflineBucketApi).localFileIfCached(path: String)  // androidMain
 io.github.nesfeder.supabase.offline: suspend fun (OfflineBucketApi).localPathIfCached(path: String)  // iosMain
 io.github.nesfeder.supabase.offline: suspend fun (OfflineBucketApi).localUriIfCached(path: String)  // androidMain
 io.github.nesfeder.supabase.offline: suspend fun <reified T : Any> (Offline).applyServerRecord(table: String, record: T, primaryKeys: List<String>? = …, schema: String? = …)
@@ -58,6 +59,7 @@ io.github.nesfeder.supabase.offline: suspend fun Offline.applyServerDelete(table
 io.github.nesfeder.supabase.offline: suspend fun Offline.applyServerRecord(table: String, record: JsonObject, primaryKeys: List<String>? = …, schema: String? = …)
 io.github.nesfeder.supabase.offline: suspend fun Offline.clearLocalData()
 io.github.nesfeder.supabase.offline: suspend fun Offline.close()
+io.github.nesfeder.supabase.offline: suspend fun Offline.conflictedMutationList()
 io.github.nesfeder.supabase.offline: suspend fun Offline.disableNetwork()
 io.github.nesfeder.supabase.offline: suspend fun Offline.disableRealtime()
 io.github.nesfeder.supabase.offline: suspend fun Offline.discardPendingMutation(id: Long)
@@ -66,6 +68,7 @@ io.github.nesfeder.supabase.offline: suspend fun Offline.dismissRejectedMutation
 io.github.nesfeder.supabase.offline: suspend fun Offline.enableNetwork()
 io.github.nesfeder.supabase.offline: suspend fun Offline.enableRealtime()
 io.github.nesfeder.supabase.offline: suspend fun Offline.pendingMutationCount(table: String? = …)
+io.github.nesfeder.supabase.offline: suspend fun Offline.rejectedMutationList()
 io.github.nesfeder.supabase.offline: suspend fun Offline.resolveConflictedMutation(id: Long, resolution: ConflictResolution)
 io.github.nesfeder.supabase.offline: suspend fun Offline.retryRejectedMutation(id: Long)
 io.github.nesfeder.supabase.offline: suspend fun Offline.rpc(function: String, parameters: JsonObject, request: RpcRequestBuilder.() -> Unit = …)

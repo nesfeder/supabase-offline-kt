@@ -87,6 +87,9 @@ internal class OfflinePlugin(
 
     override fun rejectedMutations(): Flow<List<RejectedMutation>> = client.rejectedMutations()
 
+    override suspend fun rejectedMutationList(): List<RejectedMutation> =
+        client.rejectedMutationList()
+
     override suspend fun dismissRejectedMutation(id: Long): Unit =
         client.dismissRejectedMutation(id)
 
@@ -94,6 +97,9 @@ internal class OfflinePlugin(
 
     override fun conflictedMutations(): Flow<List<ConflictedMutation>> =
         client.conflictedMutations()
+
+    override suspend fun conflictedMutationList(): List<ConflictedMutation> =
+        client.conflictedMutationList()
 
     override suspend fun resolveConflictedMutation(id: Long, resolution: ConflictResolution): Unit =
         client.resolveConflictedMutation(id, resolution)

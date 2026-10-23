@@ -48,7 +48,7 @@ Reached through `supabase.offline.storage.from(bucket)`.
 | Call | What the library does |
 | --- | --- |
 | `downloadAuthenticated`, `downloadPublic`, to bytes or to a channel | **Cached**: network first, the cached copy when the network fails. A "not found" drops the copy. An image transform is cached apart, per transform |
-| `cachedFile`, `ensureCachedFile`, and the platform helpers (`ensureLocalFile`, `ensureLocalUri`, `localUriIfCached` on Android; `ensureLocalPath`, `localPathIfCached` on iOS) | The file cache itself: `cachedFile` never touches the network, `ensureCachedFile` downloads only when nothing is cached |
+| `cachedFile`, `ensureCachedFile`, and the platform helpers (`ensureLocalFile`, `ensureLocalUri`, `localFileIfCached`, `localUriIfCached` on Android; `ensureLocalPath`, `localPathIfCached` on iOS) | The file cache itself: `cachedFile` never touches the network, `ensureCachedFile` downloads only when nothing is cached |
 | `upload`, `update`, `delete`, `move`, `copy`, `uploadAsFlow`, resumable uploads, uploads to a signed URL | **Passed through**, online only, never queued. A write that reaches the server drops the cached copies it made stale |
 | `createSignedUrl`, `createSignedUrls`, `list`, `info`, `exists` | **Passed through** |
 | `publicUrl`, `authenticatedUrl` and the other URL builders | Built on the device; nothing is sent |

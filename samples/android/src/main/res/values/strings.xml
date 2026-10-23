@@ -264,7 +264,7 @@
     <string name="failure_server_refused">The server refused it (%1$d): %2$s</string>
     <string name="failure_invalid_request">The library refused the request before sending it: %1$s</string>
     <string name="failure_row_format">A row couldn’t be read or written by this version of the app.</string>
-    <string name="failure_client_unavailable">The connection to Supabase is closed or not set up.</string>
+    <string name="failure_client_unavailable">The connection to Supabase is closed.</string>
     <string name="failure_unknown_library">The offline library reported a failure this version of the app doesn’t know.</string>
     <string name="sync_developer">Try it</string>
     <string name="sync_queue_invalid">Queue an invalid title</string>

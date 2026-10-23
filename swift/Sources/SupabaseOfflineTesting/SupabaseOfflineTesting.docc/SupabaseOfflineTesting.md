@@ -26,6 +26,8 @@ of your own.
 - ``serverError(status:code:message:details:hint:)``
 - ``syncReport(syncedCount:rejected:remainingCount:alreadyOnServerCount:heldBehindOtherTablesCount:)``
 - ``syncReport(syncedCount:rejected:remainingCount:alreadyOnServerCount:heldBehindOtherTablesCount:conflictsResolvedCount:conflictsKeptServerCount:conflicted:)``
+- ``syncReport(syncedCount:rejected:remainingCount:alreadyOnServerCount:heldBehindOtherTablesCount:conflictsResolvedCount:conflictsKeptServerCount:conflicted:stopReason:)``
+- ``syncStopReason(kind:error:)``
 - ``syncStatus(network:pendingMutationCount:rejectedMutationCount:isSyncing:lastSyncedAt:lastSyncError:)``
 - ``syncStatus(network:pendingMutationCount:rejectedMutationCount:isSyncing:lastSyncedAt:lastSyncError:conflictedMutationCount:)``
 - ``mutationConflict(mutationId:table:operation:rowKey:base:local:server:changedOnServer:conflictingColumns:)``

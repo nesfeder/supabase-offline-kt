@@ -64,7 +64,6 @@ class LiveEvictionTest {
                     queryCacheLimits =
                         QueryCacheLimits(
                             maxPayloadBytes = (LARGE_LIST.length + LIST_A.length + 1).toLong(),
-                            evictionBatchSize = 1,
                             evictionHeadroomBytes = 0,
                         ),
                     nowMillis = { clock },

@@ -80,6 +80,6 @@ public class BridgeFakeRealtime {
             report(row)
             null
         } catch (failure: Throwable) {
-            bridgeErrorOf(failure, clientClosing = false)
+            bridgeErrorOf(failure)
         }
 }

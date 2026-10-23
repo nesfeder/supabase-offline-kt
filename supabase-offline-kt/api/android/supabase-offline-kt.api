@@ -212,6 +212,7 @@ public abstract interface class io/github/nesfeder/supabase/offline/Offline : io
 	public static synthetic fun applyServerRecord$default (Lio/github/nesfeder/supabase/offline/Offline;Ljava/lang/String;Lkotlinx/serialization/json/JsonObject;Ljava/util/List;Ljava/lang/String;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
 	public abstract fun clearLocalData (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun close (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public abstract fun conflictedMutationList (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun conflictedMutations ()Lkotlinx/coroutines/flow/Flow;
 	public abstract fun disableNetwork (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun disableRealtime (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
@@ -233,6 +234,7 @@ public abstract interface class io/github/nesfeder/supabase/offline/Offline : io
 	public static synthetic fun pendingMutationCountFlow$default (Lio/github/nesfeder/supabase/offline/Offline;Ljava/lang/String;ILjava/lang/Object;)Lkotlinx/coroutines/flow/Flow;
 	public abstract fun pendingMutations (Ljava/lang/String;)Lkotlinx/coroutines/flow/Flow;
 	public static synthetic fun pendingMutations$default (Lio/github/nesfeder/supabase/offline/Offline;Ljava/lang/String;ILjava/lang/Object;)Lkotlinx/coroutines/flow/Flow;
+	public abstract fun rejectedMutationList (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun rejectedMutations ()Lkotlinx/coroutines/flow/Flow;
 	public abstract fun resolveConflictedMutation (JLio/github/nesfeder/supabase/offline/ConflictResolution;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun retryRejectedMutation (JLkotlin/coroutines/Continuation;)Ljava/lang/Object;
@@ -291,7 +293,11 @@ public final class io/github/nesfeder/supabase/offline/OfflineBucketApi_androidK
 	public static synthetic fun ensureLocalFile$default (Lio/github/nesfeder/supabase/offline/OfflineBucketApi;Ljava/lang/String;ZLkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
 	public static final fun ensureLocalUri (Lio/github/nesfeder/supabase/offline/OfflineBucketApi;Ljava/lang/String;ZLkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public static synthetic fun ensureLocalUri$default (Lio/github/nesfeder/supabase/offline/OfflineBucketApi;Ljava/lang/String;ZLkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+	public static final fun localFileIfCached (Lio/github/nesfeder/supabase/offline/OfflineBucketApi;Ljava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public static final fun localUriIfCached (Lio/github/nesfeder/supabase/offline/OfflineBucketApi;Ljava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+}
+
+public final class io/github/nesfeder/supabase/offline/OfflineClientClosedException : java/lang/IllegalStateException {
 }
 
 public abstract class io/github/nesfeder/supabase/offline/OfflineException : java/lang/Exception {
@@ -582,6 +588,7 @@ public final class io/github/nesfeder/supabase/offline/SyncReport {
 	public final fun component6 ()I
 	public final fun component7 ()I
 	public final fun component8 ()Ljava/util/List;
+	public final fun component9 ()Lio/github/nesfeder/supabase/offline/SyncStopReason;
 	public fun equals (Ljava/lang/Object;)Z
 	public final fun getAlreadyOnServerCount ()I
 	public final fun getConflicted ()Ljava/util/List;
@@ -590,6 +597,7 @@ public final class io/github/nesfeder/supabase/offline/SyncReport {
 	public final fun getHeldBehindOtherTablesCount ()I
 	public final fun getRejected ()Ljava/util/List;
 	public final fun getRemainingCount ()I
+	public final fun getStopReason ()Lio/github/nesfeder/supabase/offline/SyncStopReason;
 	public final fun getSyncedCount ()I
 	public fun hashCode ()I
 	public fun toString ()Ljava/lang/String;
@@ -612,6 +620,74 @@ public final class io/github/nesfeder/supabase/offline/SyncStatus {
 	public final fun getRejectedMutationCount ()I
 	public fun hashCode ()I
 	public final fun isSyncing ()Z
+	public fun toString ()Ljava/lang/String;
+}
+
+public abstract class io/github/nesfeder/supabase/offline/SyncStopReason {
+}
+
+public final class io/github/nesfeder/supabase/offline/SyncStopReason$Completed : io/github/nesfeder/supabase/offline/SyncStopReason {
+	public static final field INSTANCE Lio/github/nesfeder/supabase/offline/SyncStopReason$Completed;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/github/nesfeder/supabase/offline/SyncStopReason$HeldBehindOtherTables : io/github/nesfeder/supabase/offline/SyncStopReason {
+	public static final field INSTANCE Lio/github/nesfeder/supabase/offline/SyncStopReason$HeldBehindOtherTables;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/github/nesfeder/supabase/offline/SyncStopReason$LocalDataCleared : io/github/nesfeder/supabase/offline/SyncStopReason {
+	public static final field INSTANCE Lio/github/nesfeder/supabase/offline/SyncStopReason$LocalDataCleared;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/github/nesfeder/supabase/offline/SyncStopReason$LocalFailure : io/github/nesfeder/supabase/offline/SyncStopReason {
+	public final fun component1 ()Lio/github/nesfeder/supabase/offline/SyncFailedException;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getError ()Lio/github/nesfeder/supabase/offline/SyncFailedException;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/github/nesfeder/supabase/offline/SyncStopReason$NetworkDisabled : io/github/nesfeder/supabase/offline/SyncStopReason {
+	public static final field INSTANCE Lio/github/nesfeder/supabase/offline/SyncStopReason$NetworkDisabled;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/github/nesfeder/supabase/offline/SyncStopReason$NetworkUnavailable : io/github/nesfeder/supabase/offline/SyncStopReason {
+	public static final field INSTANCE Lio/github/nesfeder/supabase/offline/SyncStopReason$NetworkUnavailable;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/github/nesfeder/supabase/offline/SyncStopReason$ServerFailure : io/github/nesfeder/supabase/offline/SyncStopReason {
+	public final fun component1 ()Lio/github/nesfeder/supabase/offline/SyncFailedException;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getError ()Lio/github/nesfeder/supabase/offline/SyncFailedException;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/github/nesfeder/supabase/offline/SyncStopReason$SessionChanged : io/github/nesfeder/supabase/offline/SyncStopReason {
+	public static final field INSTANCE Lio/github/nesfeder/supabase/offline/SyncStopReason$SessionChanged;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/github/nesfeder/supabase/offline/SyncStopReason$SessionNotReady : io/github/nesfeder/supabase/offline/SyncStopReason {
+	public static final field INSTANCE Lio/github/nesfeder/supabase/offline/SyncStopReason$SessionNotReady;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
 	public fun toString ()Ljava/lang/String;
 }
 
