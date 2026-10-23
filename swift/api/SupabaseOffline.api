@@ -168,12 +168,15 @@ property OfflineBucketApi.UploadSignedURL.url | let url: URL
 method OfflineBucketApi.authenticatedURL(path:) | func authenticatedURL(path: String) async throws -> URL
 property OfflineBucketApi.bucketId | let bucketId: String
 method OfflineBucketApi.cachedFile(path:) | func cachedFile(path: String) async throws -> CachedFile?
+method OfflineBucketApi.cachedFile(path:transform:) | func cachedFile(path: String, transform: OfflineBucketApi.ImageTransformation) async throws -> CachedFile?
 method OfflineBucketApi.copy(from:to:destinationBucket:) | func copy(from source: String, to destination: String, destinationBucket: String? = nil) async throws
 method OfflineBucketApi.createSignedURL(path:expiresIn:transform:) | func createSignedURL(path: String, expiresIn: Int, transform: OfflineBucketApi.ImageTransformation? = nil) async throws -> URL
 method OfflineBucketApi.createSignedURLs(paths:expiresIn:) | func createSignedURLs(paths: [String], expiresIn: Int) async throws -> [OfflineBucketApi.SignedURL]
 method OfflineBucketApi.createSignedUploadURL(path:upsert:) | func createSignedUploadURL(path: String, upsert: Bool = false) async throws -> OfflineBucketApi.UploadSignedURL
 method OfflineBucketApi.download(path:options:isPublic:) | func download(path: String, options: OfflineBucketApi.ImageTransformation? = nil, isPublic: Bool = false) async throws -> Data
 method OfflineBucketApi.ensureCachedFile(path:isPublic:) | func ensureCachedFile(path: String, isPublic: Bool = false) async throws -> CachedFile
+method OfflineBucketApi.evictCachedFile(path:) | func evictCachedFile(path: String) async throws
+method OfflineBucketApi.evictCachedFile(path:transform:) | func evictCachedFile(path: String, transform: OfflineBucketApi.ImageTransformation) async throws
 method OfflineBucketApi.exists(path:) | func exists(path: String) async throws -> Bool
 method OfflineBucketApi.info(path:) | func info(path: String) async throws -> OfflineBucketApi.FileObjectV2
 method OfflineBucketApi.list(path:options:) | func list(path: String? = nil, options: OfflineBucketApi.StorageListFilter? = nil) async throws -> [OfflineBucketApi.FileObject]
@@ -326,6 +329,7 @@ method OfflineSelectRequestBuilder.applying(_:) | func applying(_ change: Offlin
 method OfflineSelectRequestBuilder.execute() | @discardableResult func execute() async throws -> OfflineResponse<Void>
 method OfflineSelectRequestBuilder.execute(_:) | func execute<Value>(_ type: Value.Type = Value.self) async throws -> OfflineResponse<Value> where Value : Decodable, Value : Sendable
 struct OfflineStorage | struct OfflineStorage
+method OfflineStorage.clearFileCache() | func clearFileCache() async throws
 method OfflineStorage.from(_:) | func from(_ bucketId: String) -> OfflineBucketApi
 enum OfflineTextSearchType | enum OfflineTextSearchType
 init OfflineTextSearchType.init(rawValue:) | init?(rawValue: String)

@@ -236,16 +236,17 @@ internal class StorageFileCache(
     private val generation = AtomicLong(0L)
 
     /**
-     * The lock of the running downloads' bookkeeping: [invalidationSequence], [invalidatedAt] and
-     * [runningDownloads]. The operations that bump or check the sequence take it under [lock];
-     * [beginDownload] and [endDownload] take it alone, so a download's start — an offline read's
-     * too — waits for no commit, eviction pass or clear.
+     * The lock of the running downloads' bookkeeping: [invalidationSequence], [invalidatedAt],
+     * [entryInvalidatedAt] and [runningDownloads]. The operations that bump or check the sequence
+     * take it under [lock]; [beginDownload] and [endDownload] take it alone, so a download's start
+     * — an offline read's too — waits for no commit, eviction pass or clear.
      */
     private val downloadsLock = Mutex()
 
     /**
-     * Bumped each time an object's copies are dropped ([removeObjectLocked]), so a download that
-     * started before the drop is never committed over it. Guarded by [downloadsLock].
+     * Bumped each time an object's copies, or one entry's, are dropped ([removeObjectLocked],
+     * [removeEntryLocked]), so a download that started before the drop is never committed over it.
+     * Guarded by [downloadsLock].
      */
     private var invalidationSequence = 0L
 
@@ -254,6 +255,13 @@ internal class StorageFileCache(
      * that started before the drop is still running. Guarded by [downloadsLock].
      */
     private val invalidatedAt = mutableMapOf<String, Long>()
+
+    /**
+     * Entry key → [invalidationSequence] when that entry alone was last dropped, kept as
+     * [invalidatedAt] is. Apart from it, since an untransformed entry's key is its object's.
+     * Guarded by [downloadsLock].
+     */
+    private val entryInvalidatedAt = mutableMapOf<String, Long>()
 
     /**
      * The downloads in progress, between [beginDownload] and [endDownload]. Guarded by
@@ -731,6 +739,18 @@ internal class StorageFileCache(
     }
 
     /**
+     * Drops the cached copy of [entry] alone: one transformed variant, or the original without its
+     * variants. A download of that entry still running is never committed over the drop, as
+     * [invalidateObject] has it for a whole object; downloads of the object's other entries are
+     * left to commit.
+     *
+     * @param entry the entry.
+     */
+    suspend fun invalidateEntry(entry: FileCacheEntry) {
+        withContext(ioDispatcher + NonCancellable) { lock.withLock { removeEntryLocked(entry) } }
+    }
+
+    /**
      * Mirrors a server-side move in the cache: the destination's stale copies are dropped, and the
      * source's copy, if cached, becomes the destination's. Transformed variants of the source are
      * dropped; they are cached again when next downloaded.
@@ -756,12 +776,13 @@ internal class StorageFileCache(
     }
 
     /**
-     * Empties the cache for an identity change. Runs [clearDatabase] — the store's own wipe, which
-     * removes every storage row — and deletes both cache directories, all under the lock and after
-     * bumping the generation, so no download that started before can commit into the emptied cache.
-     * The temporary file of a download still running stays, for its caller to read and [discard].
+     * Empties the cache, for an identity change or [clearFiles]. Runs [clearDatabase] — the store's
+     * own wipe, or the cache's rows alone, removing every storage row either way — and deletes both
+     * cache directories, all under the lock and after bumping the generation, so no download that
+     * started before can commit into the emptied cache. The temporary file of a download still
+     * running stays, for its caller to read and [discard].
      *
-     * @param clearDatabase the store's wipe.
+     * @param clearDatabase the wipe of the rows.
      */
     suspend fun clear(clearDatabase: suspend () -> Unit) {
         withContext(ioDispatcher + NonCancellable) {
@@ -777,6 +798,14 @@ internal class StorageFileCache(
                 if (directoriesPrepared) prepareDirectories()
             }
         }
+    }
+
+    /**
+     * Empties the cache and nothing else, as [clear] does: every row and file goes, and no download
+     * that started before commits. The rest of the database is left as it is.
+     */
+    suspend fun clearFiles() {
+        clear { cachedFileDao.deleteAll() }
     }
 
     /**
@@ -841,6 +870,24 @@ internal class StorageFileCache(
         entryFor(bucketId, objectPath)?.let { entry -> deleteContained(entry.file) }
     }
 
+    /**
+     * Drops [entry]'s row and file alone, and records the drop for the downloads of that entry
+     * still running, as [removeObjectLocked] does for a whole object.
+     */
+    private suspend fun removeEntryLocked(entry: FileCacheEntry) {
+        downloadsLock.withLock {
+            invalidationSequence += 1
+            if (runningDownloads.isNotEmpty()) entryInvalidatedAt[entry.key] = invalidationSequence
+        }
+        rowOf(entry.bucketId, entry.rowPath)?.let { row ->
+            removeRowLocked(row)
+            if (row.recordsOutdatedPath(entry))
+                deleteOrphanedOutdatedFileLocked(row.localPath.toPath().normalized())
+        }
+        // Even without a row: an outdated row may have recorded another path
+        deleteContained(entry.file)
+    }
+
     /** Deletes [row] and takes its recorded size off [trackedBytes]. */
     private suspend fun removeRowLocked(row: CachedFileRow) {
         cachedFileDao.delete(row.key)
@@ -848,12 +895,15 @@ internal class StorageFileCache(
     }
 
     /**
-     * Whether [entry]'s object had its copies dropped after the download that began at [start].
-     * Runs under [downloadsLock].
+     * Whether [entry]'s object, or [entry] alone, had its copies dropped after the download that
+     * began at [start]. Runs under [downloadsLock].
      */
-    private fun invalidatedSince(entry: FileCacheEntry, start: DownloadStart): Boolean =
-        (invalidatedAt[cachedFileKeyOf(entry.bucketId, entry.objectPath)] ?: Long.MIN_VALUE) >
-            start.sequence
+    private fun invalidatedSince(entry: FileCacheEntry, start: DownloadStart): Boolean {
+        val objectDropped =
+            invalidatedAt[cachedFileKeyOf(entry.bucketId, entry.objectPath)] ?: Long.MIN_VALUE
+        val entryDropped = entryInvalidatedAt[entry.key] ?: Long.MIN_VALUE
+        return maxOf(objectDropped, entryDropped) > start.sequence
+    }
 
     /**
      * Forgets the recorded drops no running download can be refused for: those at or before the
@@ -863,6 +913,7 @@ internal class StorageFileCache(
     private fun forgetStaleInvalidations() {
         val oldestStart = runningDownloads.minOfOrNull { it.sequence } ?: invalidationSequence
         invalidatedAt.values.removeAll { sequence -> sequence <= oldestStart }
+        entryInvalidatedAt.values.removeAll { sequence -> sequence <= oldestStart }
     }
 
     /**

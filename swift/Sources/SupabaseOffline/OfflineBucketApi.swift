@@ -282,13 +282,71 @@ public struct OfflineBucketApi: Sendable {
     /// network.
     ///
     /// Only an untransformed ``download(path:options:isPublic:)`` or ``ensureCachedFile(path:isPublic:)``
-    /// caches the copy this returns.
+    /// caches the copy this returns; a transformed download's copy is found with
+    /// ``cachedFile(path:transform:)``.
     ///
     /// - Throws: ``OfflineError``: `clientClosed` once the client is closed.
     public func cachedFile(path: String) async throws -> CachedFile? {
+        try await cachedFile(path: path, transformText: nil)
+    }
+
+    /// The cached copy of one image transformation of the object at `path`, or `nil` when there is
+    /// none; never touches the network.
+    ///
+    /// It is the copy a ``download(path:options:isPublic:)`` with the same transformation keeps,
+    /// and answers from offline: each transformation is a copy of its own, so a thumbnail can be
+    /// handed to an image view as a file. A transformation that sets nothing is the untransformed
+    /// object, as it is for a download.
+    ///
+    /// - Parameters:
+    ///   - path: The object's path in the bucket.
+    ///   - transform: The image transformation, as a download's `options:` sets it.
+    /// - Throws: ``OfflineError``: `clientClosed` once the client is closed.
+    public func cachedFile(path: String, transform: ImageTransformation) async throws -> CachedFile? {
+        try await cachedFile(path: path, transformText: transform.coreText())
+    }
+
+    /// The cached copy of `path` with the transformation the core reads from `transformText`.
+    private func cachedFile(path: String, transformText: String?) async throws -> CachedFile? {
         try await client.connection.call { core, complete in
-            core.storage.cachedFile(bucket: bucketId, path: path) { file, failure in
+            core.storage.cachedFile(bucket: bucketId, path: path, imageTransform: transformText) { file, failure in
                 complete(coreResult(file, failure) { $0.map(CachedFile.init(coreFile:)) })
+            }
+        }
+    }
+
+    /// Deletes every cached copy of the object at `path` from the device: the untransformed copy
+    /// and each image transformation. Nothing is sent, and the object stays in the bucket; the next
+    /// download fetches it again. Other objects' copies stay.
+    ///
+    /// A download of the object still running answers its caller but is not kept, as when the
+    /// object is uploaded again: an ``ensureCachedFile(path:isPublic:)`` running meanwhile
+    /// downloads it once more.
+    ///
+    /// - Throws: ``OfflineError``: `clientClosed` once the client is closed.
+    public func evictCachedFile(path: String) async throws {
+        try await evictCachedFile(path: path, transformText: nil)
+    }
+
+    /// Deletes the cached copy of one image transformation of the object at `path` from the device:
+    /// the copy ``cachedFile(path:transform:)`` with the same transformation returns.
+    ///
+    /// The untransformed copy and the other transformations stay; a transformation that sets
+    /// nothing is the untransformed copy, which goes alone. Nothing is sent.
+    ///
+    /// - Parameters:
+    ///   - path: The object's path in the bucket.
+    ///   - transform: The image transformation, as a download's `options:` sets it.
+    /// - Throws: ``OfflineError``: `clientClosed` once the client is closed.
+    public func evictCachedFile(path: String, transform: ImageTransformation) async throws {
+        try await evictCachedFile(path: path, transformText: transform.coreText())
+    }
+
+    /// Deletes the copies of `path` the core reads from `transformText`: every copy for `nil`.
+    private func evictCachedFile(path: String, transformText: String?) async throws {
+        try await client.connection.call { core, complete in
+            core.storage.evictCachedFile(bucket: bucketId, path: path, imageTransform: transformText) { failure in
+                complete(coreResult(failure))
             }
         }
     }

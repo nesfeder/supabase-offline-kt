@@ -64,8 +64,8 @@ public interface OfflineBucketApi : BucketApi {
 
     /**
      * The cached copy of the object at [path], or `null` when none is cached. Never touches the
-     * network. Only an untransformed download or [ensureCachedFile] caches the copy this returns;
-     * a transformed download's copy is found with a transform.
+     * network. Only an untransformed download or [ensureCachedFile] caches the copy this returns; a
+     * transformed download's copy is found with a transform.
      *
      * @param path the object path within this bucket.
      * @return the cached file, or `null`.
@@ -106,8 +106,8 @@ public interface OfflineBucketApi : BucketApi {
      * @throws IllegalStateException when local data or the file cache was cleared while the file
      *   was downloading; when the object was written through this client, or its copies evicted,
      *   while it was downloading, twice in a row (the first time, it is downloaded again); or when
-     *   a header set on this bucket made the request fetch only part of the object, which cannot
-     *   be the cached copy.
+     *   a header set on this bucket made the request fetch only part of the object, which cannot be
+     *   the cached copy.
      * @throws Exception the download's own failure when nothing is cached: supabase-kt's
      *   connectivity error offline, or its REST error from the server.
      */

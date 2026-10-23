@@ -1191,8 +1191,17 @@ __attribute__((swift_name("BridgeStorage")))
 /**
  * The cached copy of [path], or `null` with no error when none is cached; never touches the
  * network.
+ *
+ * @param imageTransform an image transform as for [createSignedUrl], whose cached copy a
+ *   download with it keeps, or `null` for the untransformed object's.
  */
-- (SOCBridgeCancellable *)cachedFileBucket:(NSString *)bucket path:(NSString *)path completion:(void (^)(SOCBridgeCachedFile * _Nullable, SOCBridgeError * _Nullable))completion __attribute__((swift_name("cachedFile(bucket:path:completion:)")));
+- (SOCBridgeCancellable *)cachedFileBucket:(NSString *)bucket path:(NSString *)path imageTransform:(NSString * _Nullable)imageTransform completion:(void (^)(SOCBridgeCachedFile * _Nullable, SOCBridgeError * _Nullable))completion __attribute__((swift_name("cachedFile(bucket:path:imageTransform:completion:)")));
+
+/**
+ * Deletes every downloaded file the library keeps on this device; the mutation queue and the
+ * cached rows stay.
+ */
+- (SOCBridgeCancellable *)clearFileCacheCompletion:(void (^)(SOCBridgeError * _Nullable))completion __attribute__((swift_name("clearFileCache(completion:)")));
 
 /** Copies the object at [from] to [to], in this bucket or [destinationBucket]. */
 - (SOCBridgeCancellable *)doCopyObjectBucket:(NSString *)bucket from:(NSString *)from to:(NSString *)to destinationBucket:(NSString * _Nullable)destinationBucket completion:(void (^)(SOCBridgeError * _Nullable))completion __attribute__((swift_name("doCopyObject(bucket:from:to:destinationBucket:completion:)")));
@@ -1234,6 +1243,14 @@ __attribute__((swift_name("BridgeStorage")))
 
 /** The cached copy of [path], downloading it into the cache first when none is cached. */
 - (SOCBridgeCancellable *)ensureCachedFileBucket:(NSString *)bucket path:(NSString *)path isPublic:(BOOL)isPublic completion:(void (^)(SOCBridgeCachedFile * _Nullable, SOCBridgeError * _Nullable))completion __attribute__((swift_name("ensureCachedFile(bucket:path:isPublic:completion:)")));
+
+/**
+ * Deletes cached copies of [path] from the device; sends nothing.
+ *
+ * @param imageTransform an image transform as for [createSignedUrl], whose cached copy alone
+ *   goes, or `null` for every copy of the object, untransformed and transformed.
+ */
+- (SOCBridgeCancellable *)evictCachedFileBucket:(NSString *)bucket path:(NSString *)path imageTransform:(NSString * _Nullable)imageTransform completion:(void (^)(SOCBridgeError * _Nullable))completion __attribute__((swift_name("evictCachedFile(bucket:path:imageTransform:completion:)")));
 
 /** Whether an object exists at [path]. */
 - (SOCBridgeCancellable *)existsBucket:(NSString *)bucket path:(NSString *)path completion:(void (^)(SOCBoolean * _Nullable, SOCBridgeError * _Nullable))completion __attribute__((swift_name("exists(bucket:path:completion:)")));

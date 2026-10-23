@@ -71,11 +71,11 @@ class BridgeStorageTest {
         val offline = CompletionProbe<NSData>()
         client.storage.download("avatars", "a.png", false, null, offline.completion)
         val cached = CompletionProbe<BridgeCachedFile>()
-        client.storage.cachedFile("avatars", "a.png", cached.completion)
+        client.storage.cachedFile("avatars", "a.png", null, cached.completion)
         val ensured = CompletionProbe<BridgeCachedFile>()
         client.storage.ensureCachedFile("avatars", "a.png", false, ensured.completion)
         val missing = CompletionProbe<BridgeCachedFile>()
-        client.storage.cachedFile("avatars", "never-downloaded.png", missing.completion)
+        client.storage.cachedFile("avatars", "never-downloaded.png", null, missing.completion)
 
         // Then
         assertEquals("a photo", bytes)
@@ -85,6 +85,49 @@ class BridgeStorageTest {
         assertEquals(file.path, ensured.awaitValue()?.path)
         assertEquals(null to null, missing.await())
         client.closeAndWait()
+    }
+
+    @Test
+    fun a_transform_finds_its_own_copy_and_evictions_and_the_clear_drop_copies() = bridgeTest {
+        // Given — the original and a thumbnail, each downloaded once
+        val client = openTestClient(server)
+        val thumbnail = """{"width":64,"height":64}"""
+        for (transform in listOf(null, thumbnail)) {
+            val download = CompletionProbe<NSData>()
+            client.storage.download("avatars", "a.png", false, transform, download.completion)
+            assertNotNull(download.awaitValue())
+        }
+
+        // When — each copy is looked up, the thumbnail evicted, then the file cache cleared
+        val variant = cachedFileOf(client, thumbnail)
+        val otherSize = cachedFileOf(client, """{"width":32,"height":32}""")
+        val thumbnailEvicted = awaitErrorOnly {
+            client.storage.evictCachedFile("avatars", "a.png", thumbnail, it)
+        }
+        val variantAfterEviction = cachedFileOf(client, thumbnail)
+        val originalAfterEviction = cachedFileOf(client, null)
+        val cleared = awaitErrorOnly { client.storage.clearFileCache(it) }
+        val originalAfterClear = cachedFileOf(client, null)
+
+        // Then — the thumbnail had a copy of its own, which went alone; the clear took the rest
+        assertNotNull(variant)
+        assertNull(otherSize)
+        assertNull(thumbnailEvicted)
+        assertNull(variantAfterEviction)
+        assertNotNull(originalAfterEviction)
+        assertTrue(variant.path != originalAfterEviction.path)
+        assertNull(cleared)
+        assertNull(originalAfterClear)
+        client.closeAndWait()
+    }
+
+    /** The cached copy of `avatars/a.png` with [transform], or `null`, through the bridge. */
+    private suspend fun cachedFileOf(client: BridgeClient, transform: String?): BridgeCachedFile? {
+        val probe = CompletionProbe<BridgeCachedFile>()
+        client.storage.cachedFile("avatars", "a.png", transform, probe.completion)
+        val (file, error) = probe.await()
+        assertNull(error)
+        return file
     }
 
     @Test

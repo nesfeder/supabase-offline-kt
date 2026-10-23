@@ -11,6 +11,7 @@ import io.github.jan.supabase.storage.DownloadOptionBuilder
 import io.github.jan.supabase.storage.FileObject
 import io.github.jan.supabase.storage.FileObjectV2
 import io.github.jan.supabase.storage.FileUploadResponse
+import io.github.jan.supabase.storage.ImageTransformation
 import io.github.jan.supabase.storage.SignedUrl
 import io.github.jan.supabase.storage.SignedUrlBuilder
 import io.github.jan.supabase.storage.SignedUrlsBuilder
@@ -32,6 +33,7 @@ import io.github.nesfeder.supabase.offline.internal.postgrest.RequestSession
 import io.github.nesfeder.supabase.offline.internal.postgrest.settledIdentityOf
 import io.ktor.client.network.sockets.SocketTimeoutException
 import io.ktor.client.plugins.HttpRequestTimeoutException
+import io.ktor.http.Url
 import io.ktor.utils.io.ByteChannel
 import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.ByteWriteChannel
@@ -117,6 +119,39 @@ internal class CachingBucketApi(
         cache.entryFor(bucketId, path)?.let { entry -> cache.useCachedCopy(entry) }
     }
 
+    override suspend fun cachedFile(
+        path: String,
+        transform: ImageTransformation.() -> Unit,
+    ): CachedFile? = operationGate.call {
+        if (!cachesDownloadsOf(path)) return@call null
+        entryOf(path, transform)?.let { entry -> cache.useCachedCopy(entry) }
+    }
+
+    // Any path, as a write drops it: one that cannot be cached has no copy, and loses nothing
+    override suspend fun evictCachedFile(path: String): Unit = operationGate.call {
+        cache.invalidateObject(bucketId, path)
+    }
+
+    override suspend fun evictCachedFile(
+        path: String,
+        transform: ImageTransformation.() -> Unit,
+    ): Unit = operationGate.call {
+        if (!cachesDownloadsOf(path)) return@call
+        entryOf(path, transform)?.let { entry -> cache.invalidateEntry(entry) }
+    }
+
+    /**
+     * The cache entry a download of [path] with [transform] stores and is answered from, named from
+     * the URL supabase-kt builds for it: the original when the transform sets nothing, as the
+     * download then fetches the untransformed object, and otherwise the variant the URL's query
+     * names. Public and authenticated downloads carry the same query, so either names it.
+     */
+    private fun entryOf(path: String, transform: ImageTransformation.() -> Unit): FileCacheEntry? {
+        val url = Url(delegate.authenticatedRenderUrl(path, transform))
+        if (url.parameters.isEmpty()) return cache.entryFor(bucketId, path)
+        return cache.variantEntryFor(bucketId, path, canonicalTransformOf(url))
+    }
+
     override suspend fun ensureCachedFile(path: String, isPublic: Boolean): CachedFile =
         operationGate.cancellableCall(backgroundScope) { ensureCachedFileNow(path, isPublic) }
 
@@ -154,7 +189,7 @@ internal class CachingBucketApi(
                         )
                 CommitOutcome.CLEARED ->
                     throw IllegalStateException(
-                        "Local data was cleared while this file was downloading"
+                        "Local data or the file cache was cleared while this file was downloading"
                     )
                 CommitOutcome.SUPERSEDED -> {
                     // The object was written while it downloaded: a download started now fetches
@@ -162,7 +197,8 @@ internal class CachingBucketApi(
                     // going
                     if (supersededBefore) {
                         throw IllegalStateException(
-                            "The object was written while this file was downloading, twice in a row"
+                            "The object was written, or its copies evicted, while this file was " +
+                                "downloading, twice in a row"
                         )
                     }
                     supersededBefore = true
