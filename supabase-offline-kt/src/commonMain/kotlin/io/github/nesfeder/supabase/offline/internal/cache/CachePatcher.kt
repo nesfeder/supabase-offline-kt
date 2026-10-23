@@ -15,9 +15,9 @@ import io.github.nesfeder.supabase.offline.internal.mutationqueue.PrimaryKeys
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.primaryKeyOf
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 import io.github.nesfeder.supabase.offline.internal.postgrest.QueryShape
+import io.github.nesfeder.supabase.offline.internal.postgrest.RowFilter
 import io.github.nesfeder.supabase.offline.internal.postgrest.RowMatch
 import io.github.nesfeder.supabase.offline.internal.postgrest.encodeFilter
-import io.github.nesfeder.supabase.offline.internal.postgrest.rowMatch
 import kotlin.concurrent.atomics.AtomicLong
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.concurrent.atomics.decrementAndFetch
@@ -410,12 +410,12 @@ internal class CachePatcher(
             freshness.advanceLocalWriteWatermark(table)
             val shapes = queryCache.queryShapes.shapesOf(table)
             val cached = queryCacheDao.allForTable(table)
+            val narrowed = narrowing?.let { filter -> RowFilter(filter) }
             for (row in cached) {
                 val reached =
-                    narrowing == null ||
+                    narrowed == null ||
                         payloadRowsOf(json, row.payload).orEmpty().any { element ->
-                            element !is JsonObject ||
-                                rowMatch(element, narrowing) != RowMatch.EXCLUDED
+                            element !is JsonObject || narrowed.match(element) != RowMatch.EXCLUDED
                         } ||
                         (patch != null && mayGainRowsBy(patch, shapes[row.cacheKey]))
                 if (!reached) continue
