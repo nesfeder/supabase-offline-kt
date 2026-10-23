@@ -3,6 +3,7 @@
 package io.github.nesfeder.supabase.offline.bridge
 
 import io.github.nesfeder.supabase.offline.bridge.internal.toNSData
+import io.github.nesfeder.supabase.offline.offline
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -384,6 +385,43 @@ class BridgeClientTest {
         assertNull(error)
         assertNotNull(read)
         assertEquals("Bearer user-token", server.requests.single().header("Authorization"))
+        client.closeAndWait()
+    }
+
+    @Test
+    fun with_identity_from_the_access_token_a_users_writes_go_only_with_their_token() = bridgeTest {
+        // Given — a client that tells users apart by their token, with automatic replay off and
+        // its network off, whose provider names user A
+        val tokens = SwitchingAccessTokenProvider(userJwt("user-a"))
+        val client =
+            openTestClient(server) {
+                accessTokenProvider = tokens
+                identityFromAccessToken = true
+                autoSync = false
+            }
+        assertTrue(client.supabase.offline.config.identityFromAccessToken)
+        assertNull(awaitErrorOnly { client.disableNetwork(it) })
+
+        // When — A writes, B signs in and writes, and B syncs online
+        val (forA, _) = client.mutateAndWait(INSERT_TODO, """{"id":2,"title":"A's tea"}""")
+        tokens.token = userJwt("user-b")
+        val (forB, _) = client.mutateAndWait(INSERT_TODO, """{"id":3,"title":"B's tea"}""")
+        val counted = CompletionProbe<Int>()
+        client.pendingMutationCount("todos", counted.completion)
+        assertNull(awaitErrorOnly { client.enableNetwork(it) })
+        val synced = CompletionProbe<BridgeSyncReport>()
+        client.syncPendingMutations(null, synced.completion)
+
+        // Then — both queued, B sees one, and only B's went, with B's token
+        assertNotNull(forA?.queued)
+        assertNotNull(forB?.queued)
+        assertEquals(1, counted.awaitValue())
+        assertEquals(1, assertNotNull(synced.awaitValue()).syncedCount)
+        val posts = server.requests.filter { it.method == "POST" }
+        assertEquals(
+            listOf("Bearer ${userJwt("user-b")}"),
+            posts.map { it.header("Authorization") },
+        )
         client.closeAndWait()
     }
 

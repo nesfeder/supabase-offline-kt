@@ -99,6 +99,11 @@ internal class MutationQueueReplayer(
     },
     /** Whether the session is settled now, without waiting; see [awaitSessionSettled]. */
     private val isSessionSettledNow: () -> Boolean = { supabase.currentReplayIdentity() != null },
+    /**
+     * Whose a request's bearer token is, for a client that tells users apart by their access token;
+     * `null` when the Auth plugin's session, or nothing, decides it. See [ReplayOwner].
+     */
+    private val identityOfToken: ((token: String?) -> QueueIdentity?)? = null,
     private val primaryKeys: PrimaryKeys = DefaultPrimaryKeys,
     /** Told of each pass's report as it ends, with the table it covered (`null` for all). */
     private val passEnded: suspend (table: String?, report: SyncReport) -> Unit = { _, _ -> },
@@ -364,7 +369,7 @@ internal class MutationQueueReplayer(
         if (!claimed) return HeadSendOutcome.NotAtHead
         try {
             val newlyUnconfirmed = mutationQueue.markSendUnconfirmed(mutationId)
-            val owner = ReplayOwner(identity)
+            val owner = ReplayOwner(identity, identityOfToken = identityOfToken)
             val result =
                 when (val sent = sendCapturingEngineFailure { withContext(owner) { send() } }) {
                     is SendOutcome.Succeeded -> sent.value
@@ -915,7 +920,7 @@ internal class MutationQueueReplayer(
         newlyUnconfirmed: Boolean = false,
         request: suspend () -> T,
     ): Attempt<T> {
-        val owner = ReplayOwner(identity, sender = pass)
+        val owner = ReplayOwner(identity, sender = pass, identityOfToken = identityOfToken)
         return when (val sent = sendCapturingEngineFailure { withContext(owner) { request() } }) {
             is SendOutcome.Succeeded -> Attempt.Done(sent.value)
             is SendOutcome.Failed ->

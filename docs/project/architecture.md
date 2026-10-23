@@ -114,7 +114,8 @@ The settings:
 needed only for `storage`. Auth is optional. With it, the cache belongs to one user at a time and
 the mutation queue keeps each user's writes apart; without it, or with the app's own token provider,
 there is one identity for the life of the install, and an app whose own provider serves several
-users must clear local data itself when the user changes. On Android the plugin takes the
+users must clear local data itself when the user changes, unless `identityFromAccessToken` tells
+users apart by the `sub` of the provider's token, as with Auth (`AccessTokenIdentity`). On Android the plugin takes the
 application context from androidx.startup, so it needs no `Context`. Opening claims the database and
 creates its directory on the thread that calls `createSupabaseClient`, and on iOS first moves a
 database an earlier default left in `Documents`. A second client over the same database or data
@@ -1144,7 +1145,10 @@ the restore window (a few seconds) and then returns the anon key's answer uncach
 which under row-level security can hold fewer rows, or none; a live read shows none of the cached
 rows, only the queued writes it admits (`Refreshing`), until the session settles. Without Auth, or
 with the app's own token provider, every request is the anonymous identity: the engine cannot tell
-those users apart.
+those users apart, unless `identityFromAccessToken` is on. Then `AccessTokenIdentity` asks the
+provider for its token wherever the engine decides whose data it reads or writes, and publishes the
+`sub` it names as the Auth plugin's session status would be: a token that names no user is no
+identity, and a provider that fails keeps the last user as the owner, unsettled.
 
 **Ownerless mutations.** Every write the plugin queues records its owner. The queue also accepts a
 write with no owner recorded, which the plugin itself does not make; a pass adopts such writes for a
@@ -1177,8 +1181,8 @@ then are the locks let go: when an open read held the log, the clear tries again
 most a second, then leaves it to the client's scope, which tries with a wait doubling up to five
 seconds until the log is emptied, and `close()` tries once more before the database closes. The same
 path follows `dropCacheFor`. Live queries fetch again once the clear has let the locks go, and after
-a clear that was cut short too. Without Auth there is one identity and its cache is never dropped;
-only this call empties it.
+a clear that was cut short too. Without Auth there is one identity and its cache is never dropped,
+unless `identityFromAccessToken` is on; only this call empties it.
 
 ### Logging
 

@@ -261,6 +261,7 @@ public final class io/github/nesfeder/supabase/offline/Offline$Config {
 	public final fun getConflictResolver ()Lio/github/nesfeder/supabase/offline/ConflictResolver;
 	public final fun getDataDirectory ()Ljava/lang/String;
 	public final fun getFileCacheSizeBytes ()J
+	public final fun getIdentityFromAccessToken ()Z
 	public final fun getLogLevel ()Lio/github/jan/supabase/logging/LogLevel;
 	public final fun getNetworkAvailability ()Lkotlinx/coroutines/flow/Flow;
 	public final fun getPrimaryKeys ()Ljava/util/Map;
@@ -274,6 +275,7 @@ public final class io/github/nesfeder/supabase/offline/Offline$Config {
 	public final fun setConflictResolver (Lio/github/nesfeder/supabase/offline/ConflictResolver;)V
 	public final fun setDataDirectory (Ljava/lang/String;)V
 	public final fun setFileCacheSizeBytes (J)V
+	public final fun setIdentityFromAccessToken (Z)V
 	public final fun setLogLevel (Lio/github/jan/supabase/logging/LogLevel;)V
 	public final fun setNetworkAvailability (Lkotlinx/coroutines/flow/Flow;)V
 	public final fun setResponseTrust (Lio/github/nesfeder/supabase/offline/ResponseTrust;)V

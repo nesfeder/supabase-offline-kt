@@ -247,7 +247,8 @@ in a `finally` around it: offline, `signOut()` throws, and a clear after it neve
 the cached rows, the downloaded files and every write still queued; with Auth the cache already
 passes from one user to the next, but queued writes stay with their user until you clear them.
 With your own token provider and no Auth, clear only once it has stopped returning the outgoing
-user's token: a live read refreshes right after the clear with whatever token it gets
+user's token: a live read refreshes right after the clear with whatever token it gets. With
+`identityFromAccessToken` on, the cache passes from one user to the next as with Auth
 ([Signing out and switching users](../behaviors/sign-out.md)).
 
 ## Logging

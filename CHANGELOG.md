@@ -33,6 +33,12 @@ All notable changes to this project are recorded in this file. The format follow
   same `stopReason`, a `SyncStopReason` with an extensible `kind` and the failure as `error`, and
   the testing artifacts build one with `serverFailureStop`, `localFailureStop` and a `syncReport`
   overload in Kotlin, and `syncStopReason(kind:error:)` and a `syncReport` overload in Swift.
+- `identityFromAccessToken` in `install(Offline)`, and the same setting in the Swift package's
+  `Config`: a client without the Auth plugin tells its users apart by the `sub` claim of the token
+  its own provider returns, read and never verified. Each user's queued writes are then sent only
+  with that user's token, the caches belong to one user at a time and are dropped when the token
+  names another, and the Realtime channel is joined again for the new user, as with Auth, so a Swift
+  app no longer needs its own sign-out routine. It is off by default, which changes nothing.
 
 ### Changed
 

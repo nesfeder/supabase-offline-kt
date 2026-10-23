@@ -16,10 +16,10 @@ extension SupabaseOfflineClient {
         /// `{ try? await supabase.auth.session.accessToken }`. A throw fails that request with
         /// ``OfflineError/Code/accessToken``.
         ///
-        /// The client learns who the user is only from the token this returns, and cannot tell one
-        /// user's cached rows and queued writes from another's: a sync that starts once this returns
-        /// another token sends the last user's queued writes with it, and a live read fetches again
-        /// right after ``SupabaseOfflineClient/clearLocalData()`` with whatever token this returns then.
+        /// Unless ``identityFromAccessToken`` is on, the client cannot tell one user's cached rows
+        /// and queued writes from another's: a sync that starts once this returns another token
+        /// sends the last user's queued writes with it, and a live read fetches again right after
+        /// ``SupabaseOfflineClient/clearLocalData()`` with whatever token this returns then.
         /// So at sign-out: sync with ``SupabaseOfflineClient/syncPendingMutations(table:)`` while the
         /// user is signed in, if their queued writes should still be sent; turn the network off with
         /// ``SupabaseOfflineClient/disableNetwork()``; sign out, so this returns `nil`, and clear local
@@ -28,10 +28,30 @@ extension SupabaseOfflineClient {
         /// first); and turn the network back on with ``SupabaseOfflineClient/enableNetwork()`` once
         /// this returns the next user's token, which makes open live reads fetch again with it.
         /// Signing out and back in as the same user needs nothing. The channel for ``realtimeTables``
-        /// is joined with the token this returns at the join, and is not joined again by itself
-        /// when the token changes: bracket a sign-in or sign-out with
-        /// ``SupabaseOfflineClient/disableRealtime()`` and ``SupabaseOfflineClient/enableRealtime()``.
+        /// is joined with the token this returns at the join, and, unless
+        /// ``identityFromAccessToken`` is on, is not joined again by itself when the token changes:
+        /// bracket a sign-in or sign-out with ``SupabaseOfflineClient/disableRealtime()`` and
+        /// ``SupabaseOfflineClient/enableRealtime()``.
         public var accessToken: (@Sendable () async throws -> String?)?
+
+        /// Whether the client tells its users apart by the `sub` claim of the token ``accessToken``
+        /// returns, read and never verified; `false` by default.
+        ///
+        /// With `true`, each user's queued writes are sent only with that user's token, the caches
+        /// belong to one user at a time and are dropped when the token names another, and the
+        /// channel for ``realtimeTables`` is joined again for the new user: the sign-out routine
+        /// under ``accessToken`` is no longer needed. `nil` is nobody signed in. A token that names
+        /// no user is no identity: a write made with it is sent at once and never queued, nothing
+        /// queued is sent, and the cache is not used. The client asks ``accessToken`` before a
+        /// write is queued, before the cache is read or written, before each queued write is sent,
+        /// and once when it opens, so a new user is seen at its next call. Return `nil` only when
+        /// nobody is signed in: when a refresh fails offline, return the session's expired token
+        /// (supabase-swift's `currentSession?.accessToken`), which still names its user, or a write
+        /// made then is nobody's. While ``accessToken`` throws, the user it last named keeps the
+        /// local data. The claim decides only which local data a user is shown, never what the
+        /// server allows. Writes queued before this was turned on are nobody's, and are sent only
+        /// while nobody is signed in: sync them first.
+        public var identityFromAccessToken: Bool
 
         /// The directory for the local database and cached files, created when missing; `nil` for
         /// `SupabaseOffline` in Application Support.
@@ -179,8 +199,43 @@ extension SupabaseOfflineClient {
             conflictResolver: (@Sendable (MutationConflict) async throws -> ConflictResolution)? = nil,
             logLevel: LogLevel = .warning
         ) {
+            self.init(
+                defaultSchema: defaultSchema,
+                accessToken: accessToken,
+                identityFromAccessToken: false,
+                dataDirectory: dataDirectory,
+                cacheSize: cacheSize,
+                fileCacheSize: fileCacheSize,
+                networkAvailability: networkAvailability,
+                autoSync: autoSync,
+                primaryKeys: primaryKeys,
+                realtimeTables: realtimeTables,
+                versionColumns: versionColumns,
+                conflictResolver: conflictResolver,
+                logLevel: logLevel
+            )
+        }
+
+        /// A configuration with every value given or defaulted, saying whether the client tells
+        /// its users apart by their access token.
+        public init(
+            defaultSchema: String = "public",
+            accessToken: (@Sendable () async throws -> String?)? = nil,
+            identityFromAccessToken: Bool,
+            dataDirectory: URL? = nil,
+            cacheSize: CacheSize = .bytes(100 * 1_024 * 1_024),
+            fileCacheSize: CacheSize = .bytes(256 * 1_024 * 1_024),
+            networkAvailability: (@Sendable () -> AsyncStream<Bool>)? = nil,
+            autoSync: Bool = true,
+            primaryKeys: [String: [String]] = [:],
+            realtimeTables: [RealtimeTable] = [],
+            versionColumns: [String: String] = [:],
+            conflictResolver: (@Sendable (MutationConflict) async throws -> ConflictResolution)? = nil,
+            logLevel: LogLevel = .warning
+        ) {
             self.defaultSchema = defaultSchema
             self.accessToken = accessToken
+            self.identityFromAccessToken = identityFromAccessToken
             self.dataDirectory = dataDirectory
             self.cacheSize = cacheSize
             self.fileCacheSize = fileCacheSize
