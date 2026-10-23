@@ -43,21 +43,25 @@ internal interface CachedFileDao {
 
     /**
      * The rows of one object in [bucketId], variants included. Its own row's `path` is [path]; its
-     * image-transform variants' `path` starts with [variantPrefix].
+     * image-transform variants' `path` starts with [variantPrefix], so it sorts at or after
+     * [variantPrefix] and before [variantBound]: a range the `(bucketId, path)` index serves, where
+     * a prefix test would read every row of the bucket.
      *
      * @param bucketId the bucket.
      * @param path the object path.
      * @param variantPrefix [path] followed by the variant separator.
+     * @param variantBound [path] followed by the character after the variant separator.
      * @return the matching rows.
      */
     @Query(
         "SELECT * FROM storage_objects WHERE bucketId = :bucketId AND " +
-            "(path = :path OR substr(path, 1, length(:variantPrefix)) = :variantPrefix)"
+            "(path = :path OR (path >= :variantPrefix AND path < :variantBound))"
     )
     suspend fun forObject(
         bucketId: String,
         path: String,
         variantPrefix: String,
+        variantBound: String,
     ): List<CachedFileRow>
 
     /** Every cached storage-object row, for the size bound's least-recently-used pass. */

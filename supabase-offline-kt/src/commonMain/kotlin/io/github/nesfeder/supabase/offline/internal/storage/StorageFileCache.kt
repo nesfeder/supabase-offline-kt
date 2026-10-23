@@ -17,6 +17,7 @@ import kotlin.random.Random
 import kotlin.time.Clock
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.hours
+import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
 import kotlinx.coroutines.CoroutineDispatcher
@@ -58,6 +59,16 @@ private val STALE_TEMPORARY_FILE_AGE: Duration = 24.hours
  * deliver it, or a caller was just handed its path and has yet to open it.
  */
 internal val RECENT_USE_GRACE: Duration = 30.seconds
+
+/**
+ * A use of a file is written to it, as its modification time, only once this much time has passed
+ * since the last one written: a grid re-binding the same thumbnails writes no metadata. The uses
+ * left off the file are kept in memory for the eviction pass instead.
+ */
+internal val USE_MARK_INTERVAL: Duration = 1.minutes
+
+/** Size past which the uses kept in memory are pruned of those too old to spare a file. */
+private const val RECENT_USES_PRUNE_SIZE: Int = 256
 
 /**
  * Once over its bound, the cache evicts a further 1/this of the bound below it, so the next
@@ -166,14 +177,16 @@ internal fun cachedFileRowOf(
 /**
  * The client's file cache for Storage objects, shared by every bucket it hands out. An entry's file
  * is derived from its bucket and path, never read back from its row, and every file operation stays
- * inside the data directory; commits, evictions, invalidations and clears run under one lock.
+ * inside the data directory; commits, evictions, invalidations and clears run under one lock, and
+ * reads pin their files under a lock of their own, so none of them waits behind those.
  *
  * @param cachedFileDao the cached files' rows.
  * @param ownership whether the cache serves, and takes files for, the current identity.
  * @param fetchedAtMillis the clock a row's fetch time is read from.
  * @param maxSizeBytes the size bound, or `null` for none.
  * @param nowMillis the clock use times and file ages are read from.
- * @param markUsed records a use time on a file.
+ * @param markUsed records a use time on a file; called at most once per [USE_MARK_INTERVAL] per
+ *   file.
  * @param syncFile asks the platform to write a file through to the disk, before it is renamed into
  *   place; what it throws is logged, and the size check on reads catches a file a power loss cut
  *   short.
@@ -223,18 +236,29 @@ internal class StorageFileCache(
     private val generation = AtomicLong(0L)
 
     /**
+     * The lock of the running downloads' bookkeeping: [invalidationSequence], [invalidatedAt] and
+     * [runningDownloads]. The operations that bump or check the sequence take it under [lock];
+     * [beginDownload] and [endDownload] take it alone, so a download's start — an offline read's
+     * too — waits for no commit, eviction pass or clear.
+     */
+    private val downloadsLock = Mutex()
+
+    /**
      * Bumped each time an object's copies are dropped ([removeObjectLocked]), so a download that
-     * started before the drop is never committed over it. Guarded by [lock].
+     * started before the drop is never committed over it. Guarded by [downloadsLock].
      */
     private var invalidationSequence = 0L
 
     /**
      * Object key → [invalidationSequence] when its copies were last dropped, kept while a download
-     * that started before the drop is still running. Guarded by [lock].
+     * that started before the drop is still running. Guarded by [downloadsLock].
      */
     private val invalidatedAt = mutableMapOf<String, Long>()
 
-    /** The downloads in progress, between [beginDownload] and [endDownload]. Guarded by [lock]. */
+    /**
+     * The downloads in progress, between [beginDownload] and [endDownload]. Guarded by
+     * [downloadsLock].
+     */
     private val runningDownloads = mutableListOf<DownloadStart>()
 
     /**
@@ -243,8 +267,25 @@ internal class StorageFileCache(
      */
     private val openTemporaryFiles = mutableSetOf<Path>()
 
-    /** Entry key → number of reads in progress. Guarded by [lock]. */
+    /**
+     * The read side's lock: [pins] and [recentUses], and nothing that does I/O or takes [lock]. A
+     * read takes it alone, so no read waits behind a commit, an eviction pass or a clear; an
+     * eviction takes it under [lock], only for as long as it removes the files it chose.
+     */
+    private val readLock = Mutex()
+
+    /** Entry key → number of reads in progress. Guarded by [readLock]. */
     private val pins = mutableMapOf<String, Int>()
+
+    /**
+     * Entry key → the latest use [useCachedCopy] left off the file, within [USE_MARK_INTERVAL] of
+     * the one written to it. The eviction pass counts these uses too, so a file handed out keeps
+     * its [RECENT_USE_GRACE] whether or not its use was written. Guarded by [readLock].
+     */
+    private val recentUses = mutableMapOf<String, Long>()
+
+    /** The `ensureCachedFile` downloads in flight, which every caller for one entry shares. */
+    val downloadsInFlight = InFlightDownloads()
 
     /** Whether the one sweep for crash-orphaned temporary files has run. Guarded by [lock]. */
     private var temporaryFilesSwept = false
@@ -324,11 +365,12 @@ internal class StorageFileCache(
     /**
      * Marks a download as started, before its request is sent, and says where the cache stood: pass
      * the result to [commit] or [write], and to [endDownload] once the download is over, however it
-     * ends.
+     * ends. Waits for no commit, eviction pass or clear; one begun during a clear is refused by
+     * [commit] or not as the clear's bump of the generation came after or before.
      *
      * @return the download's start.
      */
-    suspend fun beginDownload(): DownloadStart = lock.withLock {
+    suspend fun beginDownload(): DownloadStart = downloadsLock.withLock {
         DownloadStart(generation.load(), invalidationSequence).also { runningDownloads += it }
     }
 
@@ -340,9 +382,9 @@ internal class StorageFileCache(
      */
     suspend fun endDownload(start: DownloadStart) {
         withContext(NonCancellable) {
-            lock.withLock {
+            downloadsLock.withLock {
                 runningDownloads.remove(start)
-                pruneInvalidationsLocked()
+                forgetStaleInvalidations()
             }
         }
     }
@@ -354,7 +396,7 @@ internal class StorageFileCache(
      * mapping's file is dropped and counts as not cached, as does every entry while the cache is
      * not the current identity's. A file whose size is not the one its row recorded, as a power
      * loss between the rename and the disk can leave, is dropped with its row and counts as not
-     * cached.
+     * cached. Takes [lock] only to drop such a row.
      *
      * @param entry the entry.
      * @return the cached file, reporting the size of the file on disk.
@@ -368,16 +410,17 @@ internal class StorageFileCache(
                 return@withContext null
             }
             if (!resolvesInsideDataDirectory(entry.file)) return@withContext null
-            val size =
-                fileSystem.metadataOrNull(entry.file)?.takeIf { it.isRegularFile }?.size
+            val metadata =
+                fileSystem.metadataOrNull(entry.file)?.takeIf { it.isRegularFile }
                     ?: return@withContext null
+            val size = metadata.size ?: return@withContext null
             if (row.sizeBytes != null && row.sizeBytes != size) {
                 val dropped =
                     withContext(NonCancellable) { lock.withLock { dropTruncatedFileLocked(entry) } }
                 // Not dropped: a commit replaced the row and the file between the two reads
                 return@withContext if (dropped) null else useCachedCopy(entry)
             }
-            markUsed(entry.file, nowMillis())
+            noteUse(entry, markedAtMillis = metadata.lastModifiedAtMillis)
             CachedFile(
                 path = entry.file.toString(),
                 fetchedAt = Instant.fromEpochMilliseconds(row.lastFetchedEpochMs),
@@ -386,19 +429,43 @@ internal class StorageFileCache(
         }
 
     /**
+     * Records a use of [entry]'s file, whose use last written to it is [markedAtMillis]: on the
+     * file once [USE_MARK_INTERVAL] has passed since that one (or the clock went back past it), in
+     * [recentUses] before then, where the eviction pass finds it all the same.
+     */
+    private suspend fun noteUse(entry: FileCacheEntry, markedAtMillis: Long?) {
+        val now = nowMillis()
+        val sinceMarked = if (markedAtMillis == null) Long.MAX_VALUE else now - markedAtMillis
+        if (sinceMarked < 0L || sinceMarked >= USE_MARK_INTERVAL.inWholeMilliseconds) {
+            markUsed(entry.file, now)
+            return
+        }
+        // Without a bound nothing evicts, so no one would read the use
+        if (maxSizeBytes == null) return
+        readLock.withLock {
+            recentUses[entry.key] = now
+            if (recentUses.size > RECENT_USES_PRUNE_SIZE) {
+                val sparedAfter = now - RECENT_USE_GRACE.inWholeMilliseconds
+                recentUses.values.removeAll { usedAt -> usedAt < sparedAfter }
+            }
+        }
+    }
+
+    /**
      * Runs [block] with [entry] pinned, so no eviction removes its file while [block] reads it.
+     * Pins live under [readLock], so the read waits for no commit, eviction pass or clear.
      *
      * @param entry the entry to pin.
      * @param block the read.
      * @return what [block] returns.
      */
     suspend fun <T> withPinned(entry: FileCacheEntry, block: suspend () -> T): T {
-        lock.withLock { pins[entry.key] = (pins[entry.key] ?: 0) + 1 }
+        readLock.withLock { pins[entry.key] = (pins[entry.key] ?: 0) + 1 }
         try {
             return block()
         } finally {
             withContext(NonCancellable) {
-                lock.withLock {
+                readLock.withLock {
                     val remaining = (pins[entry.key] ?: 1) - 1
                     if (remaining <= 0) pins.remove(entry.key) else pins[entry.key] = remaining
                 }
@@ -557,69 +624,81 @@ internal class StorageFileCache(
                 // The read side's size check catches what a power loss leaves of the file
                 engineLogger.debug { "Storage cache could not sync a file to disk: $failure" }
             }
-            lock.withLock {
-                if (
-                    generation.load() != start.generation ||
-                        !ownership.cacheTakesWritesOfCurrentIdentity()
-                ) {
-                    engineLogger.info {
-                        "Storage download from ${entry.bucketId} finished after local data was cleared; not caching"
-                    }
-                    return@withLock CommitOutcome.CLEARED
-                }
-                if (invalidatedSince(entry, start)) {
-                    engineLogger.info {
-                        "Storage download from ${entry.bucketId} finished after the object was written; not caching"
-                    }
-                    return@withLock CommitOutcome.SUPERSEDED
-                }
-                val directory = entry.file.parent
-                if (directory == null || !resolvesInsideDataDirectory(directory)) {
-                    engineLogger.warning {
-                        "Storage cache refused a directory that resolves outside the cache; not caching"
-                    }
-                    return@withLock CommitOutcome.FAILED
-                }
-                val size = fileSystem.metadataOrNull(temporary.path)?.size
-                val previous =
-                    try {
-                        rowOf(entry.bucketId, entry.rowPath).also {
-                            recordRow(
-                                bucketId = entry.bucketId,
-                                path = entry.rowPath,
-                                file = entry.file,
-                                size = size,
-                            )
-                        }
-                    } catch (failure: Exception) {
-                        engineLogger.warning {
-                            "Storage cache could not record a download (${failure::class.simpleName}); not caching"
-                        }
-                        return@withLock CommitOutcome.FAILED
-                    }
-                trackedBytes = trackedBytes?.plus((size ?: 0L) - (previous?.sizeBytes ?: 0L))
+            val outcome = commitLocked(temporary, start)
+            if (outcome == CommitOutcome.COMMITTED) {
                 try {
-                    fileSystem.atomicMove(temporary.path, entry.file)
-                } catch (failure: IOException) {
-                    engineLogger.warning {
-                        "Storage cache could not store a file (${failure::class.simpleName}); not caching"
-                    }
-                    // The row describes bytes that never arrived: put back the one it replaced.
-                    restoreRowLocked(entry, replaced = previous, recordedSize = size)
-                    return@withLock CommitOutcome.FAILED
-                }
-                openTemporaryFiles -= temporary.path
-                markUsed(entry.file, nowMillis())
-                try {
-                    evictOverLimit(protectedKey = entry.key)
+                    enforceSizeBound(protectedKey = entry.key)
                 } catch (failure: Exception) {
                     engineLogger.warning {
                         "Storage cache could not enforce its size bound (${failure::class.simpleName})"
                     }
                 }
-                CommitOutcome.COMMITTED
             }
+            outcome
         }
+
+    /** [commit]'s part under [lock]: the row, then the rename. */
+    private suspend fun commitLocked(
+        temporary: TemporaryDownload,
+        start: DownloadStart,
+    ): CommitOutcome {
+        val entry = temporary.entry
+        return lock.withLock {
+            if (
+                generation.load() != start.generation ||
+                    !ownership.cacheTakesWritesOfCurrentIdentity()
+            ) {
+                engineLogger.info {
+                    "Storage download from ${entry.bucketId} finished after local data was cleared; not caching"
+                }
+                return@withLock CommitOutcome.CLEARED
+            }
+            if (downloadsLock.withLock { invalidatedSince(entry, start) }) {
+                engineLogger.info {
+                    "Storage download from ${entry.bucketId} finished after the object was written; not caching"
+                }
+                return@withLock CommitOutcome.SUPERSEDED
+            }
+            val directory = entry.file.parent
+            if (directory == null || !resolvesInsideDataDirectory(directory)) {
+                engineLogger.warning {
+                    "Storage cache refused a directory that resolves outside the cache; not caching"
+                }
+                return@withLock CommitOutcome.FAILED
+            }
+            val size = fileSystem.metadataOrNull(temporary.path)?.size
+            val previous =
+                try {
+                    rowOf(entry.bucketId, entry.rowPath).also {
+                        recordRow(
+                            bucketId = entry.bucketId,
+                            path = entry.rowPath,
+                            file = entry.file,
+                            size = size,
+                        )
+                    }
+                } catch (failure: Exception) {
+                    engineLogger.warning {
+                        "Storage cache could not record a download (${failure::class.simpleName}); not caching"
+                    }
+                    return@withLock CommitOutcome.FAILED
+                }
+            trackedBytes = trackedBytes?.plus((size ?: 0L) - (previous?.sizeBytes ?: 0L))
+            try {
+                fileSystem.atomicMove(temporary.path, entry.file)
+            } catch (failure: IOException) {
+                engineLogger.warning {
+                    "Storage cache could not store a file (${failure::class.simpleName}); not caching"
+                }
+                // The row describes bytes that never arrived: put back the one it replaced.
+                restoreRowLocked(entry, replaced = previous, recordedSize = size)
+                return@withLock CommitOutcome.FAILED
+            }
+            openTemporaryFiles -= temporary.path
+            markUsed(entry.file, nowMillis())
+            CommitOutcome.COMMITTED
+        }
+    }
 
     /**
      * Deletes a temporary download that was not committed. Safe to call more than once.
@@ -690,6 +769,7 @@ internal class StorageFileCache(
                 generation.addAndFetch(1L)
                 trackedBytes = null
                 evictionIdleUntilMillis = Long.MIN_VALUE
+                readLock.withLock { recentUses.clear() }
                 clearDatabase()
                 cacheDirectories().forEach { directory ->
                     deleteSparingOpenTemporaryFilesLocked(directory)
@@ -737,12 +817,20 @@ internal class StorageFileCache(
      * the drop for the downloads of it still running, which may hold the bytes it replaced.
      */
     private suspend fun removeObjectLocked(bucketId: String, objectPath: String) {
-        invalidationSequence += 1
-        if (runningDownloads.isNotEmpty()) {
-            invalidatedAt[cachedFileKeyOf(bucketId, objectPath)] = invalidationSequence
+        downloadsLock.withLock {
+            invalidationSequence += 1
+            if (runningDownloads.isNotEmpty()) {
+                invalidatedAt[cachedFileKeyOf(bucketId, objectPath)] = invalidationSequence
+            }
         }
-        cachedFileDao.forObject(bucketId, objectPath, "$objectPath$VARIANT_SEPARATOR").forEach { row
-            ->
+        val rows =
+            cachedFileDao.forObject(
+                bucketId,
+                objectPath,
+                variantPrefix = "$objectPath$VARIANT_SEPARATOR",
+                variantBound = "$objectPath$VARIANT_BOUND",
+            )
+        rows.forEach { row ->
             removeRowLocked(row)
             val entry = entryForRow(row) ?: return@forEach
             deleteContained(entry.file)
@@ -759,16 +847,20 @@ internal class StorageFileCache(
         trackedBytes = trackedBytes?.minus(row.sizeBytes ?: 0L)
     }
 
-    /** Whether [entry]'s object had its copies dropped after the download that began at [start]. */
+    /**
+     * Whether [entry]'s object had its copies dropped after the download that began at [start].
+     * Runs under [downloadsLock].
+     */
     private fun invalidatedSince(entry: FileCacheEntry, start: DownloadStart): Boolean =
         (invalidatedAt[cachedFileKeyOf(entry.bucketId, entry.objectPath)] ?: Long.MIN_VALUE) >
             start.sequence
 
     /**
      * Forgets the recorded drops no running download can be refused for: those at or before the
-     * oldest running download's start, or all of them once none is running.
+     * oldest running download's start, or all of them once none is running. Runs under
+     * [downloadsLock].
      */
-    private fun pruneInvalidationsLocked() {
+    private fun forgetStaleInvalidations() {
         val oldestStart = runningDownloads.minOfOrNull { it.sequence } ?: invalidationSequence
         invalidatedAt.values.removeAll { sequence -> sequence <= oldestStart }
     }
@@ -900,46 +992,75 @@ internal class StorageFileCache(
 
     /**
      * Once the cache is over its bound, evicts the least recently used files until it is a tenth
-     * below it. It spares [protectedKey], pinned entries and files used within [RECENT_USE_GRACE],
-     * and skips the scan until the oldest file it had to spare ages out. Runs under [lock].
+     * below it. The rows are read, and their files' use times looked up, outside [lock], so no
+     * commit, invalidation or clear queues behind a look at every file; each file chosen is looked
+     * at again, and removed, under [lock] and [readLock]. Spared are [protectedKey], pinned entries
+     * and files used within [RECENT_USE_GRACE], and the scan is skipped until the oldest file it
+     * had to spare ages out.
      */
-    private suspend fun evictOverLimit(protectedKey: String) {
+    private suspend fun enforceSizeBound(protectedKey: String) {
         val limit = maxSizeBytes ?: return
-        val total = trackedBytes ?: cachedFileDao.totalSizeBytes().also { trackedBytes = it }
-        if (total <= limit) return
-        val now = nowMillis()
-        if (now < evictionIdleUntilMillis) return
         val lowWater = limit - limit / LOW_WATER_FRACTION
-        val usedBefore = now - RECENT_USE_GRACE.inWholeMilliseconds
-        val (evictable, recent) =
+        val grace = RECENT_USE_GRACE.inWholeMilliseconds
+        val scanDue = lock.withLock {
+            val total = trackedBytes ?: cachedFileDao.totalSizeBytes().also { trackedBytes = it }
+            total > limit && nowMillis() >= evictionIdleUntilMillis
+        }
+        if (!scanDue) return
+        val scannedAt = nowMillis()
+        val usesAtScan = readLock.withLock { recentUses.toMap() }
+        val candidates =
             cachedFileDao
                 .all()
-                .filter { row -> row.key != protectedKey && row.key !in pins }
-                .map { row -> row to lastUsedMillis(row) }
-                .partition { (_, lastUsed) -> lastUsed < usedBefore }
-        var remaining = total
-        var evicted = 0
-        for ((row, _) in evictable.sortedBy { (_, lastUsed) -> lastUsed }) {
-            if (remaining <= lowWater) break
-            entryForRow(row)?.let { entry -> deleteContained(entry.file) }
-            cachedFileDao.delete(row.key)
-            remaining -= row.sizeBytes ?: 0L
-            evicted++
+                .filter { row -> row.key != protectedKey }
+                .map { row -> row to lastUsedMillis(row, usesAtScan) }
+                .sortedBy { (_, lastUsed) -> lastUsed }
+        lock.withLock {
+            // Cleared since the scan: nothing is left to evict
+            var remaining = trackedBytes ?: return
+            var evicted = 0
+            var oldestSpared: Long? = null
+            readLock.withLock {
+                for ((scanned, usedAtScan) in candidates) {
+                    if (remaining <= lowWater) break
+                    if (scanned.key in pins) continue
+                    if (usedAtScan >= scannedAt - grace) {
+                        oldestSpared = minOf(oldestSpared ?: usedAtScan, usedAtScan)
+                        continue
+                    }
+                    // Looked at again under the locks: used, replaced or removed since the scan
+                    val row = cachedFileDao.getByKey(scanned.key) ?: continue
+                    val lastUsed = lastUsedMillis(row, recentUses)
+                    if (lastUsed >= nowMillis() - grace) {
+                        oldestSpared = minOf(oldestSpared ?: lastUsed, lastUsed)
+                        continue
+                    }
+                    entryForRow(row)?.let { entry -> deleteContained(entry.file) }
+                    cachedFileDao.delete(row.key)
+                    remaining -= row.sizeBytes ?: 0L
+                    evicted++
+                }
+            }
+            trackedBytes = remaining
+            // Still over: the rest is too recent to take, so scan again once the oldest of it
+            // ages out.
+            val spared = oldestSpared
+            evictionIdleUntilMillis =
+                if (remaining > lowWater && spared != null) spared + grace else Long.MIN_VALUE
+            engineLogger.debug {
+                "Storage cache evicted $evicted file(s) to stay within $limit bytes"
+            }
         }
-        trackedBytes = remaining
-        // Still over: the rest is too recent to take, so scan again once the oldest of it ages out.
-        val oldestRecentUse = recent.minOfOrNull { (_, lastUsed) -> lastUsed }
-        evictionIdleUntilMillis =
-            if (remaining > lowWater && oldestRecentUse != null)
-                oldestRecentUse + RECENT_USE_GRACE.inWholeMilliseconds
-            else Long.MIN_VALUE
-        engineLogger.debug { "Storage cache evicted $evicted file(s) to stay within $limit bytes" }
     }
 
-    /** When [row]'s file was last used, or the earliest time there is when it has no file. */
-    private fun lastUsedMillis(row: CachedFileRow): Long {
+    /**
+     * When [row]'s file was last used: the later of the time on the file and the one [uses] holds,
+     * or the earliest time there is when it has no file.
+     */
+    private fun lastUsedMillis(row: CachedFileRow, uses: Map<String, Long>): Long {
         val file = entryForRow(row)?.file ?: return Long.MIN_VALUE
-        return fileSystem.metadataOrNull(file)?.lastModifiedAtMillis ?: Long.MIN_VALUE
+        val onFile = fileSystem.metadataOrNull(file)?.lastModifiedAtMillis ?: return Long.MIN_VALUE
+        return maxOf(onFile, uses[row.key] ?: Long.MIN_VALUE)
     }
 
     /**

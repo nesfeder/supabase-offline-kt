@@ -54,6 +54,7 @@ import io.github.nesfeder.supabase.offline.internal.realtime.ServerChangeFeed
 import io.github.nesfeder.supabase.offline.internal.realtime.WatchedTable
 import io.github.nesfeder.supabase.offline.internal.storage.CachingBucketApi
 import io.github.nesfeder.supabase.offline.internal.storage.StorageFileCache
+import io.github.nesfeder.supabase.offline.internal.storage.markFileUsed
 import io.github.nesfeder.supabase.offline.internal.storage.syncFileToDisk
 import io.github.nesfeder.supabase.offline.internal.testing.InMemoryCachedFileDao
 import io.github.nesfeder.supabase.offline.internal.versionColumnsByTable
@@ -435,6 +436,8 @@ internal fun newTestMutationQueueReplayer(
  * @param nowMillis the clock use times are stamped from.
  * @param syncFile writes a finished download through to the disk before it is renamed into place;
  *   the platform's by default.
+ * @param markUsed records a use time on a file; the platform's by default. Wrap it to count the
+ *   writes.
  * @return the cache.
  */
 internal fun newTestFileCache(
@@ -445,6 +448,7 @@ internal fun newTestFileCache(
     maxSizeBytes: Long? = null,
     nowMillis: () -> Long = { Clock.System.now().toEpochMilliseconds() },
     syncFile: (Path) -> Unit = ::syncFileToDisk,
+    markUsed: (Path, Long) -> Unit = ::markFileUsed,
 ): StorageFileCache =
     StorageFileCache(
         cachedFileDao = store.cachedFileDao,
@@ -455,6 +459,7 @@ internal fun newTestFileCache(
         engineLogger = engineLogger,
         fileSystem = fileSystem,
         nowMillis = nowMillis,
+        markUsed = markUsed,
         syncFile = syncFile,
     )
 

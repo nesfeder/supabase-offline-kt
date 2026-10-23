@@ -34,6 +34,12 @@ private const val MAX_PLAIN_PATH_BYTES: Int = 512
 internal const val VARIANT_SEPARATOR: Char = '\u001F'
 
 /**
+ * The character after [VARIANT_SEPARATOR]. An object path followed by it bounds, from above, the
+ * row paths of the object's variants, which a query then finds as a range.
+ */
+internal val VARIANT_BOUND: Char = VARIANT_SEPARATOR + 1
+
+/**
  * Whether [bucketId] can name a directory of the cache: one non-empty segment, not `.` or `..`,
  * with no `/`, `\` or control character.
  *

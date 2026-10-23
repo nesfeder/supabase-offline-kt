@@ -41,12 +41,12 @@ internal fun renderImagePathOf(supabase: SupabaseClient): String =
  * a `Range` or `If-Range` header) fetches part of it, or none: neither stored nor served.
  *
  * @param renderImagePath the encoded path prefix of a transformed download, ending in `/`.
- * @param beforeSend runs once the request is recorded, before it is sent; what it throws stops the
- *   request, with the variant known.
+ * @param beforeSend runs on the probe once the request is recorded, before it is sent; what it
+ *   throws stops the request, with the variant known.
  */
 internal class DownloadRequestProbe(
     private val renderImagePath: String = DEFAULT_RENDER_IMAGE_PATH,
-    private val beforeSend: () -> Unit = {},
+    private val beforeSend: DownloadRequestProbe.() -> Unit = {},
 ) {
 
     /** What the probe saw of the request. */
@@ -78,7 +78,7 @@ internal class DownloadRequestProbe(
         // Last, so it sees the method and headers the caller's own overrides set
         httpOverride {
             record(method, headers, url.build())
-            beforeSend()
+            this@DownloadRequestProbe.beforeSend()
         }
     }
 
