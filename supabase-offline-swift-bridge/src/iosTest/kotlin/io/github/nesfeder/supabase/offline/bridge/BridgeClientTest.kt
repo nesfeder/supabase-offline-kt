@@ -116,6 +116,7 @@ class BridgeClientTest {
         assertEquals(0, report.syncedCount)
         assertEquals(1, report.remainingCount)
         assertEquals(1, report.heldBehindOtherTablesCount)
+        assertEquals(BridgeSyncStopKind.HELD_BEHIND_OTHER_TABLES, report.stopReason.kind)
         assertEquals(emptyList(), server.requests.filter { it.path.endsWith("/todos") })
 
         // And — once the parent's table answers, a sync of every table holds nothing back
@@ -125,6 +126,7 @@ class BridgeClientTest {
         val allReport = assertNotNull(all.awaitValue())
         assertEquals(0, allReport.heldBehindOtherTablesCount)
         assertEquals(0, allReport.remainingCount)
+        assertEquals(BridgeSyncStopKind.COMPLETED, allReport.stopReason.kind)
         val posts =
             server.requests.filter { it.method == "POST" }.map { it.path.substringAfterLast('/') }
         assertEquals(listOf("projects", "todos"), posts.distinct())

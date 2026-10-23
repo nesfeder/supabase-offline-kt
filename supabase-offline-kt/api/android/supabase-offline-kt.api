@@ -588,6 +588,7 @@ public final class io/github/nesfeder/supabase/offline/SyncReport {
 	public final fun component6 ()I
 	public final fun component7 ()I
 	public final fun component8 ()Ljava/util/List;
+	public final fun component9 ()Lio/github/nesfeder/supabase/offline/SyncStopReason;
 	public fun equals (Ljava/lang/Object;)Z
 	public final fun getAlreadyOnServerCount ()I
 	public final fun getConflicted ()Ljava/util/List;
@@ -596,6 +597,7 @@ public final class io/github/nesfeder/supabase/offline/SyncReport {
 	public final fun getHeldBehindOtherTablesCount ()I
 	public final fun getRejected ()Ljava/util/List;
 	public final fun getRemainingCount ()I
+	public final fun getStopReason ()Lio/github/nesfeder/supabase/offline/SyncStopReason;
 	public final fun getSyncedCount ()I
 	public fun hashCode ()I
 	public fun toString ()Ljava/lang/String;
@@ -618,6 +620,74 @@ public final class io/github/nesfeder/supabase/offline/SyncStatus {
 	public final fun getRejectedMutationCount ()I
 	public fun hashCode ()I
 	public final fun isSyncing ()Z
+	public fun toString ()Ljava/lang/String;
+}
+
+public abstract class io/github/nesfeder/supabase/offline/SyncStopReason {
+}
+
+public final class io/github/nesfeder/supabase/offline/SyncStopReason$Completed : io/github/nesfeder/supabase/offline/SyncStopReason {
+	public static final field INSTANCE Lio/github/nesfeder/supabase/offline/SyncStopReason$Completed;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/github/nesfeder/supabase/offline/SyncStopReason$HeldBehindOtherTables : io/github/nesfeder/supabase/offline/SyncStopReason {
+	public static final field INSTANCE Lio/github/nesfeder/supabase/offline/SyncStopReason$HeldBehindOtherTables;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/github/nesfeder/supabase/offline/SyncStopReason$LocalDataCleared : io/github/nesfeder/supabase/offline/SyncStopReason {
+	public static final field INSTANCE Lio/github/nesfeder/supabase/offline/SyncStopReason$LocalDataCleared;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/github/nesfeder/supabase/offline/SyncStopReason$LocalFailure : io/github/nesfeder/supabase/offline/SyncStopReason {
+	public final fun component1 ()Lio/github/nesfeder/supabase/offline/SyncFailedException;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getError ()Lio/github/nesfeder/supabase/offline/SyncFailedException;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/github/nesfeder/supabase/offline/SyncStopReason$NetworkDisabled : io/github/nesfeder/supabase/offline/SyncStopReason {
+	public static final field INSTANCE Lio/github/nesfeder/supabase/offline/SyncStopReason$NetworkDisabled;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/github/nesfeder/supabase/offline/SyncStopReason$NetworkUnavailable : io/github/nesfeder/supabase/offline/SyncStopReason {
+	public static final field INSTANCE Lio/github/nesfeder/supabase/offline/SyncStopReason$NetworkUnavailable;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/github/nesfeder/supabase/offline/SyncStopReason$ServerFailure : io/github/nesfeder/supabase/offline/SyncStopReason {
+	public final fun component1 ()Lio/github/nesfeder/supabase/offline/SyncFailedException;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getError ()Lio/github/nesfeder/supabase/offline/SyncFailedException;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/github/nesfeder/supabase/offline/SyncStopReason$SessionChanged : io/github/nesfeder/supabase/offline/SyncStopReason {
+	public static final field INSTANCE Lio/github/nesfeder/supabase/offline/SyncStopReason$SessionChanged;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/github/nesfeder/supabase/offline/SyncStopReason$SessionNotReady : io/github/nesfeder/supabase/offline/SyncStopReason {
+	public static final field INSTANCE Lio/github/nesfeder/supabase/offline/SyncStopReason$SessionNotReady;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
 	public fun toString ()Ljava/lang/String;
 }
 

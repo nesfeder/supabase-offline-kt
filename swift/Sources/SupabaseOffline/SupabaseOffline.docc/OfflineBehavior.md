@@ -79,8 +79,9 @@ Nothing runs when your app returns to the foreground: call
 ``SupabaseOfflineClient/syncPendingMutations(table:)`` then.
 
 A sync sends the user's writes one at a time, in order. A failure that may pass (no connection, a
-`401`, `408`, `429` or `5xx`) stops it with the rest still queued, and
-``SyncStatus/lastSyncError`` says why. A write the server refuses for good moves to the rejected
+`401`, `408`, `429` or `5xx`) stops it with the rest still queued, and the report's
+``SyncReport/stopReason`` and ``SyncStatus/lastSyncError`` say why. A write the server refuses for
+good moves to the rejected
 list, ``SupabaseOfflineClient/rejectedMutations()``, and the sync goes on. The list is kept across
 launches until the app dismisses or retries each entry, and holds the newest 100.
 

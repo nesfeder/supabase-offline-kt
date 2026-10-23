@@ -346,13 +346,13 @@ public interface Offline : SupabasePlugin<Offline.Config> {
      * The pass first waits, for a bounded time, for the session to settle (signed in, or signed
      * out); it does not wait when the network is known to be down. A failure that may pass (no
      * connection, a `401`, `408`, `429` or `5xx`) stops it with every remaining write still queued,
-     * so no write overtakes an earlier one; it is not thrown, and [SyncStatus.lastSyncError] says
-     * what it was. A write the server refuses for good (another `4xx`) goes to [rejectedMutations],
-     * and the pass goes on. A guarded write whose row moved on the server ([Config.versionColumns])
-     * is settled by [Config.conflictResolver] and sent again, dropped, or parked on
-     * [conflictedMutations], and the pass goes on. For a single table, the pass stops at the first
-     * write that has an earlier write of the user still queued in another table, which may be the
-     * row it depends on: no write is sent ahead of an earlier one, and
+     * so no write overtakes an earlier one; it is not thrown, and [SyncReport.stopReason] and
+     * [SyncStatus.lastSyncError] say what it was. A write the server refuses for good (another
+     * `4xx`) goes to [rejectedMutations], and the pass goes on. A guarded write whose row moved on
+     * the server ([Config.versionColumns]) is settled by [Config.conflictResolver] and sent again,
+     * dropped, or parked on [conflictedMutations], and the pass goes on. For a single table, the
+     * pass stops at the first write that has an earlier write of the user still queued in another
+     * table, which may be the row it depends on: no write is sent ahead of an earlier one, and
      * [SyncReport.heldBehindOtherTablesCount] counts what it held back.
      *
      * When the library is sending the same writes at that moment, by itself or for another call,
@@ -366,7 +366,8 @@ public interface Offline : SupabasePlugin<Offline.Config> {
      * server's `Retry-After` asks. Call this as the app comes to the foreground to send at once.
      *
      * @param table the table, or `null` for every table.
-     * @return what this call sent, what was refused, and what is still queued.
+     * @return what this call sent, what was refused, what is still queued, and why
+     *   ([SyncReport.stopReason]).
      * @throws OfflineClientClosedException when the client is closed.
      * @throws IllegalStateException when [Postgrest] is not installed.
      */

@@ -176,6 +176,7 @@ struct MutationQueueTests {
         #expect(held.syncedCount == 0)
         #expect(held.remainingCount == 1)
         #expect(held.heldBehindOtherTablesCount == 1)
+        #expect(held.stopReason.kind == .heldBehindOtherTables)
         #expect(server.requests.values.filter { $0.url.path.hasSuffix("/todos") }.isEmpty)
 
         // When the parent's table answers and every table is synced
@@ -185,6 +186,7 @@ struct MutationQueueTests {
         // Then both are sent, the parent first, and nothing is held
         #expect(all.heldBehindOtherTablesCount == 0)
         #expect(all.remainingCount == 0)
+        #expect(all.stopReason.kind == .completed)
         let tablesWritten = server.requests(withMethod: "POST").map(\.url.lastPathComponent)
         let firstChildWrite = try #require(tablesWritten.firstIndex(of: "todos"))
         #expect(tablesWritten[..<firstChildWrite].contains("projects"))
@@ -214,6 +216,45 @@ struct MutationQueueTests {
         #expect(server.requests.values.last?.method == "PATCH")
         #expect(try server.requests.values.last?.jsonBody == ["done": true])
         #expect(try await client.pendingMutationCount() == 0)
+        try await client.close()
+    }
+
+    @Test func aSyncSaysWhyItReturned() async throws {
+        // Given a write queued while the server is out of reach
+        let server = RecordingFakeServer { _ in .noConnection }
+        let client = SupabaseOfflineClient.inMemory(config: .init(autoSync: false), server: server.server)
+        _ = try await client.from("todos").insert(Self.tea).execute()
+
+        // When a sync runs offline, against a server that fails writes, with network access off,
+        // and online
+        let offline = try await client.syncPendingMutations()
+        server.answer { request in
+            request.method == "POST"
+                ? .json(#"{"code":"PGRST000","message":"busy","details":null,"hint":null}"#, status: 503)
+                : .status(201)
+        }
+        let failing = try await client.syncPendingMutations()
+        let recorded = client.syncStatus.value.lastSyncError
+        try await client.disableNetwork()
+        let disabled = try await client.syncPendingMutations()
+        try await client.enableNetwork()
+        server.answer { _ in .status(201) }
+        let online = try await client.syncPendingMutations()
+
+        // Then each says why, and the failure carries the error the status holds
+        #expect(offline.stopReason.kind == .networkUnavailable)
+        #expect(offline.stopReason.error == nil)
+        #expect(failing.stopReason.kind == .serverFailure)
+        let failure = try #require(failing.stopReason.error)
+        #expect(failure.code == .syncFailed)
+        #expect(failure.httpStatus == 503)
+        #expect(failure.serverError?.code == "PGRST000")
+        #expect(failure.message == recorded?.message)
+        #expect(disabled.stopReason.kind == .networkDisabled)
+        #expect(disabled.remainingCount == 1)
+        #expect(online.stopReason.kind == .completed)
+        #expect(online.stopReason.error == nil)
+        #expect(online.syncedCount == 1)
         try await client.close()
     }
 }
