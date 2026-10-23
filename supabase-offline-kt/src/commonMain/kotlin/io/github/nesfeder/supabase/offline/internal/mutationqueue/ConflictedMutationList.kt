@@ -94,7 +94,7 @@ internal data class StoredConflictList(
  * @property list The list as persisted.
  * @property entrySizes Each entry's encoded length, one per entry of [list], in its order.
  */
-internal class MeasuredConflictList(val list: StoredConflictList, val entrySizes: List<Int>) {
+internal data class MeasuredConflictList(val list: StoredConflictList, val entrySizes: List<Int>) {
 
     init {
         require(entrySizes.size == list.entries.size) { "One size per conflicted entry" }

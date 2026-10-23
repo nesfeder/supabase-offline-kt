@@ -268,6 +268,11 @@ internal open class InMemoryMutationDao : MutationDao {
     override suspend fun pendingAll(): List<MutationRow> =
         mutations.value.filter { it.syncedAtMs == null }.sortedBy { it.id }
 
+    override suspend fun countPending(): Int = mutations.value.count { it.syncedAtMs == null }
+
+    override suspend fun countPendingForTable(table: String): Int =
+        mutations.value.count { it.table == table && it.syncedAtMs == null }
+
     override suspend fun pendingGuardedAfter(
         table: String,
         afterId: Long,

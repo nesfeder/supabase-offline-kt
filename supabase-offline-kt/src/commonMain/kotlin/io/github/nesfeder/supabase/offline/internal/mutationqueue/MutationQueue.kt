@@ -515,7 +515,7 @@ internal class MutationQueue(
     }
 
     /** How many mutations [pendingMutationsOf] would return, without reading them. */
-    suspend fun pendingMutationCountOf(identity: String, table: String? = null): Int {
+    suspend fun pendingMutationCountOf(identity: String, table: String?): Int {
         val adopts = mayAdoptOwnerlessMutations(identity)
         return if (table == null) mutationDao.countPendingOwnedBy(identity, adopts)
         else mutationDao.countPendingOwnedByInTable(identity, adopts, table)
@@ -951,6 +951,10 @@ internal class MutationQueue(
      * Returns all pending mutations in insertion order across **all tables**, whatever their owner.
      */
     suspend fun allPendingMutations(): List<MutationRow> = mutationDao.pendingAll()
+
+    /** How many mutations are pending, of [table] or of every table, whatever their owner. */
+    suspend fun allPendingMutationCount(table: String?): Int =
+        if (table == null) mutationDao.countPending() else mutationDao.countPendingForTable(table)
 
     /*
      * What the app is shown of the queue: the current identity's mutations and the ownerless ones

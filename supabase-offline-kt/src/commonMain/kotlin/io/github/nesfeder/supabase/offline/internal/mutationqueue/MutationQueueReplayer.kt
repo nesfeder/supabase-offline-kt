@@ -120,7 +120,7 @@ internal class MutationQueueReplayer(
     /**
      * The mutations being sent right now, by id, each with the pass sending it, or `null` for a
      * send at the head. Changed under [sendLock]; observed by a caller waiting for a sender to let
-     * go, which waits for a pass to end rather than for its one write, since a pass claims its next
+     * go, which waits for a pass to end before it waits for the write, since a pass claims its next
      * write as soon as it records the last.
      */
     private val inFlight = MutableStateFlow<Map<Long, Job?>>(emptyMap())
@@ -129,8 +129,10 @@ internal class MutationQueueReplayer(
     private val clearGeneration = MutableStateFlow(0L)
 
     /**
-     * Passes in flight, so [clearLocalData] can cancel them and a caller can wait one out; a pass
-     * is here before it claims anything, until its report is in.
+     * Passes in flight, so [clearLocalData] can cancel them and a caller can wait one out: a pass
+     * is here from before it claims anything until its caller's wait on it ends. A pass whose
+     * caller was canceled leaves while its last request finishes on the wire, so a waiter waits for
+     * the writes a pass held as well ([awaitOtherSenders]).
      */
     private val activePasses = MutableStateFlow<Set<Job>>(emptySet())
 
@@ -211,19 +213,20 @@ internal class MutationQueueReplayer(
 
     /**
      * Waits for the senders holding a mutation now to let go: each pass until it leaves
-     * [activePasses], each send at the head until its mutation leaves [inFlight]. Returns at once
-     * when nothing is held.
+     * [activePasses], then every held mutation until it leaves [inFlight]. The second wait is the
+     * whole wait for a send at the head, and what a pass needs whose caller was canceled: it leaves
+     * [activePasses] at once while its request finishes on the wire, and a caller that ran again
+     * before the outcome was recorded would meet the same write in flight, and run again. Returns
+     * at once when nothing is held.
      */
     private suspend fun awaitOtherSenders() {
         val holding = inFlight.value
+        if (holding.isEmpty()) return
         val passes = holding.values.filterNotNullTo(HashSet())
         if (passes.isNotEmpty()) {
             activePasses.first { active -> passes.none { pass -> pass in active } }
         }
-        val headSends = holding.filterValues { pass -> pass == null }.keys
-        if (headSends.isNotEmpty()) {
-            inFlight.first { current -> headSends.none { id -> id in current } }
-        }
+        inFlight.first { current -> holding.keys.none { id -> id in current } }
     }
 
     /** One pass, as [sync] describes it, without telling [passEnded]. */
@@ -539,13 +542,9 @@ internal class MutationQueueReplayer(
      * How many of [identity]'s mutations are pending in [table], or in every table, counted rather
      * than read; every identity's when [identity] is `null`.
      */
-    private suspend fun remainingFor(identity: QueueIdentity?, table: String?): Int {
-        if (identity == null)
-            return mutationQueue.allPendingMutations().count { row ->
-                table == null || row.table == table
-            }
-        return mutationQueue.pendingMutationCountOf(identity.storedValue, table)
-    }
+    private suspend fun remainingFor(identity: QueueIdentity?, table: String?): Int =
+        if (identity == null) mutationQueue.allPendingMutationCount(table)
+        else mutationQueue.pendingMutationCountOf(identity.storedValue, table)
 
     /** The next step of a pass, chosen under [sendLock]. */
     private sealed interface Claim {

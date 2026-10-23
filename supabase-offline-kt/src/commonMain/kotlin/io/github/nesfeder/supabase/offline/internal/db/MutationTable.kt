@@ -151,6 +151,14 @@ internal interface MutationDao {
     @Query("SELECT * FROM mutation_cache WHERE synced_at_ms IS NULL ORDER BY id ASC")
     suspend fun pendingAll(): List<MutationRow>
 
+    /** How many mutations [pendingAll] would return, without reading them. */
+    @Query("SELECT COUNT(*) FROM mutation_cache WHERE synced_at_ms IS NULL")
+    suspend fun countPending(): Int
+
+    /** How many mutations [pendingForTable] would return, without reading them. */
+    @Query("SELECT COUNT(*) FROM mutation_cache WHERE table_name = :table AND synced_at_ms IS NULL")
+    suspend fun countPendingForTable(table: String): Int
+
     /**
      * Every pending mutation across all tables, in insertion order, re-emitted on every queue
      * change.
