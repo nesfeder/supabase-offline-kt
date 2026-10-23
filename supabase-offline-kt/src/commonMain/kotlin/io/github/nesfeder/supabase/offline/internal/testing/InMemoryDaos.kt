@@ -349,9 +349,11 @@ internal open class InMemoryCachedFileDao : CachedFileDao {
         bucketId: String,
         path: String,
         variantPrefix: String,
+        variantBound: String,
     ): List<CachedFileRow> =
         rows.value.values.filter {
-            it.bucketId == bucketId && (it.path == path || it.path.startsWith(variantPrefix))
+            it.bucketId == bucketId &&
+                (it.path == path || (it.path >= variantPrefix && it.path < variantBound))
         }
 
     override suspend fun all(): List<CachedFileRow> = rows.value.values.toList()

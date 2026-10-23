@@ -101,6 +101,7 @@ class InMemoryDaosAcrossThreadsTest {
                             BUCKET,
                             "file-${read % CACHE_KEYS}",
                             "file-${read % CACHE_KEYS}@",
+                            "file-${read % CACHE_KEYS}A",
                         )
                         dao.delete(BUCKET, "file-${read % CACHE_KEYS}")
                     }

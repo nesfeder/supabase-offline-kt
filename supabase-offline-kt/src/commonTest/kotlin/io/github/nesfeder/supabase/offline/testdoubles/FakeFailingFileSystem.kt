@@ -40,6 +40,9 @@ internal class FakeFailingFileSystem : ForwardingFileSystem(FileSystem.SYSTEM) {
     /** Runs as [atomicMove] starts, before it moves or refuses. */
     var onMove: ((source: Path, target: Path) -> Unit)? = null
 
+    /** Runs as [metadataOrNull] starts, with the path, on the thread that asked. */
+    var onMetadata: ((Path) -> Unit)? = null
+
     /** Every file a sink was opened on, in order. */
     val sinksOpened: MutableList<Path> = mutableListOf()
 
@@ -68,6 +71,7 @@ internal class FakeFailingFileSystem : ForwardingFileSystem(FileSystem.SYSTEM) {
     }
 
     override fun metadataOrNull(path: Path): FileMetadata? {
+        onMetadata?.invoke(path)
         if (failMetadataOf?.invoke(path) == true) throw IOException("Permission denied")
         return super.metadataOrNull(path)
     }

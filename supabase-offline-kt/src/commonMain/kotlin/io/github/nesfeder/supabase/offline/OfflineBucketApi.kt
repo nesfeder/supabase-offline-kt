@@ -72,9 +72,11 @@ public interface OfflineBucketApi : BucketApi {
 
     /**
      * The cached copy of the object at [path], downloading it into the cache first when none is
-     * cached. The download streams to disk. A cached copy is returned as it is, however old; check
-     * [CachedFile.fetchedAt] against your own freshness rule. Canceled mid-download, it returns
-     * once its partial file is deleted (see [OfflineBucketApi] on how long that can take).
+     * cached. The download streams to disk, and concurrent calls for one object share it. A cached
+     * copy is returned as it is, however old; check [CachedFile.fetchedAt] against your own
+     * freshness rule. Canceled mid-download, it returns once its partial file is deleted (see
+     * [OfflineBucketApi] on how long that can take), unless another call is still waiting for the
+     * download, which then goes on for that call.
      *
      * @param path the object path within this bucket.
      * @param isPublic whether to download through the public URL rather than the authenticated one.

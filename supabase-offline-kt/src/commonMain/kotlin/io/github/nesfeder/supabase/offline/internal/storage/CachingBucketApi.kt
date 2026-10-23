@@ -1,5 +1,7 @@
 // Copyright (c) 2026 nesfeder
 // SPDX-License-Identifier: MIT
+@file:OptIn(ExperimentalAtomicApi::class)
+
 package io.github.nesfeder.supabase.offline.internal.storage
 
 import io.github.jan.supabase.exceptions.NotFoundRestException
@@ -35,6 +37,9 @@ import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.ByteWriteChannel
 import io.ktor.utils.io.readAvailable
 import io.ktor.utils.io.writeFully
+import kotlin.concurrent.atomics.AtomicBoolean
+import kotlin.concurrent.atomics.AtomicReference
+import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.time.Duration
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
@@ -132,11 +137,33 @@ internal class CachingBucketApi(
                         "be mapped onto a file"
                 )
         var supersededBefore = false
+        var retriedAfterJoinedFailure = false
         while (true) {
             cache.useCachedCopy(entry)?.let {
                 return it
             }
-            when (downloadIntoCache(entry, path, isPublic)) {
+            // One download per cold object: a concurrent call for it waits for this one. Its body
+            // looks at the cache first, so a call that missed just before a commit downloads
+            // nothing.
+            val shared =
+                cache.downloadsInFlight.joinOrStart(entry.key, backgroundScope) { ensureWanted ->
+                    if (cache.useCachedCopy(entry) != null) CommitOutcome.COMMITTED
+                    else downloadIntoCache(entry, path, isPublic, ensureWanted)
+                }
+            val outcome =
+                when (shared) {
+                    is SharedOutcome.Ended -> shared.outcome
+                    is SharedOutcome.Failed -> {
+                        // The request was another caller's — its URL, headers and session — so
+                        // once, this call makes its own
+                        if (shared.joined && !retriedAfterJoinedFailure) {
+                            retriedAfterJoinedFailure = true
+                            continue
+                        }
+                        throw shared.cause
+                    }
+                }
+            when (outcome) {
                 CommitOutcome.COMMITTED ->
                     return cache.useCachedCopy(entry)
                         ?: throw IOException(
@@ -164,15 +191,20 @@ internal class CachingBucketApi(
     }
 
     /**
-     * Downloads [path] into [entry]'s file and commits it. A request that fetched only part of the
-     * object, by a header set on this bucket, is refused: the fragment cannot be the cached copy.
+     * Downloads [path] into [entry]'s file and commits it, as the download every concurrent
+     * [ensureCachedFile] of [path] shares. A request that fetched only part of the object, by a
+     * header set on this bucket, is refused: the fragment cannot be the cached copy.
      *
+     * @param ensureWanted throws a cancellation when every caller waiting for this download has
+     *   been canceled; called just before the commit, so a download they all gave up leaves no
+     *   file.
      * @return what the commit said.
      */
     private suspend fun downloadIntoCache(
         entry: FileCacheEntry,
         path: String,
         isPublic: Boolean,
+        ensureWanted: () -> Unit,
     ): CommitOutcome {
         val sentUnsettled = isSessionUnsettled()
         val file = OwnedTemporaryFile()
@@ -206,6 +238,7 @@ internal class CachingBucketApi(
                             download.cause,
                         )
                     StreamedDownload.StreamedThrough,
+                    StreamedDownload.Served,
                     StreamedDownload.Uncacheable ->
                         error("A known cache entry was reported uncacheable")
                 }
@@ -215,6 +248,10 @@ internal class CachingBucketApi(
                         "which cannot be the cached copy"
                 )
             }
+            // The download runs in the client's scope, so a caller's cancellation reaches it only
+            // once that caller runs again to leave it, which may be after this point: the file
+            // goes, rather than become a copy no caller waits for any more
+            ensureWanted()
             val outcome = cache.commit(written.temporary, start)
             if (outcome == CommitOutcome.COMMITTED) file.temporary = null
             return outcome
@@ -267,7 +304,8 @@ internal class CachingBucketApi(
     /**
      * A download returning its bytes. They are in memory anyway — that is what the caller asked for
      * — so the cache copy is written from them after the download, and a failure to write it is
-     * logged, never thrown.
+     * logged, never thrown. An [ensureCachedFile] download of the same entry in flight is waited
+     * for instead, and its file read.
      */
     private suspend fun downloadBytes(
         path: String,
@@ -282,21 +320,26 @@ internal class CachingBucketApi(
             networkAccess.ensureEnabled()
             return fetch { options -> options }
         }
-        val probe = DownloadRequestProbe(renderImagePath, beforeSend = networkAccess::ensureEnabled)
+        val request = ProbedRequest(path)
+        val probe = request.probe
         val start = cache.beginDownload()
         try {
             val sentUnsettled = isSessionUnsettled()
             val bytes =
                 try {
-                    fetch(probe::wrap)
+                    fetchUnlessDownloadInFlight(request) { fetch(probe::wrap) }
+                        ?: request.serveFromDownloadInFlight { entry -> cache.readBytes(entry) }
+                        ?: fetch(probe::wrap)
                 } catch (failure: Exception) {
                     currentCoroutineContext().ensureActive()
                     return recover(path, probe, failure, sentUnsettled) { entry ->
                         cache.readBytes(entry)
                     }
                 }
-            probe.entryToStore(cache, bucketId, path)?.let { entry ->
-                cache.write(entry, bytes, start)
+            if (!request.servedFromDownloadInFlight) {
+                probe.entryToStore(cache, bucketId, path)?.let { entry ->
+                    cache.write(entry, bytes, start)
+                }
             }
             return bytes
         } finally {
@@ -305,10 +348,92 @@ internal class CachingBucketApi(
     }
 
     /**
+     * Thrown by a [ProbedRequest]'s override to stop its request before it is sent: an
+     * [ensureCachedFile] download of the very entry it would fetch is in flight, and the call waits
+     * for that one instead of fetching the object a second time.
+     */
+    private class DownloadInFlight : Exception("A download of this entry is in flight")
+
+    /**
+     * The probe of one bytes or channel download of [path]. Its request override, once the request
+     * is recorded, refuses the request while network access is off and, the first time, stops it
+     * when an [ensureCachedFile] download of the entry it would fetch is in flight: the call then
+     * waits for that download ([serveFromDownloadInFlight]) rather than fetch the object twice.
+     */
+    private inner class ProbedRequest(private val path: String) {
+
+        /** The entry whose download in flight the stopped request waits for; `null` until then. */
+        private val inFlight = AtomicReference<FileCacheEntry?>(null)
+
+        /** Whether the next request may be stopped to wait for a download in flight: once only. */
+        private val mayJoin = AtomicBoolean(true)
+
+        /** Whether the call was answered from the download it waited for. */
+        var servedFromDownloadInFlight: Boolean = false
+            private set
+
+        val probe =
+            DownloadRequestProbe(renderImagePath) {
+                networkAccess.ensureEnabled()
+                val entry =
+                    if (mayJoin.exchange(false)) entryToStore(cache, bucketId, path) else null
+                if (entry != null && cache.downloadsInFlight.isInFlight(entry.key)) {
+                    inFlight.store(entry)
+                    throw DownloadInFlight()
+                }
+            }
+
+        /** Whether the request was stopped to wait for a download in flight. */
+        val stoppedForDownloadInFlight: Boolean
+            get() = inFlight.load() != null
+
+        /**
+         * Waits for the download in flight the request was stopped for, and answers from the cached
+         * copy it committed with [read]. A download that ended before it could be joined may have
+         * committed too, so its copy is read as well. One that did not commit, or failed — the
+         * request was another caller's, and a copy the disk refused never fails a download — gives
+         * nothing: the call fetches for itself then.
+         *
+         * @return what [read] gave, or `null` when there is nothing to serve.
+         */
+        suspend fun <T : Any> serveFromDownloadInFlight(read: suspend (FileCacheEntry) -> T?): T? {
+            val entry = inFlight.exchange(null) ?: return null
+            engineLogger.debug { "Storage download $bucketId/$path waiting for the one in flight" }
+            val committed =
+                when (val shared = cache.downloadsInFlight.join(entry.key)) {
+                    null -> true
+                    is SharedOutcome.Ended -> shared.outcome == CommitOutcome.COMMITTED
+                    is SharedOutcome.Failed -> false
+                }
+            if (!committed) return null
+            return read(entry)?.also { servedFromDownloadInFlight = true }
+        }
+    }
+
+    /**
+     * Runs [fetch], a download through [request]'s probe.
+     *
+     * @return the fetch's result, or `null` when the probe stopped the request for an
+     *   [ensureCachedFile] download of the same entry in flight, which the caller then waits for
+     *   ([ProbedRequest.serveFromDownloadInFlight]).
+     */
+    private suspend fun <T : Any> fetchUnlessDownloadInFlight(
+        request: ProbedRequest,
+        fetch: suspend () -> T,
+    ): T? =
+        try {
+            fetch()
+        } catch (failure: Exception) {
+            currentCoroutineContext().ensureActive()
+            if (request.stoppedForDownloadInFlight) null else throw failure
+        }
+
+    /**
      * A download into the caller's channel, streamed through a temporary file so it is never held
      * in memory. [channel] gets nothing until the download is complete, then is closed, as
      * supabase-kt does. A response that is not a success throws as the bytes download does, and
-     * none of it reaches [channel] or the cache.
+     * none of it reaches [channel] or the cache. An [ensureCachedFile] download of the same entry
+     * in flight is waited for instead, and its file streamed out.
      */
     private suspend fun downloadToChannel(
         path: String,
@@ -332,28 +457,48 @@ internal class CachingBucketApi(
             fetch(channel, options)
             return
         }
-        val probe = DownloadRequestProbe(renderImagePath, beforeSend = networkAccess::ensureEnabled)
+        val request = ProbedRequest(path)
+        val probe = request.probe
         val sentUnsettled = isSessionUnsettled()
         val file = OwnedTemporaryFile()
         val start = cache.beginDownload()
         try {
-            val download =
+            suspend fun stream(): StreamedDownload =
+                downloadToTemporaryFile(
+                    file,
+                    entryProvider = { probe.entryToStore(cache, bucketId, path) },
+                    passThrough = channel,
+                ) { target ->
+                    fetch(target, probe.wrap(options))
+                }
+            suspend fun recoverInto(failure: Exception) {
+                recover(path, probe, failure, sentUnsettled) { entry ->
+                    if (cache.copyTo(entry, channel)) Unit else null
+                }
+                channel.flushAndClose()
+            }
+            val streamed =
                 try {
-                    downloadToTemporaryFile(
-                        file,
-                        entryProvider = { probe.entryToStore(cache, bucketId, path) },
-                        passThrough = channel,
-                    ) { target ->
-                        fetch(target, probe.wrap(options))
-                    }
+                    fetchUnlessDownloadInFlight(request) { stream() }
                 } catch (failure: Exception) {
                     currentCoroutineContext().ensureActive()
-                    recover(path, probe, failure, sentUnsettled) { entry ->
-                        if (cache.copyTo(entry, channel)) Unit else null
-                    }
-                    channel.flushAndClose()
+                    recoverInto(failure)
                     return
                 }
+            // The copy a download in flight committed is served outside that try: a copy that
+            // fails part-way must not be followed by the whole object from the recovery
+            val download =
+                streamed
+                    ?: request.serveFromDownloadInFlight { entry ->
+                        if (cache.copyTo(entry, channel)) StreamedDownload.Served else null
+                    }
+                    ?: try {
+                        stream()
+                    } catch (failure: Exception) {
+                        currentCoroutineContext().ensureActive()
+                        recoverInto(failure)
+                        return
+                    }
             when (download) {
                 is StreamedDownload.Written -> commitAndStream(file, download, start, channel)
                 is StreamedDownload.CacheRefused -> {
@@ -363,7 +508,9 @@ internal class CachingBucketApi(
                     return
                 }
                 // Part of the object, or none: delivered as it came, and never cached
-                StreamedDownload.StreamedThrough -> Unit
+                StreamedDownload.StreamedThrough,
+                // The whole object, from the copy the download in flight committed
+                StreamedDownload.Served -> Unit
                 StreamedDownload.Uncacheable -> error("A channel download had no channel to fill")
             }
             channel.flushAndClose()
@@ -451,6 +598,12 @@ internal class CachingBucketApi(
 
         /** Every byte went straight to the caller's channel: no whole variant to cache. */
         data object StreamedThrough : StreamedDownload
+
+        /**
+         * Every byte went to the caller's channel from the cached copy an [ensureCachedFile]
+         * download in flight committed; nothing was fetched.
+         */
+        data object Served : StreamedDownload
 
         /** The download finished without a cache entry to hold it, nor a channel to fill. */
         data object Uncacheable : StreamedDownload
