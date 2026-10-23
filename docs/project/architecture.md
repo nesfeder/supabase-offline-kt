@@ -849,10 +849,15 @@ live readers fetch again. Stale means "refresh when you can": `CacheFirst` fetch
 again online and serves it offline within its `maxAge`, and `NetworkFirst` and `CacheOnly` serve it
 within theirs.
 
-**Eviction.** After a response of 4 K characters or more, and after every 32nd response, the engine
-sums the payloads' length. Over the bound, it deletes the payloads fetched longest ago, ten at a
-time, down to 50 MB below the bound (or to the bound when it is 50 MB or less), never one of up to
-500 queries with a live reader. The engine's own records are never counted or evicted.
+**Eviction.** The engine keeps a running count of the payloads' length: read once from the table,
+in the background after the first response of a process is written, and moved by each payload
+written, less the one it replaced, patched or evicted since. When a written response takes the
+count past the bound, a pass runs in the engine's scope after the response is returned: it reads
+every payload's `rowid`, fetch time and length once, oldest fetch first, chooses the payloads to
+delete down to 50 MB below the bound (or to the bound when it is 50 MB or less), never one of up to
+500 with a live reader, deletes them by `rowid` in one transaction, sparing any fetched again since
+the read, and sets the count from what it read. A response that lands during a pass gets a pass of
+its own. The engine's own records are never counted or evicted.
 
 **Retries and refreshes.** A `NetworkFirst` read with a warm cache, a `CacheFirst` read fetching a
 stale payload again, a `NetworkFirstThenCache` read's first request with a warm cache, and every

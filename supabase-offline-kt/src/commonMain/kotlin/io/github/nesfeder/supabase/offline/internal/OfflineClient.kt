@@ -350,6 +350,7 @@ internal class OfflineClient(
             },
             onCacheNotServed = { cacheOwnerChecks.tryEmit(Unit) },
             versionColumns = versionColumns,
+            backgroundScope = clientScope,
         )
 
     /*

@@ -56,7 +56,7 @@ internal class LocalData(
                     mutationQueue.forgetRecordsOfClearedQueue()
                 }
                 queryCache.queryShapes.forgetAll()
-                queryCache.forgetParsedPayloads()
+                queryCache.payloadsEmptied()
                 // Counted again once committed: a read between the delete and the commit saw the
                 // rows before it
                 queryCacheDao.countWriteToEveryTable()
@@ -89,7 +89,7 @@ internal class LocalData(
                     }
                 }
                 queryCache.queryShapes.forgetAll()
-                queryCache.forgetParsedPayloads()
+                queryCache.payloadsEmptied()
                 // Counted again once committed, as in clearLocalData
                 queryCacheDao.countWriteToEveryTable()
             }

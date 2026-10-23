@@ -4,8 +4,11 @@
 
 package io.github.nesfeder.supabase.offline.internal.db
 
+import kotlin.concurrent.atomics.AtomicInt
 import kotlin.concurrent.atomics.AtomicReference
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
+import kotlin.concurrent.atomics.decrementAndFetch
+import kotlin.concurrent.atomics.incrementAndFetch
 import kotlin.concurrent.atomics.update
 
 /**
@@ -34,6 +37,15 @@ internal class PayloadWriteCountingDao(private val delegate: QueryCacheDao) :
     /** The writes counted so far. */
     private val writes = AtomicReference(ChangeCounts())
 
+    /** How many [runInTransaction] calls are open. */
+    private val openTransactions = AtomicInt(0)
+
+    /**
+     * The tables counted while a transaction was open, `null` standing for every table, to count
+     * again once it ends; see [runInTransaction].
+     */
+    private val countedInTransaction = AtomicReference<Set<String?>>(emptySet())
+
     /** The writes counted against [table]: those that may reach every table, and those to it. */
     fun writesTo(table: String): Pair<Long, Long> = writes.load().of(table)
 
@@ -48,6 +60,24 @@ internal class PayloadWriteCountingDao(private val delegate: QueryCacheDao) :
             if (table == null) counts.copy(everyTable = counts.everyTable + 1)
             else
                 counts.copy(byTable = counts.byTable + (table to (counts.byTable[table] ?: 0L) + 1))
+        }
+        if (openTransactions.load() > 0) countedInTransaction.update { tables -> tables + table }
+    }
+
+    /**
+     * [QueryCacheDao.runInTransaction], counting each table written inside it once more when it
+     * ends: a statement is counted as it returns, before the transaction commits, so a reader of
+     * another connection between the two saw the rows before the write under the count after it,
+     * and would keep what it read until the next write.
+     */
+    override suspend fun runInTransaction(block: suspend () -> Unit) {
+        openTransactions.incrementAndFetch()
+        try {
+            delegate.runInTransaction(block)
+        } finally {
+            openTransactions.decrementAndFetch()
+            // Committed or rolled back, the rows may differ from what was read under the counts
+            countedInTransaction.exchange(emptySet()).forEach { table -> count(table) }
         }
     }
 
@@ -76,8 +106,8 @@ internal class PayloadWriteCountingDao(private val delegate: QueryCacheDao) :
     override suspend fun deleteOrphanedQueryShapes(): Int =
         counted(null) { delegate.deleteOrphanedQueryShapes() }
 
-    override suspend fun deleteOldestPayloadRows(limit: Int, keptCacheKeys: List<String>): Int =
-        counted(null) { delegate.deleteOldestPayloadRows(limit, keptCacheKeys) }
+    override suspend fun deletePayloads(rowIds: List<Long>, fetchedAtOrBefore: Long): Int =
+        counted(null) { delegate.deletePayloads(rowIds, fetchedAtOrBefore) }
 
     /** Runs [write], then counts it against [table] whether it returned or failed. */
     private inline fun <T> counted(table: String?, write: () -> T): T =
