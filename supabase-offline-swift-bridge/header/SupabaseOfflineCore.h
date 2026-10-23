@@ -6,7 +6,7 @@
 #import <Foundation/NSString.h>
 #import <Foundation/NSValue.h>
 
-@class NSData, SOCBridgeAccessTokenCallback, SOCBridgeCachedFile, SOCBridgeCancellable, SOCBridgeClient, SOCBridgeClientCompanion, SOCBridgeClientOptions, SOCBridgeClientOptionsCompanion, SOCBridgeConflict, SOCBridgeConflictAnswer, SOCBridgeConflictDecision, SOCBridgeConflictedMutation, SOCBridgeError, SOCBridgeErrorKind, SOCBridgeFakeRealtime, SOCBridgeHttpRequest, SOCBridgeHttpResponder, SOCBridgeLogLevel, SOCBridgeMutationOperation, SOCBridgeMutationResult, SOCBridgeNetworkStatus, SOCBridgeOpenResult, SOCBridgePendingMutation, SOCBridgeQueryResult, SOCBridgeQuerySnapshot, SOCBridgeRealtimeFilter, SOCBridgeRealtimeStatus, SOCBridgeRealtimeStatusKind, SOCBridgeRealtimeTable, SOCBridgeRefreshKind, SOCBridgeRefreshState, SOCBridgeRejectedMutation, SOCBridgeServerError, SOCBridgeStorage, SOCBridgeStringResult, SOCBridgeSyncReport, SOCBridgeSyncStatus, SOCBridgeTesting, SOCKotlinArray<T>, SOCKotlinEnum<E>, SOCKotlinEnumCompanion;
+@class NSData, SOCBridgeAccessTokenCallback, SOCBridgeCachedFile, SOCBridgeCancellable, SOCBridgeClient, SOCBridgeClientCompanion, SOCBridgeClientOptions, SOCBridgeClientOptionsCompanion, SOCBridgeConflict, SOCBridgeConflictAnswer, SOCBridgeConflictDecision, SOCBridgeConflictedMutation, SOCBridgeError, SOCBridgeErrorKind, SOCBridgeFakeRealtime, SOCBridgeHttpRequest, SOCBridgeHttpResponder, SOCBridgeLogLevel, SOCBridgeMutationOperation, SOCBridgeMutationResult, SOCBridgeNetworkStatus, SOCBridgeOpenResult, SOCBridgePendingMutation, SOCBridgeQueryResult, SOCBridgeQuerySnapshot, SOCBridgeRealtimeFilter, SOCBridgeRealtimeStatus, SOCBridgeRealtimeStatusKind, SOCBridgeRealtimeTable, SOCBridgeRefreshKind, SOCBridgeRefreshState, SOCBridgeRejectedMutation, SOCBridgeServerError, SOCBridgeStorage, SOCBridgeStringResult, SOCBridgeSyncReport, SOCBridgeSyncStatus, SOCBridgeSyncStopKind, SOCBridgeSyncStopReason, SOCBridgeTesting, SOCKotlinArray<T>, SOCKotlinEnum<E>, SOCKotlinEnumCompanion;
 
 @protocol SOCBridgeAccessTokenProvider, SOCBridgeClock, SOCBridgeConflictResolver, SOCBridgeFakeServer, SOCBridgeLogSink, SOCKotlinComparable, SOCKotlinIterator;
 
@@ -1308,6 +1308,7 @@ __attribute__((swift_name("BridgeStringResult")))
  * @property conflictsKeptServerCount the guarded writes dropped unsent because the server's row
  *   stands.
  * @property conflicted the guarded writes parked during this call, now on the conflicted list.
+ * @property stopReason why the call returned when it did.
  */
 __attribute__((objc_subclassing_restricted))
 __attribute__((swift_name("BridgeSyncReport")))
@@ -1319,6 +1320,7 @@ __attribute__((swift_name("BridgeSyncReport")))
 @property (readonly) int32_t heldBehindOtherTablesCount __attribute__((swift_name("heldBehindOtherTablesCount")));
 @property (readonly) NSArray<SOCBridgeRejectedMutation *> *rejected __attribute__((swift_name("rejected")));
 @property (readonly) int32_t remainingCount __attribute__((swift_name("remainingCount")));
+@property (readonly) SOCBridgeSyncStopReason *stopReason __attribute__((swift_name("stopReason")));
 @property (readonly) int32_t syncedCount __attribute__((swift_name("syncedCount")));
 @end
 
@@ -1347,6 +1349,45 @@ __attribute__((swift_name("BridgeSyncStatus")))
 @property (readonly) SOCBridgeNetworkStatus *network __attribute__((swift_name("network")));
 @property (readonly) int32_t pendingMutationCount __attribute__((swift_name("pendingMutationCount")));
 @property (readonly) int32_t rejectedMutationCount __attribute__((swift_name("rejectedMutationCount")));
+@end
+
+
+/** The reasons a sync call returns when it does, as the library names them. */
+__attribute__((objc_subclassing_restricted))
+__attribute__((swift_name("BridgeSyncStopKind")))
+@interface SOCBridgeSyncStopKind : SOCKotlinEnum<SOCBridgeSyncStopKind *>
++ (instancetype)alloc __attribute__((unavailable));
+
+/** The reasons a sync call returns when it does, as the library names them. */
++ (instancetype)allocWithZone:(struct _NSZone *)zone __attribute__((unavailable));
+- (instancetype)initWithName:(NSString *)name ordinal:(int32_t)ordinal __attribute__((swift_name("init(name:ordinal:)"))) __attribute__((objc_designated_initializer)) __attribute__((unavailable));
+@property (class, readonly) SOCBridgeSyncStopKind *completed __attribute__((swift_name("completed")));
+@property (class, readonly) SOCBridgeSyncStopKind *networkUnavailable __attribute__((swift_name("networkUnavailable")));
+@property (class, readonly) SOCBridgeSyncStopKind *serverFailure __attribute__((swift_name("serverFailure")));
+@property (class, readonly) SOCBridgeSyncStopKind *localFailure __attribute__((swift_name("localFailure")));
+@property (class, readonly) SOCBridgeSyncStopKind *sessionNotReady __attribute__((swift_name("sessionNotReady")));
+@property (class, readonly) SOCBridgeSyncStopKind *sessionChanged __attribute__((swift_name("sessionChanged")));
+@property (class, readonly) SOCBridgeSyncStopKind *networkDisabled __attribute__((swift_name("networkDisabled")));
+@property (class, readonly) SOCBridgeSyncStopKind *heldBehindOtherTables __attribute__((swift_name("heldBehindOtherTables")));
+@property (class, readonly) SOCBridgeSyncStopKind *localDataCleared __attribute__((swift_name("localDataCleared")));
+@property (class, readonly) SOCBridgeSyncStopKind *unknown __attribute__((swift_name("unknown")));
++ (SOCKotlinArray<SOCBridgeSyncStopKind *> *)values __attribute__((swift_name("values()")));
+@property (class, readonly) NSArray<SOCBridgeSyncStopKind *> *entries __attribute__((swift_name("entries")));
+@end
+
+
+/**
+ * Why one call of [BridgeClient.syncPendingMutations] returned when it did.
+ *
+ * @property kind the reason.
+ * @property error for [BridgeSyncStopKind.SERVER_FAILURE] and [BridgeSyncStopKind.LOCAL_FAILURE],
+ *   the failure, a [BridgeErrorKind.SYNC_FAILED]; `null` for every other kind.
+ */
+__attribute__((objc_subclassing_restricted))
+__attribute__((swift_name("BridgeSyncStopReason")))
+@interface SOCBridgeSyncStopReason : SOCBase
+@property (readonly) SOCBridgeError * _Nullable error __attribute__((swift_name("error")));
+@property (readonly) SOCBridgeSyncStopKind *kind __attribute__((swift_name("kind")));
 @end
 
 

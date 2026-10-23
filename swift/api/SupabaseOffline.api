@@ -457,6 +457,7 @@ method SupabaseOfflineClient.applyServerRecord(table:record:primaryKeys:schema:)
 method SupabaseOfflineClient.applyServerRecord(table:record:primaryKeys:schema:) | func applyServerRecord(table: String, record: some Encodable, primaryKeys: [String]? = nil, schema: String? = nil) async throws
 method SupabaseOfflineClient.clearLocalData() | func clearLocalData() async throws
 method SupabaseOfflineClient.close() | func close() async throws
+method SupabaseOfflineClient.conflictedMutationList() | func conflictedMutationList() async throws -> [ConflictedMutation]
 method SupabaseOfflineClient.conflictedMutations() | func conflictedMutations() -> ConflictedMutationSequence
 method SupabaseOfflineClient.disableNetwork() | func disableNetwork() async throws
 method SupabaseOfflineClient.disableRealtime() | func disableRealtime() async throws
@@ -472,6 +473,7 @@ method SupabaseOfflineClient.pendingMutationCount(table:) | func pendingMutation
 method SupabaseOfflineClient.pendingMutationCountSequence(table:) | func pendingMutationCountSequence(table: String? = nil) -> PendingMutationCountSequence
 method SupabaseOfflineClient.pendingMutations(table:) | func pendingMutations(table: String? = nil) -> PendingMutationSequence
 property SupabaseOfflineClient.realtimeStatus | var realtimeStatus: RealtimeStatusSequence { get }
+method SupabaseOfflineClient.rejectedMutationList() | func rejectedMutationList() async throws -> [RejectedMutation]
 method SupabaseOfflineClient.rejectedMutations() | func rejectedMutations() -> RejectedMutationSequence
 method SupabaseOfflineClient.resolveConflictedMutation(id:resolution:) | func resolveConflictedMutation(id: Int64, resolution: ConflictResolution) async throws
 method SupabaseOfflineClient.retryRejectedMutation(id:) | func retryRejectedMutation(id: Int64) async throws
@@ -489,6 +491,7 @@ property SyncReport.conflictsResolvedCount | let conflictsResolvedCount: Int
 property SyncReport.heldBehindOtherTablesCount | let heldBehindOtherTablesCount: Int
 property SyncReport.rejected | let rejected: [RejectedMutation]
 property SyncReport.remainingCount | let remainingCount: Int
+property SyncReport.stopReason | let stopReason: SyncStopReason
 property SyncReport.syncedCount | let syncedCount: Int
 struct SyncStatus | struct SyncStatus
 func.op SyncStatus.==(_:_:) | static func == (lhs: SyncStatus, rhs: SyncStatus) -> Bool
@@ -505,6 +508,22 @@ struct SyncStatusSequence.Iterator | struct Iterator
 method SyncStatusSequence.Iterator.next() | mutating func next() async throws -> SyncStatusSequence.Element?
 method SyncStatusSequence.makeAsyncIterator() | func makeAsyncIterator() -> SyncStatusSequence.Iterator
 property SyncStatusSequence.value | var value: SyncStatus { get }
+struct SyncStopReason | struct SyncStopReason
+struct SyncStopReason.Kind | struct Kind
+type.property SyncStopReason.Kind.completed | static let completed: SyncStopReason.Kind
+property SyncStopReason.Kind.description | var description: String { get }
+type.property SyncStopReason.Kind.heldBehindOtherTables | static let heldBehindOtherTables: SyncStopReason.Kind
+init SyncStopReason.Kind.init(rawValue:) | init(rawValue: String)
+type.property SyncStopReason.Kind.localDataCleared | static let localDataCleared: SyncStopReason.Kind
+type.property SyncStopReason.Kind.localFailure | static let localFailure: SyncStopReason.Kind
+type.property SyncStopReason.Kind.networkDisabled | static let networkDisabled: SyncStopReason.Kind
+type.property SyncStopReason.Kind.networkUnavailable | static let networkUnavailable: SyncStopReason.Kind
+property SyncStopReason.Kind.rawValue | let rawValue: String
+type.property SyncStopReason.Kind.serverFailure | static let serverFailure: SyncStopReason.Kind
+type.property SyncStopReason.Kind.sessionChanged | static let sessionChanged: SyncStopReason.Kind
+type.property SyncStopReason.Kind.sessionNotReady | static let sessionNotReady: SyncStopReason.Kind
+property SyncStopReason.error | var error: OfflineError? { get }
+property SyncStopReason.kind | let kind: SyncStopReason.Kind
 property UInt.offlineFilterText | var offlineFilterText: String { get }
 property UInt16.offlineFilterText | var offlineFilterText: String { get }
 property UInt32.offlineFilterText | var offlineFilterText: String { get }
@@ -712,3 +731,11 @@ conformance SyncStatus | Swift.Sendable
 conformance SyncStatusSequence | Swift.Sendable
 conformance SyncStatusSequence | _Concurrency.AsyncSequence
 conformance SyncStatusSequence.Iterator | _Concurrency.AsyncIteratorProtocol
+conformance SyncStopReason | Swift.Equatable
+conformance SyncStopReason | Swift.Hashable
+conformance SyncStopReason | Swift.Sendable
+conformance SyncStopReason.Kind | Swift.CustomStringConvertible
+conformance SyncStopReason.Kind | Swift.Equatable
+conformance SyncStopReason.Kind | Swift.Hashable
+conformance SyncStopReason.Kind | Swift.RawRepresentable
+conformance SyncStopReason.Kind | Swift.Sendable

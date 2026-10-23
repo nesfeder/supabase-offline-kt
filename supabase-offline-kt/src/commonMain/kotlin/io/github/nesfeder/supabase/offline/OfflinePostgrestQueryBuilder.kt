@@ -104,7 +104,7 @@ public class OfflinePostgrestQueryBuilder internal constructor(private val engin
      *   read, or the read asks for a shape the cache never holds.
      * @throws NetworkDisabledException while network access is off ([Offline.disableNetwork]) and
      *   the cache cannot answer the read.
-     * @throws IllegalStateException when the client is closed.
+     * @throws OfflineClientClosedException when the client is closed.
      * @throws IllegalArgumentException when two top-level filters name one column (see
      *   [OfflinePostgrestQueryBuilder]).
      */
@@ -167,7 +167,7 @@ public class OfflinePostgrestQueryBuilder internal constructor(private val engin
      * @return [MutationOutcome.Applied] with the server's response, or [MutationOutcome.Queued].
      * @throws MutationNotQueueableException when a write the mutation queue cannot hold cannot be
      *   sent for want of a connection; see [MutationStrategy.QueueIfOffline].
-     * @throws IllegalStateException when the client is closed.
+     * @throws OfflineClientClosedException when the client is closed.
      */
     @Throws(Throwable::class)
     public suspend fun insert(
@@ -186,7 +186,7 @@ public class OfflinePostgrestQueryBuilder internal constructor(private val engin
      * @return [MutationOutcome.Applied] with the server's response, or [MutationOutcome.Queued].
      * @throws MutationNotQueueableException when a write the mutation queue cannot hold cannot be
      *   sent for want of a connection; see [MutationStrategy.QueueIfOffline].
-     * @throws IllegalStateException when the client is closed.
+     * @throws OfflineClientClosedException when the client is closed.
      */
     @Throws(Throwable::class)
     public suspend inline fun <reified T : Any> insert(
@@ -210,7 +210,7 @@ public class OfflinePostgrestQueryBuilder internal constructor(private val engin
      * @return [MutationOutcome.Applied] with the server's response, or [MutationOutcome.Queued].
      * @throws MutationNotQueueableException when a write the mutation queue cannot hold cannot be
      *   sent for want of a connection; see [MutationStrategy.QueueIfOffline].
-     * @throws IllegalStateException when the client is closed.
+     * @throws OfflineClientClosedException when the client is closed.
      */
     @Throws(Throwable::class)
     public suspend inline fun <reified T : Any> insert(
@@ -229,7 +229,7 @@ public class OfflinePostgrestQueryBuilder internal constructor(private val engin
      * @return [MutationOutcome.Applied] with the server's response, or [MutationOutcome.Queued].
      * @throws MutationNotQueueableException when a write the mutation queue cannot hold cannot be
      *   sent for want of a connection; see [MutationStrategy.QueueIfOffline].
-     * @throws IllegalStateException when the client is closed.
+     * @throws OfflineClientClosedException when the client is closed.
      */
     @Throws(Throwable::class)
     public suspend fun upsert(
@@ -248,7 +248,7 @@ public class OfflinePostgrestQueryBuilder internal constructor(private val engin
      * @return [MutationOutcome.Applied] with the server's response, or [MutationOutcome.Queued].
      * @throws MutationNotQueueableException when a write the mutation queue cannot hold cannot be
      *   sent for want of a connection; see [MutationStrategy.QueueIfOffline].
-     * @throws IllegalStateException when the client is closed.
+     * @throws OfflineClientClosedException when the client is closed.
      */
     @Throws(Throwable::class)
     public suspend inline fun <reified T : Any> upsert(
@@ -272,7 +272,7 @@ public class OfflinePostgrestQueryBuilder internal constructor(private val engin
      * @return [MutationOutcome.Applied] with the server's response, or [MutationOutcome.Queued].
      * @throws MutationNotQueueableException when a write the mutation queue cannot hold cannot be
      *   sent for want of a connection; see [MutationStrategy.QueueIfOffline].
-     * @throws IllegalStateException when the client is closed.
+     * @throws OfflineClientClosedException when the client is closed.
      */
     @Throws(Throwable::class)
     public suspend inline fun <reified T : Any> upsert(
@@ -296,7 +296,7 @@ public class OfflinePostgrestQueryBuilder internal constructor(private val engin
      * @return [MutationOutcome.Applied] with the server's response, or [MutationOutcome.Queued].
      * @throws MutationNotQueueableException when a write the mutation queue cannot hold cannot be
      *   sent for want of a connection; see [MutationStrategy.QueueIfOffline].
-     * @throws IllegalStateException when the client is closed.
+     * @throws OfflineClientClosedException when the client is closed.
      * @throws IllegalArgumentException when two top-level filters name one column (see
      *   [OfflinePostgrestQueryBuilder]).
      */
@@ -319,7 +319,7 @@ public class OfflinePostgrestQueryBuilder internal constructor(private val engin
      * @return [MutationOutcome.Applied] with the server's response, or [MutationOutcome.Queued].
      * @throws MutationNotQueueableException when a write the mutation queue cannot hold cannot be
      *   sent for want of a connection; see [MutationStrategy.QueueIfOffline].
-     * @throws IllegalStateException when the client is closed.
+     * @throws OfflineClientClosedException when the client is closed.
      * @throws IllegalArgumentException when two top-level filters name one column (see
      *   [OfflinePostgrestQueryBuilder]).
      */
@@ -342,7 +342,7 @@ public class OfflinePostgrestQueryBuilder internal constructor(private val engin
      * @return [MutationOutcome.Applied] with the server's response, or [MutationOutcome.Queued].
      * @throws MutationNotQueueableException when a write the mutation queue cannot hold cannot be
      *   sent for want of a connection; see [MutationStrategy.QueueIfOffline].
-     * @throws IllegalStateException when the client is closed.
+     * @throws OfflineClientClosedException when the client is closed.
      * @throws IllegalArgumentException when two top-level filters name one column (see
      *   [OfflinePostgrestQueryBuilder]).
      */
@@ -364,7 +364,7 @@ public class OfflinePostgrestQueryBuilder internal constructor(private val engin
      * @return [MutationOutcome.Applied] with the server's response, or [MutationOutcome.Queued].
      * @throws MutationNotQueueableException when a write the mutation queue cannot hold cannot be
      *   sent for want of a connection; see [MutationStrategy.QueueIfOffline].
-     * @throws IllegalStateException when the client is closed.
+     * @throws OfflineClientClosedException when the client is closed.
      * @throws IllegalArgumentException when two top-level filters name one column (see
      *   [OfflinePostgrestQueryBuilder]).
      */

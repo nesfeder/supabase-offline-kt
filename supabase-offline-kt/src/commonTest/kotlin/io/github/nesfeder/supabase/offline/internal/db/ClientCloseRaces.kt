@@ -9,7 +9,6 @@ import io.github.nesfeder.supabase.offline.FlowReadStrategy
 import io.github.nesfeder.supabase.offline.MutationOutcome
 import io.github.nesfeder.supabase.offline.Offline
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogLevel
-import io.github.nesfeder.supabase.offline.internal.postgrest.CLIENT_CLOSED_MESSAGE
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingBackendServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingLogSink
 import io.github.nesfeder.supabase.offline.testdoubles.assertClientClosedError
@@ -22,7 +21,6 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -115,15 +113,7 @@ internal object ClientCloseRaces {
                 )
             } else {
                 refused++
-                assertTrue(
-                    failure !is CancellationException,
-                    "iteration $iteration: an uncanceled caller got $failure",
-                )
-                assertIs<IllegalStateException>(
-                    failure,
-                    "iteration $iteration: the clear failed with ${failure::class.simpleName}: ${failure.message}",
-                )
-                assertEquals(CLIENT_CLOSED_MESSAGE, failure.message)
+                assertClientClosedError(failure, "iteration $iteration: the clear")
             }
             val reopened = openClient(server.supabaseClient(), configIn(databaseDirectory))
             val pending = reopened.pendingMutationCount()
@@ -216,13 +206,7 @@ internal object ClientCloseRaces {
                 runCatching { pendingCount.first() },
             )
             .forEachIndexed { index, outcome ->
-                val failure = outcome.exceptionOrNull()
-                assertTrue(
-                    failure !is CancellationException,
-                    "call $index after close() gave $failure",
-                )
-                assertIs<IllegalStateException>(failure, "call $index after close() gave $failure")
-                assertEquals(CLIENT_CLOSED_MESSAGE, failure.message)
+                assertClientClosedError(outcome.exceptionOrNull(), "call $index after close()")
             }
         assertEquals(
             downloadsBefore,

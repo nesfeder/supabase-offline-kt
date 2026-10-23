@@ -424,6 +424,27 @@ class FilterReplayTest {
     }
 
     @Test
+    fun `an empty member of an in list is kept in the overlay and the replay`() {
+        listOf(listOf("", "active") to "in.(,active)", listOf("a", "", "b") to "in.(a,,b)")
+            .forEach { (members, sent) ->
+                // Given an isIn filter with an empty member, which PostgREST keeps
+                val original =
+                    SelectRequestBuilder(schema, conversion).apply {
+                        filter { isIn("status", members) }
+                    }
+                val descriptor = storeAndRestore(assertNotNull(captureFilterExactly(original)))
+
+                // When / Then — the overlay admits a row whose status is empty, and the replay
+                // sends the list whole, as supabase-kt sent it
+                assertEquals(listOf(sent), original.params["status"])
+                assertTrue(matches(rowWithStatus(""), descriptor), sent)
+                assertTrue(matches(rowWithStatus(members.last()), descriptor), sent)
+                assertFalse(matches(rowWithStatus("archived"), descriptor), sent)
+                assertEquals(listOf(sent), replayParams(descriptor)["status"])
+            }
+    }
+
+    @Test
     fun `empty in filter replays as a match-nothing filter instead of being dropped`() {
         // Given a captured isIn filter with no values, encoded by supabase-kt as "in.()"
         val original =

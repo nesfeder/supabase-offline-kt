@@ -29,6 +29,7 @@ import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 import io.github.nesfeder.supabase.offline.internal.postgrest.QueryShape
 import io.github.nesfeder.supabase.offline.internal.storage.cachedFileKeyOf
 import io.github.nesfeder.supabase.offline.internal.storage.cachedFileRowOf
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.combine
@@ -50,6 +51,7 @@ import okio.Path
  *   for every identity's.
  * @param identityChanges emits when the identity may have changed.
  * @param versionColumns each table's version column, which guards a queued write's replay.
+ * @param backgroundScope where the cache's eviction pass runs after a response is written.
  */
 internal class TestStore(
     queryCacheDao: QueryCacheDao,
@@ -73,6 +75,7 @@ internal class TestStore(
     onQueriesMarkedStale: (table: String, cacheKeys: Set<String>) -> Unit,
     onCacheNotServed: () -> Unit,
     versionColumns: VersionColumns,
+    backgroundScope: CoroutineScope,
 ) {
 
     /** The components, which this store copies into its fields. */
@@ -95,6 +98,7 @@ internal class TestStore(
             onQueriesMarkedStale = onQueriesMarkedStale,
             onCacheNotServed = onCacheNotServed,
             versionColumns = versionColumns,
+            backgroundScope = backgroundScope,
         )
 
     /** The cached queries' table, every write to it counted, as the components write it. */

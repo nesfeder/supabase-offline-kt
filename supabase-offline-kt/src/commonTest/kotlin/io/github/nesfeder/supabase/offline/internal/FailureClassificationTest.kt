@@ -164,4 +164,38 @@ class FailureClassificationTest {
         assertTrue(409.isPermanentMutationFailureStatus())
         assertTrue(499.isPermanentMutationFailureStatus())
     }
+
+    /**
+     * A write sent at once stays queued on every status in [MAY_PASS_LATER_STATUSES], and on a
+     * `401` that says its token expired; a replay must keep a write queued on each of them too, or
+     * the two paths disagree on the same answer.
+     */
+    @Test
+    fun isPermanentMutationFailureStatus_false_forEveryStatusAWriteSentAtOnceStaysQueuedOn() {
+        // Given
+        val staysQueuedAtTheHead = MAY_PASS_LATER_STATUSES + 401
+
+        // When
+        val permanent = staysQueuedAtTheHead.filter { status ->
+            status.isPermanentMutationFailureStatus()
+        }
+
+        // Then
+        assertEquals(emptyList(), permanent)
+    }
+
+    // ---------- mayPassWhenSentAgain ----------
+
+    @Test
+    fun mayPassWhenSentAgain_false_forThrowableWithoutHttpStatus() {
+        // Given
+        val throwable = IllegalStateException("no http", IOException("no answer"))
+
+        // When
+        val mayPass = throwable.mayPassWhenSentAgain()
+
+        // Then
+        assertFalse(mayPass)
+        assertNull(throwable.postgrestCodeOrNull())
+    }
 }

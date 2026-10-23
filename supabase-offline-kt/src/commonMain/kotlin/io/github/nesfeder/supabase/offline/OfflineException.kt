@@ -2,12 +2,15 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline
 
+import io.github.nesfeder.supabase.offline.internal.postgrest.CLIENT_CLOSED_MESSAGE
+
 /**
  * A failure the library itself reports, rather than one supabase-kt or the server raised, which
  * pass through unchanged.
  *
  * The hierarchy is open: a release may add a subclass, so match the ones you handle and keep a
- * branch for the rest.
+ * branch for the rest. The closed client's error, [OfflineClientClosedException], is the library's
+ * own too, but an [IllegalStateException] rather than one of these.
  */
 public abstract class OfflineException internal constructor(message: String, cause: Throwable?) :
     Exception(message, cause)
@@ -38,7 +41,7 @@ public class CacheMissException internal constructor(message: String) :
  *
  * The message says which; [MutationNotQueueableException.cause] is the connectivity failure, so
  * [isNetworkOrConnectivityFailure] is `true` for it. While the client is closing, such a write
- * fails with the client's closed error instead.
+ * fails with [OfflineClientClosedException] instead.
  */
 public class MutationNotQueueableException internal constructor(message: String, cause: Throwable) :
     OfflineException(message, cause)
@@ -77,3 +80,17 @@ internal constructor(
     public val code: String?,
     internal val isConnectivityFailure: Boolean,
 ) : OfflineException(message, null)
+
+/**
+ * A call on a closed client: [Offline.close] has run, on its own or through `supabase.close()`.
+ * Every call made afterward throws it, on the plugin and on any builder or bucket obtained from it,
+ * and a flow obtained from it fails with it when collected. A call the closing stopped while it ran
+ * throws it too, never a cancellation; its `cause` is then the cancellation that stopped it.
+ *
+ * It is not an [OfflineException]: it is an [IllegalStateException], as the closed error was before
+ * it had a type of its own, so a `catch (e: IllegalStateException)` still catches it. Its message
+ * is still "This offline client is closed", so code that matches the message keeps working; match
+ * the type instead.
+ */
+public class OfflineClientClosedException internal constructor(cause: Throwable?) :
+    IllegalStateException(CLIENT_CLOSED_MESSAGE, cause)

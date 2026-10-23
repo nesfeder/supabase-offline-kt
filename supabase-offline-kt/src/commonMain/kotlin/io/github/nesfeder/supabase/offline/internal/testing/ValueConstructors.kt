@@ -14,6 +14,7 @@ import io.github.nesfeder.supabase.offline.MutationOperation
 import io.github.nesfeder.supabase.offline.MutationOutcome
 import io.github.nesfeder.supabase.offline.NetworkDisabledException
 import io.github.nesfeder.supabase.offline.NetworkStatus
+import io.github.nesfeder.supabase.offline.OfflineClientClosedException
 import io.github.nesfeder.supabase.offline.OfflineInternal
 import io.github.nesfeder.supabase.offline.PendingMutation
 import io.github.nesfeder.supabase.offline.QuerySnapshot
@@ -24,6 +25,7 @@ import io.github.nesfeder.supabase.offline.ServerError
 import io.github.nesfeder.supabase.offline.SyncFailedException
 import io.github.nesfeder.supabase.offline.SyncReport
 import io.github.nesfeder.supabase.offline.SyncStatus
+import io.github.nesfeder.supabase.offline.SyncStopReason
 import io.github.nesfeder.supabase.offline.isNetworkOrConnectivityFailure
 import kotlin.experimental.ExperimentalObjCRefinement
 import kotlin.native.HiddenFromObjC
@@ -66,6 +68,10 @@ public object ValueConstructors {
     public fun networkDisabledException(message: String): NetworkDisabledException =
         NetworkDisabledException(message)
 
+    /** An [OfflineClientClosedException] with no cause. */
+    public fun offlineClientClosedException(): OfflineClientClosedException =
+        OfflineClientClosedException(null)
+
     /** A [PendingMutation] with the given fields. */
     public fun pendingMutation(
         id: Long,
@@ -104,7 +110,11 @@ public object ValueConstructors {
         refresh: RefreshState,
     ): QuerySnapshot = QuerySnapshot(result, isFromCache, fetchedAt, hasPendingMutations, refresh)
 
-    /** A [SyncReport] with the given fields. */
+    /**
+     * A [SyncReport] with the given fields. Its stop reason is the one the library gives such a
+     * report: [SyncStopReason.HeldBehindOtherTables] when [heldBehindOtherTablesCount] is more than
+     * zero, else [SyncStopReason.Completed].
+     */
     public fun syncReport(
         syncedCount: Int,
         rejected: List<RejectedMutation>,
@@ -112,7 +122,7 @@ public object ValueConstructors {
         alreadyOnServerCount: Int,
         heldBehindOtherTablesCount: Int,
     ): SyncReport =
-        SyncReport(
+        syncReport(
             syncedCount,
             rejected,
             remainingCount,
@@ -123,7 +133,11 @@ public object ValueConstructors {
             conflicted = emptyList(),
         )
 
-    /** A [SyncReport] with the given fields, the conflict counts included. */
+    /**
+     * A [SyncReport] with the given fields, the conflict counts included. Its stop reason is the
+     * one the library gives such a report: [SyncStopReason.HeldBehindOtherTables] when
+     * [heldBehindOtherTablesCount] is more than zero, else [SyncStopReason.Completed].
+     */
     public fun syncReport(
         syncedCount: Int,
         rejected: List<RejectedMutation>,
@@ -134,6 +148,32 @@ public object ValueConstructors {
         conflictsKeptServerCount: Int,
         conflicted: List<ConflictedMutation>,
     ): SyncReport =
+        syncReport(
+            syncedCount,
+            rejected,
+            remainingCount,
+            alreadyOnServerCount,
+            heldBehindOtherTablesCount,
+            conflictsResolvedCount,
+            conflictsKeptServerCount,
+            conflicted,
+            stopReason =
+                if (heldBehindOtherTablesCount > 0) SyncStopReason.HeldBehindOtherTables
+                else SyncStopReason.Completed,
+        )
+
+    /** A [SyncReport] with the given fields, the stop reason included. */
+    public fun syncReport(
+        syncedCount: Int,
+        rejected: List<RejectedMutation>,
+        remainingCount: Int,
+        alreadyOnServerCount: Int,
+        heldBehindOtherTablesCount: Int,
+        conflictsResolvedCount: Int,
+        conflictsKeptServerCount: Int,
+        conflicted: List<ConflictedMutation>,
+        stopReason: SyncStopReason,
+    ): SyncReport =
         SyncReport(
             syncedCount,
             rejected,
@@ -143,7 +183,16 @@ public object ValueConstructors {
             conflictsResolvedCount,
             conflictsKeptServerCount,
             conflicted,
+            stopReason,
         )
+
+    /** A [SyncStopReason.ServerFailure] carrying [error]. */
+    public fun serverFailureStop(error: SyncFailedException): SyncStopReason.ServerFailure =
+        SyncStopReason.ServerFailure(error)
+
+    /** A [SyncStopReason.LocalFailure] carrying [error]. */
+    public fun localFailureStop(error: SyncFailedException): SyncStopReason.LocalFailure =
+        SyncStopReason.LocalFailure(error)
 
     /** A [SyncStatus] with the given fields. */
     public fun syncStatus(

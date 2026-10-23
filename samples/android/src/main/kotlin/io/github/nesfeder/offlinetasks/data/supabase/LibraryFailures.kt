@@ -27,6 +27,7 @@ import io.github.nesfeder.offlinetasks.data.WriteNeedsConnectionException
 import io.github.nesfeder.supabase.offline.CacheMissException
 import io.github.nesfeder.supabase.offline.MutationNotQueueableException
 import io.github.nesfeder.supabase.offline.NetworkDisabledException
+import io.github.nesfeder.supabase.offline.OfflineClientClosedException
 import io.github.nesfeder.supabase.offline.OfflineException
 import io.github.nesfeder.supabase.offline.SyncFailedException
 import io.github.nesfeder.supabase.offline.httpStatusOrNull
@@ -84,6 +85,8 @@ internal fun Throwable.toAppFailure(call: LibraryCall): Throwable =
             SyncStoppedException(httpStatus, code, isNetworkOrConnectivityFailure(), this)
         // A kind of failure a later release of the library adds.
         this is OfflineException -> UnknownLibraryFailureException(this)
+        // The client is closed: every call after close() throws it.
+        this is OfflineClientClosedException -> ClientUnavailableException(this)
         // The session's token expired and could not be refreshed, here or on the server.
         this is TokenExpiredException || httpStatusOrNull() == HTTP_UNAUTHORIZED ->
             SessionExpiredException(this)
@@ -98,8 +101,6 @@ internal fun Throwable.toAppFailure(call: LibraryCall): Throwable =
             RowFormatException(this)
         // Two top-level filters on one column, or a retry of a write that cannot be retried.
         this is IllegalArgumentException -> InvalidRequestException(message.orEmpty(), this)
-        // The client is closed, or was built without a plugin the call needs.
-        this is IllegalStateException -> ClientUnavailableException(this)
         else -> this // unexpected: reported as it is
     }
 

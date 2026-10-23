@@ -9,6 +9,7 @@ import io.github.jan.supabase.postgrest.exception.PostgrestRestException
 import io.github.nesfeder.supabase.offline.CacheMissException
 import io.github.nesfeder.supabase.offline.MutationNotQueueableException
 import io.github.nesfeder.supabase.offline.NetworkDisabledException
+import io.github.nesfeder.supabase.offline.OfflineClientClosedException
 import io.github.nesfeder.supabase.offline.SyncFailedException
 import io.github.nesfeder.supabase.offline.bridge.BridgeError
 import io.github.nesfeder.supabase.offline.bridge.BridgeErrorKind
@@ -20,7 +21,6 @@ import io.ktor.client.plugins.HttpRequestTimeoutException
 import io.ktor.client.plugins.ResponseException
 import io.ktor.http.IllegalHeaderNameException
 import io.ktor.http.IllegalHeaderValueException
-import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
@@ -62,12 +62,11 @@ internal fun clientClosedError(debugType: String = "ClientClosed"): BridgeError 
     bridgeError(BridgeErrorKind.CLIENT_CLOSED, "The client is closed", debugType)
 
 /**
- * [failure] as the value a completion carries.
- *
- * @param clientClosing whether the bridge client is closing or closed, which makes the library's
- *   closed error, and a cancellation, [BridgeErrorKind.CLIENT_CLOSED].
+ * [failure] as the value a completion carries, by its type alone. The library's closed error,
+ * [OfflineClientClosedException], is [BridgeErrorKind.CLIENT_CLOSED]; nothing else is, so a failure
+ * of its own that a call meets while the client closes keeps its kind.
  */
-internal fun bridgeErrorOf(failure: Throwable, clientClosing: Boolean): BridgeError {
+internal fun bridgeErrorOf(failure: Throwable): BridgeError {
     val type = failure::class.simpleName ?: "Throwable"
     return when {
         failure is InvalidDescriptionException ->
@@ -83,6 +82,7 @@ internal fun bridgeErrorOf(failure: Throwable, clientClosing: Boolean): BridgeEr
         failure is MutationNotQueueableException ->
             bridgeError(BridgeErrorKind.MUTATION_NOT_QUEUEABLE, failure.messageOr(type), type, true)
         failure is SyncFailedException -> syncFailedError(failure)
+        failure is OfflineClientClosedException -> clientClosedError(type)
         failure is PostgrestRestException -> postgrestError(failure, type)
         failure is RestException -> restError(failure, type)
         failure is ResponseException ->
@@ -92,8 +92,6 @@ internal fun bridgeErrorOf(failure: Throwable, clientClosing: Boolean): BridgeEr
                 httpStatus = failure.response.status.value,
                 type = type,
             )
-        clientClosing && (failure is IllegalStateException || failure is CancellationException) ->
-            clientClosedError(type)
         failure.isNetworkOrConnectivityFailure() -> connectivityError(failure, type)
         failure is SerializationException || failure is SupabaseEncodingException ->
             bridgeError(BridgeErrorKind.DECODING, decodingMessageOf(failure), type)

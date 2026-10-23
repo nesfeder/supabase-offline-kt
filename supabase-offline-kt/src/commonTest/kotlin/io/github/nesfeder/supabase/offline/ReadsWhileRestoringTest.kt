@@ -283,7 +283,8 @@ class ReadsWhileRestoringTest {
         otherShapes.forEach { (name, request, usersAnswer) ->
             listOf(ReadStrategy.NetworkOnly, ReadStrategy.NetworkFirst(), ReadStrategy.CacheFirst())
                 .forEach { strategy ->
-                    // Given — a session still restoring
+                    // Given — nothing cached, and a session still restoring
+                    queryCacheDao.deleteAll()
                     val (server, items, sessions) = restoringClient()
 
                     // When — the read starts before the session has loaded
@@ -306,8 +307,9 @@ class ReadsWhileRestoringTest {
                     sessions.release()
                     runCurrent()
 
-                    // Then — at once, one request, with the user's token, and the user's answer,
-                    // not stored
+                    // Then — at once, one request, with the user's token, and the user's answer:
+                    // a single object cached as its list, one row long; a count or a head not
+                    // stored
                     assertTrue(
                         read.isCompleted,
                         "$name via $strategy did not wake when the session settled",
@@ -318,9 +320,10 @@ class ReadsWhileRestoringTest {
                         server.requests.single().authorization.orEmpty().contains(testJwt("u-1")),
                         "$name via $strategy was sent on the anon key",
                     )
-                    assertTrue(
-                        queryCacheDao.rowsOf(TABLE).isEmpty(),
-                        "$name via $strategy was stored",
+                    assertEquals(
+                        if (name == "single") listOf("[$ONE_ROW]") else emptyList(),
+                        queryCacheDao.rowsOf(TABLE).map { row -> row.payload },
+                        "$name via $strategy",
                     )
                 }
         }
@@ -363,6 +366,29 @@ class ReadsWhileRestoringTest {
                 "got $warnings",
             )
         }
+
+    @Test
+    fun a_count_whose_session_never_settles_is_sent_once_after_the_wait() = runTest {
+        // Given — a session that stays restoring
+        val (server, items, _) = restoringClient()
+
+        // When — a count, which the cache cannot hold
+        val read = async {
+            items.select(readStrategy = ReadStrategy.NetworkOnly) { count(Count.EXACT) }
+        }
+        advanceTimeBy(5.seconds)
+        runCurrent()
+
+        // Then — sent once after the wait, on the anon key, with a warning, and never stored
+        assertEquals("[]", read.await().data)
+        assertEquals(1, server.requests.size)
+        assertTrue(queryCacheDao.rowsOf(TABLE).isEmpty(), "the count was stored")
+        val warnings = logs.entriesAt(EngineLogLevel.WARNING).map { entry -> entry.message }
+        assertTrue(
+            warnings.any { message -> "sending the request as it is" in message },
+            "got $warnings",
+        )
+    }
 
     @Test
     fun a_cache_only_read_of_another_shape_fails_at_once_while_the_session_restores() = runTest {
