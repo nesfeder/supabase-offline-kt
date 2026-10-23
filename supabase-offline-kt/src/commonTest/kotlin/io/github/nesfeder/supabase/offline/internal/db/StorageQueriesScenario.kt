@@ -35,8 +35,9 @@ private fun row(bucketId: String, path: String, size: Long?) =
 
 /**
  * Writes an object, one of its transformed variants, a neighbor whose path merely starts the same,
- * the same path in another bucket, a name with SQL wildcard characters and a row with no recorded
- * size, then runs every query the file cache uses.
+ * one whose path is exactly the bound of the object's variants (its path and a space), the same
+ * path in another bucket, a name with SQL wildcard characters, one holding the key's `::` and a row
+ * with no recorded size, then runs every query the file cache uses.
  */
 internal suspend fun OfflineDatabase.runStorageQueries(): StorageQueryResults {
     val dao = cachedFileDao()
@@ -44,9 +45,11 @@ internal suspend fun OfflineDatabase.runStorageQueries(): StorageQueryResults {
             row("avatars", "u-1/me.png", 10),
             row("avatars", "u-1/me.png${VARIANT_SEPARATOR}height=64&width=64", 3),
             row("avatars", "u-1/me.png.bak", 5),
+            row("avatars", "u-1/me.png ", 4),
             row("photos", "u-1/me.png", 7),
             row("avatars", "a%b.png", 1),
             row("avatars", "aXb.png", 2),
+            row("avatars", "a::b.png", 6),
             row("avatars", "unsized.png", null),
         )
         .forEach { dao.upsert(it) }
@@ -86,12 +89,14 @@ internal val EXPECTED_STORAGE_QUERY_RESULTS: StorageQueryResults =
         allKeys =
             listOf(
                 "avatars::a%b.png",
+                "avatars::a::b.png",
                 "avatars::aXb.png",
                 "avatars::u-1/me.png",
                 "avatars::u-1/me.png${VARIANT_SEPARATOR}height=64&width=64",
+                "avatars::u-1/me.png ",
                 "avatars::u-1/me.png.bak",
                 "avatars::unsized.png",
                 "photos::u-1/me.png",
             ),
-        totalSizeBytes = 28,
+        totalSizeBytes = 38,
     )

@@ -47,6 +47,6 @@ database, which returns the space.
 Downloaded Storage files have a bound of their own, `fileCacheSizeBytes`, 256 MiB by default. When
 a download passes it, the least recently used files are deleted until the cache is a tenth below
 the bound. A file being read, and a file used in the last 30 seconds, are kept; a file's last use
-is recorded on disk, so it survives a restart. `CACHE_SIZE_UNLIMITED` turns this eviction off, and
+is recorded on disk, to the minute, so it survives a restart. `CACHE_SIZE_UNLIMITED` turns this eviction off, and
 any other value below zero counts as zero. Temporary download files a crash left behind are
 deleted once they are more than a day old. See [Storage caching](storage.md).

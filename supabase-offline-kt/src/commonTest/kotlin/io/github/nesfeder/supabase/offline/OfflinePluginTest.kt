@@ -53,7 +53,6 @@ import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import okio.FileSystem
-import okio.Path.Companion.toPath
 import okio.SYSTEM
 
 /**
@@ -407,8 +406,10 @@ class OfflinePluginTest {
         try {
             val bucket = supabase.offline.storage.from("avatars")
             bucket.downloadAuthenticated("a.png")
-            val older = checkNotNull(bucket.cachedFile("a.png")) { "the first file was not cached" }
-            markFileUsed(older.path.toPath(), epochMillis = 0L)
+            // Backdated without a lookup, which would count as a use within the eviction's grace
+            val older = directory / "storage" / "avatars" / "a.png"
+            check(FileSystem.SYSTEM.exists(older)) { "the first file was not cached" }
+            markFileUsed(older, epochMillis = 0L)
             bucket.downloadAuthenticated("b.png")
             return bucket.cachedFile("a.png") != null
         } finally {

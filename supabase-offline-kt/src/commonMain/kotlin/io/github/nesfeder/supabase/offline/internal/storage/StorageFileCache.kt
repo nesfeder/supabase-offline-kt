@@ -30,6 +30,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import okio.BufferedSink
+import okio.FileMetadata
 import okio.FileSystem
 import okio.IOException
 import okio.Path
@@ -178,7 +179,8 @@ internal fun cachedFileRowOf(
  * The client's file cache for Storage objects, shared by every bucket it hands out. An entry's file
  * is derived from its bucket and path, never read back from its row, and every file operation stays
  * inside the data directory; commits, evictions, invalidations and clears run under one lock, and
- * reads pin their files under a lock of their own, so none of them waits behind those.
+ * reads pin their files under a lock of their own, which an eviction holds only to unlink a file,
+ * so no read waits behind those.
  *
  * @param cachedFileDao the cached files' rows.
  * @param ownership whether the cache serves, and takes files for, the current identity.
@@ -276,9 +278,10 @@ internal class StorageFileCache(
     private val openTemporaryFiles = mutableSetOf<Path>()
 
     /**
-     * The read side's lock: [pins] and [recentUses], and nothing that does I/O or takes [lock]. A
-     * read takes it alone, so no read waits behind a commit, an eviction pass or a clear; an
-     * eviction takes it under [lock], only for as long as it removes the files it chose.
+     * The read side's lock: [pins] and [recentUses]. It is never held over a database call or while
+     * waiting for [lock]. A read takes it alone, so no read waits behind a commit, an eviction pass
+     * or a clear; an eviction takes it under [lock], per file it removes, for no more than the pin
+     * check, the use check and the unlink.
      */
     private val readLock = Mutex()
 
@@ -788,6 +791,8 @@ internal class StorageFileCache(
         withContext(ioDispatcher + NonCancellable) {
             lock.withLock {
                 generation.addAndFetch(1L)
+                // Their commits are refused now; a caller arriving after the clear starts afresh
+                downloadsInFlight.forgetAll()
                 trackedBytes = null
                 evictionIdleUntilMillis = Long.MIN_VALUE
                 readLock.withLock { recentUses.clear() }
@@ -846,12 +851,13 @@ internal class StorageFileCache(
      * the drop for the downloads of it still running, which may hold the bytes it replaced.
      */
     private suspend fun removeObjectLocked(bucketId: String, objectPath: String) {
+        val objectKey = cachedFileKeyOf(bucketId, objectPath)
         downloadsLock.withLock {
             invalidationSequence += 1
-            if (runningDownloads.isNotEmpty()) {
-                invalidatedAt[cachedFileKeyOf(bucketId, objectPath)] = invalidationSequence
-            }
+            if (runningDownloads.isNotEmpty()) invalidatedAt[objectKey] = invalidationSequence
         }
+        // Its commit is refused now; a caller arriving after the write starts afresh
+        downloadsInFlight.forget(objectKey)
         val rows =
             cachedFileDao.forObject(
                 bucketId,
@@ -1071,28 +1077,39 @@ internal class StorageFileCache(
             var remaining = trackedBytes ?: return
             var evicted = 0
             var oldestSpared: Long? = null
-            readLock.withLock {
+            try {
                 for ((scanned, usedAtScan) in candidates) {
                     if (remaining <= lowWater) break
-                    if (scanned.key in pins) continue
                     if (usedAtScan >= scannedAt - grace) {
                         oldestSpared = minOf(oldestSpared ?: usedAtScan, usedAtScan)
                         continue
                     }
-                    // Looked at again under the locks: used, replaced or removed since the scan
+                    // Looked at again, under this lock alone: used, replaced or removed since the
+                    // scan
                     val row = cachedFileDao.getByKey(scanned.key) ?: continue
-                    val lastUsed = lastUsedMillis(row, recentUses)
-                    if (lastUsed >= nowMillis() - grace) {
-                        oldestSpared = minOf(oldestSpared ?: lastUsed, lastUsed)
-                        continue
+                    val file = entryForRow(row)?.file
+                    val metadata = file?.let { fileSystem.metadataOrNull(it) }
+                    val contained = file != null && directoryContains(file)
+                    // The read side's lock only for the pin, the use in memory and the unlink: a
+                    // read that pins after this finds the file gone, never half gone
+                    val taken = readLock.withLock {
+                        if (row.key in pins) return@withLock false
+                        val lastUsed = lastUsedMillis(metadata, recentUses[row.key])
+                        if (lastUsed >= nowMillis() - grace) {
+                            oldestSpared = minOf(oldestSpared ?: lastUsed, lastUsed)
+                            return@withLock false
+                        }
+                        if (file != null) deleteContained(file, contained)
+                        true
                     }
-                    entryForRow(row)?.let { entry -> deleteContained(entry.file) }
+                    if (!taken) continue
                     cachedFileDao.delete(row.key)
                     remaining -= row.sizeBytes ?: 0L
                     evicted++
                 }
+            } finally {
+                trackedBytes = remaining
             }
-            trackedBytes = remaining
             // Still over: the rest is too recent to take, so scan again once the oldest of it
             // ages out.
             val spared = oldestSpared
@@ -1110,9 +1127,17 @@ internal class StorageFileCache(
      */
     private fun lastUsedMillis(row: CachedFileRow, uses: Map<String, Long>): Long {
         val file = entryForRow(row)?.file ?: return Long.MIN_VALUE
-        val onFile = fileSystem.metadataOrNull(file)?.lastModifiedAtMillis ?: return Long.MIN_VALUE
-        return maxOf(onFile, uses[row.key] ?: Long.MIN_VALUE)
+        return lastUsedMillis(fileSystem.metadataOrNull(file), uses[row.key])
     }
+
+    /**
+     * When a file with [metadata] was last used: the later of the time on it, when the platform
+     * reports one (okio on the JVM reports none for an epoch of zero), and [useInMemory]; the
+     * earliest time there is when the file is missing.
+     */
+    private fun lastUsedMillis(metadata: FileMetadata?, useInMemory: Long?): Long =
+        if (metadata == null) Long.MIN_VALUE
+        else maxOf(metadata.lastModifiedAtMillis ?: Long.MIN_VALUE, useInMemory ?: Long.MIN_VALUE)
 
     /**
      * Runs [block] on the IO dispatcher to the end, and hands its result back even to a caller
@@ -1195,13 +1220,19 @@ internal class StorageFileCache(
         return resolved.isStrictlyInside(root)
     }
 
+    /** Whether [file]'s directory resolves inside the data directory. */
+    private fun directoryContains(file: Path): Boolean {
+        val directory = file.parent ?: return false
+        return resolvesInsideDataDirectory(directory)
+    }
+
     /**
-     * Deletes [file] when its directory resolves inside the data directory. A symlink at [file]
-     * itself is removed as a link; its target is never touched.
+     * Deletes [file] when its directory resolves inside the data directory ([contained], looked up
+     * now or earlier). A symlink at [file] itself is removed as a link; its target is never
+     * touched.
      */
-    private fun deleteContained(file: Path) {
-        val directory = file.parent ?: return
-        if (!resolvesInsideDataDirectory(directory)) {
+    private fun deleteContained(file: Path, contained: Boolean = directoryContains(file)) {
+        if (!contained) {
             engineLogger.debug {
                 "Storage cache left a file whose directory resolves outside the cache"
             }

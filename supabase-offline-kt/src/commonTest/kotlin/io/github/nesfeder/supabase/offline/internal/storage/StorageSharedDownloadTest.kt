@@ -7,11 +7,13 @@ import io.github.nesfeder.supabase.offline.CachedFile
 import io.github.nesfeder.supabase.offline.OfflineBucketApi
 import io.github.nesfeder.supabase.offline.isNetworkOrConnectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.FakeBucketApi
+import io.github.nesfeder.supabase.offline.testdoubles.FakeFailingFileSystem
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingStorageServer
 import io.github.nesfeder.supabase.offline.testdoubles.TestStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestBucketApi
 import io.github.nesfeder.supabase.offline.testdoubles.newTestFileCache
 import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
+import io.ktor.http.HttpHeaders
 import io.ktor.utils.io.ByteChannel
 import io.ktor.utils.io.readRemaining
 import kotlin.random.Random
@@ -47,9 +49,13 @@ import okio.SYSTEM
  * Concurrent requests for one cold object download it once. `ensureCachedFile` calls for the same
  * path, through any bucket of the client, wait for the download the first of them started; a bytes
  * or channel download of the same entry waits for it too; and the download outlives any one caller,
- * canceled only once every caller has canceled. A write landing while the shared download is on the
- * wire still keeps its bytes out of the cache, and every waiter then gets the new object,
- * downloaded once more between them; a clear voids the download for every waiter.
+ * canceled only once every caller has canceled.
+ *
+ * A download is shared only while it can still be the cached copy: once a write of the object lands
+ * or local data is cleared, a caller arriving later downloads afresh, and the callers already
+ * waiting get what the old download's commit says. A caller that joined a download made with
+ * another caller's request — its headers, URL and session — makes its own once when that one fails,
+ * and a bytes or channel caller fetches for itself when the download it waited for did not commit.
  *
  * These run the real supabase-kt bucket against [RecordingStorageServer], whose download gate holds
  * a download on the wire with its bytes read, so a write can land under it.
@@ -77,10 +83,18 @@ class StorageSharedDownloadTest {
         FileSystem.SYSTEM.deleteRecursively(dataDirectory, mustExist = false)
     }
 
-    /** A bucket of its own over the one cache, as each `storage.from(bucket)` of a client is. */
+    /**
+     * A bucket of its own over the one cache, as each `storage.from(bucket)` of a client is, with
+     * the download status check the client installs.
+     */
     private fun bucket(): OfflineBucketApi =
         newTestBucketApi(
-            delegate = server.supabaseClient().storage.from(BUCKET),
+            delegate =
+                server
+                    .supabaseClient()
+                    .also { it.installDownloadStatusCheck() }
+                    .storage
+                    .from(BUCKET),
             baseDirectory = dataDirectory,
             store = store,
             cache = cache,
@@ -196,7 +210,7 @@ class StorageSharedDownloadTest {
                     outcomes += runCatching { bucket.ensureCachedFile(PATH) }.exceptionOrNull()
                 }
             }
-        midway.await()
+        awaitSoon(midway)
         awaitWaiters(2)
         awaitOnRealTime { regularFilesUnder(dataDirectory).isNotEmpty() }
 
@@ -222,24 +236,94 @@ class StorageSharedDownloadTest {
     }
 
     @Test
-    fun a_caller_joining_a_download_an_update_outruns_gets_the_new_bytes() = runTest {
+    fun a_caller_arriving_after_an_update_downloads_afresh_and_both_get_the_new_bytes() = runTest {
         // Given — a download of the old object held at the server
         val gate = holdDownloads()
         val first = async(Dispatchers.Default) { bucket().ensureCachedFile(PATH) }
         awaitSoon(server.downloadHeld)
 
-        // When — the object is replaced, a second caller joins the download of the old bytes, and
-        // then they arrive
+        // When — the object is replaced, then a second caller arrives: the old download can no
+        // longer be the cached copy, so it downloads the new object, held at the server too
         bucket().update(PATH, NEW.encodeToByteArray())
+        assertFalse(cache.downloadsInFlight.isInFlight(entryKey))
+        server.downloadHeld = CompletableDeferred()
         val second = async(Dispatchers.Default) { bucket().ensureCachedFile(PATH) }
-        awaitWaiters(2)
+        awaitSoon(server.downloadHeld)
+        assertEquals(1, cache.downloadsInFlight.waitersOf(entryKey))
         server.downloadGate = null
         gate.complete(Unit)
         val files = listOf(awaitSoon(first), awaitSoon(second))
 
-        // Then — the old bytes were kept for neither; both callers got the new object, downloaded
-        // once more between them
+        // Then — the old bytes were kept for neither; both callers got the new object, which was
+        // downloaded once: the first caller's one retry waited for the second's download
         files.forEach { file -> assertEquals(NEW, contentOf(file)) }
+        assertEquals(2, downloads())
+    }
+
+    @Test
+    fun a_caller_arriving_after_a_clear_downloads_afresh_and_gets_the_file() = runTest {
+        // Given — a download held at the server
+        val gate = holdDownloads()
+        val first = async(Dispatchers.Default) { runCatching { bucket().ensureCachedFile(PATH) } }
+        awaitSoon(server.downloadHeld)
+
+        // When — local data is cleared, as a sign-out does, and the next user asks for the object
+        cache.clear { store.cachedFileDao.deleteAll() }
+        assertFalse(cache.downloadsInFlight.isInFlight(entryKey))
+        server.downloadHeld = CompletableDeferred()
+        val second = async(Dispatchers.Default) { bucket().ensureCachedFile(PATH) }
+        awaitSoon(server.downloadHeld)
+        server.downloadGate = null
+        gate.complete(Unit)
+
+        // Then — the outgoing user's download was voided for its caller; the new one is the next
+        // user's file
+        assertIs<IllegalStateException>(awaitSoon(first).exceptionOrNull())
+        assertEquals(OLD, contentOf(awaitSoon(second)))
+        assertNotNull(store.getStorageByKey(BUCKET, PATH))
+        assertEquals(2, downloads())
+    }
+
+    @Test
+    fun a_clear_during_a_shared_download_voids_it_for_every_caller_waiting() = runTest {
+        // Given — two callers waiting for a download held at the server
+        val gate = holdDownloads()
+        val first = async(Dispatchers.Default) { runCatching { bucket().ensureCachedFile(PATH) } }
+        awaitSoon(server.downloadHeld)
+        val second = async(Dispatchers.Default) { runCatching { bucket().ensureCachedFile(PATH) } }
+        awaitWaiters(2)
+
+        // When — local data is cleared, then the bytes arrive
+        cache.clear { store.cachedFileDao.deleteAll() }
+        gate.complete(Unit)
+        val outcomes = listOf(awaitSoon(first), awaitSoon(second))
+
+        // Then — neither caller got the outgoing user's file, and nothing was put back
+        outcomes.forEach { outcome -> assertIs<IllegalStateException>(outcome.exceptionOrNull()) }
+        assertNull(store.getStorageByKey(BUCKET, PATH))
+        assertEquals(emptyList(), regularFilesUnder(dataDirectory))
+        assertEquals(1, downloads())
+    }
+
+    @Test
+    fun a_caller_that_joined_a_download_another_request_failed_makes_its_own() = runTest {
+        // Given — a download held at the server, started through a bucket whose header asks for
+        // part of the object, and a call through a plain bucket waiting for it
+        val gate = holdDownloads()
+        val ranged = bucket().setHeader(HttpHeaders.Range, "bytes=0-3")
+        val first = async(Dispatchers.Default) { runCatching { ranged.ensureCachedFile(PATH) } }
+        awaitSoon(server.downloadHeld)
+        val second = async(Dispatchers.Default) { bucket().ensureCachedFile(PATH) }
+        awaitWaiters(2)
+
+        // When — the fragment arrives
+        server.downloadGate = null
+        gate.complete(Unit)
+
+        // Then — the ranged call fails as it always did; the plain one made its own request, once,
+        // and got the whole object
+        assertIs<IllegalStateException>(awaitSoon(first).exceptionOrNull())
+        assertEquals(OLD, contentOf(awaitSoon(second)))
         assertEquals(2, downloads())
     }
 
@@ -286,7 +370,59 @@ class StorageSharedDownloadTest {
     }
 
     @Test
-    fun a_download_that_fails_fails_every_caller_waiting_for_it() = runTest {
+    fun a_bytes_download_that_joined_one_the_disk_refused_still_returns_its_bytes() = runTest {
+        // Given — a cache over a disk that will refuse the download's file, and an ensureCachedFile
+        // download held at the server with a bytes download waiting for it
+        val fileSystem = FakeFailingFileSystem()
+        cache =
+            newTestFileCache(baseDirectory = dataDirectory, store = store, fileSystem = fileSystem)
+        val gate = holdDownloads()
+        val ensure = async(Dispatchers.Default) { runCatching { bucket().ensureCachedFile(PATH) } }
+        awaitSoon(server.downloadHeld)
+        val download = async(Dispatchers.Default) { bucket().downloadAuthenticated(PATH) {} }
+        awaitWaiters(2)
+
+        // When — the disk fills up, then the bytes arrive
+        fileSystem.failWritesAfterBytes = 0
+        server.downloadGate = null
+        gate.complete(Unit)
+
+        // Then — ensureCachedFile could not produce its file, but the bytes download, which a copy
+        // the disk refused never fails, fetched the object for itself
+        assertIs<okio.IOException>(awaitSoon(ensure).exceptionOrNull())
+        assertEquals(OLD, awaitSoon(download).decodeToString())
+        assertEquals(2, downloads())
+    }
+
+    @Test
+    fun a_channel_download_that_joined_one_an_update_outran_streams_the_new_object() = runTest {
+        // Given — an ensureCachedFile download of the old object held at the server, and a channel
+        // download waiting for it
+        val gate = holdDownloads()
+        val ensure = async(Dispatchers.Default) { bucket().ensureCachedFile(PATH) }
+        awaitSoon(server.downloadHeld)
+        val channel = ByteChannel()
+        val download =
+            async(Dispatchers.Default) { bucket().downloadAuthenticated(PATH, channel) {} }
+        val received = async(Dispatchers.Default) { channel.readRemaining().readByteArray() }
+        awaitWaiters(2)
+
+        // When — the object is replaced, then the old bytes arrive
+        bucket().update(PATH, NEW.encodeToByteArray())
+        server.downloadGate = null
+        gate.complete(Unit)
+        awaitSoon(download)
+        channel.flushAndClose()
+
+        // Then — the download it waited for was not kept, so the channel download fetched the new
+        // object itself, and nothing of the old one reached it
+        assertEquals(NEW, awaitSoon(received).decodeToString())
+        assertEquals(NEW, contentOf(awaitSoon(ensure)))
+        assertTrue(downloads() >= 2)
+    }
+
+    @Test
+    fun a_download_that_fails_fails_every_caller_once_each_has_tried_its_own_request() = runTest {
         // Given — a download held before the server answers, with two callers waiting for it
         val held = CompletableDeferred<Unit>()
         server.gate = held
@@ -297,10 +433,12 @@ class StorageSharedDownloadTest {
 
         // When — the network goes away under the request
         server.online = false
+        server.gate = null
         held.complete(Unit)
         val outcomes = listOf(awaitSoon(first), awaitSoon(second))
 
-        // Then — each caller got the connectivity failure; one request was made, nothing is cached
+        // Then — each caller got the connectivity failure; the one that joined tried its own
+        // request once, and nothing is cached
         outcomes.forEach { outcome ->
             val failure = assertNotNull(outcome.exceptionOrNull())
             assertTrue(
@@ -308,29 +446,8 @@ class StorageSharedDownloadTest {
                 "expected the connectivity failure, got $failure",
             )
         }
-        assertEquals(1, server.requests.size)
+        assertEquals(2, server.requests.size)
         assertNull(bucket().cachedFile(PATH))
-    }
-
-    @Test
-    fun a_clear_during_a_shared_download_voids_it_for_every_caller() = runTest {
-        // Given — two callers waiting for a download held at the server
-        val gate = holdDownloads()
-        val first = async(Dispatchers.Default) { runCatching { bucket().ensureCachedFile(PATH) } }
-        awaitSoon(server.downloadHeld)
-        val second = async(Dispatchers.Default) { runCatching { bucket().ensureCachedFile(PATH) } }
-        awaitWaiters(2)
-
-        // When — local data is cleared, as a sign-out does, then the bytes arrive
-        cache.clear { store.cachedFileDao.deleteAll() }
-        gate.complete(Unit)
-        val outcomes = listOf(awaitSoon(first), awaitSoon(second))
-
-        // Then — neither caller got the outgoing user's file, and nothing was put back
-        outcomes.forEach { outcome -> assertIs<IllegalStateException>(outcome.exceptionOrNull()) }
-        assertNull(store.getStorageByKey(BUCKET, PATH))
-        assertEquals(emptyList(), regularFilesUnder(dataDirectory))
-        assertEquals(1, downloads())
     }
 
     private companion object {

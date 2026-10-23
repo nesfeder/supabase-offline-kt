@@ -1,5 +1,7 @@
 // Copyright (c) 2026 nesfeder
 // SPDX-License-Identifier: MIT
+@file:OptIn(ExperimentalAtomicApi::class)
+
 package io.github.nesfeder.supabase.offline.internal.storage
 
 import io.github.nesfeder.supabase.offline.testdoubles.FakeBucketApi
@@ -9,6 +11,8 @@ import io.github.nesfeder.supabase.offline.testdoubles.TestStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestBucketApi
 import io.github.nesfeder.supabase.offline.testdoubles.newTestFileCache
 import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
+import kotlin.concurrent.atomics.AtomicInt
+import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.random.Random
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
@@ -36,9 +40,10 @@ import okio.SYSTEM
 /**
  * An offline read of a cached file — a download answered from the cache, or the cache's own
  * `readBytes` — waits for no commit, eviction pass or clear: a read pins its file apart from the
- * cache's lock, and an eviction pass looks at the files outside it. A commit held writing its row,
- * and an eviction pass held looking at a file, each leave a concurrent read of another file to
- * finish in bounded time.
+ * cache's lock, and an eviction pass looks at the files outside it, and at the ones it chose again
+ * without the read side's lock. A commit held writing its row, and an eviction pass held looking at
+ * a file in either of its phases, each leave a concurrent read of another file to finish in bounded
+ * time.
  */
 class StorageReadContentionTest {
 
@@ -185,6 +190,42 @@ class StorageReadContentionTest {
         assertTrue(store.cachedFileDao.totalSizeBytes() <= 20)
         assertNotNull(store.getStorageByKey(BUCKET, "a.bin"))
         assertNull(store.getStorageByKey(BUCKET, "b.bin"))
+        assertNotNull(store.getStorageByKey(BUCKET, "c.bin"))
+    }
+
+    @Test
+    fun an_offline_read_does_not_wait_for_an_eviction_pass_held_at_the_file_it_chose() = runTest {
+        // Given — a and b in a bounded cache, and a download of c that takes it past the bound,
+        // whose eviction pass is held looking again, under the cache's lock, at a: the file it
+        // chose to evict
+        val bucket = bucket(maxSizeBytes = 20)
+        download(bucket, "a.bin", A, at = 1 * MINUTE)
+        download(bucket, "b.bin", B, at = 2 * MINUTE)
+        val looksAtA = AtomicInt(0)
+        val passHeld = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        fileSystem.onMetadata = { path ->
+            // The pass's first look at a ranks it; its second, once chosen, is the one held
+            if (path.name == "a.bin" && looksAtA.addAndFetch(1) == 2) {
+                passHeld.complete(Unit)
+                holdUntil(release)
+            }
+        }
+        now = 3 * MINUTE
+        delegate.onDownload = { C }
+        val download = async(Dispatchers.Default) { bucket.api.downloadAuthenticated("c.bin") {} }
+        awaitSoon(passHeld)
+
+        // When — b is read offline while the pass holds the cache's lock
+        val read = boundedOfflineRead(bucket, "b.bin")
+
+        // Then — the read did not wait behind the pass; once released, the pass took a
+        assertContentEquals(B, assertNotNull(read, "the offline read waited behind the pass"))
+        release.complete(Unit)
+        assertContentEquals(C, awaitSoon(download))
+        assertTrue(store.cachedFileDao.totalSizeBytes() <= 20)
+        assertNull(store.getStorageByKey(BUCKET, "a.bin"))
+        assertNotNull(store.getStorageByKey(BUCKET, "b.bin"))
         assertNotNull(store.getStorageByKey(BUCKET, "c.bin"))
     }
 
