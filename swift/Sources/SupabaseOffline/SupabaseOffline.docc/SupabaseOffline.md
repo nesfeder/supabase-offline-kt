@@ -84,6 +84,7 @@ your test scripts: see <doc:TestingYourApp>.
 - ``RejectedMutation``
 - ``RejectedMutationSequence``
 - ``SyncReport``
+- ``SyncStopReason``
 
 ### Conflicts
 

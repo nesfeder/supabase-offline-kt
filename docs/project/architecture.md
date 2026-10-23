@@ -69,9 +69,9 @@ rules hold across every table below and are not repeated in them:
   bridge catches around it.
 - **Value types have internal constructors.** `QuerySnapshot`, `PendingMutation`,
   `RejectedMutation`, `ServerError`, `SyncReport`, `SyncStatus`, `CachedFile`, the two
-  `MutationOutcome` cases, `RefreshState.Stalled` and the exceptions are built by the library, so
-  it can add a field without breaking a caller. A test builds them with the
-  [testing artifact](#the-testing-artifact)'s factories.
+  `MutationOutcome` cases, `RefreshState.Stalled`, the two `SyncStopReason` failures and the
+  exceptions are built by the library, so it can add a field without breaking a caller. A test
+  builds them with the [testing artifact](#the-testing-artifact)'s factories.
 
 "The current user" means the identity the session speaks for: the signed-in user, or the
 anonymous identity when nobody is signed in or the client has no Auth plugin (see
@@ -364,8 +364,10 @@ app lets its user dismiss or retry each entry.
 was lost had reached it) and `heldBehindOtherTablesCount` (of `remainingCount`, the writes a call
 for one table held back behind an earlier write of the user to another table; `0` for a call over
 every table), `conflictsResolvedCount` (of `syncedCount`, the conflicts settled with `KeepLocal` or
-`Apply` and sent), `conflictsKeptServerCount` (the writes dropped with `KeepServer`) and
-`conflicted` (the entries parked during the call); `alreadyOnServerCount` also counts a guarded
+`Apply` and sent), `conflictsKeptServerCount` (the writes dropped with `KeepServer`),
+`conflicted` (the entries parked during the call) and `stopReason` (a `SyncStopReason`: `Completed`,
+or what stopped the call short, from the replayer's internal stop; an open set, so a later reason is
+additive); `alreadyOnServerCount` also counts a guarded
 write whose earlier send had landed and a guarded DELETE whose row was already gone. Its counts are
 the call's own: a pass the library ran by itself just before is counted
 nowhere in it, and a refusal it made is found on the rejected list.
@@ -435,7 +437,7 @@ one failed read never turns a trigger off.
 | `pendingMutationCount`, `rejectedMutationCount`, `conflictedMutationCount` | The current user's queued writes, rejected entries and conflicted entries. They follow each change to the queue shortly after it, read together, so a write moving between the queue and either list is counted in exactly one. A failed read of either is logged, and they follow the queue again after a wait that doubles up to about a minute. |
 | `isSyncing` | Whether a pass is sending, started by the app or by the library; `false` while a pass waits for the session to settle. |
 | `lastSyncedAt: Instant?` | When a pass, or a write sent at once, last left the current user's queue empty, a pass over an already empty queue included. In memory only. |
-| `lastSyncError: SyncFailedException?` | Why the last pass stopped with writes queued: the server's `httpStatus` and `code`, or a failure the network caused. Cleared when a later pass runs to the end, when sending empties the queue, and when local data is cleared. |
+| `lastSyncError: SyncFailedException?` | The failure that last stopped a pass with writes queued: the server's `httpStatus` and `code`, or a failure the network or the device caused. Cleared when a later pass runs to the end or stops because the session changed user, when sending empties the queue, and when local data is cleared; a pass stopped because the session is not ready, access is off or a write waits behind another table leaves it as it was. |
 
 `NetworkStatus` is the closed enum `UNKNOWN` (nothing has said yet; treated as online), `ONLINE`,
 `OFFLINE` and `DISABLED` (after `disableNetwork()`).

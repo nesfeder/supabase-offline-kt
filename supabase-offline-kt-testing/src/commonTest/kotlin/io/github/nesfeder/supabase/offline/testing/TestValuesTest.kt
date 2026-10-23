@@ -5,6 +5,7 @@ package io.github.nesfeder.supabase.offline.testing
 import io.github.nesfeder.supabase.offline.MutationOperation
 import io.github.nesfeder.supabase.offline.NetworkStatus
 import io.github.nesfeder.supabase.offline.RealtimeStatus
+import io.github.nesfeder.supabase.offline.SyncStopReason
 import io.github.nesfeder.supabase.offline.isNetworkOrConnectivityFailure
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -344,6 +345,28 @@ class TestValuesTest {
         )
         assertEquals(emptyList(), plainReport.conflicted)
         assertEquals(0, plainStatus.conflictedMutationCount)
+    }
+
+    @Test
+    fun a_sync_report_carries_the_stop_reason_it_was_given_or_the_one_its_counts_imply() {
+        // Given
+        val failure = syncFailedException(message = "stopped", httpStatus = 503, code = "PGRST000")
+        val onDevice = syncFailedException(message = "stopped on the device")
+
+        // When
+        val failed = syncReport(remainingCount = 2, stopReason = serverFailureStop(failure))
+        val local = localFailureStop(onDevice)
+        val disabled = syncReport(stopReason = SyncStopReason.NetworkDisabled)
+        val held = syncReport(syncedCount = 0, remainingCount = 1, heldBehindOtherTablesCount = 1)
+
+        // Then
+        val reason = failed.stopReason as SyncStopReason.ServerFailure
+        assertSame(failure, reason.error)
+        assertEquals(2 to 0, failed.remainingCount to failed.syncedCount)
+        assertSame(onDevice, local.error)
+        assertEquals(SyncStopReason.NetworkDisabled, disabled.stopReason)
+        assertEquals(SyncStopReason.HeldBehindOtherTables, held.stopReason)
+        assertEquals(SyncStopReason.Completed, syncReport(syncedCount = 1).stopReason)
     }
 
     @Test

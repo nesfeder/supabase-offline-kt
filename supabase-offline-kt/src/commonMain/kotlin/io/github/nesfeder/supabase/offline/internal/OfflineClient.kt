@@ -70,6 +70,7 @@ import io.github.nesfeder.supabase.offline.internal.mutationqueue.currentReplayI
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.jsonObjectOrNull
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.pinnedRowKeyOf
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.replayIdentityFor
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.stopReasonOf
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.syncFailureOf
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.toConflictedMutation
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.toPendingMutation
@@ -1167,7 +1168,11 @@ internal class OfflineClient(
     /**
      * Records what a pass that ended with [report] tells the status: a failure that stopped it as
      * [SyncStatus.lastSyncError], built without the failure's message; a pass that ran to the end
-     * clears it, and records [SyncStatus.lastSyncedAt] when it left the session's queue empty.
+     * clears it, and records [SyncStatus.lastSyncedAt] when it left the session's queue empty. A
+     * change of user or a clear clears it too, as the writes it held back are another user's or
+     * gone. A pass that got no newer answer for the writes, since the session was not ready, access
+     * was off, an earlier write waits in another table or another sender has the next one, leaves
+     * it as it was.
      */
     private suspend fun recordPassEnded(report: EngineSyncReport) {
         when (val stop = report.stop) {
@@ -1183,8 +1188,14 @@ internal class OfflineClient(
                 publishStatus { status ->
                     status.copy(lastSyncError = syncFailureOf(stop.cause))
                 }
-            // The session, a clear, the switch or another sender: nothing failed
-            else -> Unit
+            SyncStop.SessionChanged,
+            SyncStop.LocalDataCleared ->
+                publishStatus { status -> status.copy(lastSyncError = null) }
+            SyncStop.SessionNotReady,
+            SyncStop.IdentityUnknown,
+            SyncStop.NetworkDisabled,
+            is SyncStop.HeldBehindOtherTables,
+            SyncStop.HeadInFlight -> Unit
         }
     }
 
@@ -1248,6 +1259,7 @@ internal class OfflineClient(
             conflictsKeptServerCount = conflictsKeptServerCount,
             conflicted =
                 conflicted.map { entry -> entry.toConflictedMutation(EngineJson, primaryKeys) },
+            stopReason = stopReasonOf(stop),
         )
 
     override suspend fun applyServerRecord(

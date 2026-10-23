@@ -15,6 +15,15 @@ All notable changes to this project are recorded in this file. The format follow
 
 ### Added
 
+- `SyncReport.stopReason` says why a sync returned when it did, and so why writes remain: it
+  completed, the network could not be reached, the server failed in a way that may pass (with its
+  `SyncFailedException`), a failure on the device stopped it, the session was not ready or changed
+  user, network access was off, writes wait behind another table, or local data was cleared. The
+  set is open, so a `when` over it keeps an `else` branch. The Swift package's `SyncReport` has the
+  same `stopReason`, a `SyncStopReason` with an extensible `kind` and the failure as `error`, and
+  the testing artifacts build one with `serverFailureStop`, `localFailureStop` and a `syncReport`
+  overload in Kotlin, and `syncStopReason(kind:error:)` and a `syncReport` overload in Swift.
+
 ### Changed
 
 - The rejected list keeps a guarded write's base in each guarded entry, under two new keys
@@ -43,6 +52,10 @@ All notable changes to this project are recorded in this file. The format follow
 
 ### Fixed
 
+- A sync pass that a user switch stopped left `SyncStatus.lastSyncError` holding an earlier pass's
+  failure, which was about the previous user's writes; it is now cleared then. A pass stopped
+  because the session is not ready, network access is off or a write waits behind another table
+  still leaves it as it was, since no newer answer came for those writes.
 - A reactive read's refresh asks again, on its retry schedule, for as long as its answers are
   refused as older than a change to the table, and reads `Refreshing` meanwhile; a
   `NetworkFirstThenCache` read whose first fetch is refused that way stays `Refreshing` too. Before,

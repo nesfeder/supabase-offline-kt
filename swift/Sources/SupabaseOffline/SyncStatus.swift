@@ -25,9 +25,13 @@ public struct SyncStatus: Sendable {
     /// device's clock; `nil` until it happens. Kept in memory only.
     public let lastSyncedAt: Date?
 
-    /// Why the last pass stopped with writes still queued, an ``OfflineError/Code/syncFailed`` error
-    /// with the server's status and code when the server caused it; `nil` once a later pass runs to
-    /// the end, sending empties the queue, or local data is cleared.
+    /// The failure that last stopped a sync pass with writes still queued
+    /// (``SyncStopReason/Kind/networkUnavailable``, ``SyncStopReason/Kind/serverFailure`` or
+    /// ``SyncStopReason/Kind/localFailure``), an ``OfflineError/Code/syncFailed`` error with the
+    /// server's status and code when the server caused it. `nil` once a later pass runs to the end or
+    /// stops because the session changed user, sending empties the queue, or local data is cleared. A
+    /// pass that stops because the session is not ready, network access is off or an earlier write
+    /// waits in another table leaves it as it was: no newer answer came for the writes it held back.
     public let lastSyncError: OfflineError?
 
     /// The current user's entries on ``SupabaseOfflineClient/conflictedMutations()``.
