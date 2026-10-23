@@ -24,10 +24,11 @@ import kotlin.time.Clock
  * ```
  *
  * Each client starts empty, and a second client over the same configuration shares nothing with the
- * first. A [CachedFile.path] names a file that exists only in the client's memory: read it through
- * the offline bucket, not from disk. supabase-kt's own plugins keep their own state: in a test,
- * give Storage a `MemoryResumableCache` and Auth a session manager that keeps the session in
- * memory.
+ * first; to have a client find what an earlier one left, as an app relaunched on a device does,
+ * build both over one [InMemoryStore]. A [CachedFile.path] names a file that exists only in the
+ * client's memory: read it through the offline bucket, not from disk. supabase-kt's own plugins
+ * keep their own state: in a test, give Storage a `MemoryResumableCache` and Auth a session manager
+ * that keeps the session in memory.
  *
  * The client watches no connectivity monitor: [SyncStatus.network] stays [NetworkStatus.UNKNOWN],
  * which counts as online, unless the test sets [Offline.Config.networkAvailability] or calls
@@ -71,5 +72,44 @@ public fun Offline.Config.inMemory(clock: Clock = Clock.System) {
 @OptIn(OfflineInternal::class)
 public fun Offline.Config.inMemory(clock: Clock = Clock.System, realtime: FakeRealtime) {
     keepLocalDataInMemory(clock)
+    followServerChangesThrough(realtime.channelHook)
+}
+
+/**
+ * [inMemory], over [store]: the client starts with what an earlier client over [store] left there
+ * (the queued writes, which it replays, the rejected and conflicted lists, the cached queries and
+ * files) and leaves its own there when it closes. A test closes one client and builds the next to
+ * see what the app does after it is killed and relaunched:
+ * ```kotlin
+ * install(Offline) { inMemory(store = store) }
+ * ```
+ *
+ * Building the client fails with an [IllegalStateException] while another client holds [store],
+ * open or still closing: close that one first.
+ *
+ * @param clock the time the client sees, as for [inMemory].
+ * @param store the local data the client keeps, shared with the clients before and after it.
+ */
+@OptIn(OfflineInternal::class)
+public fun Offline.Config.inMemory(clock: Clock = Clock.System, store: InMemoryStore) {
+    keepLocalDataInMemory(clock, store.localData)
+}
+
+/**
+ * [inMemory] over [store], as the overload that takes a store alone, with the server's row changes
+ * reported by [realtime] in place of a Realtime channel, as the overload that takes a
+ * [FakeRealtime] alone.
+ *
+ * @param clock the time the client sees, as for [inMemory].
+ * @param realtime where the client's channel is joined and the test reports changes.
+ * @param store the local data the client keeps, shared with the clients before and after it.
+ */
+@OptIn(OfflineInternal::class)
+public fun Offline.Config.inMemory(
+    clock: Clock = Clock.System,
+    realtime: FakeRealtime,
+    store: InMemoryStore,
+) {
+    keepLocalDataInMemory(clock, store.localData)
     followServerChangesThrough(realtime.channelHook)
 }

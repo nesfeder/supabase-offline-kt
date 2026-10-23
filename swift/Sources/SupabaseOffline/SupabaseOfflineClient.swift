@@ -15,6 +15,9 @@ public final class SupabaseOfflineClient: Sendable {
     /// The core client, once open; every operation goes through it.
     let connection: CoreConnection
 
+    /// The tables ``Config/realtimeTables`` names, which ``realtimeTableStatus`` reports on.
+    let realtimeTables: [RealtimeTable]
+
     /// A client for the project at `supabaseURL`, with its publishable (anon) key.
     ///
     /// - Parameters:
@@ -35,6 +38,7 @@ public final class SupabaseOfflineClient: Sendable {
         config: Config,
         opening: @escaping @Sendable (BridgeClientOptions) -> BridgeOpenResult
     ) {
+        realtimeTables = config.realtimeTables
         connection = CoreConnection {
             let coreOptions = try SupabaseOfflineClient.coreOptions(supabaseURL: supabaseURL, supabaseKey: supabaseKey, config: config)
             let opened = opening(coreOptions)
@@ -103,6 +107,7 @@ public final class SupabaseOfflineClient: Sendable {
         )
         coreOptions.schema = config.defaultSchema
         coreOptions.accessTokenProvider = config.accessToken.map(AccessTokenRelay.init)
+        coreOptions.identityFromAccessToken = config.identityFromAccessToken
         coreOptions.cacheSizeBytes = config.cacheSize.coreBytes
         coreOptions.fileCacheSizeBytes = config.fileCacheSize.coreBytes
         coreOptions.autoSync = config.autoSync

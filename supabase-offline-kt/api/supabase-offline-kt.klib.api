@@ -47,6 +47,8 @@ abstract fun interface io.github.nesfeder.supabase.offline/ConflictResolver { //
 abstract interface io.github.nesfeder.supabase.offline/Offline : io.github.jan.supabase.plugins/SupabasePlugin<io.github.nesfeder.supabase.offline/Offline.Config> { // io.github.nesfeder.supabase.offline/Offline|null[0]
     abstract val realtimeStatus // io.github.nesfeder.supabase.offline/Offline.realtimeStatus|{}realtimeStatus[0]
         abstract fun <get-realtimeStatus>(): kotlinx.coroutines.flow/StateFlow<io.github.nesfeder.supabase.offline/RealtimeStatus> // io.github.nesfeder.supabase.offline/Offline.realtimeStatus.<get-realtimeStatus>|<get-realtimeStatus>(){}[0]
+    abstract val realtimeTableStatus // io.github.nesfeder.supabase.offline/Offline.realtimeTableStatus|{}realtimeTableStatus[0]
+        abstract fun <get-realtimeTableStatus>(): kotlinx.coroutines.flow/StateFlow<kotlin.collections/Map<io.github.nesfeder.supabase.offline/RealtimeTable, io.github.nesfeder.supabase.offline/RealtimeStatus>> // io.github.nesfeder.supabase.offline/Offline.realtimeTableStatus.<get-realtimeTableStatus>|<get-realtimeTableStatus>(){}[0]
     abstract val storage // io.github.nesfeder.supabase.offline/Offline.storage|{}storage[0]
         abstract fun <get-storage>(): io.github.nesfeder.supabase.offline/OfflineStorage // io.github.nesfeder.supabase.offline/Offline.storage.<get-storage>|<get-storage>(){}[0]
     abstract val syncStatus // io.github.nesfeder.supabase.offline/Offline.syncStatus|{}syncStatus[0]
@@ -62,6 +64,7 @@ abstract interface io.github.nesfeder.supabase.offline/Offline : io.github.jan.s
     abstract suspend fun applyServerRecord(kotlin/String, kotlinx.serialization.json/JsonObject, kotlin.collections/List<kotlin/String>? = ..., kotlin/String? = ...) // io.github.nesfeder.supabase.offline/Offline.applyServerRecord|applyServerRecord(kotlin.String;kotlinx.serialization.json.JsonObject;kotlin.collections.List<kotlin.String>?;kotlin.String?){}[0]
     abstract suspend fun clearLocalData() // io.github.nesfeder.supabase.offline/Offline.clearLocalData|clearLocalData(){}[0]
     abstract suspend fun close() // io.github.nesfeder.supabase.offline/Offline.close|close(){}[0]
+    abstract suspend fun conflictedMutationList(): kotlin.collections/List<io.github.nesfeder.supabase.offline/ConflictedMutation> // io.github.nesfeder.supabase.offline/Offline.conflictedMutationList|conflictedMutationList(){}[0]
     abstract suspend fun disableNetwork() // io.github.nesfeder.supabase.offline/Offline.disableNetwork|disableNetwork(){}[0]
     abstract suspend fun disableRealtime() // io.github.nesfeder.supabase.offline/Offline.disableRealtime|disableRealtime(){}[0]
     abstract suspend fun discardPendingMutation(kotlin/Long) // io.github.nesfeder.supabase.offline/Offline.discardPendingMutation|discardPendingMutation(kotlin.Long){}[0]
@@ -70,6 +73,7 @@ abstract interface io.github.nesfeder.supabase.offline/Offline : io.github.jan.s
     abstract suspend fun enableNetwork() // io.github.nesfeder.supabase.offline/Offline.enableNetwork|enableNetwork(){}[0]
     abstract suspend fun enableRealtime() // io.github.nesfeder.supabase.offline/Offline.enableRealtime|enableRealtime(){}[0]
     abstract suspend fun pendingMutationCount(kotlin/String? = ...): kotlin/Int // io.github.nesfeder.supabase.offline/Offline.pendingMutationCount|pendingMutationCount(kotlin.String?){}[0]
+    abstract suspend fun rejectedMutationList(): kotlin.collections/List<io.github.nesfeder.supabase.offline/RejectedMutation> // io.github.nesfeder.supabase.offline/Offline.rejectedMutationList|rejectedMutationList(){}[0]
     abstract suspend fun resolveConflictedMutation(kotlin/Long, io.github.nesfeder.supabase.offline/ConflictResolution) // io.github.nesfeder.supabase.offline/Offline.resolveConflictedMutation|resolveConflictedMutation(kotlin.Long;io.github.nesfeder.supabase.offline.ConflictResolution){}[0]
     abstract suspend fun retryRejectedMutation(kotlin/Long) // io.github.nesfeder.supabase.offline/Offline.retryRejectedMutation|retryRejectedMutation(kotlin.Long){}[0]
     abstract suspend fun rpc(kotlin/String, kotlin/Function1<io.github.jan.supabase.postgrest.query.request/RpcRequestBuilder, kotlin/Unit> = ...): io.github.jan.supabase.postgrest.result/PostgrestResult // io.github.nesfeder.supabase.offline/Offline.rpc|rpc(kotlin.String;kotlin.Function1<io.github.jan.supabase.postgrest.query.request.RpcRequestBuilder,kotlin.Unit>){}[0]
@@ -101,6 +105,9 @@ abstract interface io.github.nesfeder.supabase.offline/Offline : io.github.jan.s
         final var fileCacheSizeBytes // io.github.nesfeder.supabase.offline/Offline.Config.fileCacheSizeBytes|{}fileCacheSizeBytes[0]
             final fun <get-fileCacheSizeBytes>(): kotlin/Long // io.github.nesfeder.supabase.offline/Offline.Config.fileCacheSizeBytes.<get-fileCacheSizeBytes>|<get-fileCacheSizeBytes>(){}[0]
             final fun <set-fileCacheSizeBytes>(kotlin/Long) // io.github.nesfeder.supabase.offline/Offline.Config.fileCacheSizeBytes.<set-fileCacheSizeBytes>|<set-fileCacheSizeBytes>(kotlin.Long){}[0]
+        final var identityFromAccessToken // io.github.nesfeder.supabase.offline/Offline.Config.identityFromAccessToken|{}identityFromAccessToken[0]
+            final fun <get-identityFromAccessToken>(): kotlin/Boolean // io.github.nesfeder.supabase.offline/Offline.Config.identityFromAccessToken.<get-identityFromAccessToken>|<get-identityFromAccessToken>(){}[0]
+            final fun <set-identityFromAccessToken>(kotlin/Boolean) // io.github.nesfeder.supabase.offline/Offline.Config.identityFromAccessToken.<set-identityFromAccessToken>|<set-identityFromAccessToken>(kotlin.Boolean){}[0]
         final var logLevel // io.github.nesfeder.supabase.offline/Offline.Config.logLevel|{}logLevel[0]
             final fun <get-logLevel>(): io.github.jan.supabase.logging/LogLevel? // io.github.nesfeder.supabase.offline/Offline.Config.logLevel.<get-logLevel>|<get-logLevel>(){}[0]
             final fun <set-logLevel>(io.github.jan.supabase.logging/LogLevel?) // io.github.nesfeder.supabase.offline/Offline.Config.logLevel.<set-logLevel>|<set-logLevel>(io.github.jan.supabase.logging.LogLevel?){}[0]
@@ -352,6 +359,70 @@ sealed interface io.github.nesfeder.supabase.offline/ResponseTrust { // io.githu
 
 abstract class io.github.nesfeder.supabase.offline/OfflineException : kotlin/Exception // io.github.nesfeder.supabase.offline/OfflineException|null[0]
 
+abstract class io.github.nesfeder.supabase.offline/SyncStopReason { // io.github.nesfeder.supabase.offline/SyncStopReason|null[0]
+    final class LocalFailure : io.github.nesfeder.supabase.offline/SyncStopReason { // io.github.nesfeder.supabase.offline/SyncStopReason.LocalFailure|null[0]
+        final val error // io.github.nesfeder.supabase.offline/SyncStopReason.LocalFailure.error|{}error[0]
+            final fun <get-error>(): io.github.nesfeder.supabase.offline/SyncFailedException // io.github.nesfeder.supabase.offline/SyncStopReason.LocalFailure.error.<get-error>|<get-error>(){}[0]
+
+        final fun component1(): io.github.nesfeder.supabase.offline/SyncFailedException // io.github.nesfeder.supabase.offline/SyncStopReason.LocalFailure.component1|component1(){}[0]
+        final fun equals(kotlin/Any?): kotlin/Boolean // io.github.nesfeder.supabase.offline/SyncStopReason.LocalFailure.equals|equals(kotlin.Any?){}[0]
+        final fun hashCode(): kotlin/Int // io.github.nesfeder.supabase.offline/SyncStopReason.LocalFailure.hashCode|hashCode(){}[0]
+        final fun toString(): kotlin/String // io.github.nesfeder.supabase.offline/SyncStopReason.LocalFailure.toString|toString(){}[0]
+    }
+
+    final class ServerFailure : io.github.nesfeder.supabase.offline/SyncStopReason { // io.github.nesfeder.supabase.offline/SyncStopReason.ServerFailure|null[0]
+        final val error // io.github.nesfeder.supabase.offline/SyncStopReason.ServerFailure.error|{}error[0]
+            final fun <get-error>(): io.github.nesfeder.supabase.offline/SyncFailedException // io.github.nesfeder.supabase.offline/SyncStopReason.ServerFailure.error.<get-error>|<get-error>(){}[0]
+
+        final fun component1(): io.github.nesfeder.supabase.offline/SyncFailedException // io.github.nesfeder.supabase.offline/SyncStopReason.ServerFailure.component1|component1(){}[0]
+        final fun equals(kotlin/Any?): kotlin/Boolean // io.github.nesfeder.supabase.offline/SyncStopReason.ServerFailure.equals|equals(kotlin.Any?){}[0]
+        final fun hashCode(): kotlin/Int // io.github.nesfeder.supabase.offline/SyncStopReason.ServerFailure.hashCode|hashCode(){}[0]
+        final fun toString(): kotlin/String // io.github.nesfeder.supabase.offline/SyncStopReason.ServerFailure.toString|toString(){}[0]
+    }
+
+    final object Completed : io.github.nesfeder.supabase.offline/SyncStopReason { // io.github.nesfeder.supabase.offline/SyncStopReason.Completed|null[0]
+        final fun equals(kotlin/Any?): kotlin/Boolean // io.github.nesfeder.supabase.offline/SyncStopReason.Completed.equals|equals(kotlin.Any?){}[0]
+        final fun hashCode(): kotlin/Int // io.github.nesfeder.supabase.offline/SyncStopReason.Completed.hashCode|hashCode(){}[0]
+        final fun toString(): kotlin/String // io.github.nesfeder.supabase.offline/SyncStopReason.Completed.toString|toString(){}[0]
+    }
+
+    final object HeldBehindOtherTables : io.github.nesfeder.supabase.offline/SyncStopReason { // io.github.nesfeder.supabase.offline/SyncStopReason.HeldBehindOtherTables|null[0]
+        final fun equals(kotlin/Any?): kotlin/Boolean // io.github.nesfeder.supabase.offline/SyncStopReason.HeldBehindOtherTables.equals|equals(kotlin.Any?){}[0]
+        final fun hashCode(): kotlin/Int // io.github.nesfeder.supabase.offline/SyncStopReason.HeldBehindOtherTables.hashCode|hashCode(){}[0]
+        final fun toString(): kotlin/String // io.github.nesfeder.supabase.offline/SyncStopReason.HeldBehindOtherTables.toString|toString(){}[0]
+    }
+
+    final object LocalDataCleared : io.github.nesfeder.supabase.offline/SyncStopReason { // io.github.nesfeder.supabase.offline/SyncStopReason.LocalDataCleared|null[0]
+        final fun equals(kotlin/Any?): kotlin/Boolean // io.github.nesfeder.supabase.offline/SyncStopReason.LocalDataCleared.equals|equals(kotlin.Any?){}[0]
+        final fun hashCode(): kotlin/Int // io.github.nesfeder.supabase.offline/SyncStopReason.LocalDataCleared.hashCode|hashCode(){}[0]
+        final fun toString(): kotlin/String // io.github.nesfeder.supabase.offline/SyncStopReason.LocalDataCleared.toString|toString(){}[0]
+    }
+
+    final object NetworkDisabled : io.github.nesfeder.supabase.offline/SyncStopReason { // io.github.nesfeder.supabase.offline/SyncStopReason.NetworkDisabled|null[0]
+        final fun equals(kotlin/Any?): kotlin/Boolean // io.github.nesfeder.supabase.offline/SyncStopReason.NetworkDisabled.equals|equals(kotlin.Any?){}[0]
+        final fun hashCode(): kotlin/Int // io.github.nesfeder.supabase.offline/SyncStopReason.NetworkDisabled.hashCode|hashCode(){}[0]
+        final fun toString(): kotlin/String // io.github.nesfeder.supabase.offline/SyncStopReason.NetworkDisabled.toString|toString(){}[0]
+    }
+
+    final object NetworkUnavailable : io.github.nesfeder.supabase.offline/SyncStopReason { // io.github.nesfeder.supabase.offline/SyncStopReason.NetworkUnavailable|null[0]
+        final fun equals(kotlin/Any?): kotlin/Boolean // io.github.nesfeder.supabase.offline/SyncStopReason.NetworkUnavailable.equals|equals(kotlin.Any?){}[0]
+        final fun hashCode(): kotlin/Int // io.github.nesfeder.supabase.offline/SyncStopReason.NetworkUnavailable.hashCode|hashCode(){}[0]
+        final fun toString(): kotlin/String // io.github.nesfeder.supabase.offline/SyncStopReason.NetworkUnavailable.toString|toString(){}[0]
+    }
+
+    final object SessionChanged : io.github.nesfeder.supabase.offline/SyncStopReason { // io.github.nesfeder.supabase.offline/SyncStopReason.SessionChanged|null[0]
+        final fun equals(kotlin/Any?): kotlin/Boolean // io.github.nesfeder.supabase.offline/SyncStopReason.SessionChanged.equals|equals(kotlin.Any?){}[0]
+        final fun hashCode(): kotlin/Int // io.github.nesfeder.supabase.offline/SyncStopReason.SessionChanged.hashCode|hashCode(){}[0]
+        final fun toString(): kotlin/String // io.github.nesfeder.supabase.offline/SyncStopReason.SessionChanged.toString|toString(){}[0]
+    }
+
+    final object SessionNotReady : io.github.nesfeder.supabase.offline/SyncStopReason { // io.github.nesfeder.supabase.offline/SyncStopReason.SessionNotReady|null[0]
+        final fun equals(kotlin/Any?): kotlin/Boolean // io.github.nesfeder.supabase.offline/SyncStopReason.SessionNotReady.equals|equals(kotlin.Any?){}[0]
+        final fun hashCode(): kotlin/Int // io.github.nesfeder.supabase.offline/SyncStopReason.SessionNotReady.hashCode|hashCode(){}[0]
+        final fun toString(): kotlin/String // io.github.nesfeder.supabase.offline/SyncStopReason.SessionNotReady.toString|toString(){}[0]
+    }
+}
+
 final class io.github.nesfeder.supabase.offline/CacheMissException : io.github.nesfeder.supabase.offline/OfflineException // io.github.nesfeder.supabase.offline/CacheMissException|null[0]
 
 final class io.github.nesfeder.supabase.offline/CachedFile { // io.github.nesfeder.supabase.offline/CachedFile|null[0]
@@ -453,6 +524,8 @@ final class io.github.nesfeder.supabase.offline/MutationConflict { // io.github.
 final class io.github.nesfeder.supabase.offline/MutationNotQueueableException : io.github.nesfeder.supabase.offline/OfflineException // io.github.nesfeder.supabase.offline/MutationNotQueueableException|null[0]
 
 final class io.github.nesfeder.supabase.offline/NetworkDisabledException : io.github.nesfeder.supabase.offline/OfflineException // io.github.nesfeder.supabase.offline/NetworkDisabledException|null[0]
+
+final class io.github.nesfeder.supabase.offline/OfflineClientClosedException : kotlin/IllegalStateException // io.github.nesfeder.supabase.offline/OfflineClientClosedException|null[0]
 
 final class io.github.nesfeder.supabase.offline/OfflinePostgrestQueryBuilder { // io.github.nesfeder.supabase.offline/OfflinePostgrestQueryBuilder|null[0]
     final val postgrest // io.github.nesfeder.supabase.offline/OfflinePostgrestQueryBuilder.postgrest|{}postgrest[0]
@@ -644,6 +717,8 @@ final class io.github.nesfeder.supabase.offline/SyncReport { // io.github.nesfed
         final fun <get-rejected>(): kotlin.collections/List<io.github.nesfeder.supabase.offline/RejectedMutation> // io.github.nesfeder.supabase.offline/SyncReport.rejected.<get-rejected>|<get-rejected>(){}[0]
     final val remainingCount // io.github.nesfeder.supabase.offline/SyncReport.remainingCount|{}remainingCount[0]
         final fun <get-remainingCount>(): kotlin/Int // io.github.nesfeder.supabase.offline/SyncReport.remainingCount.<get-remainingCount>|<get-remainingCount>(){}[0]
+    final val stopReason // io.github.nesfeder.supabase.offline/SyncReport.stopReason|{}stopReason[0]
+        final fun <get-stopReason>(): io.github.nesfeder.supabase.offline/SyncStopReason // io.github.nesfeder.supabase.offline/SyncReport.stopReason.<get-stopReason>|<get-stopReason>(){}[0]
     final val syncedCount // io.github.nesfeder.supabase.offline/SyncReport.syncedCount|{}syncedCount[0]
         final fun <get-syncedCount>(): kotlin/Int // io.github.nesfeder.supabase.offline/SyncReport.syncedCount.<get-syncedCount>|<get-syncedCount>(){}[0]
 
@@ -655,6 +730,7 @@ final class io.github.nesfeder.supabase.offline/SyncReport { // io.github.nesfed
     final fun component6(): kotlin/Int // io.github.nesfeder.supabase.offline/SyncReport.component6|component6(){}[0]
     final fun component7(): kotlin/Int // io.github.nesfeder.supabase.offline/SyncReport.component7|component7(){}[0]
     final fun component8(): kotlin.collections/List<io.github.nesfeder.supabase.offline/ConflictedMutation> // io.github.nesfeder.supabase.offline/SyncReport.component8|component8(){}[0]
+    final fun component9(): io.github.nesfeder.supabase.offline/SyncStopReason // io.github.nesfeder.supabase.offline/SyncReport.component9|component9(){}[0]
     final fun equals(kotlin/Any?): kotlin/Boolean // io.github.nesfeder.supabase.offline/SyncReport.equals|equals(kotlin.Any?){}[0]
     final fun hashCode(): kotlin/Int // io.github.nesfeder.supabase.offline/SyncReport.hashCode|hashCode(){}[0]
     final fun toString(): kotlin/String // io.github.nesfeder.supabase.offline/SyncReport.toString|toString(){}[0]

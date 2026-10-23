@@ -6,4 +6,4 @@ import io.github.jan.supabase.postgrest.query.request.SelectRequestBuilder
 
 /** The `maybeSingle()` reads of `ReadShapeProbeContractTest`, a supabase-kt 3.8 read shape. */
 internal val maybeSingleProbeReads: List<Pair<ReadShape, SelectRequestBuilder.() -> Unit>> =
-    listOf(ReadShape.Uncacheable("a single object (single(), maybeSingle())") to { maybeSingle() })
+    listOf(ReadShape.SingleObject to { maybeSingle() })

@@ -158,8 +158,8 @@ else goes to the server as supabase-kt sends it, and offline fails as there. Tha
 function may change data, so it is neither cached nor queued), Auth and Functions, Realtime's
 broadcast and presence (the tables `realtime { }` names are kept current by the plugin, and another
 channel's records go into the cache with [`applyServerRecord`](../behaviors/realtime.md)),
-Storage writes, and reads of another shape (`single()`, a `count`, `head`, `csv()`, `geojson()`,
-`stripNulls()`, `explain()`; read one row offline from the list, by its key). The samples' two
+Storage writes, and reads of another shape (a `count`, `head`, `csv()`, `geojson()`,
+`stripNulls()`, `explain()`; `single()` is cached as its list, one row long). The samples' two
 database functions say so offline: Mark all done takes no parameters, the Sync tab's Server
 section takes them typed and as JSON, and a function's changes reach the device's lists as another
 device's do, through Realtime or the next read:

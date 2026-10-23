@@ -31,6 +31,7 @@ class BridgeRealtimeTest {
         val statuses = SubscriptionProbe<BridgeRealtimeStatus>()
         client.observeRealtimeStatus(statuses.onValue, statuses.onCompletion)
         statuses.awaitValue { status -> status.kind == BridgeRealtimeStatusKind.SUBSCRIBED }
+        awaitUntil { realtime.joinCount == 1 }
         client.selectAndWait(readOf())
 
         // When — the server reports a row inserted, then the first row deleted
@@ -57,6 +58,33 @@ class BridgeRealtimeTest {
     }
 
     @Test
+    fun a_filtered_table_hears_only_the_saved_rows_its_filter_admits() = bridgeTest {
+        // Given — a client following the rows whose `n` is greater than 9, values crossing as text
+        val realtime = BridgeFakeRealtime()
+        val client =
+            openTestClient(server, realtime = realtime) {
+                realtimeTables =
+                    listOf(
+                        BridgeRealtimeTable(
+                            "todos",
+                            null,
+                            BridgeRealtimeFilter("n", "gt", "9", null),
+                        )
+                    )
+            }
+        awaitUntil { realtime.joinCount == 1 }
+
+        // When — a row the filter admits, compared as a number, one it turns away, and a delete
+        assertNull(realtime.reportInsert("todos", """{"id":5,"n":10}""", null))
+        assertNull(realtime.reportInsert("todos", """{"id":6,"n":8}""", null))
+        assertNull(realtime.reportDelete("todos", """{"id":5}""", null))
+
+        // Then — only the one the filter turns away was dropped
+        assertEquals(1, realtime.droppedReportCount)
+        client.closeAndWait()
+    }
+
+    @Test
     fun the_switch_leaves_the_channel_and_joins_it_again() = bridgeTest {
         // Given — joined
         val realtime = BridgeFakeRealtime()
@@ -73,6 +101,49 @@ class BridgeRealtimeTest {
         assertNull(awaitErrorOnly { client.enableRealtime(it) })
         awaitUntil { realtime.subscribedTables == setOf("todos") }
         client.closeAndWait()
+    }
+
+    @Test
+    fun a_failed_table_is_reported_stalled_alone_in_the_order_named() = bridgeTest {
+        // Given — two tables followed, the second in another schema, both joined
+        val realtime = BridgeFakeRealtime()
+        val client =
+            openTestClient(server, realtime = realtime) {
+                realtimeTables =
+                    listOf(
+                        BridgeRealtimeTable("todos", null, null),
+                        BridgeRealtimeTable("notes", "private", null),
+                    )
+            }
+        val statuses = SubscriptionProbe<List<BridgeRealtimeTableStatus>>()
+        client.observeRealtimeTableStatuses(statuses.onValue, statuses.onCompletion)
+        statuses.awaitValue { current ->
+            current.all { entry -> entry.status.kind == BridgeRealtimeStatusKind.SUBSCRIBED }
+        }
+
+        // When — the server refuses the notes binding
+        realtime.failTable("notes", "column renamed", "private")
+
+        // Then — notes alone is stalled, with its message, each table named as configured
+        val refused = statuses.awaitValue { current ->
+            current.any { entry -> entry.status.kind == BridgeRealtimeStatusKind.STALLED }
+        }
+        assertEquals(
+            listOf("todos" to null, "notes" to "private"),
+            refused.map { it.table to it.schema },
+        )
+        assertEquals(BridgeRealtimeStatusKind.SUBSCRIBED, refused[0].status.kind)
+        assertTrue("column renamed" in assertNotNull(refused[1].status.cause).message)
+        statuses.awaitValue { current ->
+            current.all { entry -> entry.status.kind == BridgeRealtimeStatusKind.SUBSCRIBED }
+        }
+        client.closeAndWait()
+        assertTrue(
+            client.currentRealtimeTableStatuses().all { entry ->
+                entry.status.kind == BridgeRealtimeStatusKind.OFF
+            }
+        )
+        assertNull(statuses.ending.await().second)
     }
 
     @Test
@@ -119,6 +190,7 @@ class BridgeRealtimeTest {
                     server,
                     null,
                     BridgeFakeRealtime(),
+                    null,
                 )
 
             // Then — the open is refused, naming the operator
@@ -155,6 +227,7 @@ class BridgeRealtimeTest {
                     server,
                     null,
                     BridgeFakeRealtime(),
+                    null,
                 )
 
             // Then — the open is refused before anything is joined, naming the shape, not the value

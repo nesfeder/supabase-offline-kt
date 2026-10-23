@@ -269,7 +269,6 @@ class QueryShapeRecordsTest {
             launch(
                 QueryCacheLimits(
                     maxPayloadBytes = 70,
-                    evictionBatchSize = 1,
                     evictionHeadroomBytes = 0,
                 )
             )

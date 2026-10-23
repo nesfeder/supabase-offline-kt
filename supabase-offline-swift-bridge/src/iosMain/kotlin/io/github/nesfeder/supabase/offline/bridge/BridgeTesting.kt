@@ -45,12 +45,16 @@ public object BridgeTesting {
      * @param clock the time the client sees, or `null` for the device's.
      * @param realtime where the channel for [BridgeClientOptions.realtimeTables] is joined and the
      *   test reports changes, or `null` to follow nothing: with it, no Realtime plugin is needed.
+     * @param store the local data the client keeps, shared with the clients opened over it before
+     *   and after, or `null` for data of its own, which starts empty. The open fails while another
+     *   client holds it.
      */
     public fun openInMemory(
         options: BridgeClientOptions,
         server: BridgeFakeServer,
         clock: BridgeClock?,
         realtime: BridgeFakeRealtime?,
+        store: BridgeInMemoryStore?,
     ): BridgeOpenResult =
         openBridgeClient(options) { networkAvailability ->
             assembleSupabaseClient(
@@ -60,7 +64,13 @@ public object BridgeTesting {
                 postgrestRetries = 0,
             ) {
                 val time = clock?.let(::ScriptedClock) ?: Clock.System
-                if (realtime == null) inMemory(time) else inMemory(time, realtime.fake)
+                val fake = realtime?.fake
+                val kept = store?.store
+                if (kept == null) {
+                    if (fake == null) inMemory(time) else inMemory(time, fake)
+                } else {
+                    if (fake == null) inMemory(time, store = kept) else inMemory(time, fake, kept)
+                }
             }
         }
 }

@@ -41,6 +41,20 @@ public class BridgeRealtimeFilter(
 public class BridgeRealtimeStatus
 internal constructor(public val kind: BridgeRealtimeStatusKind, public val cause: BridgeError?)
 
+/**
+ * Where one table the client keeps current through Realtime stands, on its own channel.
+ *
+ * @property table the table's name, as [BridgeClientOptions.realtimeTables] names it.
+ * @property schema its schema as named there, or `null` for the client's default schema.
+ * @property status where the table's channel stands.
+ */
+public class BridgeRealtimeTableStatus
+internal constructor(
+    public val table: String,
+    public val schema: String?,
+    public val status: BridgeRealtimeStatus,
+)
+
 /** The states of the channel that keeps the client's Realtime tables current. */
 public enum class BridgeRealtimeStatusKind {
     /** No table is named, the app switched the subscription off, or the client is closed. */

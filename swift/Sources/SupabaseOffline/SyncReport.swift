@@ -14,9 +14,10 @@ public struct SyncReport: Sendable, Hashable {
     public let rejected: [RejectedMutation]
 
     /// The writes still queued when the call returned, of the table synced or of every table: more
-    /// than zero when network access is off, the network could not be reached, or the server failed
-    /// in a way that may pass (``SyncStatus/lastSyncError`` says why), or when writes wait behind
-    /// other tables (``heldBehindOtherTablesCount``).
+    /// than zero when the call was stopped short, and ``stopReason`` says why: the network could not
+    /// be reached, the server or the device failed in a way that may pass, the session was not
+    /// ready or changed, network access was off, or writes wait behind other tables
+    /// (``heldBehindOtherTablesCount``). The writes are sent by a later pass.
     public let remainingCount: Int
 
     /// Of ``syncedCount``, the inserts whose rows the server already held, because an earlier send
@@ -40,7 +41,13 @@ public struct SyncReport: Sendable, Hashable {
     /// ``SupabaseOfflineClient/conflictedMutations()`` unless local data was cleared since.
     public let conflicted: [ConflictedMutation]
 
-    /// Built by the package, and by the testing product's factories.
+    /// Why the call returned when it did: ``SyncStopReason/Kind/completed`` when it went through
+    /// every write it found queued, or what stopped it short. A call that waited for the client's
+    /// own sending gives the reason its last pass ended for.
+    public let stopReason: SyncStopReason
+
+    /// Built by the package, and by the testing product's factories; without a `stopReason`, the
+    /// one the core gives a report with these counts.
     package init(
         syncedCount: Int,
         rejected: [RejectedMutation],
@@ -49,7 +56,8 @@ public struct SyncReport: Sendable, Hashable {
         heldBehindOtherTablesCount: Int,
         conflictsResolvedCount: Int = 0,
         conflictsKeptServerCount: Int = 0,
-        conflicted: [ConflictedMutation] = []
+        conflicted: [ConflictedMutation] = [],
+        stopReason: SyncStopReason? = nil
     ) {
         self.syncedCount = syncedCount
         self.rejected = rejected
@@ -59,6 +67,8 @@ public struct SyncReport: Sendable, Hashable {
         self.conflictsResolvedCount = conflictsResolvedCount
         self.conflictsKeptServerCount = conflictsKeptServerCount
         self.conflicted = conflicted
+        self.stopReason =
+            stopReason ?? .implied(heldBehindOtherTablesCount: heldBehindOtherTablesCount)
     }
 }
 
@@ -74,7 +84,8 @@ extension SyncReport {
             heldBehindOtherTablesCount: Int(report.heldBehindOtherTablesCount),
             conflictsResolvedCount: Int(report.conflictsResolvedCount),
             conflictsKeptServerCount: Int(report.conflictsKeptServerCount),
-            conflicted: try report.conflicted.map(ConflictedMutation.init(core:))
+            conflicted: try report.conflicted.map(ConflictedMutation.init(core:)),
+            stopReason: SyncStopReason(core: report.stopReason)
         )
     }
 }

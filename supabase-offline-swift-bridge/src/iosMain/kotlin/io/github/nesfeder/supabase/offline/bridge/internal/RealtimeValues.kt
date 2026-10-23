@@ -5,6 +5,7 @@ package io.github.nesfeder.supabase.offline.bridge.internal
 import io.github.jan.supabase.postgrest.query.filter.FilterOperator
 import io.github.nesfeder.supabase.offline.RealtimeFilter
 import io.github.nesfeder.supabase.offline.RealtimeStatus
+import io.github.nesfeder.supabase.offline.RealtimeTable
 import io.github.nesfeder.supabase.offline.RealtimeTables
 import io.github.nesfeder.supabase.offline.bridge.BridgeError
 import io.github.nesfeder.supabase.offline.bridge.BridgeErrorKind
@@ -12,6 +13,7 @@ import io.github.nesfeder.supabase.offline.bridge.BridgeRealtimeFilter
 import io.github.nesfeder.supabase.offline.bridge.BridgeRealtimeStatus
 import io.github.nesfeder.supabase.offline.bridge.BridgeRealtimeStatusKind
 import io.github.nesfeder.supabase.offline.bridge.BridgeRealtimeTable
+import io.github.nesfeder.supabase.offline.bridge.BridgeRealtimeTableStatus
 
 /** Names [tables] in the library's `realtime { }` block, as the app named them. */
 internal fun RealtimeTables.name(tables: List<BridgeRealtimeTable>) {
@@ -65,6 +67,12 @@ internal fun BridgeRealtimeFilter.toRealtimeFilter(): RealtimeFilter {
 }
 
 /** The channel's status; a stalled one carries what ended the channel as an error. */
+/** Each table's status as the bridge reports it, in the order the tables were named. */
+internal fun Map<RealtimeTable, RealtimeStatus>.toBridgeTableStatuses():
+    List<BridgeRealtimeTableStatus> = map { (table, status) ->
+    BridgeRealtimeTableStatus(table.table, table.schema, status.toBridge())
+}
+
 internal fun RealtimeStatus.toBridge(): BridgeRealtimeStatus =
     when (this) {
         RealtimeStatus.Off -> BridgeRealtimeStatus(BridgeRealtimeStatusKind.OFF, null)
@@ -84,7 +92,7 @@ internal fun RealtimeStatus.toBridge(): BridgeRealtimeStatus =
  * cause, such as a socket that could not be opened, is classified as any failure is.
  */
 private fun stallCauseOf(cause: Throwable): BridgeError {
-    val error = bridgeErrorOf(cause, clientClosing = false)
+    val error = bridgeErrorOf(cause)
     if (error.kind != BridgeErrorKind.UNEXPECTED || cause !is IllegalStateException) return error
     val type = cause::class.simpleName ?: "IllegalStateException"
     return bridgeError(BridgeErrorKind.SERVER, cause.message ?: "The Realtime channel ended", type)

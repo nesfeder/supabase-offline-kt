@@ -16,6 +16,7 @@ import io.github.nesfeder.supabase.offline.ServerError
 import io.github.nesfeder.supabase.offline.SyncFailedException
 import io.github.nesfeder.supabase.offline.SyncReport
 import io.github.nesfeder.supabase.offline.SyncStatus
+import io.github.nesfeder.supabase.offline.SyncStopReason
 import io.github.nesfeder.supabase.offline.bridge.BridgeCachedFile
 import io.github.nesfeder.supabase.offline.bridge.BridgeConflictedMutation
 import io.github.nesfeder.supabase.offline.bridge.BridgeErrorKind
@@ -31,6 +32,8 @@ import io.github.nesfeder.supabase.offline.bridge.BridgeRejectedMutation
 import io.github.nesfeder.supabase.offline.bridge.BridgeServerError
 import io.github.nesfeder.supabase.offline.bridge.BridgeSyncReport
 import io.github.nesfeder.supabase.offline.bridge.BridgeSyncStatus
+import io.github.nesfeder.supabase.offline.bridge.BridgeSyncStopKind
+import io.github.nesfeder.supabase.offline.bridge.BridgeSyncStopReason
 import io.github.nesfeder.supabase.offline.fetchedAt
 import io.github.nesfeder.supabase.offline.hasPendingMutations
 import io.github.nesfeder.supabase.offline.isFromCache
@@ -52,23 +55,23 @@ internal fun PostgrestResult.toBridge(): BridgeQueryResult =
     )
 
 /** One emission of a live read. */
-internal fun QuerySnapshot.toBridge(clientClosing: Boolean): BridgeQuerySnapshot =
+internal fun QuerySnapshot.toBridge(): BridgeQuerySnapshot =
     BridgeQuerySnapshot(
         data = result?.data,
         isFromCache = isFromCache,
         fetchedAtEpochMillis = fetchedAt?.toEpochMilliseconds(),
         hasPendingMutations = hasPendingMutations,
-        refresh = refresh.toBridge(clientClosing),
+        refresh = refresh.toBridge(),
     )
 
 /** A refresh state; a stall carries its cause as an error value. */
-private fun RefreshState.toBridge(clientClosing: Boolean): BridgeRefreshState =
+private fun RefreshState.toBridge(): BridgeRefreshState =
     when (this) {
         RefreshState.Idle -> BridgeRefreshState(BridgeRefreshKind.IDLE, null)
         RefreshState.Refreshing -> BridgeRefreshState(BridgeRefreshKind.REFRESHING, null)
         RefreshState.Paused -> BridgeRefreshState(BridgeRefreshKind.PAUSED, null)
         is RefreshState.Stalled ->
-            BridgeRefreshState(BridgeRefreshKind.STALLED, bridgeErrorOf(cause, clientClosing))
+            BridgeRefreshState(BridgeRefreshKind.STALLED, bridgeErrorOf(cause))
     }
 
 /** A write's outcome. */
@@ -159,7 +162,35 @@ internal fun SyncReport.toBridge(): BridgeSyncReport =
         conflictsResolvedCount = conflictsResolvedCount,
         conflictsKeptServerCount = conflictsKeptServerCount,
         conflicted = conflicted.map { it.toBridge() },
+        stopReason = stopReason.toBridge(),
     )
+
+/**
+ * Why a sync call returned; a failure carries its error as the sync status's last error does. The
+ * library's set is open, so a reason added there without a kind here reads as
+ * [BridgeSyncStopKind.UNKNOWN] until it gets one.
+ */
+private fun SyncStopReason.toBridge(): BridgeSyncStopReason =
+    when (this) {
+        SyncStopReason.Completed -> BridgeSyncStopReason(BridgeSyncStopKind.COMPLETED, null)
+        SyncStopReason.NetworkUnavailable ->
+            BridgeSyncStopReason(BridgeSyncStopKind.NETWORK_UNAVAILABLE, null)
+        is SyncStopReason.ServerFailure ->
+            BridgeSyncStopReason(BridgeSyncStopKind.SERVER_FAILURE, syncFailedError(error))
+        is SyncStopReason.LocalFailure ->
+            BridgeSyncStopReason(BridgeSyncStopKind.LOCAL_FAILURE, syncFailedError(error))
+        SyncStopReason.SessionNotReady ->
+            BridgeSyncStopReason(BridgeSyncStopKind.SESSION_NOT_READY, null)
+        SyncStopReason.SessionChanged ->
+            BridgeSyncStopReason(BridgeSyncStopKind.SESSION_CHANGED, null)
+        SyncStopReason.NetworkDisabled ->
+            BridgeSyncStopReason(BridgeSyncStopKind.NETWORK_DISABLED, null)
+        SyncStopReason.HeldBehindOtherTables ->
+            BridgeSyncStopReason(BridgeSyncStopKind.HELD_BEHIND_OTHER_TABLES, null)
+        SyncStopReason.LocalDataCleared ->
+            BridgeSyncStopReason(BridgeSyncStopKind.LOCAL_DATA_CLEARED, null)
+        else -> BridgeSyncStopReason(BridgeSyncStopKind.UNKNOWN, null)
+    }
 
 /** The sync status; the last sync error is the one [BridgeErrorKind.SYNC_FAILED] value. */
 internal fun SyncStatus.toBridge(): BridgeSyncStatus =
@@ -175,8 +206,7 @@ internal fun SyncStatus.toBridge(): BridgeSyncStatus =
 
 /** [SyncStatus.lastSyncError] as a value: a [SyncFailedException], or, defensively, anything. */
 private fun lastSyncErrorOf(failure: Throwable) =
-    if (failure is SyncFailedException) syncFailedError(failure)
-    else bridgeErrorOf(failure, clientClosing = false)
+    if (failure is SyncFailedException) syncFailedError(failure) else bridgeErrorOf(failure)
 
 /** The network status. */
 private fun NetworkStatus.toBridge(): BridgeNetworkStatus =

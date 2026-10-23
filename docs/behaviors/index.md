@@ -23,8 +23,9 @@ A failure is the network's when it is a timeout or an I/O failure, such as supab
 is. `Throwable.isNetworkOrConnectivityFailure()`
 is the test, and the library uses it itself: a read falls back to the cache on a connectivity
 failure only, so the cache never hides a refused request, and a write stays queued when it may not
-have run (no connection, no answer, a `503` or `520`, an expired token that could not be
-refreshed). Any other answer is the server's decision, and is thrown. The
+have run or may pass when sent again (no connection, no answer, a `408`, `429`, `502`, `503`,
+`504`, `520`, `522` or `524`, a token that could not be refreshed or that the server holds
+expired). Any other answer is the server's decision, and is thrown. The
 `NetworkDisabledException` of `disableNetwork()` counts as a connectivity failure too. The
 platform's connectivity monitor is a hint, never a gate: every request you make is tried
 ([Replaying the queue](sync.md#the-connectivity-monitor-is-a-hint-never-a-gate)).
@@ -65,7 +66,8 @@ flowchart LR
 With supabase-kt's Auth plugin, the query cache and the file cache belong to one user at a time,
 dropped when the session settles as someone else; the queue keeps each user's writes apart and
 sends them only with that user's token. Without Auth there is one identity for the life of the
-install ([Signing out and switching users](sign-out.md)).
+install, unless `identityFromAccessToken` tells users apart by their access token
+([Signing out and switching users](sign-out.md)).
 
 ## Glossary
 

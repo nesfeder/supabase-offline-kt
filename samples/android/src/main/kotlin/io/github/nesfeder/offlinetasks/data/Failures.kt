@@ -64,7 +64,7 @@ class InvalidRequestException(val libraryMessage: String, cause: Throwable? = nu
 class RowFormatException(cause: Throwable? = null) :
     Exception("A row could not be read or written", cause)
 
-/** The Supabase client is closed, or was built without a plugin the call needs. */
+/** The Supabase client is closed. */
 class ClientUnavailableException(cause: Throwable? = null) :
     Exception("The Supabase client is unavailable", cause)
 

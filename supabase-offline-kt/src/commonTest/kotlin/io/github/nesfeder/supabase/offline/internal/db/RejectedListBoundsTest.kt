@@ -10,9 +10,11 @@ import io.github.nesfeder.supabase.offline.internal.mutationqueue.MAX_REJECTED_B
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.MAX_REJECTED_LIST_CHARS
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.MAX_REJECTED_MUTATIONS
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.MAX_REJECTED_TEXT_CHARS
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.RejectedMutationList
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.StoredRejection
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.StoredServerError
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.toRejectedMutation
+import io.github.nesfeder.supabase.offline.testdoubles.CountingSerializer
 import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingLogSink
 import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
@@ -26,7 +28,8 @@ import kotlinx.coroutines.test.runTest
 /**
  * The rejected list is bounded in bytes as well as in entries, so a few large refused writes cannot
  * make every later rejection read, decode and rewrite megabytes — or run the app out of memory —
- * and nothing leaves the list without a trace.
+ * and nothing leaves the list without a trace. The bounds are checked from each entry's size kept
+ * beside it, so a rejection encodes its own entry once, not every entry again.
  */
 class RejectedListBoundsTest {
 
@@ -187,6 +190,60 @@ class RejectedListBoundsTest {
             0L,
             newTestStore(queryCacheDao = queryCacheDao).mutationQueue.rejectedList.droppedCount(),
         )
+    }
+
+    @Test
+    fun a_rejection_encodes_its_own_entry_once_and_no_other() = runTest {
+        // Given — a list that counts how often it encodes an entry to measure it
+        val encodings = CountingSerializer(StoredRejection.serializer())
+        val list =
+            RejectedMutationList(
+                queryCacheDao = queryCacheDao,
+                json = EngineJson,
+                nowMillis = { 0L },
+                logger = logger.asEngineLogger(),
+                entrySerializer = encodings,
+            )
+
+        // When — fifty rejections, each written as a refusal writes it
+        repeat(50) { index -> list.add(rejection(id = index + 1L)) }
+
+        // Then — fifty encodings, one per rejection; measuring every entry again would take 1,275
+        assertEquals(50, encodings.encodings)
+        assertEquals((1L..50L).toList(), list.rejections().map { it.id })
+    }
+
+    @Test
+    fun the_sizes_kept_beside_the_entries_match_the_row_in_memory_and_on_reload() = runTest {
+        // Given — a list built up by adds, a removal and a replaced entry, and the same row loaded
+        // afresh by another store
+        repeat(5) { index -> store.addRejection(rejection(index + 1L, "[{\"n\":$index}]")) }
+        store.mutationQueue.rejectedList.removeRejection(3L)
+        store.addRejection(rejection(id = 2L, bodyJson = "[]"))
+        val inMemory = store.mutationQueue.rejectedList.rejectedRowWith().second
+        val reloaded =
+            newTestStore(queryCacheDao = queryCacheDao)
+                .mutationQueue
+                .rejectedList
+                .rejectedRowWith()
+                .second
+
+        // Then — one size per entry, each the entry's encoded length, in memory as on reload
+        val expected =
+            inMemory.entries.map { entry ->
+                EngineJson.encodeToString(StoredRejection.serializer(), entry).length
+            }
+        assertEquals(listOf(1L, 4L, 5L, 2L), inMemory.entries.map { it.id })
+        assertEquals(expected, inMemory.entrySizes)
+        assertEquals(inMemory.entries, reloaded.entries)
+        assertEquals(expected, reloaded.entrySizes)
+    }
+
+    /** Adds [entry] as the newest rejection and writes the list, as a refusal does. */
+    private suspend fun RejectedMutationList.add(entry: StoredRejection) {
+        val (row, list) = rejectedRowWith(add = entry)
+        queryCacheDao.upsert(row)
+        rejectedWritten(list)
     }
 
     private fun rejection(id: Long, bodyJson: String = "[]"): StoredRejection =

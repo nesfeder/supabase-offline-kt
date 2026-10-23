@@ -1,9 +1,9 @@
 # Applying Realtime events
 
 Name a table in `realtime { }` and the plugin keeps the device's copy of it current through
-Supabase Realtime: it joins one channel for every named table, applies each insert, update and
-delete the server sends to every cached list of the table, and reads the named tables again each
-time it joins, since Realtime replays nothing. A change made elsewhere (another device, the
+Supabase Realtime: it joins a channel for each named table, applies each insert, update and
+delete the server sends to every cached list of the table, and reads the table again each time its
+channel joins, since Realtime replays nothing. A change made elsewhere (another device, the
 dashboard, a database function) shows without a fetch, and the app wires no channel.
 
 From the samples: [SampleSupabaseClient.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/platform/SampleSupabaseClient.kt) · [ClientSettings.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/App/ClientSettings.swift)
@@ -37,7 +37,7 @@ The channel is joined while three things hold, and left as soon as one stops:
 
 | The channel is joined while… | …and left when |
 | --- | --- |
-| a user is signed in, with the Auth plugin installed (without it, always) | the user signs out |
+| a user is signed in, with the Auth plugin installed (without it, always; with `identityFromAccessToken`, while the token names a user or nobody) | the user signs out |
 | the network is not known down | the network drops, or `disableNetwork()` turns access off |
 | the subscription is on, which it is at start | `disableRealtime()` is called |
 
@@ -50,19 +50,34 @@ minute starts the wait over. The log says so as a warning when the channel is jo
 when it ended because of a sign-out, the network or `close()`. Nothing is joined when no table is
 named.
 
-A Kotlin app that keeps channels of its own beside this one, for broadcast, presence or changes of
-its own, should install supabase-kt's Realtime plugin with `install(Realtime) { maxAttempts = 1 }`.
-On an error reply supabase-kt 3.6.0 rejoins the channel from inside the socket's read loop: it
-waits 2 s, sends a leave, and then waits for an `UNSUBSCRIBED` that only that same loop could read.
-With the named tables' channel alone this costs nothing: the library removes its channel, and the
-disconnect that follows cancels the stuck loop. With an app channel present nothing disconnects,
-the loop stays stuck until the heartbeat timeout and the reconnect delay have passed, and the
-app's channels receive nothing meanwhile. `maxAttempts = 1` also ends supabase-kt's rejoin after an
-error reply for the app's channels, which the wait above never covered: such a channel turns
-`UNSUBSCRIBED`, and the app subscribes it again itself. After a socket reconnection supabase-kt
-still rejoins every channel.
+Each named table has a channel of its own, so the server can refuse one table, such as one whose
+filter names a column a migration renamed, without stopping the others: that table's channel waits
+and is joined again on its own schedule, only that table is read again when it is, and the other
+tables stay joined and keep receiving. The channels share supabase-kt's one socket; a join is one
+more message on it per table, and the reads on joining cost what they did, one per table.
 
-`realtimeStatus` says where the channel stands, as one value to draw a row of the Sync screen from:
+A Kotlin app that names more than one table, or keeps channels of its own beside the library's,
+for broadcast, presence or changes of its own, should install supabase-kt's Realtime plugin with
+`install(Realtime) { maxAttempts = 1 }`. On an error reply supabase-kt 3.6.0 rejoins the channel
+from inside the socket's read loop: it waits 2 s, sends a leave, and then waits for an
+`UNSUBSCRIBED` that only that same loop could read, so no channel on the socket receives anything
+meanwhile. When the library's channels are alone on the socket, the library closes it, which ends
+the stuck loop, and joins every table's channel again: at each refusal the other tables lose their
+channel for a moment and are read again. With an app channel present nothing is closed, the loop
+stays stuck until the heartbeat timeout and the reconnect delay have passed, and every channel
+receives nothing meanwhile. With `maxAttempts = 1` supabase-kt does not rejoin after an error
+reply: the refused channel turns `UNSUBSCRIBED` at once, the library joins it again after its own
+wait, and the other channels never notice. It also ends supabase-kt's rejoin after an error reply
+for the app's channels, which the wait above never covered: such a channel turns `UNSUBSCRIBED`,
+and the app subscribes it again itself. After a socket reconnection supabase-kt still rejoins every
+channel.
+
+`realtimeStatus` sums up where the tables' channels stand, as one value to draw a row of the Sync
+screen from: `Stalled` while any table is, with the cause of the first one named, otherwise
+`Subscribing` while any join is in flight, and `Subscribed` once every table is joined. Off, paused
+and switched off apply to every table at once. `realtimeTableStatus` gives each table's own status,
+in the same values, keyed by the `RealtimeTable` as named and in that order, to say which table is
+stalled:
 
 | Status | Meaning |
 | --- | --- |
@@ -74,18 +89,18 @@ still rejoins every channel.
 
 ## The re-read on every join
 
-Realtime does not replay what happened while the channel was not joined, so every join reads the
-named tables again: the plugin marks every cached query of each named table stale and fetches the
-ones a live read shows, as a `NetworkOnly` read of the same query would. Queries nothing reads
-live stay marked and are fetched when they are read next. The cost is one fetch per live query of
-each named table on every join, so a channel that drops and rejoins often refetches often; the
+Realtime does not replay what happened while a channel was not joined, so every join reads its
+table again: the plugin marks every cached query of the table stale and fetches the ones a live
+read shows, as a `NetworkOnly` read of the same query would. Queries nothing reads live stay marked
+and are fetched when they are read next. The cost is one fetch per live query of the table on every
+join of its channel, so a channel that drops and rejoins often refetches its table often; the
 backoff above bounds how often a refused join does. A one-shot read is not fetched again by the
 join; it takes its strategy's path when the app reads it next.
 
 Between joins, the changes a table receives are applied as they arrive, those waiting together as
 one patch of its cached queries; a burst the device cannot keep up with, more than 5,000 changes
-waiting across every named table, is discarded as a whole and the named tables are read again as on
-a join, with one warning in the log that says how many and which tables.
+waiting for one table, is discarded as a whole and that table is read again as on a join, with one
+warning in the log that says how many and which table.
 
 ## The status and the switch
 
@@ -121,8 +136,10 @@ the token's `exp`, and more often as the expiry nears, and sends the channel any
 returns that expires later, as soon as it does, so a long session is not closed by the server when
 the token expires. What it cannot see is a change of user: an iOS app, whose core has no Auth
 plugin, brackets a sign-in or sign-out with `disableRealtime()` and `enableRealtime()`, as the iOS
-sample's `applyLiveUpdates()` above does, so the channel is joined again as the new user. A Kotlin
-app with Auth installed needs nothing: the plugin follows the session.
+sample's `applyLiveUpdates()` above does, so the channel is joined again as the new user. With
+`identityFromAccessToken` on, the client sees the change itself: the channel is joined again as the
+user the new token names, at the client's next call, and the bracket is not needed. A Kotlin app
+with Auth installed needs nothing: the plugin follows the session.
 
 ## Manual control
 

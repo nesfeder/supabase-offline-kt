@@ -15,10 +15,12 @@ import io.github.nesfeder.supabase.offline.FlowReadStrategy
 import io.github.nesfeder.supabase.offline.QuerySnapshot
 import io.github.nesfeder.supabase.offline.ReadStrategy
 import io.github.nesfeder.supabase.offline.RefreshState
+import io.github.nesfeder.supabase.offline.internal.EngineJson
 import io.github.nesfeder.supabase.offline.internal.TransportClosedException
 import io.github.nesfeder.supabase.offline.internal.cache.CacheFreshness
 import io.github.nesfeder.supabase.offline.internal.cache.CacheWriteOutcome
 import io.github.nesfeder.supabase.offline.internal.cache.EMPTY_JSON_ARRAY
+import io.github.nesfeder.supabase.offline.internal.cache.OverlaidCachedPayload
 import io.github.nesfeder.supabase.offline.internal.cache.QueryCache
 import io.github.nesfeder.supabase.offline.internal.cache.QueryOverlay
 import io.github.nesfeder.supabase.offline.internal.cache.ServedPayload
@@ -56,6 +58,9 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onCompletion
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.serialization.SerializationException
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
 
 /**
  * Thrown into a reactive read's refresh loop when a response came back under a session the trust
@@ -146,6 +151,50 @@ private fun isJsonMediaType(contentType: String): Boolean =
     }
 
 /**
+ * A single-object [response] as the list read of the same query is answered, one row long: `null`
+ * unless its body is one JSON object under a JSON media type (PostgREST names it
+ * `application/vnd.pgrst.object+json`) or none.
+ */
+private fun oneRowListOf(response: PostgrestResult): String? {
+    val contentType = response.headers[HttpHeaders.ContentType]
+    if (contentType != null && !isJsonFamilyMediaType(contentType)) return null
+    val body = response.data.trim()
+    if (!body.startsWith('{')) return null
+    val isObject =
+        try {
+            EngineJson.parseToJsonElement(body) is JsonObject
+        } catch (_: SerializationException) {
+            false
+        }
+    return if (isObject) "[$body]" else null
+}
+
+/** Whether [contentType] is `application/json` or a `+json` type; a malformed value is not. */
+private fun isJsonFamilyMediaType(contentType: String): Boolean =
+    try {
+        val type = ContentType.parse(contentType)
+        type.contentType == ContentType.Application.TYPE &&
+            (type.contentSubtype == "json" || type.contentSubtype.endsWith("+json"))
+    } catch (_: BadContentTypeFormatException) {
+        false
+    }
+
+/**
+ * The one row of a cached [payload], as the JSON object `single()` answers with; `null` when the
+ * payload holds no row, several, or a row that is not an object.
+ */
+private fun soleRowOf(payload: String): String? {
+    val rows =
+        try {
+            EngineJson.parseToJsonElement(payload)
+        } catch (_: SerializationException) {
+            return null
+        }
+    val row = (rows as? JsonArray)?.singleOrNull()
+    return if (row is JsonObject) row.toString() else null
+}
+
+/**
  * A network read's answer, as a caller gets it.
  *
  * @property result what the caller is answered with.
@@ -187,8 +236,9 @@ internal class QueryReader(
 
     /**
      * A one-shot SELECT answered from the network, the cache, or both, as [readStrategy] says. A
-     * read whose response is not a row list goes to the network as it is, whatever the strategy,
-     * once the session has settled.
+     * single object is cached as its list, one row long ([selectSingleObject]); a read of any other
+     * shape that is not a row list goes to the network as it is, whatever the strategy, once the
+     * session has settled.
      */
     suspend fun select(
         columns: Columns,
@@ -206,9 +256,14 @@ internal class QueryReader(
             }
         val slot = built ?: cacheSlotOf(columns, request)
         val table = slot.table
-        if (shape is ReadShape.Uncacheable) {
-            if (readStrategy is ReadStrategy.CacheOnly) throw cacheCannotAnswer(shape)
-            return selectUncacheable(columns, request, shape)
+        when (shape) {
+            is ReadShape.Uncacheable -> {
+                if (readStrategy is ReadStrategy.CacheOnly) throw cacheCannotAnswer(shape.kind)
+                return selectUncacheable(columns, request, shape)
+            }
+            ReadShape.SingleObject ->
+                return selectSingleObject(slot, columns, request, readStrategy)
+            ReadShape.RowList -> Unit
         }
         engineLogger.debug { "SELECT $table via ${readStrategy::class.simpleName}" }
         return when (readStrategy) {
@@ -471,17 +526,191 @@ internal class QueryReader(
     ): PostgrestResult {
         val table = delegate.table
         engineLogger.debug { "SELECT $table asks for ${shape.kind}; bypassing the cache" }
-        if (isUnsettledStoredSession(requestSession())) {
-            engineLogger.info {
-                "SELECT $table asks for ${shape.kind} while the session is not settled; waiting for the session"
-            }
-            if (isUnsettledStoredSession(RestoreWindow().awaitSettledSession())) {
-                engineLogger.warning {
-                    "SELECT $table session did not settle after $RESTORE_WINDOW_RETRY_WAITS waits; sending the request as it is"
+        if (!sessionSettledBeforeSending(table, shape.kind)) warnSendingUnsettled(table)
+        return networkResult(delegate.select(columns, request))
+    }
+
+    /**
+     * Waits out the restore window ([RestoreWindow]) before a read that is sent once, when the
+     * session is restoring or its refresh has failed: a request sent meanwhile would carry the anon
+     * key.
+     *
+     * @param kind what the read asks for, as a phrase for the log.
+     * @return whether the session is settled now: `false` when the window ran out first.
+     */
+    private suspend fun sessionSettledBeforeSending(table: String, kind: String): Boolean {
+        if (!isUnsettledStoredSession(requestSession())) return true
+        engineLogger.info {
+            "SELECT $table asks for $kind while the session is not settled; waiting for the session"
+        }
+        return !isUnsettledStoredSession(RestoreWindow().awaitSettledSession())
+    }
+
+    /** Logs that a read sent once goes out under a session that did not settle in the window. */
+    private fun warnSendingUnsettled(table: String) {
+        engineLogger.warning {
+            "SELECT $table session did not settle after $RESTORE_WINDOW_RETRY_WAITS waits; sending the request as it is"
+        }
+    }
+
+    /**
+     * A one-shot read of one row as an object, `single()` or supabase-kt 3.8's `maybeSingle()`. It
+     * asks for the rows the list read of the same query does, so the cache holds a successful
+     * answer as that list, one row long, under the list's key ([cacheSingleObject]). The cache
+     * answers it with that list, the queued writes laid over it, when the list holds exactly one
+     * row ([cachedSingleObject]): under `CacheOnly`, under `CacheFirst` before the network, and
+     * under `NetworkFirst` and `CacheFirst` when the network cannot be reached, or when the session
+     * does not settle within the restore window. No row, or several, answer nothing: the network's
+     * failure is thrown, or [CacheMissException] under `CacheOnly`. The server's own answer is
+     * returned as it came.
+     */
+    private suspend fun selectSingleObject(
+        slot: CacheSlot,
+        columns: Columns,
+        request: SelectRequestBuilder.() -> Unit,
+        readStrategy: ReadStrategy,
+    ): PostgrestResult {
+        val table = slot.table
+        engineLogger.debug {
+            "SELECT $table asks for a single object via ${readStrategy::class.simpleName}"
+        }
+        return when (readStrategy) {
+            is ReadStrategy.CacheOnly -> {
+                val cached = cachedSingleObject(slot, readStrategy.maxAge, servesStale = true)
+                if (cached != null) {
+                    engineLogger.info { "SELECT $table served one row from cache" }
+                    cached
+                } else {
+                    engineLogger.info { "SELECT $table no cached row answers a single object" }
+                    throw CacheMissException(NO_CACHED_SINGLE_ROW)
                 }
             }
+            is ReadStrategy.CacheFirst -> {
+                val cached = cachedSingleObject(slot, readStrategy.maxAge, servesStale = false)
+                if (cached != null) {
+                    engineLogger.info { "SELECT $table served one row from cache" }
+                    cached
+                } else {
+                    singleObjectFromNetwork(slot, columns, request, readStrategy.maxAge, true)
+                }
+            }
+            is ReadStrategy.NetworkFirst ->
+                singleObjectFromNetwork(slot, columns, request, readStrategy.maxAge, true)
+            ReadStrategy.NetworkOnly ->
+                singleObjectFromNetwork(slot, columns, request, cacheDuration = null, false)
         }
-        return networkResult(delegate.select(columns, request))
+    }
+
+    /**
+     * A single-object read sent to the network once, after the session has settled, its answer
+     * offered to the cache. With [fallsBackToTheCache], a transport failure, or a session that did
+     * not settle within the restore window, is answered from the cache when its list within
+     * [cacheDuration], marked stale or not, holds exactly one row.
+     */
+    private suspend fun singleObjectFromNetwork(
+        slot: CacheSlot,
+        columns: Columns,
+        request: SelectRequestBuilder.() -> Unit,
+        cacheDuration: Duration?,
+        fallsBackToTheCache: Boolean,
+    ): PostgrestResult {
+        val table = slot.table
+        val fallback: suspend () -> PostgrestResult? = {
+            if (fallsBackToTheCache) cachedSingleObject(slot, cacheDuration, servesStale = true)
+            else null
+        }
+        if (!sessionSettledBeforeSending(table, SINGLE_OBJECT)) {
+            val cached = fallback()
+            if (cached != null) {
+                engineLogger.warning {
+                    "SELECT $table session did not settle after $RESTORE_WINDOW_RETRY_WAITS waits; serving the cache"
+                }
+                return cached
+            }
+            warnSendingUnsettled(table)
+        }
+        val retries =
+            retriesFor(cacheAnswers = fallsBackToTheCache && hasFreshCache(slot, cacheDuration))
+        val sessionBefore = requestSession()
+        val requestStartedAtTick = freshness.tickNow()
+        val response =
+            try {
+                send(slot, columns, request, retries)
+            } catch (exception: Exception) {
+                if (!exception.isNetworkOrConnectivityFailure()) throw exception
+                val cached = fallback()
+                if (cached == null) {
+                    engineLogger.info { "SELECT $table network failed and no cached row answers" }
+                    throw exception
+                }
+                engineLogger.info { "SELECT $table network failed, serving one row from cache" }
+                return cached
+            }
+        cacheSingleObject(slot, response, sessionBefore, requestSession(), requestStartedAtTick)
+        return networkResult(response)
+    }
+
+    /**
+     * Offers a single-object [response] to the cache as the list read of the same query is
+     * answered, one row long, through every guard a list response passes: the trust policy, the
+     * cache's owner, the table's watermark and a clear of local data. A blank body (supabase-kt
+     * 3.8's `maybeSingle()` answers no row and several rows alike with one) or a body that is not
+     * one JSON object is not offered.
+     */
+    private suspend fun cacheSingleObject(
+        slot: CacheSlot,
+        response: PostgrestResult,
+        sessionBefore: RequestSession,
+        sessionAfter: RequestSession,
+        requestStartedAtTick: Long,
+    ) {
+        val payload = oneRowListOf(response) ?: return
+        val outcome =
+            queryCache.cacheResponse(
+                table = slot.table,
+                cacheKey = slot.cacheKey,
+                payload = payload,
+                requestStartedAtTick = requestStartedAtTick,
+                isTrusted = trustPolicy.mayCache(sessionBefore, sessionAfter, isEmpty = false),
+                shape = slot.shape,
+            )
+        when (outcome) {
+            // The tick goes along, so a replay that landed after this request left still blocks it
+            CacheWriteOutcome.WRITTEN ->
+                mutationQueue.retireCoveredSyncedMutations(slot.table, requestStartedAtTick)
+            CacheWriteOutcome.REFUSED_STALE ->
+                engineLogger.info {
+                    "SELECT ${slot.table} single object predates a local write; not cached"
+                }
+            else -> Unit
+        }
+    }
+
+    /**
+     * The payload of [slot] as a single object, from the cache: its list within [cacheDuration]
+     * (not marked stale unless [servesStale]), with the queued writes laid over it, when it holds
+     * exactly one row; `null` when none is cached or it holds no row or several.
+     */
+    private suspend fun cachedSingleObject(
+        slot: CacheSlot,
+        cacheDuration: Duration?,
+        servesStale: Boolean,
+    ): PostgrestResult? {
+        val cached = overlaidCached(slot, cacheDuration, servesStale) ?: return null
+        val row = soleRowOf(cached.overlay.payload)
+        if (row == null) {
+            engineLogger.info { "SELECT ${slot.table} cached rows are not one row" }
+            return null
+        }
+        return provenancedResult(
+            row,
+            delegate.postgrest,
+            ResultProvenance(
+                isFromCache = true,
+                fetchedAtMillis = fetchedAtOf(cached.updatedAt),
+                hasPendingMutations = cached.overlay.hasPendingMutations,
+            ),
+        )
     }
 
     /**
@@ -507,7 +736,7 @@ internal class QueryReader(
      * A reactive read of the query as [QuerySnapshot]s. Every collection registers the query as
      * live while it runs; `CacheFirstThenNetwork` collections of one query share one refresh. A
      * read whose response is not a row list emits the network's answer once, after the session has
-     * settled, and completes.
+     * settled, and completes; a single object's answer is cached as a one-shot read's is.
      */
     fun selectAsFlow(
         columns: Columns,
@@ -522,9 +751,21 @@ internal class QueryReader(
                 requireReadableEscapedValues(builder)
                 built = cacheSlotOf(columns, builder)
             }
-        if (shape is ReadShape.Uncacheable) {
-            if (readStrategy == FlowReadStrategy.CacheOnly) throw cacheCannotAnswer(shape)
-            val result = selectUncacheable(columns, request, shape)
+        if (shape != ReadShape.RowList) {
+            if (readStrategy == FlowReadStrategy.CacheOnly) {
+                throw if (shape is ReadShape.Uncacheable) cacheCannotAnswer(shape.kind)
+                else CacheMissException(NO_REACTIVE_SINGLE_ROW)
+            }
+            val result =
+                if (shape is ReadShape.Uncacheable) selectUncacheable(columns, request, shape)
+                else
+                    singleObjectFromNetwork(
+                        built ?: cacheSlotOf(columns, request),
+                        columns,
+                        request,
+                        cacheDuration = null,
+                        fallsBackToTheCache = false,
+                    )
             emit(
                 QuerySnapshot(
                     result = result,
@@ -1080,11 +1321,7 @@ internal class QueryReader(
         cacheDuration: Duration?,
         servesStale: Boolean,
     ): PostgrestResult? {
-        val cached =
-            queryOverlay.cachedPayloadOverlaid(slot.table, slot.cacheKey, slot.shape) { updatedAt ->
-                (servesStale || !isStaleStamp(updatedAt)) &&
-                    isFresh(fetchedAtOf(updatedAt), cacheDuration)
-            } ?: return null
+        val cached = overlaidCached(slot, cacheDuration, servesStale) ?: return null
         return provenancedResult(
             cached.overlay.payload,
             delegate.postgrest,
@@ -1095,6 +1332,20 @@ internal class QueryReader(
             ),
         )
     }
+
+    /**
+     * The payload cached for [slot] with its mutations overlaid, as [readCached] reads it; `null`
+     * as it says.
+     */
+    private suspend fun overlaidCached(
+        slot: CacheSlot,
+        cacheDuration: Duration?,
+        servesStale: Boolean,
+    ): OverlaidCachedPayload? =
+        queryOverlay.cachedPayloadOverlaid(slot.table, slot.cacheKey, slot.shape) { updatedAt ->
+            (servesStale || !isStaleStamp(updatedAt)) &&
+                isFresh(fetchedAtOf(updatedAt), cacheDuration)
+        }
 
     /**
      * Whether a fallback to the cache would answer: a payload is cached, stale or not, fetched
@@ -1137,12 +1388,12 @@ internal class QueryReader(
         SelectRequestBuilder(delegate.schema, delegate.postgrest.config.propertyConversionMethod)
 
     /**
-     * What a cache-only read of [shape] fails with: the cache holds lists of rows, and it sends
-     * nothing.
+     * What a cache-only read of a shape the cache cannot hold, asking for [kind], fails with: the
+     * cache holds lists of rows, and it sends nothing.
      */
-    private fun cacheCannotAnswer(shape: ReadShape.Uncacheable): CacheMissException =
+    private fun cacheCannotAnswer(kind: String): CacheMissException =
         CacheMissException(
-            "A cache-only read cannot answer ${shape.kind}: the cache holds lists of rows. Read the list and take " +
+            "A cache-only read cannot answer $kind: the cache holds lists of rows. Read the list and take " +
                 "the rows you need, or read with a strategy that may use the network."
         )
 
@@ -1179,6 +1430,18 @@ internal class QueryReader(
          * older than a local write. One converges, since it starts after that write.
          */
         const val STALE_RESPONSE_REFETCH_BUDGET = 1
+
+        /** What a single-object read asks for, as a phrase for the log. */
+        const val SINGLE_OBJECT = "a single object"
+
+        /** What a cache-only single-object read fails with when no cached row answers it. */
+        const val NO_CACHED_SINGLE_ROW =
+            "No cached row answers this single-object read: its list is not cached, or holds no row or more than one"
+
+        /** What a reactive cache-only single-object read fails with: the flow follows lists. */
+        const val NO_REACTIVE_SINGLE_ROW =
+            "A reactive cache-only read cannot answer a single object: read it once with ReadStrategy.CacheOnly, " +
+                "or read the list as a flow and take the row you need."
 
         /**
          * Backoff steps a one-shot read waits through for a session that is restoring or whose
