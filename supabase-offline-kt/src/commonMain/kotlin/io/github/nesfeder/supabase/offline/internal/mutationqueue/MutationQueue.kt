@@ -314,16 +314,20 @@ internal class MutationQueue(
     }
 
     /**
-     * Refreshes the base of every pending guarded mutation of [table] queued after [afterId] whose
-     * row is one of [rows], which the server returned: their version and their columns become the
-     * row's. Runs inside the caller's transaction, under the queue lock.
+     * Refreshes the base of every pending guarded mutation of [table] queued after [afterId] by
+     * [owner] whose row is one of [rows], which the server returned: their version and their
+     * columns become the row's. Only [owner]'s writes: a base is what the device's user saw, so on
+     * a shared device another user's queued write keeps its own base and meets the change as a
+     * conflict. Runs inside the caller's transaction, under the queue lock.
      *
+     * @param owner The completed mutation's owner, as stored; `null` for a mutation with none.
      * @return Whether any base moved.
      */
     private suspend fun forwardBases(
         table: String,
         afterId: Long,
         rows: List<JsonObject>,
+        owner: String?,
     ): Boolean {
         val versionColumn = versionColumns.of(table) ?: return false
         if (rows.isEmpty()) return false
@@ -337,6 +341,10 @@ internal class MutationQueue(
         var forwarded = false
         mutationDao.pendingForTable(table).forEach { pending ->
             if (pending.id <= afterId || pending.baseVersion == null) return@forEach
+            // The owner's exactly: a row with none was queued by a store with no session model,
+            // as the completed write then was too, and under a session model a pass adopts every
+            // ownerless row, under the send lock, before it sends anything
+            if (pending.owner != owner) return@forEach
             val filter = decodeFilterOrNull(pending.filterJson, json) ?: return@forEach
             val key =
                 pinnedRowKeyOf(filter, keyColumns)?.let { pinned -> keyOf(pinned, keyColumns) }
@@ -655,7 +663,9 @@ internal class MutationQueue(
         if (ids.isEmpty()) return
         mutationQueueMutex.withLock {
             val idSet = ids.toSet()
-            val touched = tables ?: idSet.mapNotNull { id -> mutationDao.byId(id)?.table }
+            val found =
+                if (tables == null) idSet.mapNotNull { id -> mutationDao.byId(id) } else null
+            val touched = tables ?: found.orEmpty().map { row -> row.table }
             // Loaded first, so the change below reaches it.
             unconfirmedSends()
             val rejected =
@@ -666,12 +676,25 @@ internal class MutationQueue(
                 }
             // Removed already, as an accepted head write is under its table's readers' lock
             if (touched.isEmpty() && rejected == null) return@withLock
+            // A row already gone cannot say whose it was: its response forwards to nothing
+            val completed = forwarding?.let { (_, afterId, _) ->
+                found?.firstOrNull { row -> row.id == afterId } ?: mutationDao.byId(afterId)
+            }
             val forwarded = mutationDao.inTransaction {
                 idSet.forEach { id -> mutationDao.deleteById(id) }
                 rejected?.let { (row, _) -> queryCacheDao.upsert(row) }
-                forwarding?.let { (table, afterId, rows) -> forwardBases(table, afterId, rows) }
+                if (forwarding != null && completed != null) {
+                    forwardBases(
+                        forwarding.table,
+                        forwarding.afterId,
+                        forwarding.rows,
+                        owner = completed.owner,
+                    )
+                } else {
+                    false
+                }
             }
-            if (forwarded == true && forwarding != null) noteMutationsChanged(forwarding.table)
+            if (forwarded && forwarding != null) noteMutationsChanged(forwarding.table)
             unconfirmedSendIds.update { current -> current?.minus(idSet) }
             rejected?.let { (_, next) -> rejectedList.rejectedWritten(next) }
             loggedOverlaySkips.update { logged -> logged - idSet }
@@ -705,6 +728,8 @@ internal class MutationQueue(
                 onConflict = mutation.onConflict,
                 ignoreDuplicates = mutation.ignoreDuplicates,
                 owner = mutation.owner,
+                baseVersion = mutation.baseVersion,
+                baseJson = mutation.baseJson,
                 rejectedAtMs = nowMillis(),
                 message = message,
                 serverError = serverError,
@@ -1033,14 +1058,21 @@ internal class MutationQueue(
      * stale-refresh watermark, so a refresh that started before the replay cannot land after it.
      */
     suspend fun recordReplayed(id: Long, table: String) {
-        recordReplayed(id, table, returnedRows = emptyList())
+        recordReplayed(id, table, returnedRows = emptyList(), owner = null)
     }
 
     /**
      * [recordReplayed] for a replay whose response carried [returnedRows]: in the same transaction,
-     * later guarded writes to those rows take them as their base.
+     * [owner]'s later guarded writes to those rows take them as their base.
+     *
+     * @param owner The replayed mutation's owner, as stored; `null` for a mutation with none.
      */
-    suspend fun recordReplayed(id: Long, table: String, returnedRows: List<JsonObject>) {
+    suspend fun recordReplayed(
+        id: Long,
+        table: String,
+        returnedRows: List<JsonObject>,
+        owner: String?,
+    ) {
         freshness.advanceLocalWriteWatermark(table)
         mutationQueueMutex.withLock {
             val sequence = latestSyncSequence() + 1
@@ -1053,7 +1085,7 @@ internal class MutationQueue(
             mutationDao.runInTransaction {
                 mutationDao.markSynced(id = id, syncedAtMs = nowMillis(), syncSequence = sequence)
                 rejected?.let { (row, _) -> queryCacheDao.upsert(row) }
-                forwardBases(table, afterId = id, rows = returnedRows)
+                forwardBases(table, afterId = id, rows = returnedRows, owner = owner)
             }
             latestSyncSequence = sequence
             unconfirmedSendIds.update { current -> current?.minus(id) }

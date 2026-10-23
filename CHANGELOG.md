@@ -17,6 +17,10 @@ All notable changes to this project are recorded in this file. The format follow
 
 ### Changed
 
+- The rejected list keeps a guarded write's base in each guarded entry, under two new keys
+  (`baseVersion`, `baseJson`), so a retry replays guarded. A list an earlier build wrote reads back
+  without them, and a retry of such an entry replays unguarded, as it did there.
+
 ### Deprecated
 
 ### Removed
@@ -65,6 +69,23 @@ All notable changes to this project are recorded in this file. The format follow
   served each other's rows offline. Such a query's key now ends in a digest of its parts; every
   other key is unchanged. Such a query's rows cached before the upgrade are not found; it is fetched
   again once, and the old rows stay until evicted.
+- A rejected write that was guarded by a version column keeps its base when it is retried: the
+  retry checks the server's row as the first send did, so a row another device changed meanwhile is
+  a conflict for the resolver, not an overwrite.
+- A replayed write's returned row moves the base of the writes queued behind it by the same user
+  only. On a shared device, another user's queued write to the same row keeps the version its user
+  saw, so its replay meets the change as a conflict.
+- A write parked on the conflicted list leaves the cached row showing the server's values for the
+  columns the replay read, instead of the values the device last read. The row keeps the version
+  the device saw, as it now does after the resolver's `KeepServer` too, so a later write to it
+  still meets the move instead of applying over another device's change to a column the replay
+  did not read.
+- `KeepServer` on a listed entry drops a gone row from the cache, or lays the columns the entry
+  recorded into the cached row while that row is still as the device saw it before the write, as
+  the resolver's own `KeepServer` does; the lists holding the row are then fetched again.
+- A sync pass canceled by anything but `clearLocalData()` (a cancellation the transport threw) is
+  no longer reported as a cleared pass with nothing left queued. It reports a failure on the
+  device, the writes stay queued, and the library's own passes go on.
 
 ## [0.2.0] - 2026-10-20
 

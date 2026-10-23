@@ -73,6 +73,9 @@ internal data class StoredServerError(
  * @property onConflict [MutationRow.onConflict].
  * @property ignoreDuplicates [MutationRow.ignoreDuplicates].
  * @property owner The identity that made the write, or `null` when none was recorded.
+ * @property baseVersion [MutationRow.baseVersion]; `null` when the write was not guarded, or an
+ *   earlier build wrote the entry.
+ * @property baseJson [MutationRow.baseJson]; `null` when there is none, or it was too long to keep.
  * @property rejectedAtMs When it was refused, by the device clock.
  * @property message A human-readable reason.
  * @property serverError The server's refusal, or `null` when the engine refused it locally.
@@ -91,14 +94,17 @@ internal data class StoredRejection(
     val onConflict: String? = null,
     val ignoreDuplicates: Boolean? = null,
     val owner: String? = null,
+    val baseVersion: String? = null,
+    val baseJson: String? = null,
     val rejectedAtMs: Long,
     val message: String,
     val serverError: StoredServerError? = null,
     val bodyOmittedChars: Int? = null,
 ) {
     /**
-     * The row this rejection re-queues as, at the tail: its stored fields, id `0` for the queue to
-     * assign, a new creation time and [owner].
+     * The row this rejection re-queues as, at the tail: its stored fields, its base included, id
+     * `0` for the queue to assign, a new creation time and [owner]. With its base, a guarded write
+     * replays as guarded as it was first sent.
      *
      * @param createdAtMs When it is re-queued.
      * @param owner The identity it is re-queued for, or `null` to record none.
@@ -117,6 +123,8 @@ internal data class StoredRejection(
             onConflict = onConflict,
             ignoreDuplicates = ignoreDuplicates,
             owner = owner,
+            baseVersion = baseVersion,
+            baseJson = baseJson,
         )
     }
 }
@@ -335,6 +343,16 @@ internal class RejectedMutationList(
                         )
                     },
             )
+        // Without its base row the retry still carries its base version, so it is still guarded,
+        // though every column it sets then reads as moved when the row has
+        if ((entry.baseJson?.length ?: 0) > MAX_REJECTED_BODY_CHARS) {
+            logger.warning {
+                "Rejected ${entry.operation} ${entry.id} on ${entry.table}: its base row of " +
+                    "${entry.baseJson?.length} characters is too long to keep; a retry is guarded " +
+                    "by its version alone, so any move of the row is a conflict for the resolver"
+            }
+            bounded = bounded.copy(baseJson = null)
+        }
         if (entry.bodyJson.length > MAX_REJECTED_BODY_CHARS) {
             logger.warning {
                 "Rejected ${entry.operation} ${entry.id} on ${entry.table}: its body of " +

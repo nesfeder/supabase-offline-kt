@@ -5,11 +5,13 @@ package io.github.nesfeder.supabase.offline.internal.db
 import io.github.nesfeder.supabase.offline.MutationOperation
 import io.github.nesfeder.supabase.offline.internal.EngineJson
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.StoredConflictList
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.StoredRejectionList
 import io.github.nesfeder.supabase.offline.internal.postgrest.decodeFilterOrNull
 import io.github.nesfeder.supabase.offline.internal.postgrest.encodeFilter
 import io.github.nesfeder.supabase.offline.internal.postgrest.replaysFully
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 import kotlinx.serialization.json.JsonPrimitive
 
@@ -76,6 +78,49 @@ class ShippedStoredFormatTest {
         assertEquals("2026-10-18T13:00:27.486123+00:00", entry.baseVersion)
         assertEquals("2026-10-18T13:05:00+00:00", entry.serverVersion)
         assertEquals(EngineJson.encodeToString(StoredConflictList.serializer(), list), payload)
+    }
+
+    @Test
+    fun a_stored_rejected_list_decodes_to_the_entries_that_were_refused_with_their_base() {
+        // Given — a list as this build writes a guarded UPDATE a policy refused, its base under
+        // `baseVersion` and `baseJson`, and one as 0.2.0 wrote it, with no base
+        val payload =
+            """{"version":1,"entries":[{"id":3,"table":"todos","operation":"UPDATE",""" +
+                """"bodyJson":"{\"done\":true}","filterJson":${JsonPrimitive(ShippedDatabaseFixture.UPDATE_FILTER_JSON)},""" +
+                """"createdAtMs":1,"baseVersion":"2026-10-18T13:00:27.486123+00:00",""" +
+                """"baseJson":"{\"done\":false,\"updated_at\":\"2026-10-18T13:00:27.486123+00:00\"}",""" +
+                """"rejectedAtMs":2,"message":"The row cannot be changed under the server's current policies"}]}"""
+        val fromEarlierBuild = ShippedDatabaseFixture.REJECTED_LIST_JSON_WITHOUT_BASE
+
+        // When
+        val list = EngineJson.decodeFromString(StoredRejectionList.serializer(), payload)
+        val earlier =
+            EngineJson.decodeFromString(StoredRejectionList.serializer(), fromEarlierBuild)
+
+        // Then — the base reads back verbatim and re-queues with the write; the earlier build's
+        // entry reads back with none; and both still encode as they were written
+        val entry = list.entries.single()
+        assertEquals(1, list.version)
+        assertEquals("2026-10-18T13:00:27.486123+00:00", entry.baseVersion)
+        assertEquals(
+            """{"done":false,"updated_at":"2026-10-18T13:00:27.486123+00:00"}""",
+            entry.baseJson,
+        )
+        val requeued = assertNotNull(entry.toRequeuedRow(createdAtMs = 3, owner = null))
+        assertEquals(entry.baseVersion to entry.baseJson, requeued.baseVersion to requeued.baseJson)
+        assertEquals(
+            ShippedDatabaseFixture.UPDATE_FILTER,
+            decodeFilterOrNull(requeued.filterJson, EngineJson),
+        )
+        val earlierEntry = earlier.entries.single()
+        assertEquals(null to null, earlierEntry.baseVersion to earlierEntry.baseJson)
+        assertEquals("user:u-1" to 17000, earlierEntry.owner to earlierEntry.bodyOmittedChars)
+        assertEquals(1, earlier.droppedCount)
+        assertEquals(EngineJson.encodeToString(StoredRejectionList.serializer(), list), payload)
+        assertEquals(
+            EngineJson.encodeToString(StoredRejectionList.serializer(), earlier),
+            fromEarlierBuild,
+        )
     }
 
     @Test
