@@ -76,6 +76,49 @@ class BridgeRealtimeTest {
     }
 
     @Test
+    fun a_failed_table_is_reported_stalled_alone_in_the_order_named() = bridgeTest {
+        // Given — two tables followed, the second in another schema, both joined
+        val realtime = BridgeFakeRealtime()
+        val client =
+            openTestClient(server, realtime = realtime) {
+                realtimeTables =
+                    listOf(
+                        BridgeRealtimeTable("todos", null, null),
+                        BridgeRealtimeTable("notes", "private", null),
+                    )
+            }
+        val statuses = SubscriptionProbe<List<BridgeRealtimeTableStatus>>()
+        client.observeRealtimeTableStatuses(statuses.onValue, statuses.onCompletion)
+        statuses.awaitValue { current ->
+            current.all { entry -> entry.status.kind == BridgeRealtimeStatusKind.SUBSCRIBED }
+        }
+
+        // When — the server refuses the notes binding
+        realtime.failTable("notes", "column renamed", "private")
+
+        // Then — notes alone is stalled, with its message, each table named as configured
+        val refused = statuses.awaitValue { current ->
+            current.any { entry -> entry.status.kind == BridgeRealtimeStatusKind.STALLED }
+        }
+        assertEquals(
+            listOf("todos" to null, "notes" to "private"),
+            refused.map { it.table to it.schema },
+        )
+        assertEquals(BridgeRealtimeStatusKind.SUBSCRIBED, refused[0].status.kind)
+        assertTrue("column renamed" in assertNotNull(refused[1].status.cause).message)
+        statuses.awaitValue { current ->
+            current.all { entry -> entry.status.kind == BridgeRealtimeStatusKind.SUBSCRIBED }
+        }
+        client.closeAndWait()
+        assertTrue(
+            client.currentRealtimeTableStatuses().all { entry ->
+                entry.status.kind == BridgeRealtimeStatusKind.OFF
+            }
+        )
+        assertNull(statuses.ending.await().second)
+    }
+
+    @Test
     fun a_failed_channel_is_reported_stalled_with_its_message_and_joined_again() = bridgeTest {
         // Given — joined
         val realtime = BridgeFakeRealtime()

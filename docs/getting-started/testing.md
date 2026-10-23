@@ -100,9 +100,11 @@ channel as it would Realtime's (signed in or without Auth, the network not known
 subscription on), and `subscribedTables` says which tables it follows now; wait for a table there
 before reporting a change to it, since nothing is replayed. Each report reaches the cached queries
 as `applyServerRecord` and `applyServerDelete` apply a record; a report to a table nothing follows
-is dropped and counted in `droppedReportCount`. `failChannel(cause)` ends the channel as a server
-that refuses it would, and `dropChannel()` as a lost socket: `realtimeStatus` reads `Stalled`, and
-the client joins again after a short wait.
+is dropped and counted in `droppedReportCount`. `failChannel(cause)` ends every table's channel as
+a server that refuses them would, and `dropChannel()` as a lost socket: `realtimeStatus` reads
+`Stalled`, and the client joins again after a short wait. `failTable(table, cause)` refuses one
+table alone, as a server refuses a binding: its entry in `realtimeTableStatus` reads `Stalled`
+while the other tables stay joined and keep receiving reports.
 
 ```kotlin
 val fakeRealtime = FakeRealtime()

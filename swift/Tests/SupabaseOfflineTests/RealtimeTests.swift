@@ -93,6 +93,49 @@ struct RealtimeTests {
         #expect(statuses.last == .off)
     }
 
+    @Test func aRefusedTableIsReportedStalledAloneAndTheOtherKeepsReceiving() async throws {
+        // Given a client following two tables through the fake, both joined, with `todos`'s row cached
+        let realtime = FakeRealtime()
+        let server = RecordingFakeServer(rows: Self.rows)
+        let todos = RealtimeTable("todos")
+        let notes = RealtimeTable("notes", schema: "private")
+        let client = SupabaseOfflineClient.inMemory(
+            config: .init(realtimeTables: [todos, notes]),
+            server: server.server,
+            realtime: realtime
+        )
+        let summed = LiveRecording(client.realtimeStatus)
+        _ = try await client.from("todos").select().execute([TodoRow].self)
+        #expect(await eventually { client.realtimeTableStatus.value == [todos: .subscribed, notes: .subscribed] })
+
+        // When the server refuses the notes binding
+        realtime.failTable(table: "notes", message: "column renamed", schema: "private")
+
+        // Then notes alone reads stalled, with the message, and the summed status says so
+        #expect(await eventually { client.realtimeTableStatus.value[notes]?.stallMessage?.contains("column renamed") == true })
+        #expect(client.realtimeTableStatus.value[todos] == .subscribed)
+        #expect(await eventually { summed.values.values.contains { $0.stallMessage?.contains("column renamed") == true } })
+
+        // And todos keeps receiving, while notes is joined again after a wait
+        try realtime.reportInsert(table: "todos", record: ["id": .int(2), "title": .string("Green tea"), "done": .bool(true)])
+        let kept = try await cachedRows(of: client, until: { $0.contains(Self.greenTea) })
+        #expect(kept.contains(Self.greenTea))
+        #expect(await eventually(within: .seconds(10)) { client.realtimeTableStatus.value == [todos: .subscribed, notes: .subscribed] })
+        try await client.close()
+        #expect(client.realtimeTableStatus.value == [todos: .off, notes: .off])
+    }
+
+    @Test func withNoTableNamedTheTableStatusesAreEmpty() async throws {
+        // Given a client that names no Realtime table
+        let client = SupabaseOfflineClient.inMemory()
+
+        // Then there is no table status, before and after the client has opened
+        #expect(client.realtimeTableStatus.value.isEmpty)
+        try await client.enableRealtime()
+        #expect(client.realtimeTableStatus.value.isEmpty)
+        try await client.close()
+    }
+
     @Test func aFilterTheServerCannotEvaluateFailsTheOpen() async throws {
         // Given a table filtered with an operator Realtime does not evaluate
         let filter = RealtimeFilter(column: "title", operator: .like, value: "%a%")

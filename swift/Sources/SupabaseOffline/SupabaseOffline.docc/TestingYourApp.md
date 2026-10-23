@@ -81,9 +81,11 @@ channel as it would Realtime's (the network not known down, the subscription on)
 to read ``RealtimeStatus/subscribed`` before reporting a change, since nothing is replayed. Each
 report reaches the cached queries as ``SupabaseOfflineClient/applyServerRecord(table:record:primaryKeys:schema:)-(_,[String:OfflineJSON],_,_)``
 applies a record; a report to a table nothing follows is dropped and counted in
-`droppedReportCount`. `failChannel(message:)` ends the channel as a server that refuses it would, and
-`dropChannel()` as a lost socket: the status reads ``RealtimeStatus/stalled(cause:)``, and the
-client joins again after a short wait.
+`droppedReportCount`. `failChannel(message:)` ends every table's channel as a server that refuses
+them would, and `dropChannel()` as a lost socket: the status reads ``RealtimeStatus/stalled(cause:)``,
+and the client joins again after a short wait. `failTable(table:message:schema:)` refuses one table
+alone, as a server refuses a binding: its entry in ``SupabaseOfflineClient/realtimeTableStatus``
+reads ``RealtimeStatus/stalled(cause:)`` while the other tables stay joined and keep receiving.
 
 <!-- swift-listing: TestingYourAppListings.swift:realtime-test -->
 ```swift

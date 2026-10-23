@@ -27,7 +27,8 @@ import kotlinx.serialization.json.put
 /**
  * `inMemory(realtime = fakeRealtime)` with `realtime { table(…) }`: the client joins the fake's
  * channel as it would Realtime's, the fake says what is followed, a reported change reaches the
- * cached queries, a report nothing follows is dropped, and a channel the fake ends is joined again.
+ * cached queries, a report nothing follows is dropped, and a channel the fake ends is joined again;
+ * a table the fake fails stalls alone, while the other tables keep receiving.
  */
 class FakeRealtimeTest {
 
@@ -114,6 +115,58 @@ class FakeRealtimeTest {
         }
 
     @Test
+    fun a_failed_table_stalls_alone_and_the_other_keeps_receiving() =
+        runTest(timeout = 2.minutes) {
+            // Given — two tables followed and joined, with one list of the first cached
+            val supabase = watching {
+                realtime {
+                    table(TABLE)
+                    table(OTHER)
+                }
+            }
+            supabase.offline.from(TABLE).select()
+            fakeRealtime.subscribedTables.awaitValue { tables ->
+                TABLE in tables && OTHER in tables
+            }
+            supabase.offline.realtimeStatus.awaitValue { status ->
+                status == RealtimeStatus.Subscribed
+            }
+
+            // When — the server refuses the other table's binding
+            val cause = IllegalStateException("column renamed")
+            fakeRealtime.failTable(OTHER, cause)
+
+            // Then — that table alone is stalled, with the cause, and the summed status says so
+            val statuses =
+                supabase.offline.realtimeTableStatus.awaitValue { current ->
+                    current.entries.any { (table, status) ->
+                        table.table == OTHER && status is RealtimeStatus.Stalled
+                    }
+                }
+            val stalled =
+                assertIs<RealtimeStatus.Stalled>(
+                    statuses.entries.single { it.key.table == OTHER }.value
+                )
+            assertEquals(cause.message, stalled.cause.message)
+            assertEquals(
+                RealtimeStatus.Subscribed,
+                statuses.entries.single { it.key.table == TABLE }.value,
+            )
+            supabase.offline.realtimeStatus.awaitValue { status ->
+                status is RealtimeStatus.Stalled
+            }
+
+            // And — the first table keeps receiving, and the refused one is joined again
+            fakeRealtime.reportInsert(TABLE, row(2, "Tea"))
+            supabase.awaitCachedRead { data -> "Tea" in data }
+            supabase.offline.realtimeTableStatus.awaitValue { current ->
+                current.values.all { status -> status == RealtimeStatus.Subscribed }
+            }
+            assertEquals(0, fakeRealtime.droppedReportCount)
+            supabase.close()
+        }
+
+    @Test
     fun a_dropped_channel_is_joined_again() =
         runTest(timeout = 2.minutes) {
             // Given — joined
@@ -181,5 +234,6 @@ class FakeRealtimeTest {
 
     private companion object {
         const val TABLE = "todos"
+        const val OTHER = "notes"
     }
 }

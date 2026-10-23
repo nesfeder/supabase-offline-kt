@@ -5,6 +5,7 @@ class FakeRealtime | final class FakeRealtime
 method FakeRealtime.dropChannel() | func dropChannel()
 property FakeRealtime.droppedReportCount | var droppedReportCount: Int { get }
 method FakeRealtime.failChannel(message:) | func failChannel(message: String = "The channel was refused")
+method FakeRealtime.failTable(table:message:schema:) | func failTable(table: String, message: String = "The table's binding was refused", schema: String? = nil)
 init FakeRealtime.init() | init()
 method FakeRealtime.reportDelete(table:oldRecord:schema:) | func reportDelete(table: String, oldRecord: [String : OfflineJSON], schema: String? = nil) throws
 method FakeRealtime.reportInsert(table:record:schema:) | func reportInsert(table: String, record: [String : OfflineJSON], schema: String? = nil) throws

@@ -36,6 +36,9 @@ import kotlinx.coroutines.withTimeoutOrNull
 /** What the client's channels are named, with a number that makes each join's topic its own. */
 internal const val REALTIME_TOPIC_PREFIX: String = "supabase-offline"
 
+/** What supabase-kt puts before a channel's name to make its topic. */
+private const val REALTIME_TOPIC_NAMESPACE: String = "realtime:"
+
 /** What a client whose configuration names tables but has no Realtime plugin fails with. */
 internal const val REALTIME_NOT_INSTALLED_MESSAGE: String =
     "The offline configuration names tables to follow through Realtime, but the Realtime plugin " +
@@ -51,6 +54,19 @@ internal const val REALTIME_NOT_INSTALLED_MESSAGE: String =
  * from the server, or a socket that dropped. supabase-kt's own rejoin leaves the channel before it
  * joins again, which ends the feed too, so every join is the follower's, on a fresh channel with a
  * fresh token.
+ *
+ * The follower follows each table on its own, so each table has a channel of its own, and the
+ * channels share supabase-kt's one socket. A leave does two things supabase-kt 3.6.0 leaves undone
+ * once another channel keeps that socket open. supabase-kt sends no leave for a channel that is not
+ * joined: one still joining, or one the server refused once supabase-kt stopped rejoining it, which
+ * the server may still hold, trying its binding again and again; so the leave sends one. And
+ * supabase-kt's own rejoin, after a refusal, runs inside the loop that reads the socket and waits
+ * there for a reply only that loop could read, so no channel on the socket receives anything until
+ * the heartbeat gives up on it; with nothing but this library's channels left on the socket, the
+ * leave closes it, which ends the loop, as removing the last channel does. The other tables'
+ * channels end with it and are joined again by the follower. An app's own channel is never closed
+ * this way: with one on the socket the loop waits for the heartbeat, which `install(Realtime) {
+ * maxAttempts = 1 }` avoids.
  *
  * Nothing a burst sends is lost: each table's `postgresChangeFlow` is buffered without limit, which
  * supabase-kt's `callbackFlow` takes as its own buffer, so the `trySend` behind it cannot drop a
@@ -77,6 +93,8 @@ internal class SupabaseRealtimeFeed(
     ): Flow<ServerChangeEvent> = channelFlow {
         val realtime = supabase.realtime
         val channel = supabase.channel("$REALTIME_TOPIC_PREFIX-${joins.incrementAndFetch()}")
+        // Whether a join went out: a channel that never asked has nothing to leave on the server
+        var joinSent = false
         try {
             for (watched in tables) {
                 val schema = watched.schema ?: defaultSchema
@@ -96,11 +114,12 @@ internal class SupabaseRealtimeFeed(
                 }
             }
             launch(start = CoroutineStart.UNDISPATCHED) { reportStatus(channel) }
+            joinSent = true
             channel.subscribe()
             tokenRefresher?.let { refresher -> launch { refresher.keepFresh() } }
             awaitClose()
         } finally {
-            withContext(NonCancellable) { leave(realtime, channel) }
+            withContext(NonCancellable) { leave(realtime, channel, joinSent) }
         }
     }
         .buffer(Channel.UNLIMITED)
@@ -133,12 +152,23 @@ internal class SupabaseRealtimeFeed(
         }
     }
 
-    /** Leaves [channel] within [leaveBound]; a failure to leave is logged, never thrown. */
-    private suspend fun leave(realtime: Realtime, channel: RealtimeChannel) {
+    /**
+     * Leaves [channel] within [leaveBound]: removes it, sends the leave supabase-kt does not, and
+     * frees the socket's read loop that supabase-kt's own rejoin of it stopped, when only this
+     * library's channels are left on the socket. A failure to leave is logged, never thrown.
+     *
+     * @param joinSent whether a join of [channel] went out.
+     */
+    private suspend fun leave(realtime: Realtime, channel: RealtimeChannel, joinSent: Boolean) {
         val left =
             withTimeoutOrNull(leaveBound) {
                 try {
+                    // Read before the removal, which leaves a joined channel itself
+                    val status = channel.status.value
                     realtime.removeChannel(channel)
+                    if (joinSent && realtime.status.value == Realtime.Status.CONNECTED) {
+                        finishLeaving(realtime, channel, status)
+                    }
                 } catch (cancellation: CancellationException) {
                     throw cancellation
                 } catch (failure: Exception) {
@@ -151,6 +181,38 @@ internal class SupabaseRealtimeFeed(
             engineLogger.debug { "Realtime: leaving the channel took longer than $leaveBound" }
         }
     }
+
+    /**
+     * Does what [Realtime.removeChannel] left undone for [channel], removed at [status] from a
+     * socket still connected: sends the leave of a channel joining, or refused, which the server
+     * may still hold; or, for one supabase-kt's own rejoin was leaving, closes the socket when
+     * nothing but this library's channels is left on it, which ends the read loop the rejoin
+     * stopped. The leave goes out after the removal, so its reply, an error for a channel the
+     * server no longer holds, reaches no channel.
+     */
+    private suspend fun finishLeaving(
+        realtime: Realtime,
+        channel: RealtimeChannel,
+        status: RealtimeChannel.Status,
+    ) {
+        when (status) {
+            RealtimeChannel.Status.SUBSCRIBING,
+            RealtimeChannel.Status.UNSUBSCRIBED -> channel.unsubscribe()
+            RealtimeChannel.Status.UNSUBSCRIBING ->
+                if (realtime.subscriptions.keys.all(::isOwnTopic)) {
+                    engineLogger.debug {
+                        "Realtime: a refused channel stopped the socket's read loop; the socket " +
+                            "is closed, and the tables' channels are joined again"
+                    }
+                    realtime.disconnect()
+                }
+            RealtimeChannel.Status.SUBSCRIBED -> Unit
+        }
+    }
+
+    /** Whether [topic] is one of this library's channels. */
+    private fun isOwnTopic(topic: String): Boolean =
+        topic.startsWith("$REALTIME_TOPIC_NAMESPACE$REALTIME_TOPIC_PREFIX-")
 
     /** This change as the feed reports it; `null` for a kind the feed never asked for. */
     private fun PostgresAction.toEvent(table: String, schema: String): ServerChangeEvent? =

@@ -19,6 +19,7 @@ import io.github.nesfeder.supabase.offline.bridge.internal.readDescription
 import io.github.nesfeder.supabase.offline.bridge.internal.resolutionOf
 import io.github.nesfeder.supabase.offline.bridge.internal.rpcDescription
 import io.github.nesfeder.supabase.offline.bridge.internal.toBridge
+import io.github.nesfeder.supabase.offline.bridge.internal.toBridgeTableStatuses
 import io.github.nesfeder.supabase.offline.offline
 import io.ktor.client.engine.darwin.Darwin
 import kotlin.concurrent.atomics.AtomicBoolean
@@ -381,6 +382,28 @@ internal constructor(
     ): BridgeCancellable =
         runner.subscribe("observeRealtimeStatus", onStatus, onCompletion) {
             offline.realtimeStatus.map { it.toBridge() }
+        }
+
+    /**
+     * Where each table [BridgeClientOptions.realtimeTables] names stands now, on its own channel,
+     * in the order they were named; empty without named tables. A failure to read it is reported as
+     * no table, which the package reads as every table off.
+     */
+    public fun currentRealtimeTableStatuses(): List<BridgeRealtimeTableStatus> =
+        runner.answerNow("currentRealtimeTableStatuses", onFailure = { emptyList() }) {
+            offline.realtimeTableStatus.value.toBridgeTableStatuses()
+        }
+
+    /**
+     * Each table's status as it changes, starting with the current ones; [onCompletion] fires once,
+     * with `null`, when the client closes.
+     */
+    public fun observeRealtimeTableStatuses(
+        onStatuses: (List<BridgeRealtimeTableStatus>) -> Unit,
+        onCompletion: (BridgeError?) -> Unit,
+    ): BridgeCancellable =
+        runner.subscribe("observeRealtimeTableStatuses", onStatuses, onCompletion) {
+            offline.realtimeTableStatus.map { it.toBridgeTableStatuses() }
         }
 
     /**

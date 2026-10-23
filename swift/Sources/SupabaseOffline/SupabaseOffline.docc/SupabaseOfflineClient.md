@@ -50,6 +50,7 @@
 ### Realtime
 
 - ``realtimeStatus``
+- ``realtimeTableStatus``
 - ``disableRealtime()``
 - ``enableRealtime()``
 

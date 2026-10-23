@@ -14,6 +14,7 @@ import kotlin.concurrent.atomics.incrementAndFetch
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.serialization.json.JsonObject
 
 /**
@@ -32,28 +33,30 @@ import kotlinx.serialization.json.JsonObject
  * fakeRealtime.reportInsert("tasks", buildJsonObject { put("id", "t1"); put("title", "Milk") })
  * ```
  *
- * The client joins a channel as it would with Realtime: while a user is signed in (or Auth is not
- * installed), the network is not known down and [Offline.disableRealtime] has not switched it off.
- * The fake answers each join at once, and [subscribedTables] says which tables the client follows
- * now, so a test waits for a table there before reporting a change to it. A report to a table no
- * joined channel follows is dropped, as a server drops a change for a channel nobody joined, and
- * counted in [droppedReportCount]. Nothing is replayed: a change reported while the client was not
- * joined never reaches it, as with Realtime, and each join has the client read the named tables
- * again.
+ * The client joins a channel for each named table as it would with Realtime: while a user is signed
+ * in (or Auth is not installed), the network is not known down and [Offline.disableRealtime] has
+ * not switched it off. The fake answers each join at once, and [subscribedTables] says which tables
+ * the client follows now, so a test waits for a table there before reporting a change to it. A
+ * report to a table no joined channel follows is dropped, as a server drops a change for a channel
+ * nobody joined, and counted in [droppedReportCount]. Nothing is replayed: a change reported while
+ * the client was not joined never reaches it, as with Realtime, and each join has the client read
+ * the table again. [failTable] refuses one table's channel, as a server refuses a binding, and
+ * leaves the others joined.
  */
 public class FakeRealtime {
 
-    private val current = MutableStateFlow<ScriptedRealtimeChannel?>(null)
+    /** The channel open for each followed table, keyed as [subscribedTables] keys it. */
+    private val channels = MutableStateFlow<Map<String, ScriptedRealtimeChannel>>(emptyMap())
 
     private val followed = MutableStateFlow<Set<String>>(emptySet())
 
     private val dropped = AtomicInt(0)
 
     /**
-     * The tables the client follows through the joined channel now, each as `realtime { }` keys it:
-     * its name alone in the client's default schema, `schema.table` in another. Empty while no
-     * channel is joined: before the client joins, while it is paused or switched off, and between a
-     * channel that ended and the next join.
+     * The tables the client follows through a joined channel now, each as `realtime { }` keys it:
+     * its name alone in the client's default schema, `schema.table` in another. A table is missing
+     * while its channel is not joined: before the client joins, while it is paused or switched off,
+     * and between a channel that ended and the next join of that table.
      */
     public val subscribedTables: StateFlow<Set<String>> = followed.asStateFlow()
 
@@ -98,44 +101,72 @@ public class FakeRealtime {
     }
 
     /**
-     * Ends the joined channel with [cause], as a server that refuses the join or closes the
-     * channel: the client reports [RealtimeStatus.Stalled] with [cause], joins again after a wait
-     * of at most a minute (a second the first time), and reads the named tables again. Nothing
+     * Ends every joined channel with [cause], as a server that refuses the joins or closes the
+     * channels: the client reports [RealtimeStatus.Stalled] with [cause], joins each table again
+     * after a wait of at most a minute (a second the first time), and reads it again. Nothing
      * happens while no channel is joined.
      */
     public fun failChannel(cause: Throwable) {
-        current.value?.fail(cause)
+        channels.value.values.distinct().forEach { channel -> channel.fail(cause) }
     }
 
     /**
-     * Ends the joined channel quietly, as a lost socket does: the client reports
-     * [RealtimeStatus.Stalled], joins again after a short wait, and reads the named tables again.
+     * Ends every joined channel quietly, as a lost socket does: the client reports
+     * [RealtimeStatus.Stalled], joins each table again after a short wait, and reads it again.
      * Nothing happens while no channel is joined.
      */
     public fun dropChannel() {
-        current.value?.end()
+        channels.value.values.distinct().forEach { channel -> channel.end() }
+    }
+
+    /**
+     * Ends the channel of [table] alone with [cause], as a server that refuses that table's
+     * binding: [Offline.realtimeTableStatus] reads [RealtimeStatus.Stalled] with [cause] for it,
+     * the other tables stay joined and keep receiving reports, and the client joins [table] again
+     * after a wait of at most a minute (a second the first time), and reads it again. Nothing
+     * happens while [table] is not joined.
+     *
+     * @param table the table's name.
+     * @param cause why the server refused it.
+     * @param schema the table's schema, or `null` for the client's default schema.
+     */
+    public fun failTable(table: String, cause: Throwable, schema: String? = null) {
+        channelOf(table, schema)?.fail(cause)
     }
 
     /** What `inMemory(clock, realtime)` installs: takes each channel the client opens. */
     internal val channelHook: (ScriptedRealtimeChannel) -> Unit = { channel -> open(channel) }
 
     private fun open(channel: ScriptedRealtimeChannel) {
-        current.value = channel
-        followed.value =
-            channel.tables
-                .map { table -> keyOf(table.table, table.schema, channel.defaultSchema) }
-                .toSet()
-        channel.onLeft { if (current.compareAndSet(channel, null)) followed.value = emptySet() }
+        val keys =
+            channel.tables.map { table -> keyOf(table.table, table.schema, channel.defaultSchema) }
+        channels.update { current -> current + keys.associateWith { channel } }
+        followed.update { current -> current + keys }
+        // A table's next channel opens only once the client has left this one, so a key removed
+        // here is never the next channel's
+        channel.onLeft {
+            channels.update { current ->
+                current.filterNot { (key, open) -> key in keys && open === channel }
+            }
+            followed.update { current -> current - keys.toSet() }
+        }
         channel.join()
     }
 
     private fun report(table: String, schema: String?, deliver: (ScriptedRealtimeChannel) -> Unit) {
-        val channel = current.value
-        if (channel == null || keyOf(table, schema, channel.defaultSchema) !in followed.value) {
+        val channel = channelOf(table, schema)
+        if (channel == null) {
             dropped.incrementAndFetch()
             return
         }
         deliver(channel)
+    }
+
+    /** The joined channel that follows [table] in [schema], or `null`. */
+    private fun channelOf(table: String, schema: String?): ScriptedRealtimeChannel? {
+        val open = channels.value
+        val defaultSchema = open.values.firstOrNull()?.defaultSchema ?: return null
+        return open[keyOf(table, schema, defaultSchema)]
     }
 
     /** [table] as `realtime { }` keys it: the name alone in the default schema. */

@@ -4,6 +4,7 @@ io.github.nesfeder.supabase.offline.testing: fun (Offline.Config).inMemory(clock
 io.github.nesfeder.supabase.offline.testing: fun (Offline.Config).inMemory(clock: Clock = …, realtime: FakeRealtime)
 io.github.nesfeder.supabase.offline.testing: fun FakeRealtime.dropChannel()
 io.github.nesfeder.supabase.offline.testing: fun FakeRealtime.failChannel(cause: Throwable)
+io.github.nesfeder.supabase.offline.testing: fun FakeRealtime.failTable(table: String, cause: Throwable, schema: String? = …)
 io.github.nesfeder.supabase.offline.testing: fun FakeRealtime.reportDelete(table: String, oldRecord: JsonObject, schema: String? = …)
 io.github.nesfeder.supabase.offline.testing: fun FakeRealtime.reportInsert(table: String, record: JsonObject, schema: String? = …)
 io.github.nesfeder.supabase.offline.testing: fun FakeRealtime.reportUpdate(table: String, record: JsonObject, schema: String? = …)

@@ -2,6 +2,8 @@ public final class io/github/nesfeder/supabase/offline/testing/FakeRealtime {
 	public fun <init> ()V
 	public final fun dropChannel ()V
 	public final fun failChannel (Ljava/lang/Throwable;)V
+	public final fun failTable (Ljava/lang/String;Ljava/lang/Throwable;Ljava/lang/String;)V
+	public static synthetic fun failTable$default (Lio/github/nesfeder/supabase/offline/testing/FakeRealtime;Ljava/lang/String;Ljava/lang/Throwable;Ljava/lang/String;ILjava/lang/Object;)V
 	public final fun getDroppedReportCount ()I
 	public final fun getSubscribedTables ()Lkotlinx/coroutines/flow/StateFlow;
 	public final fun reportDelete (Ljava/lang/String;Lkotlinx/serialization/json/JsonObject;Ljava/lang/String;)V

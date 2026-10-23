@@ -44,10 +44,10 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
 /**
- * The gated hook behind the testing artifact's `FakeRealtime`: each channel the client opens
- * reaches the test with the tables the configuration named, what the test reports on it is applied,
- * and a channel the test fails or ends stalls the client, which joins again. A channel built with a
- * capacity drops what it cannot hold, as supabase-kt 3.6.0's does, and counts it.
+ * The gated hook behind the testing artifact's `FakeRealtime`: each channel the client opens, one
+ * per table, reaches the test with the table the configuration named, what the test reports on it
+ * is applied, and a channel the test fails or ends stalls the client, which joins again. A channel
+ * built with a capacity drops what it cannot hold, as supabase-kt 3.6.0's does, and counts it.
  */
 class ScriptedRealtimeTest {
 
@@ -73,19 +73,18 @@ class ScriptedRealtimeTest {
                 }
             val offline = supabase.offline
             offline.from("tasks").select()
-            val first = channels.receiveWithin()
+            val (tasks, audit) = channels.receiveOnePerTable()
 
-            // Then — the channel names the tables as the configuration did, and is joining
-            assertEquals(
-                listOf(RealtimeTable("tasks", null, null), RealtimeTable("audit", "app", filter)),
-                first.tables,
-            )
-            assertEquals("public", first.defaultSchema)
+            // Then — each table has a channel of its own, named as the configuration names it
+            assertEquals(listOf(RealtimeTable("tasks", null, null)), tasks.tables)
+            assertEquals(listOf(RealtimeTable("audit", "app", filter)), audit.tables)
+            assertEquals("public", tasks.defaultSchema)
 
-            // When — joined, then a row saved and the cached one deleted
-            first.join()
+            // When — both joined, then a row saved and the cached one deleted
+            tasks.join()
+            audit.join()
             offline.awaitStatus { status -> status == RealtimeStatus.Subscribed }
-            first.saved(
+            tasks.saved(
                 "tasks",
                 null,
                 buildJsonObject {
@@ -93,34 +92,48 @@ class ScriptedRealtimeTest {
                     put("title", "Tea")
                 },
             )
-            first.deleted("tasks", null, buildJsonObject { put("id", "t1") })
+            tasks.deleted("tasks", null, buildJsonObject { put("id", "t1") })
 
             // Then — the cached list carries both changes
             offline.awaitCached("tasks") { data -> "Tea" in data && "Milk" !in data }
 
-            // When — the switch leaves the channel
-            val left = CompletableDeferred<Unit>()
-            first.onLeft { left.complete(Unit) }
+            // When — the switch leaves the channels
+            val tasksLeft = CompletableDeferred<Unit>()
+            val auditLeft = CompletableDeferred<Unit>()
+            tasks.onLeft { tasksLeft.complete(Unit) }
+            audit.onLeft { auditLeft.complete(Unit) }
             offline.disableRealtime()
 
-            // Then — the channel hears it
-            withContext(Dispatchers.Default) { withTimeout(10.seconds) { left.await() } }
+            // Then — both channels hear it
+            withContext(Dispatchers.Default) {
+                withTimeout(10.seconds) {
+                    tasksLeft.await()
+                    auditLeft.await()
+                }
+            }
 
-            // When — switched on, the server refuses the next channel, and closes the one after
+            // When — switched on, the server refuses the tasks channel, and closes the one after
             offline.enableRealtime()
-            val second = channels.receiveWithin()
-            second.fail(IllegalStateException("not in the publication"))
+            val (refused, rejoinedAudit) = channels.receiveOnePerTable()
+            rejoinedAudit.join()
+            refused.fail(IllegalStateException("not in the publication"))
             val stalled = offline.awaitStatus { status -> status is RealtimeStatus.Stalled }
-            val third = channels.receiveWithin()
-            third.join()
+            val retried = channels.receiveWithin()
+            assertEquals(tasks.tables, retried.tables)
+            retried.join()
             offline.awaitStatus { status -> status == RealtimeStatus.Subscribed }
-            third.end()
+            retried.end()
             offline.awaitStatus { status -> status is RealtimeStatus.Stalled }
 
-            // Then — each stall says why, and the client joins again after each
+            // Then — each stall says why, and the client joins the tasks table again after each,
+            // the audit table's channel staying joined throughout
             val cause = assertIs<RealtimeStatus.Stalled>(stalled).cause
             assertTrue("not in the publication" in cause.message.orEmpty(), "$cause")
-            channels.receiveWithin()
+            assertEquals(tasks.tables, channels.receiveWithin().tables)
+            assertEquals(
+                RealtimeStatus.Subscribed,
+                offline.realtimeTableStatus.value[RealtimeTable("audit", "app", filter)],
+            )
             supabase.close()
             assertEquals(RealtimeStatus.Off, offline.realtimeStatus.value)
         }
@@ -162,6 +175,14 @@ class ScriptedRealtimeTest {
 
     private suspend fun Channel<ScriptedRealtimeChannel>.receiveWithin(): ScriptedRealtimeChannel =
         withContext(Dispatchers.Default) { withTimeout(10.seconds) { receive() } }
+
+    /** The next two channels, the tasks table's first: the client opens them in either order. */
+    private suspend fun Channel<ScriptedRealtimeChannel>.receiveOnePerTable():
+        Pair<ScriptedRealtimeChannel, ScriptedRealtimeChannel> {
+        val opened = listOf(receiveWithin(), receiveWithin())
+        return opened.single { it.tables.single().table == "tasks" } to
+            opened.single { it.tables.single().table == "audit" }
+    }
 
     private suspend fun Offline.awaitStatus(matches: (RealtimeStatus) -> Boolean): RealtimeStatus =
         withContext(Dispatchers.Default) {
