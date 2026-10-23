@@ -36,6 +36,12 @@ All notable changes to this project are recorded in this file. The format follow
   the wrong one: such a filter was sent as `owner=in.<id>` or `id=eq.[1]`, the server refused the
   join, and the channel stalled and retried forever. Pass a `List` for `in` and a single value for
   every other operator.
+- A `QueueIfOffline` write sent at once stays queued, instead of being thrown and dropped from the
+  queue, when the server answers `408`, `429`, `502`, `504`, `522` or `524`, or `401` with
+  PostgREST's `PGRST301` or `PGRST303` (a token the server holds expired while the device's clock
+  says it is fresh), as a replay of the same write always has; a later pass sends it. A caller
+  that relied on the exception to show an error now gets `Queued`. A `500` from the database is
+  still thrown.
 
 ### Deprecated
 

@@ -23,6 +23,7 @@ import io.github.nesfeder.supabase.offline.internal.isNetworkOrConnectivityFailu
 import io.github.nesfeder.supabase.offline.internal.isPermanentMutationFailure
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogLevel
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
+import io.github.nesfeder.supabase.offline.internal.mayPassWhenSentAgain
 import io.github.nesfeder.supabase.offline.internal.network.NetworkAccess
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 import io.github.nesfeder.supabase.offline.internal.postgrest.MisreadValue
@@ -38,6 +39,7 @@ import io.github.nesfeder.supabase.offline.internal.postgrest.replayOnto
 import io.github.nesfeder.supabase.offline.internal.postgrest.replaysFully
 import io.github.nesfeder.supabase.offline.internal.postgrest.rowMatch
 import io.github.nesfeder.supabase.offline.internal.postgrest.sendCapturingEngineFailure
+import io.github.nesfeder.supabase.offline.internal.postgrestCodeOrNull
 import io.ktor.client.plugins.ResponseException
 import kotlin.coroutines.EmptyCoroutineContext
 import kotlin.time.Duration
@@ -288,9 +290,11 @@ internal class MutationQueueReplayer(
         data class Sent(val result: PostgrestResult) : HeadSendOutcome
 
         /**
-         * It may not have run on the server — no connection or no answer, a `503`/`520`, a table or
-         * column PostgREST's schema cache does not know yet, or a session token that could not be
-         * refreshed — and stays queued.
+         * It may not have run on the server, or may pass when sent again, and stays queued: no
+         * connection or no answer, an answer a replay keeps queued too (a `408`, `429`, `502`,
+         * `503`, `504`, `520`, `522` or `524`, or a `401` for a token PostgREST refused as expired
+         * or unreadable), a table or column PostgREST's schema cache does not know yet, or a
+         * session token that could not be refreshed.
          */
         data class StaysQueued(val cause: Exception) : HeadSendOutcome
 
@@ -410,13 +414,13 @@ internal class MutationQueueReplayer(
                 if (newlyUnconfirmed) mutationQueue.clearUnconfirmedSend(mutationId)
                 HeadSendOutcome.StaysQueued(cause)
             }
-            postgrestCodeOf(cause) in SCHEMA_CACHE_MISS_CODES &&
+            cause.postgrestCodeOrNull() in SCHEMA_CACHE_MISS_CODES &&
                 !schemaCacheMissReachesBound(mutationId) -> {
                 if (newlyUnconfirmed) mutationQueue.clearUnconfirmedSend(mutationId)
                 HeadSendOutcome.StaysQueued(cause)
             }
-            cause.isNetworkOrConnectivityFailure() ||
-                cause.httpStatusOrNull() in STAYS_QUEUED_STATUSES -> {
+            // No answer, or one a replay would keep queued too
+            cause.isNetworkOrConnectivityFailure() || cause.mayPassWhenSentAgain() -> {
                 if (newlyUnconfirmed && failure.provesWriteNotApplied())
                     mutationQueue.clearUnconfirmedSend(mutationId)
                 HeadSendOutcome.StaysQueued(cause)
@@ -436,7 +440,7 @@ internal class MutationQueueReplayer(
     private fun SendOutcome.Failed.provesWriteNotApplied(): Boolean =
         neverReachedServer ||
             thrown is TokenExpiredException ||
-            postgrestCodeOf(thrown).let { code ->
+            thrown.postgrestCodeOrNull().let { code ->
                 code in POSTGREST_DID_NOT_RUN_CODES || code in SCHEMA_CACHE_MISS_CODES
             }
 
@@ -456,16 +460,6 @@ internal class MutationQueueReplayer(
                 "miss $misses of $SCHEMA_CACHE_MISS_BOUND before the write is rejected"
         }
         return misses >= SCHEMA_CACHE_MISS_BOUND
-    }
-
-    /** The PostgREST error code [failure] or a cause carries, or `null`. */
-    private fun postgrestCodeOf(failure: Throwable): String? {
-        var current: Throwable? = failure
-        while (current != null) {
-            if (current is PostgrestRestException) return current.code
-            current = current.cause
-        }
-        return null
     }
 
     /** Removes an accepted mutation, logging rather than failing a write the server applied. */
@@ -1287,7 +1281,7 @@ internal class MutationQueueReplayer(
                 ReplayOutcome.Stopped(failure)
             }
 
-            postgrestCodeOf(failure) in SCHEMA_CACHE_MISS_CODES ->
+            failure.postgrestCodeOrNull() in SCHEMA_CACHE_MISS_CODES ->
                 ReplayOutcome.SchemaCacheMiss(failure)
 
             failure.isPermanentMutationFailure() -> {
@@ -1703,13 +1697,6 @@ internal class MutationQueueReplayer(
     private companion object {
         const val HTTP_FORBIDDEN = 403
         const val HTTP_CONFLICT = 409
-        const val HTTP_SERVICE_UNAVAILABLE = 503
-
-        /**
-         * Statuses after which a head send stays queued: PostgREST, or something in front of it,
-         * could not complete the request, and the write may not have run.
-         */
-        val STAYS_QUEUED_STATUSES = setOf(HTTP_SERVICE_UNAVAILABLE, 520)
 
         /**
          * PostgREST's `503` codes for a request it answered without reaching the database
