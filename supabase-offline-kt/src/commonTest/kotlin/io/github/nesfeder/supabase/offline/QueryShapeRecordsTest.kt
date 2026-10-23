@@ -2,11 +2,15 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline
 
+import io.github.jan.supabase.postgrest.PropertyConversionMethod
+import io.github.jan.supabase.postgrest.query.Columns
 import io.github.jan.supabase.postgrest.query.request.SelectRequestBuilder
+import io.github.nesfeder.supabase.offline.internal.cache.QUERY_SHAPE_RECORD_VERSION
 import io.github.nesfeder.supabase.offline.internal.cache.QueryCache
 import io.github.nesfeder.supabase.offline.internal.cache.QueryCacheLimits
 import io.github.nesfeder.supabase.offline.internal.db.QUERY_SHAPE_CACHE_KEY_PREFIX
 import io.github.nesfeder.supabase.offline.internal.db.RESERVED_TABLE_NAME
+import io.github.nesfeder.supabase.offline.internal.postgrest.queryShapeOf
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
@@ -16,10 +20,13 @@ import io.github.nesfeder.supabase.offline.testdoubles.idleCoroutineScope
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -28,7 +35,8 @@ import kotlinx.serialization.json.jsonPrimitive
  * A cached query's shape — its columns and filters, captured from its request — is kept beside its
  * payload, so the rows a query admits are known after a restart. A query cached before shapes were
  * kept, or one whose cache key two different queries share, has no known shape: its conditions are
- * unknown, and unknown admits.
+ * unknown, and unknown admits. A record this build cannot read is deleted, so the next read records
+ * the shape it knows.
  */
 class QueryShapeRecordsTest {
 
@@ -88,6 +96,29 @@ class QueryShapeRecordsTest {
     private fun row(id: String, list: String) =
         Json.parseToJsonElement("""[{"id":"$id","list_id":"$list"}]""") as JsonArray
 
+    private fun cacheKeyOf(list: String): String = "$TABLE?list_id=eq.$list"
+
+    /** The signature of the shape record of the list [list] under [RESERVED_TABLE_NAME]. */
+    private fun recordKeyOf(list: String): String =
+        "$QUERY_SHAPE_CACHE_KEY_PREFIX$TABLE\u001F${cacheKeyOf(list)}"
+
+    /** The shape record on disk of the list [list], or `null` for none. */
+    private fun recordOf(list: String): JsonObject? =
+        queryCacheDao.getRow(RESERVED_TABLE_NAME, recordKeyOf(list))?.payload?.let { payload ->
+            Json.parseToJsonElement(payload).jsonObject
+        }
+
+    /** The filter value a record's one condition holds, or `null` for a record with no shape. */
+    private fun conditionValueOf(record: JsonObject?): String? =
+        (record?.get("shape") as? JsonObject)
+            ?.getValue("conditions")
+            ?.jsonArray
+            ?.single()
+            ?.jsonObject
+            ?.getValue("value")
+            ?.jsonPrimitive
+            ?.content
+
     @Test
     fun a_cached_query_keeps_its_shape_across_a_restart() = runTest {
         // Given — two lists cached by one launch
@@ -126,15 +157,38 @@ class QueryShapeRecordsTest {
 
     @Test
     fun two_queries_sharing_a_cache_key_are_trusted_for_neither() = runTest {
-        // Given — one value holding `&` and two filters, which key the same
+        // Given — list A cached with its shape, and another query recorded under the same key
+        val client = launch()
+        client.from(TABLE).select(readStrategy = ReadStrategy.NetworkOnly, request = list("A"))
+        val other =
+            queryShapeOf(
+                Columns.ALL,
+                SelectRequestBuilder("public", PropertyConversionMethod.NONE).apply {
+                    filter { eq("list_id", "B") }
+                },
+            )
+        queryCache.queryShapes.remember(TABLE, cacheKeyOf("A"), other, persist = true)
+
+        // When
+        val shape = queryCache.queryShapes.shapeOf(TABLE, cacheKeyOf("A"))
+
+        // Then — unknown, so that key's rows are never judged by the wrong query's filters, in
+        // memory and on disk alike
+        assertNull(shape)
+        assertEquals(
+            QUERY_SHAPE_RECORD_VERSION,
+            recordOf("A")?.getValue("version")?.jsonPrimitive?.int,
+        )
+        assertNull(conditionValueOf(recordOf("A")))
+    }
+
+    @Test
+    fun a_value_holding_a_separator_keys_apart_from_the_query_it_reads_as() = runTest {
+        // Given — one value holding `&` and `=`, and the two filters it reads as
         val client = launch()
         client.from(TABLE).select(readStrategy = ReadStrategy.NetworkOnly) {
             filter { eq("list_id", "A&note=eq.x") }
         }
-        assertEquals(
-            listOf("$TABLE?list_id=eq.A&note=eq.x"),
-            queryCacheDao.rowsOf(TABLE).map { row -> row.cacheKey },
-        )
         client.from(TABLE).select(readStrategy = ReadStrategy.NetworkOnly) {
             filter {
                 eq("list_id", "A")
@@ -142,11 +196,70 @@ class QueryShapeRecordsTest {
             }
         }
 
-        // When
-        val shape = queryCache.queryShapes.shapeOf(TABLE, "$TABLE?list_id=eq.A&note=eq.x")
+        // Then — two cached lists, each with the shape of its own query
+        val keys = queryCacheDao.rowsOf(TABLE).map { row -> row.cacheKey }.sorted()
+        assertEquals(2, keys.size, "$keys")
+        assertEquals("$TABLE?list_id=eq.A&note=eq.x", keys[0])
+        assertTrue(keys[1].startsWith("$TABLE?list_id=eq.A&note=eq.x|digest="), keys[1])
+        assertEquals(
+            listOf("A", "A&note=eq.x"),
+            keys.map { key ->
+                queryCache.queryShapes.shapeOf(TABLE, key)?.conditions?.first()?.value
+            },
+        )
+    }
 
-        // Then — unknown, so that key's rows are never judged by the wrong query's filters
-        assertEquals(null, shape)
+    @Test
+    fun a_record_of_another_version_is_replaced_by_the_shape_the_next_read_records() = runTest {
+        // Given — lists A and B cached, A's record written by a build with another record format,
+        // B's unreadable
+        queryCacheDao.seedPayload(TABLE, cacheKeyOf("A"), """[{"id":"A1","list_id":"A"}]""", 1)
+        queryCacheDao.seedPayload(TABLE, cacheKeyOf("B"), """[{"id":"B1","list_id":"B"}]""", 1)
+        queryCacheDao.seedPayload(
+            RESERVED_TABLE_NAME,
+            recordKeyOf("A"),
+            """{"version":${QUERY_SHAPE_RECORD_VERSION + 1},"shape":{"select":"*","conditions":[],"hasOtherFilters":false}}""",
+        )
+        queryCacheDao.seedPayload(RESERVED_TABLE_NAME, recordKeyOf("B"), "not a record")
+        val client = launch()
+
+        // When — each list is read with its shape, then a row of list C is written
+        client.from(TABLE).select(readStrategy = ReadStrategy.CacheOnly(), request = list("A"))
+        client.from(TABLE).select(readStrategy = ReadStrategy.CacheOnly(), request = list("B"))
+        client.from(TABLE).insert(row("C1", "C"))
+
+        // Then — the shapes the reads recorded kept the row out of both lists, and each record on
+        // disk is this build's; a record read as a shared key's would have admitted it for good
+        assertEquals(listOf("A1"), cachedIds("A"))
+        assertEquals(listOf("B1"), cachedIds("B"))
+        listOf("A", "B").forEach { list ->
+            val record = recordOf(list)
+            assertEquals(
+                QUERY_SHAPE_RECORD_VERSION,
+                record?.getValue("version")?.jsonPrimitive?.int,
+            )
+            assertEquals(list, conditionValueOf(record))
+        }
+    }
+
+    @Test
+    fun an_unreadable_record_is_deleted_when_the_tables_records_are_read() = runTest {
+        // Given — list A cached with a record this build cannot read
+        queryCacheDao.seedPayload(TABLE, cacheKeyOf("A"), """[{"id":"A1","list_id":"A"}]""", 1)
+        queryCacheDao.seedPayload(RESERVED_TABLE_NAME, recordKeyOf("A"), "not a record")
+        val client = launch()
+
+        // When — a write is patched into the table before list A is read, and another after
+        client.from(TABLE).insert(row("B2", "B"))
+        val recordAfterPatch = recordOf("A")
+        client.from(TABLE).select(readStrategy = ReadStrategy.CacheOnly(), request = list("A"))
+        client.from(TABLE).insert(row("B3", "B"))
+
+        // Then — the patch deleted the record and, the shape unknown, admitted the first row, as
+        // for a query cached without one; the read recorded the shape, which kept out the second
+        assertNull(recordAfterPatch)
+        assertEquals(listOf("A1", "B2"), cachedIds("A"))
+        assertEquals("A", conditionValueOf(recordOf("A")))
     }
 
     @Test

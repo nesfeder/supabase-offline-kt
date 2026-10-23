@@ -10,7 +10,9 @@ import io.github.jan.supabase.postgrest.query.Columns
 import io.github.jan.supabase.postgrest.query.request.SelectRequestBuilder
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNotEquals
 import kotlin.test.assertNotNull
+import kotlin.test.assertTrue
 
 /**
  * The cache-key format. [cacheKeyOf]'s output is the `cacheKey` column of every cached SELECT, so a
@@ -205,6 +207,110 @@ class CacheKeyTest {
             "assets?deleted=eq.false&limit=50&name=ilike.%pump%&offset=0",
             cacheKey,
         )
+    }
+
+    @Test
+    fun a_value_holding_the_parameter_separators_keys_apart_from_two_parameters() {
+        // Given — one value that reads as two parameters, and the two parameters
+        val oneValue =
+            cacheKeyOf(
+                table = "assets",
+                builderFactory = { SelectRequestBuilder(SCHEMA, dummyConversionMethod()) },
+                request = { filter { eq("a", "x&b=eq.y") } },
+            )
+        val twoParameters =
+            cacheKeyOf(
+                table = "assets",
+                builderFactory = { SelectRequestBuilder(SCHEMA, dummyConversionMethod()) },
+                request = {
+                    filter {
+                        eq("a", "x")
+                        eq("b", "y")
+                    }
+                },
+            )
+
+        // Then — the two parameters keep the key they always had; the value's key ends in a
+        // digest of its parts, read apart
+        assertEquals("assets?a=eq.x&b=eq.y", twoParameters)
+        assertTrue(oneValue.startsWith("assets?a=eq.x&b=eq.y|digest="), oneValue)
+        assertEquals(16, oneValue.substringAfter("|digest=").length, oneValue)
+        assertNotEquals(twoParameters, oneValue)
+    }
+
+    @Test
+    fun a_value_holding_a_range_keys_apart_from_the_range_header() {
+        // Given — one value that reads as a parameter and a range, and that parameter with a range
+        val oneValue =
+            cacheKeyOf(
+                table = "assets",
+                builderFactory = { SelectRequestBuilder(SCHEMA, dummyConversionMethod()) },
+                request = { filter { eq("a", "x|range=0-9") } },
+            )
+        val withRange =
+            cacheKeyOf(
+                table = "assets",
+                builderFactory = { SelectRequestBuilder(SCHEMA, dummyConversionMethod()) },
+                request = {
+                    filter { eq("a", "x") }
+                    headers.append("Range", "items=0-9")
+                },
+            )
+
+        // Then
+        assertEquals("assets?a=eq.x|range=0-9", withRange)
+        assertTrue(oneValue.startsWith("assets?a=eq.x|range=0-9|digest="), oneValue)
+        assertNotEquals(withRange, oneValue)
+    }
+
+    @Test
+    fun a_range_holding_a_separator_gets_a_digest_too() {
+        // Given — a raw Range header whose window holds a separator
+        val cacheKey =
+            cacheKeyOf(
+                table = "assets",
+                builderFactory = { SelectRequestBuilder(SCHEMA, dummyConversionMethod()) },
+                request = { headers.append("Range", "items=0-9|x=y") },
+            )
+
+        // Then
+        assertTrue(cacheKey.startsWith("assets|range=0-9|x=y|digest="), cacheKey)
+    }
+
+    @Test
+    fun the_digest_is_the_same_for_the_same_request_and_differs_between_requests() {
+        // Given
+        fun keyOf(value: String): String =
+            cacheKeyOf(
+                table = "assets",
+                builderFactory = { SelectRequestBuilder(SCHEMA, dummyConversionMethod()) },
+                request = { filter { eq("a", value) } },
+            )
+
+        // Then — a device finds its own key again, and another value has another one
+        assertEquals(keyOf("x&y"), keyOf("x&y"))
+        assertNotEquals(keyOf("x&y"), keyOf("x&z"))
+        assertNotEquals(keyOf("x=y"), keyOf("x|y"))
+    }
+
+    @Test
+    fun a_key_without_a_separator_in_its_parts_is_unchanged() {
+        // Given — values with the characters a key may hold apart from its separators
+        val cacheKey =
+            cacheKeyOf(
+                table = "assets",
+                builderFactory = { SelectRequestBuilder(SCHEMA, dummyConversionMethod()) },
+                request = {
+                    filter {
+                        ilike("name", "%pump#2%")
+                        eq("note", "a?b:c")
+                    }
+                    headers.append("Range", "items=0-49")
+                },
+            )
+
+        // Then — byte for byte the key this request always had
+        assertEquals("assets?name=ilike.%pump#2%&note=eq.a?b:c|range=0-49", cacheKey)
     }
 
     private companion object {

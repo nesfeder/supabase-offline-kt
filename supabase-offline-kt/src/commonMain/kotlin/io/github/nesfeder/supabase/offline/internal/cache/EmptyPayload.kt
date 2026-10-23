@@ -38,3 +38,18 @@ internal fun isEmptyJsonArrayPayload(payload: String): Boolean {
     val trimmed = payload.trim()
     return trimmed.isEmpty() || trimmed == EMPTY_JSON_ARRAY
 }
+
+/**
+ * Whether [payload] is a JSON array, as PostgREST answers a SELECT of rows: outside any surrounding
+ * whitespace its text begins with `[` and ends with `]`. The cache stores nothing else. A proxy's
+ * block page, or a self-hosted server's fallback page, answers `200` with HTML, which would replace
+ * a cached list with a body no read decodes; and a blank body is not an array either, though an
+ * empty list is what it stands for (see [isEmptyJsonArrayPayload]), so the cache stores that.
+ *
+ * @param payload a response body, or a payload read back from the cache.
+ * @return `true` when the body is a JSON array.
+ */
+internal fun isJsonArrayPayload(payload: String): Boolean {
+    val trimmed = payload.trim()
+    return trimmed.length >= 2 && trimmed.first() == '[' && trimmed.last() == ']'
+}

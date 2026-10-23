@@ -57,6 +57,9 @@ internal open class InMemoryQueryCacheDao : QueryCacheDao {
         return slot.asStateFlow().map { it }
     }
 
+    override suspend fun hasRow(table: String, cacheKey: String): Boolean =
+        rows.value.containsKey(table to cacheKey)
+
     override suspend fun allForTable(table: String): List<CachedQueryRow> =
         rows.value.values.filter { it.table == table }
 
@@ -100,6 +103,28 @@ internal open class InMemoryQueryCacheDao : QueryCacheDao {
             rows.update { current -> current + ((row.table to row.cacheKey) to row) }
         }
         observers.value.forEach { (key, slot) -> if (key.first == row.table) publish(key, slot) }
+    }
+
+    override suspend fun updatePayload(
+        table: String,
+        cacheKey: String,
+        payload: String,
+        updatedAt: Long,
+    ): Int {
+        val key = table to cacheKey
+        var changed = false
+        writeLock.withLock {
+            rows.update { current ->
+                val existing = current[key] ?: return@update current
+                changed = true
+                current + (key to existing.copy(payload = payload, updatedAt = updatedAt))
+            }
+        }
+        if (!changed) return 0
+        observers.value.forEach { (observed, slot) ->
+            if (observed.first == table) publish(observed, slot)
+        }
+        return 1
     }
 
     override suspend fun delete(table: String, cacheKey: String) {

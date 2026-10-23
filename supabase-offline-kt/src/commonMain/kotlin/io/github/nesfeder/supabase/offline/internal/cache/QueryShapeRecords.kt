@@ -30,8 +30,11 @@ internal const val QUERY_SHAPE_RECORD_VERSION: Int = 1
  * so it outlives the process, and read back when a write is patched into the table's cached
  * queries. A query cached by a build that kept no record has no shape until it is read: its
  * conditions are unknown, and unknown admits, so a patch meanwhile places any of the table's rows
- * in it. Records are loaded once per table per process and kept in memory. Its lock is always taken
- * last and held over no other.
+ * in it. A record of another format (another build's, or one that does not decode) is deleted when
+ * its table's records are first read, and the query is treated the same way, so the next read of it
+ * records the shape this build knows; left in place it would pass for the record of a shared key,
+ * which no read replaces. Records are loaded once per table per process and kept in memory. Its
+ * lock is always taken last and held over no other.
  */
 internal class QueryShapeRecords(private val queryCacheDao: QueryCacheDao, private val json: Json) {
 
@@ -48,8 +51,10 @@ internal class QueryShapeRecords(private val queryCacheDao: QueryCacheDao, priva
 
     /**
      * Records that the query cached under [cacheKey] has [shape], and writes the record when
-     * [persist] — when a payload for it is, or is about to be, in the cache. A different shape for
-     * the same key makes the key's shape unknown.
+     * [persist] and a payload for the query is in the cache: a record never outlives its payload,
+     * which eviction, holding no lock, may have taken since the caller saw it. The caller writes
+     * under the clear lock ([CacheFreshness.writeUnlessCleared]), so no clear parts the two. A
+     * different shape for the same key makes the key's shape unknown.
      */
     suspend fun remember(table: String, cacheKey: String, shape: QueryShape, persist: Boolean) {
         mutex.withLock {
@@ -58,12 +63,32 @@ internal class QueryShapeRecords(private val queryCacheDao: QueryCacheDao, priva
             val existing = perTable[cacheKey]
             val next = if (!recorded || existing == shape) shape else null
             perTable[cacheKey] = next
-            if (persist && (next != existing || !recorded || (table to cacheKey) !in written)) {
-                queryCacheDao.upsert(recordRow(table, cacheKey, next))
-                written += table to cacheKey
+            val record = table to cacheKey
+            if (!persist || (recorded && next == existing && record in written)) return
+            if (!queryCacheDao.hasRow(table, cacheKey)) {
+                // The payload is gone: whatever record is on disk goes with it, and the next
+                // payload written for the query writes its record again
+                written -= record
+                return
             }
+            queryCacheDao.upsert(recordRow(table, cacheKey, next))
+            written += record
         }
     }
+
+    /**
+     * Whether the record on disk of the query cached under [cacheKey] already holds [shape], or the
+     * marker of a shared key, so that [remember] with `persist` would write nothing. A reader asks
+     * this before taking the clear lock for the write, which most reads then skip; [remember]
+     * checks again under the lock, so a record written in between costs nothing but the lock.
+     */
+    suspend fun isRecorded(table: String, cacheKey: String, shape: QueryShape): Boolean =
+        mutex.withLock {
+            val perTable = loadedTable(table)
+            perTable.containsKey(cacheKey) &&
+                (table to cacheKey) in written &&
+                perTable[cacheKey].let { existing -> existing == null || existing == shape }
+        }
 
     /** The shape of the query cached under [cacheKey], or `null` when it is not known. */
     suspend fun shapeOf(table: String, cacheKey: String): QueryShape? = mutex.withLock {
@@ -112,7 +137,10 @@ internal class QueryShapeRecords(private val queryCacheDao: QueryCacheDao, priva
         }
     }
 
-    /** [table]'s shapes, read from the database the first time. Caller holds [mutex]. */
+    /**
+     * [table]'s shapes, read from the database the first time. A record this build cannot read is
+     * deleted and left out, so its query has no shape until it is read. Caller holds [mutex].
+     */
     private suspend fun loadedTable(table: String): MutableMap<String, QueryShape?> {
         val perTable = shapes.getOrPut(table) { mutableMapOf() }
         if (loadedTables.add(table)) {
@@ -121,7 +149,14 @@ internal class QueryShapeRecords(private val queryCacheDao: QueryCacheDao, priva
                 val cacheKey = row.cacheKey.removePrefix(prefix)
                 // A record this process wrote since is newer than the one read back
                 if (perTable.containsKey(cacheKey)) return@forEach
-                perTable[cacheKey] = decodedOrNull(row.payload)
+                val record = decodedOrNull(row.payload)
+                if (record == null) {
+                    // Not a record of this build's format: kept, it would read as a shared key's,
+                    // which admits every row and which no read ever writes over
+                    queryCacheDao.delete(RESERVED_TABLE_NAME, row.cacheKey)
+                    return@forEach
+                }
+                perTable[cacheKey] = record.shape
                 written += table to cacheKey
             }
         }
@@ -129,14 +164,14 @@ internal class QueryShapeRecords(private val queryCacheDao: QueryCacheDao, priva
     }
 
     /**
-     * A record's shape, or `null` for one that does not decode, which is then as good as unknown.
+     * [payload] as a record of this build's format, or `null` when it does not decode or carries
+     * another [QueryShapeRecord.version].
      */
-    private fun decodedOrNull(payload: String): QueryShape? =
+    private fun decodedOrNull(payload: String): QueryShapeRecord? =
         try {
-            json
-                .decodeFromString(QueryShapeRecord.serializer(), payload)
-                .takeIf { record -> record.version == QUERY_SHAPE_RECORD_VERSION }
-                ?.shape
+            json.decodeFromString(QueryShapeRecord.serializer(), payload).takeIf { record ->
+                record.version == QUERY_SHAPE_RECORD_VERSION
+            }
         } catch (_: SerializationException) {
             null
         } catch (_: IllegalArgumentException) {

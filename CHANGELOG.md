@@ -48,6 +48,23 @@ All notable changes to this project are recorded in this file. The format follow
   waits for a session that is restoring, or whose refresh failed, before it is sent. It went out
   at once on the anon key, where a detail screen's `single()` failed with `PGRST116` and a `count`
   read 0 at cold start.
+- A cached list whose shape record the library could not read (one another build wrote, or one
+  that did not decode) admitted every row of its table into the list, for good; the record is now
+  replaced by the one the next read records.
+- A write patched into a table while the cache was being trimmed could bring back a list the
+  trimming had just removed; a patch now changes only the lists still there. A read of the cache
+  that overlapped `clearLocalData()` could leave a record of its query's filter values behind; such
+  a record is now written only beside the rows it describes, and never after a clear.
+- A `2xx` answer that was not a list of rows (a captive portal's sign-in page, a proxy's block page,
+  a self-hosted server's fallback page) replaced the cached list, and every offline read of the
+  query then failed to decode it. Such an answer is no longer written: a `NetworkFirst` or
+  `CacheFirst` read with the query cached within its `maxAge` is served the cached rows, and a
+  reactive read's refresh asks again, `Stalled` by that cause after its fast retries. A blank
+  answer is an empty list, served and stored as `[]`.
+- Two different queries could share one cache key when a filter value held `&`, `=` or `|`, and be
+  served each other's rows offline. Such a query's key now ends in a digest of its parts; every
+  other key is unchanged. Such a query's rows cached before the upgrade are not found; it is fetched
+  again once, and the old rows stay until evicted.
 
 ## [0.2.0] - 2026-10-20
 

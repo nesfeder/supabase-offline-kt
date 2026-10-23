@@ -78,4 +78,6 @@ that changes at least once per round trip, that takes as long as the changes kee
 read asks once more and then serves the cache, or the server's rows uncached when nothing is cached.
 One that left before `clearLocalData()` is refused and not asked again, since it may carry the
 cleared session's token; one that left before the cache passed to a new owner is not written, and
-the refresh asks again.
+the refresh asks again. An answer that is not a list of rows (a sign-in page or a block page at
+`200`) is not written either, and counts as a failed attempt: the refresh asks again on its schedule,
+and reads `Stalled` by that cause after the fourth in a row.
