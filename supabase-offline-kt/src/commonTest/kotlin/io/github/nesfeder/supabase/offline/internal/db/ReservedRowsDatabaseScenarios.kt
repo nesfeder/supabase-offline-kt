@@ -79,19 +79,30 @@ internal class ReservedRowsDatabaseScenarios(
             database.writeReservedRows()
             val queryCacheDao = database.queryCacheDao()
 
-            // When
+            // When — the size is summed, the lengths listed as a pass reads them, and every listed
+            // row deleted as a pass deletes what it chose
             val size = queryCacheDao.totalPayloadBytes()
-            val evicted =
-                queryCacheDao.deleteOldestPayloadRows(limit = 10, keptCacheKeys = emptyList())
+            val lengths = queryCacheDao.payloadLengthsOldestFirst()
+            var evicted = 0
+            queryCacheDao.runInTransaction {
+                lengths
+                    .groupBy { row -> row.table }
+                    .forEach { (table, rows) ->
+                        evicted += queryCacheDao.deletePayloads(table, rows.map { it.cacheKey })
+                    }
+            }
 
-            // Then — only the cache rows counted and only they were evicted
+            // Then — only the cache rows counted, listed oldest fetch first, and only they went
+            val cached =
+                ShippedDatabaseFixture.CACHED_QUERY_ROWS.sortedBy { fetchedAtOf(it.updatedAt) }
+            assertEquals(cached.sumOf { row -> row.payload.length.toLong() }, size)
             assertEquals(
-                ShippedDatabaseFixture.CACHED_QUERY_ROWS.sumOf { row ->
-                    row.payload.length.toLong()
+                cached.map { row ->
+                    PayloadLength(row.table, row.cacheKey, row.payload.length.toLong())
                 },
-                size,
+                lengths,
             )
-            assertEquals(ShippedDatabaseFixture.CACHED_QUERY_ROWS.size, evicted)
+            assertEquals(cached.size, evicted)
             assertEquals(1L, RawDatabaseQueries.reservedRowCount(path))
         } finally {
             database.close()
@@ -175,7 +186,8 @@ internal class ReservedRowsDatabaseScenarios(
     }
 
     /**
-     * Room's eviction query passes over the signatures it is told to keep, however old they are.
+     * Room's eviction delete reaches the signatures it is given and no other, so the rows a pass
+     * keeps for live readers, by not naming them, stay however old they are.
      */
     suspend fun roomEvictionKeepsTheListedCacheKeys(path: String) {
         // Given — the shipped database's cache rows
@@ -185,12 +197,20 @@ internal class ReservedRowsDatabaseScenarios(
             val queryCacheDao = database.queryCacheDao()
             val kept = ShippedDatabaseFixture.CACHED_QUERY_ROWS.first()
 
-            // When — every row is evicted but one a live reader shows
-            val evicted =
-                queryCacheDao.deleteOldestPayloadRows(
-                    limit = 100,
-                    keptCacheKeys = listOf(kept.cacheKey),
-                )
+            // When — every row but one a live reader shows is deleted, as a pass that passed over
+            // it deletes the rest
+            val chosen =
+                ShippedDatabaseFixture.CACHED_QUERY_ROWS.filter { row ->
+                    row.cacheKey != kept.cacheKey
+                }
+            var evicted = 0
+            queryCacheDao.runInTransaction {
+                chosen
+                    .groupBy { row -> row.table }
+                    .forEach { (table, rows) ->
+                        evicted += queryCacheDao.deletePayloads(table, rows.map { it.cacheKey })
+                    }
+            }
 
             // Then
             assertEquals(ShippedDatabaseFixture.CACHED_QUERY_ROWS.size - 1, evicted)

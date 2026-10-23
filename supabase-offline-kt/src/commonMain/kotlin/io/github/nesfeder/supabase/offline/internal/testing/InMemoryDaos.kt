@@ -7,6 +7,7 @@ import io.github.nesfeder.supabase.offline.internal.db.CachedFileRow
 import io.github.nesfeder.supabase.offline.internal.db.CachedQueryRow
 import io.github.nesfeder.supabase.offline.internal.db.MutationDao
 import io.github.nesfeder.supabase.offline.internal.db.MutationRow
+import io.github.nesfeder.supabase.offline.internal.db.PayloadLength
 import io.github.nesfeder.supabase.offline.internal.db.QUERY_SHAPE_CACHE_KEY_PREFIX
 import io.github.nesfeder.supabase.offline.internal.db.QueryCacheDao
 import io.github.nesfeder.supabase.offline.internal.db.RESERVED_TABLE_NAME
@@ -148,14 +149,33 @@ internal open class InMemoryQueryCacheDao : QueryCacheDao {
             .filter { it.table != RESERVED_TABLE_NAME }
             .sumOf { it.payload.length.toLong() }
 
-    override suspend fun deleteOldestPayloadRows(limit: Int, keptCacheKeys: List<String>): Int {
-        if (limit <= 0) return 0
-        return removeChosen { current ->
-            current.values
-                .filter { it.table != RESERVED_TABLE_NAME && it.cacheKey !in keptCacheKeys }
-                .sortedBy { fetchedAtOf(it.updatedAt) }
-                .take(limit)
-                .mapTo(mutableSetOf()) { it.table to it.cacheKey }
+    override suspend fun payloadLengthsOldestFirst(): List<PayloadLength> =
+        rows.value.values
+            .filter { it.table != RESERVED_TABLE_NAME }
+            .sortedBy { fetchedAtOf(it.updatedAt) }
+            .map { PayloadLength(it.table, it.cacheKey, it.payload.length.toLong()) }
+
+    override suspend fun deletePayloads(table: String, cacheKeys: List<String>): Int {
+        val chosen = cacheKeys.mapTo(mutableSetOf()) { cacheKey -> table to cacheKey }
+        return removeChosen { current -> current.keys.filterTo(mutableSetOf()) { it in chosen } }
+    }
+
+    /**
+     * Runs [block], and puts the rows back as they were when it fails, as a rolled-back transaction
+     * leaves them; the observers of the rows it had changed hear of it.
+     */
+    override suspend fun runInTransaction(block: suspend () -> Unit) {
+        val before = rows.value
+        try {
+            block()
+        } catch (failure: Throwable) {
+            val undone = writeLock.withLock {
+                val written = rows.value
+                rows.value = before
+                (written.keys + before.keys).filter { key -> written[key] != before[key] }
+            }
+            undone.forEach { key -> observers.value[key]?.let { slot -> publish(key, slot) } }
+            throw failure
         }
     }
 

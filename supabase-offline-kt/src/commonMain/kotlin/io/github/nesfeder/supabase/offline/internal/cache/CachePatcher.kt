@@ -32,8 +32,9 @@ import kotlinx.serialization.json.jsonPrimitive
  * Patches an online write into the cached queries of its table: the rows the server accepted or
  * returned are laid into every query that admits them, a live query with no payload gets one, and a
  * query the patch may leave wrong is marked stale and fetched again. Holds no lock of its own: it
- * writes under the table's write lock, each payload under the clear lock, and over the row it read,
- * so a list eviction deleted meanwhile (eviction holds no table lock) stays deleted.
+ * writes under the table's write lock, every payload of one patch in one transaction under the
+ * clear lock, and over the row it read, so a list eviction deleted meanwhile (eviction holds no
+ * table lock) stays deleted.
  *
  * @param liveCacheKeysOf a table's queries with a live reader, which a patch may give a payload.
  * @param onQueriesMarkedStale told of the queries a write marked stale, so their live readers fetch
@@ -202,9 +203,10 @@ internal class CachePatcher(
      * [patchReturnedRows] one per returned row, [patchServerChanges] one per change the server
      * reported. Overlays [writes], in order, on every cached query of [table], creates the payloads
      * live queries without one now admit, and marks stale a query it may leave wrong
-     * ([patchMayLeaveWrong]). A cache not the current identity's is left alone, and so is one a
-     * patch no longer [applies] to, asked under the table's lock before anything is written: a
-     * server change from a channel left for another user does not.
+     * ([patchMayLeaveWrong]); every payload it changes or creates is written in one transaction. A
+     * cache not the current identity's is left alone, and so is one a patch no longer [applies] to,
+     * asked under the table's lock before anything is written: a server change from a channel left
+     * for another user does not.
      */
     private suspend fun patchWithWrites(
         table: String,
@@ -240,6 +242,7 @@ internal class CachePatcher(
                     }
             // Indexed only for a query that may draw on the rows other queries hold
             val known = lazy { KnownRows(parsed, shapes, keyColumns, mayMatter) }
+            val patches = mutableListOf<PayloadPatch>()
             for ((row, payload) in parsed) {
                 val rows = payload.rows ?: continue
                 val shape = shapes[row.cacheKey]
@@ -261,25 +264,24 @@ internal class CachePatcher(
                 // The payload stays as old as what the server last said: a local write is not fresh
                 // data, and one it may leave wrong is stale
                 val stamp = if (wrong) staleStampOf(row.updatedAt) else row.updatedAt
-                val next = row.copy(payload = overlay.encode(patched.visible), updatedAt = stamp)
-                when (patchUnlessCleared(guardTick, next)) {
-                    PatchWrite.CLEARED -> return@withLock
-                    // Evicted since the snapshot: a patch never brings a deleted list back
-                    PatchWrite.GONE -> continue
-                    PatchWrite.CHANGED -> if (wrong) toFetchAgain += row.cacheKey
-                }
+                val text = overlay.encode(patched.visible)
+                patches +=
+                    PayloadPatch(
+                        row = row.copy(payload = text, updatedAt = stamp),
+                        replacedLength = row.payload.length,
+                        // What the next patch reads, kept as parsed here so it parses nothing
+                        parsed = ParsedPayload(text, patched.visible),
+                        wrong = wrong,
+                    )
             }
-            toFetchAgain +=
-                createLivePayloads(
-                    table,
-                    uncachedLive,
-                    shapes,
-                    writes,
-                    known,
-                    guardTick,
-                    batch,
-                    keyed,
-                )
+            val created = livePayloadsFor(table, uncachedLive, shapes, writes, known, batch, keyed)
+            toFetchAgain += created.toFetchAgain
+            val changed = writePatches(guardTick, patches, created.payloads) ?: return@withLock
+            for ((patch, landed) in patches.zip(changed)) {
+                // A row not changed was evicted since the snapshot: a patch never brings a deleted
+                // list back, and its reader has nothing to fetch again for
+                if (landed && patch.wrong) toFetchAgain += patch.row.cacheKey
+            }
         }
         if (toFetchAgain.isNotEmpty()) onQueriesMarkedStale(table, toFetchAgain)
     }
@@ -306,27 +308,26 @@ internal class CachePatcher(
         conflictColumnsOf(mutation, primaryKeys)
 
     /**
-     * Writes a payload for each of [cacheKeys], queries a live reader observes that have none, of
-     * the rows [writes] wrote that the query admits. Nothing is written for a query that would stay
-     * empty, and nothing once the cache was cleared or dropped since [guardTick]. A query the rows
-     * known here may not show right gets no payload; it is returned, to be fetched again.
+     * A payload for each of [cacheKeys], queries a live reader observes that have none, of the rows
+     * [writes] wrote that the query admits; see [LivePayloads]. None for a query that would stay
+     * empty. A query the rows known here may not show right gets no payload; it is to be fetched
+     * again.
      *
      * @param shapes the table's known query shapes, by cache key.
      * @param known the rows the table's other queries hold, indexed on first use.
      * @param batch the writes' bodies and filters, read once.
      * @param keyed see [patchMayLeaveWrong].
-     * @return the queries to fetch again.
      */
-    private suspend fun createLivePayloads(
+    private fun livePayloadsFor(
         table: String,
         cacheKeys: Set<String>,
         shapes: Map<String, QueryShape?>,
         writes: List<MutationRow>,
         known: Lazy<KnownRows>,
-        guardTick: Long,
         batch: PatchWrites,
         keyed: KeyedUpdates?,
-    ): Set<String> {
+    ): LivePayloads {
+        val payloads = mutableListOf<CreatedPayload>()
         val toFetchAgain = mutableSetOf<String>()
         for (cacheKey in cacheKeys) {
             // A live query's shape is known while it is read; unknown conditions admit
@@ -345,7 +346,7 @@ internal class CachePatcher(
                     .filter(admission::admits)
             if (created.isEmpty()) continue
             // Local rows alone are not the query's answer: stale, so a read asks the server when it
-            // can
+            // can. A created payload is not a network response: it holds no synced mutation
             val row =
                 CachedQueryRow(
                     table = table,
@@ -353,17 +354,9 @@ internal class CachePatcher(
                     payload = overlay.encode(created),
                     updatedAt = staleStampOf(nowMillis()),
                 )
-            // A created payload is not a network response: it holds no synced mutation. Its shape
-            // record is written with it, under the one guard, so no clear parts the two
-            val written =
-                freshness.writeUnlessCleared(guardTick) {
-                    queryCacheDao.upsert(row)
-                    if (shape != null)
-                        queryCache.queryShapes.remember(table, cacheKey, shape, persist = true)
-                }
-            if (!written) return toFetchAgain
+            payloads += CreatedPayload(row, shape)
         }
-        return toFetchAgain
+        return LivePayloads(payloads, toFetchAgain)
     }
 
     /**
@@ -387,7 +380,9 @@ internal class CachePatcher(
      * Marks stale the cached queries of [table] an UPDATE or DELETE the cache cannot patch may have
      * reached, and has their live readers fetch again: a query holding a row [narrowing] does not
      * exclude, and, for an UPDATE, one whose filter may admit a row the write changes. With no
-     * [narrowing], every query of the table. The payloads stay, so an offline read still has them.
+     * [narrowing], every query of the table. The payloads stay, so an offline read still has them;
+     * their rows are read as [QueryCache.parsedPayloadOf] keeps them, and the stale stamps are
+     * written in one transaction.
      *
      * @param narrowing conditions the write's filter includes, all of which a row it reaches meets.
      * @param startedAtTick [CacheFreshness.tickNow] as read when the write started; nothing is
@@ -410,10 +405,11 @@ internal class CachePatcher(
             freshness.advanceLocalWriteWatermark(table)
             val shapes = queryCache.queryShapes.shapesOf(table)
             val cached = queryCacheDao.allForTable(table)
+            val toMark = mutableListOf<PayloadPatch>()
             for (row in cached) {
                 val reached =
                     narrowing == null ||
-                        payloadRowsOf(json, row.payload).orEmpty().any { element ->
+                        queryCache.parsedPayloadOf(row).rows.orEmpty().any { element ->
                             element !is JsonObject ||
                                 rowMatch(element, narrowing) != RowMatch.EXCLUDED
                         } ||
@@ -421,9 +417,16 @@ internal class CachePatcher(
                 if (!reached) continue
                 toFetchAgain += row.cacheKey
                 if (isStaleStamp(row.updatedAt)) continue
-                val next = row.copy(updatedAt = staleStampOf(row.updatedAt))
-                if (patchUnlessCleared(startedAtTick, next) == PatchWrite.CLEARED) return@withLock
+                toMark +=
+                    PayloadPatch(
+                        row = row.copy(updatedAt = staleStampOf(row.updatedAt)),
+                        replacedLength = row.payload.length,
+                        // The text is as it was, so what is kept parsed for it stays right
+                        parsed = null,
+                        wrong = true,
+                    )
             }
+            if (writePatches(startedAtTick, toMark) == null) return@withLock
             // A live query with nothing cached may gain the rows an UPDATE changes
             if (patch != null) {
                 toFetchAgain +=
@@ -433,35 +436,86 @@ internal class CachePatcher(
         if (toFetchAgain.isNotEmpty()) onQueriesMarkedStale(table, toFetchAgain)
     }
 
-    /** What became of a patch's write of a cached payload; see [patchUnlessCleared]. */
-    private enum class PatchWrite {
-        /** The cached row was changed. */
-        CHANGED,
+    /**
+     * A payload a patch writes over the row it read.
+     *
+     * @property row the row as it is written: the payload and stamp over the key it was read under.
+     * @property replacedLength the length of the payload the row held when it was read.
+     * @property parsed the written payload as its rows, to keep parsed once it lands; `null` when
+     *   the text is as it was.
+     * @property wrong whether the patch may leave the query wrong, so its live reader fetches again
+     *   once the stale stamp lands.
+     */
+    private class PayloadPatch(
+        val row: CachedQueryRow,
+        val replacedLength: Int,
+        val parsed: ParsedPayload?,
+        val wrong: Boolean,
+    )
 
-        /** No row to change: eviction took the list between the patch's read and its write. */
-        GONE,
-
-        /** A clear or drop since the guard tick voided the write, and the patch with it. */
-        CLEARED,
-    }
+    /** A payload a patch writes for a live query that had none, with the shape recorded for it. */
+    private class CreatedPayload(val row: CachedQueryRow, val shape: QueryShape?)
 
     /**
-     * Writes [row]'s payload and stamp over the row cached for its query, unless the cache was
-     * cleared or dropped since [guardTick], or the row is gone: a patch changes the lists the cache
-     * holds and never brings back one eviction deleted, which holds no table lock.
+     * What [livePayloadsFor] makes of the live queries without a payload.
+     *
+     * @property payloads the payloads to write.
+     * @property toFetchAgain the queries that get none, because the rows known may not show them
+     *   right.
      */
-    private suspend fun patchUnlessCleared(guardTick: Long, row: CachedQueryRow): PatchWrite {
-        var changed = 0
+    private class LivePayloads(val payloads: List<CreatedPayload>, val toFetchAgain: Set<String>)
+
+    /**
+     * Writes [patches] over the rows cached for their queries, and [created] as new rows, in one
+     * transaction under the clear lock: all of them land, or none, and none once the cache was
+     * cleared or dropped since [guardTick]. A patch whose row is gone changes nothing: eviction,
+     * which holds no table lock, took the list between the patch's read and its write, and a patch
+     * never brings a deleted list back. Each created payload's shape record is written after the
+     * transaction commits, under the same hold of the clear lock, so no clear parts the two:
+     * [QueryShapeRecords.remember] writes a record only beside a payload, and takes its own lock,
+     * which no transaction may wait on.
+     *
+     * @return whether each of [patches] changed its row, in their order, or `null` when a clear
+     *   voided the write.
+     */
+    private suspend fun writePatches(
+        guardTick: Long,
+        patches: List<PayloadPatch>,
+        created: List<CreatedPayload> = emptyList(),
+    ): List<Boolean>? {
+        if (patches.isEmpty() && created.isEmpty()) return emptyList()
+        val changed = BooleanArray(patches.size)
         val written =
             freshness.writeUnlessCleared(guardTick) {
-                changed =
-                    queryCacheDao.updatePayload(row.table, row.cacheKey, row.payload, row.updatedAt)
+                queryCacheDao.runInTransaction {
+                    patches.forEachIndexed { index, patch ->
+                        val row = patch.row
+                        changed[index] =
+                            queryCacheDao.updatePayload(
+                                row.table,
+                                row.cacheKey,
+                                row.payload,
+                                row.updatedAt,
+                            ) > 0
+                    }
+                    created.forEach { payload -> queryCacheDao.upsert(payload.row) }
+                }
+                created.forEach { payload ->
+                    val shape = payload.shape ?: return@forEach
+                    val row = payload.row
+                    queryCache.queryShapes.remember(row.table, row.cacheKey, shape, persist = true)
+                }
             }
-        return when {
-            !written -> PatchWrite.CLEARED
-            changed == 0 -> PatchWrite.GONE
-            else -> PatchWrite.CHANGED
+        if (!written) return null
+        var bytes = created.sumOf { payload -> payload.row.payload.length.toLong() }
+        for ((patch, landed) in patches.zip(changed.asList())) {
+            if (!landed) continue
+            val row = patch.row
+            bytes += row.payload.length - patch.replacedLength
+            patch.parsed?.let { parsed -> queryCache.keepParsed(row.table, row.cacheKey, parsed) }
         }
+        queryCache.payloadBytesWritten(bytes)
+        return changed.asList()
     }
 }
 

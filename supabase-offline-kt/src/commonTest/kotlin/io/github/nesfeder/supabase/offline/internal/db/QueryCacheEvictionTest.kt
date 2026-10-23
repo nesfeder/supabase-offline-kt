@@ -1,11 +1,13 @@
 // Copyright (c) 2026 nesfeder
 // SPDX-License-Identifier: MIT
-@file:OptIn(ExperimentalTime::class)
+@file:OptIn(ExperimentalTime::class, ExperimentalCoroutinesApi::class)
 
 package io.github.nesfeder.supabase.offline.internal.db
 
+import io.github.nesfeder.supabase.offline.internal.cache.QueryCache
 import io.github.nesfeder.supabase.offline.internal.cache.QueryCacheLimits
 import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
+import io.github.nesfeder.supabase.offline.testdoubles.PayloadScanCountingDao
 import io.github.nesfeder.supabase.offline.testdoubles.TestStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
 import kotlin.test.Test
@@ -14,40 +16,38 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.ExperimentalTime
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 
 /**
- * Tests for [QueryCache]'s size-based eviction — the loop that keeps the object cache within
+ * Tests for [QueryCache]'s size-based eviction — the pass that keeps the object cache within
  * [QueryCacheLimits.maxPayloadBytes].
  *
- * The core guarantee is termination: eviction is driven by the cache's **logical** size (summed
- * payload length) rather than the on-disk file size, which never shrinks after `DELETE` and
- * previously made the loop spin forever holding the eviction mutex once the cache first crossed its
- * limit. These tests lock in that termination (progress guard and hard iteration cap), the
- * oldest-first eviction order, the unlimited-cache short-circuit, the small-cache hysteresis
- * handling, and deadlock-free concurrent writes.
+ * Eviction is driven by the cache's **logical** size (summed payload length) rather than the
+ * on-disk file size, which never shrinks after `DELETE`. A pass reads every payload's length once,
+ * oldest fetch first, chooses what to delete and deletes it in one transaction, so it ends by
+ * construction; it reads again only while writes during the pass keep the count over the bound, and
+ * a bounded number of times. These tests lock in the oldest-first order, the unlimited-cache
+ * short-circuit, the small-cache hysteresis handling, that a write of any size starts a pass once
+ * the cache is past its bound, that every live reader's payload is kept, and deadlock-free
+ * concurrent writes. The pass a written response starts runs in the test's background scope, so a
+ * test that writes runs what is due (`runCurrent`) to see it.
  */
 class QueryCacheEvictionTest {
+
+    private val queryCacheDao = FakeQueryCacheDao()
+
+    /** The DAO as the store sees it, counting what a pass reads and deletes. */
+    private val counting = PayloadScanCountingDao(queryCacheDao)
 
     @Test
     fun eviction_removes_oldest_rows_until_within_limit_keeping_newest() = runTest {
         // Given a cache over its logical-size limit, with rows of known age and equal size
-        val queryCacheDao = FakeQueryCacheDao()
-        repeat(5) { index ->
-            queryCacheDao.seedPayload(
-                table = "ratings",
-                cacheKey = "sig-$index",
-                payload = "x".repeat(100),
-                updatedAt = index.toLong(), // 0 = oldest ... 4 = newest
-            )
-        }
-        val store =
-            buildStore(
-                queryCacheDao = queryCacheDao,
-                maxPayloadBytes = 250L,
-                evictionBatchSize = 1,
-            )
+        seedRows(5, length = 100) // 0 = oldest ... 4 = newest
+        val store = buildStore(maxPayloadBytes = 250L)
 
         // When enforcement runs
         store.queryCache.evictOverBudget()
@@ -63,90 +63,42 @@ class QueryCacheEvictionTest {
     }
 
     @Test
-    fun eviction_terminates_when_measured_size_stays_over_limit_but_table_is_empty() = runTest {
-        // Given an empty cache whose measured size is pinned above the limit — the exact
-        // pathological condition that made file-size-based eviction spin forever.
-        val queryCacheDao = FakeQueryCacheDao()
-        queryCacheDao.fixedTotalPayloadBytes = 10_000L
-        val store =
-            buildStore(
-                queryCacheDao = queryCacheDao,
-                maxPayloadBytes = 1_000L,
-                evictionBatchSize = 10,
-            )
+    fun eviction_over_an_empty_cache_reads_it_once_and_deletes_nothing() = runTest {
+        // Given an empty cache with a bound
+        val store = buildStore(maxPayloadBytes = 1_000L)
 
-        // When enforcement runs it must return rather than spin
+        // When enforcement runs
         store.queryCache.evictOverBudget()
 
-        // Then the progress guard stopped it after the first zero-row delete batch
-        assertEquals(1, queryCacheDao.deleteCallCount, "should stop after one empty delete batch")
+        // Then it read the lengths once, found nothing over the bound, and ran no delete
+        assertEquals(1, counting.payloadLengthReads)
+        assertEquals(0, counting.evictionDeletes)
+        assertEquals(0, counting.transactions)
         assertEquals(0, queryCacheDao.evictedRows)
     }
 
     @Test
-    fun eviction_stops_at_iteration_cap_when_deletes_never_reduce_measured_size() = runTest {
-        // Given a degenerate store where every delete claims progress but the measured size stays
-        // pinned above the limit forever, so only the hard iteration cap can stop the loop.
-        val queryCacheDao = FakeQueryCacheDao()
-        queryCacheDao.fixedTotalPayloadBytes = 10_000L
-        queryCacheDao.forcedDeleteCount = 5
-        val store =
-            buildStore(
-                queryCacheDao = queryCacheDao,
-                maxPayloadBytes = 1_000L,
-                evictionBatchSize = 5,
-            )
-
-        // When enforcement runs it must still terminate
-        store.queryCache.evictOverBudget()
-
-        // Then the loop was bounded by the hard iteration cap (belt-and-braces backstop)
-        assertEquals(
-            1_000,
-            queryCacheDao.deleteCallCount,
-            "loop must be bounded by the iteration cap",
-        )
-    }
-
-    @Test
     fun eviction_does_nothing_when_the_cache_is_exactly_at_its_limit() = runTest {
-        // Given a cache whose measured size equals the limit
-        val queryCacheDao = FakeQueryCacheDao()
-        queryCacheDao.fixedTotalPayloadBytes = 1_000L
-        val store =
-            buildStore(
-                queryCacheDao = queryCacheDao,
-                maxPayloadBytes = 1_000L,
-                evictionBatchSize = 5,
-            )
+        // Given a cache whose summed length equals the limit
+        seedRows(10, length = 100)
+        val store = buildStore(maxPayloadBytes = 1_000L)
 
         // When enforcement runs
         store.queryCache.evictOverBudget()
 
         // Then nothing is deleted: eviction starts only above the limit
-        assertEquals(0, queryCacheDao.deleteCallCount)
+        assertEquals(1, counting.payloadLengthReads)
+        assertEquals(0, counting.evictionDeletes)
+        assertEquals(10, queryCacheDao.rowsOf("ratings").size)
     }
 
     @Test
     fun eviction_not_blocked_when_min_retained_exceeds_small_limit() = runTest {
         // Given a small cache limit and a default-scale evictionHeadroomBytes far larger than it
-        val queryCacheDao = FakeQueryCacheDao()
-        repeat(4) { index ->
-            queryCacheDao.seedPayload(
-                table = "ratings",
-                cacheKey = "sig-$index",
-                payload = "x".repeat(4_096),
-                updatedAt = index.toLong(),
-            )
-        }
+        seedRows(4, length = 4_096)
         // 4 * 4096 = 16_384 bytes of payload; limit 8 KiB; minRetained 50 MB >> limit
         val store =
-            buildStore(
-                queryCacheDao = queryCacheDao,
-                maxPayloadBytes = 8_192L,
-                evictionBatchSize = 1,
-                evictionHeadroomBytes = 50L * 1024L * 1024L,
-            )
+            buildStore(maxPayloadBytes = 8_192L, evictionHeadroomBytes = 50L * 1024L * 1024L)
 
         // When enforcement runs
         store.queryCache.evictOverBudget()
@@ -166,23 +118,9 @@ class QueryCacheEvictionTest {
     @Test
     fun eviction_drains_below_the_ceiling_to_the_hysteresis_floor() = runTest {
         // Given a cache over its limit with a headroom configured well below the limit
-        val queryCacheDao = FakeQueryCacheDao()
-        repeat(10) { index ->
-            queryCacheDao.seedPayload(
-                table = "ratings",
-                cacheKey = "sig-$index",
-                payload = "x".repeat(100),
-                updatedAt = index.toLong(), // 0 = oldest ... 9 = newest
-            )
-        }
+        seedRows(10, length = 100) // 0 = oldest ... 9 = newest
         // 10 * 100 = 1_000 bytes cached; ceiling 700; headroom 300 -> drain down to 400.
-        val store =
-            buildStore(
-                queryCacheDao = queryCacheDao,
-                maxPayloadBytes = 700L,
-                evictionBatchSize = 1,
-                evictionHeadroomBytes = 300L,
-            )
+        val store = buildStore(maxPayloadBytes = 700L, evictionHeadroomBytes = 300L)
 
         // When enforcement runs after the cache crosses the ceiling
         store.queryCache.evictOverBudget()
@@ -209,27 +147,14 @@ class QueryCacheEvictionTest {
     @Test
     fun unlimited_cache_never_evicts() = runTest {
         // Given a store whose cache size is unlimited
-        val queryCacheDao = FakeQueryCacheDao()
-        repeat(3) { index ->
-            queryCacheDao.seedPayload(
-                table = "ratings",
-                cacheKey = "sig-$index",
-                payload = "x".repeat(1_000),
-                updatedAt = index.toLong(),
-            )
-        }
-        val store =
-            buildStore(
-                queryCacheDao = queryCacheDao,
-                maxPayloadBytes = null,
-                evictionBatchSize = 10,
-            )
+        seedRows(3, length = 1_000)
+        val store = buildStore(maxPayloadBytes = null)
 
         // When enforcement runs
         store.queryCache.evictOverBudget()
 
-        // Then nothing is measured or evicted
-        assertEquals(0, queryCacheDao.deleteCallCount)
+        // Then nothing is read or evicted
+        assertEquals(0, counting.payloadLengthReads)
         assertEquals(0, queryCacheDao.evictedRows)
         assertNotNull(queryCacheDao.getRow("ratings", "sig-0"))
     }
@@ -237,36 +162,28 @@ class QueryCacheEvictionTest {
     @Test
     fun add_payload_with_unlimited_cache_skips_enforcement() = runTest {
         // Given an unlimited cache
-        val queryCacheDao = FakeQueryCacheDao()
-        val store =
-            buildStore(
-                queryCacheDao = queryCacheDao,
-                maxPayloadBytes = null,
-                nowMillis = incrementingClock(),
-            )
+        val store = buildStore(maxPayloadBytes = null, nowMillis = incrementingClock())
 
-        // When a payload large enough to otherwise trigger enforcement is written
+        // When a payload large enough to otherwise start a pass is written, and the background
+        // runs
         store.queryCache.cacheResponse("ratings", "sig", arrayOfLength(8_192))
+        runCurrent()
 
-        // Then enforcement was skipped entirely (kept off the hot path)
-        assertEquals(0, queryCacheDao.deleteCallCount)
+        // Then no pass ran: nothing was read or deleted (kept off the hot path)
+        assertEquals(0, counting.payloadLengthReads)
+        assertEquals(0, counting.evictionDeletes)
     }
 
     @Test
     fun add_payload_larger_than_limit_evicts_older_entries() = runTest {
-        // Given a small cache holding an older entry
-        val queryCacheDao = FakeQueryCacheDao()
-        val store =
-            buildStore(
-                queryCacheDao = queryCacheDao,
-                maxPayloadBytes = 9_500L,
-                evictionBatchSize = 1,
-                nowMillis = incrementingClock(),
-            )
+        // Given a small cache holding an older entry, its size counted
+        val store = buildStore(maxPayloadBytes = 9_500L, nowMillis = incrementingClock())
         store.queryCache.cacheResponse("ratings", "old", arrayOfLength(800))
+        runCurrent()
 
-        // When a large payload pushes the cache over the limit
+        // When a large payload pushes the cache over the limit, and the pass it starts runs
         store.queryCache.cacheResponse("ratings", "new", arrayOfLength(9_000))
+        runCurrent()
 
         // Then the large write's enforcement evicted the older entry, keeping the newest
         assertTrue(queryCacheDao.totalPayloadBytes() <= 9_500L)
@@ -278,83 +195,81 @@ class QueryCacheEvictionTest {
     }
 
     @Test
-    fun add_payload_enforces_on_the_write_interval_for_small_writes() = runTest {
-        // Given a cache already over its limit, receiving only small writes — none individually
-        // large enough to trigger an enforcement pass on its own
-        val queryCacheDao = FakeQueryCacheDao()
-        queryCacheDao.seedPayload(
-            table = "ratings",
-            cacheKey = "seed",
-            payload = "x".repeat(2_000),
-            updatedAt = 0L,
-        )
-        val store =
-            buildStore(
-                queryCacheDao = queryCacheDao,
-                maxPayloadBytes = 1_000L,
-                evictionBatchSize = 50,
-                nowMillis = incrementingClock(),
-            )
+    fun add_payload_of_any_size_starts_a_pass_over_a_cache_past_its_bound() = runTest {
+        // Given a cache already over its limit, left so by an earlier run
+        queryCacheDao.seedPayload("ratings", "seed", "x".repeat(2_000), updatedAt = 0L)
+        val store = buildStore(maxPayloadBytes = 1_000L, nowMillis = incrementingClock(from = 1L))
 
-        // When 31 small writes arrive, the periodic backstop has not yet fired
-        repeat(31) { index -> store.queryCache.cacheResponse("ratings", "small-$index", "[1]") }
-        assertEquals(0, queryCacheDao.deleteCallCount, "no enforcement before the write interval")
+        // When one small write arrives — far below the size that once summed the cache at once —
+        // and the background runs
+        store.queryCache.cacheResponse("ratings", "small", "[1]")
+        runCurrent()
 
-        // When the 32nd write arrives, the rolling counter reaches the interval
-        store.queryCache.cacheResponse("ratings", "small-31", "[1]")
-
-        // Then the periodic backstop triggered an eviction pass off the per-write hot path
-        assertTrue(queryCacheDao.deleteCallCount >= 1, "enforcement should fire on the 32nd write")
+        // Then the pass ran and took the old payload: no write is too small to start one
+        assertEquals(1, counting.payloadLengthReads)
+        assertNull(queryCacheDao.getRow("ratings", "seed"))
+        assertNotNull(queryCacheDao.getRow("ratings", "small"))
+        assertTrue(queryCacheDao.totalPayloadBytes() <= 1_000L)
     }
 
     @Test
-    fun eviction_makes_progress_with_non_positive_batch_size() = runTest {
-        // Given an over-limit cache misconfigured with a non-positive eviction batch size
-        val queryCacheDao = FakeQueryCacheDao()
-        repeat(5) { index ->
-            queryCacheDao.seedPayload(
-                table = "ratings",
-                cacheKey = "sig-$index",
-                payload = "x".repeat(100),
-                updatedAt = index.toLong(),
-            )
-        }
-        val store =
-            buildStore(
-                queryCacheDao = queryCacheDao,
-                maxPayloadBytes = 250L,
-                evictionBatchSize = 0,
-            )
+    fun a_live_readers_payload_is_kept_however_many_readers_there_are() = runTest {
+        // Given 600 cached lists far over the bound, 550 of them shown by live readers: more than
+        // the 500 an SQL delete could once be told to keep
+        seedRows(600, length = 100)
+        val live = (0 until 550).mapTo(mutableSetOf()) { index -> "sig-$index" }
+        val store = buildStore(maxPayloadBytes = 10_000L, allLiveCacheKeys = { live })
 
         // When enforcement runs
         store.queryCache.evictOverBudget()
 
-        // Then the batch size is coerced to at least one row so eviction still drains to the
-        // limit instead of stalling (a zero-row batch would trip the progress guard immediately
-        // and leave the cache permanently over budget)
-        assertTrue(
-            queryCacheDao.totalPayloadBytes() <= 250L,
-            "eviction must make progress despite a non-positive batch size",
-        )
-        assertTrue(
-            queryCacheDao.evictedRows >= 1,
-            "a non-positive batch size must not disable eviction",
-        )
+        // Then every shown list stayed, whatever its age, and only the unshown ones went
+        val remaining =
+            queryCacheDao.rowsOf("ratings").mapTo(mutableSetOf()) { row -> row.cacheKey }
+        assertEquals(live, remaining)
+        assertEquals(50, queryCacheDao.evictedRows)
+        // And the pass stopped once nothing more could go, within its bounded reads
+        assertTrue(counting.payloadLengthReads <= QueryCache.MAX_EVICTION_PASSES)
+    }
+
+    @Test
+    fun writes_during_a_pass_are_counted_and_read_again_a_bounded_number_of_times() = runTest {
+        // Given a cache at twice its bound, and writers that add 60_000 characters each time the
+        // pass reads the lengths, so no pass can bring the count under the bound
+        seedRows(20, length = 5_000)
+        val store =
+            buildStore(
+                maxPayloadBytes = 50_000L,
+                nowMillis = incrementingClock(from = 100L),
+                backgroundScope = backgroundScope,
+            )
+        var late = 0
+        counting.afterPayloadLengthsRead = {
+            repeat(2) {
+                store.queryCache.cacheResponse("ratings", "late-${late++}", arrayOfLength(30_000))
+            }
+        }
+
+        // When enforcement runs
+        store.queryCache.evictOverBudget()
+
+        // Then it read the lengths again for the writes it had not seen, and stopped at the cap
+        // rather than chase them
+        assertEquals(QueryCache.MAX_EVICTION_PASSES, counting.payloadLengthReads)
+
+        // And the pass the late writes queued drains the cache once the writers stop
+        counting.afterPayloadLengthsRead = null
+        runCurrent()
+        assertTrue(queryCacheDao.totalPayloadBytes() <= 50_000L)
+        assertEquals(QueryCache.MAX_EVICTION_PASSES + 1, counting.payloadLengthReads)
     }
 
     @Test
     fun concurrent_add_payload_calls_do_not_deadlock() = runTest {
-        // Given a small cache and many large concurrent writers, each of which triggers eviction
-        val queryCacheDao = FakeQueryCacheDao()
-        val store =
-            buildStore(
-                queryCacheDao = queryCacheDao,
-                maxPayloadBytes = 40_960L,
-                evictionBatchSize = 5,
-                nowMillis = incrementingClock(),
-            )
+        // Given a small cache and many large concurrent writers, each of which may start a pass
+        val store = buildStore(maxPayloadBytes = 40_960L, nowMillis = incrementingClock())
 
-        // When 50 writes race through the eviction mutex
+        // When 50 writes race through, and the passes they queued run
         val writers =
             List(50) { index ->
                 launch {
@@ -362,36 +277,53 @@ class QueryCacheEvictionTest {
                 }
             }
         writers.forEach { writer -> writer.join() }
+        runCurrent()
 
         // Then every writer completed without deadlocking and the cache stayed bounded
         assertTrue(queryCacheDao.totalPayloadBytes() <= 40_960L, "cache should remain bounded")
     }
 
-    /** Builds the components over the supplied [queryCacheDao] with the given eviction settings. */
-    private fun buildStore(
-        queryCacheDao: QueryCacheDao,
+    /** Seeds [count] rows of `ratings`, `sig-0` the oldest, each [length] characters. */
+    private fun seedRows(count: Int, length: Int) {
+        repeat(count) { index ->
+            queryCacheDao.seedPayload(
+                table = "ratings",
+                cacheKey = "sig-$index",
+                payload = "x".repeat(length),
+                updatedAt = index.toLong(),
+            )
+        }
+    }
+
+    /**
+     * Builds the components over the counting DAO with the given eviction settings; the pass a
+     * write starts runs in the test's background scope.
+     */
+    private fun TestScope.buildStore(
         maxPayloadBytes: Long?,
-        evictionBatchSize: Int = 10,
         evictionHeadroomBytes: Long = 0L,
         nowMillis: () -> Long = { 0L },
+        allLiveCacheKeys: () -> Set<String> = { emptySet() },
+        backgroundScope: kotlinx.coroutines.CoroutineScope = this.backgroundScope,
     ): TestStore =
         newTestStore(
-            queryCacheDao = queryCacheDao,
+            queryCacheDao = counting,
             queryCacheLimits =
                 QueryCacheLimits(
                     maxPayloadBytes = maxPayloadBytes,
-                    evictionBatchSize = evictionBatchSize,
                     evictionHeadroomBytes = evictionHeadroomBytes,
                 ),
             nowMillis = nowMillis,
+            allLiveCacheKeys = allLiveCacheKeys,
+            backgroundScope = backgroundScope,
         )
 
     /** A payload of [length] characters shaped as a JSON array, the only shape the cache writes. */
     private fun arrayOfLength(length: Int): String = "[" + "x".repeat(length - 2) + "]"
 
     /** A monotonically increasing clock so each write receives a distinct, ordered timestamp. */
-    private fun incrementingClock(): () -> Long {
-        var tick = 0L
+    private fun incrementingClock(from: Long = 0L): () -> Long {
+        var tick = from
         return { tick++ }
     }
 }

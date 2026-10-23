@@ -3,17 +3,22 @@
 package io.github.nesfeder.supabase.offline.internal.cache
 
 import io.github.nesfeder.supabase.offline.internal.db.CachedQueryRow
+import io.github.nesfeder.supabase.offline.internal.db.PayloadLength
 import io.github.nesfeder.supabase.offline.internal.db.QueryCacheDao
 import io.github.nesfeder.supabase.offline.internal.db.isReservedTable
 import io.github.nesfeder.supabase.offline.internal.db.requireUserTable
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueue
 import io.github.nesfeder.supabase.offline.internal.postgrest.QueryShape
 import kotlin.concurrent.Volatile
+import kotlin.concurrent.atomics.AtomicBoolean
 import kotlin.concurrent.atomics.AtomicInt
+import kotlin.concurrent.atomics.AtomicLong
 import kotlin.concurrent.atomics.AtomicReference
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
+import kotlin.concurrent.atomics.incrementAndFetch
 import kotlin.concurrent.atomics.update
-import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.Json
@@ -87,6 +92,8 @@ internal class ParsedPayload(val text: String, val rows: List<JsonElement>?) {
  *
  * @param mutationQueue whose lock and sync sequence a written response is stamped under.
  * @param allLiveCacheKeys the queries with a live reader, which eviction keeps.
+ * @param backgroundScope where an eviction pass runs, after the response that asked for it is
+ *   written: the client's own scope, which closing the client cancels.
  */
 @OptIn(ExperimentalAtomicApi::class)
 internal class QueryCache(
@@ -99,6 +106,7 @@ internal class QueryCache(
     private val mutationQueue: MutationQueue,
     private val tableWriteLocks: TableWriteLocks,
     private val allLiveCacheKeys: () -> Set<String>,
+    private val backgroundScope: CoroutineScope,
 ) {
 
     /** Each cached query's shape, which decides the rows it admits; see [QueryShapeRecords]. */
@@ -107,15 +115,37 @@ internal class QueryCache(
     /** Serializes eviction passes. */
     private val evictionMutex = Mutex()
 
-    /**
-     * Payloads' rows as parsed, by table and cache key, each with the text it was parsed from, so
-     * an unchanged payload is not parsed again; see [parsedPayloadOf].
-     */
-    private val parsedPayloads =
-        AtomicReference<Map<Pair<String, String>, ParsedPayload>>(emptyMap())
+    /** Whether a pass is queued or running in [backgroundScope]; see [enforceSizeInBackground]. */
+    private val passQueued = AtomicBoolean(false)
 
-    /** Writes since the last size check; see [shouldEnforceSizeAfterWrite]. */
-    private val writeCounter = AtomicInt(0)
+    /**
+     * The summed length of the cached payloads as this process follows it: what the last pass read,
+     * moved by every payload written or evicted since. It is never read before a pass needs it, and
+     * it only ever overstates; see [payloadBytesWritten].
+     */
+    private val payloadBytes = AtomicLong(0L)
+
+    /**
+     * Whether [payloadBytes] has been read from the table since the process started, or since the
+     * cache was last emptied; until it has, the next written response starts a pass.
+     */
+    @Volatile private var payloadBytesMeasured = false
+
+    /** How many times the cache was emptied; a pass that saw one trusts no count it computed. */
+    private val emptyings = AtomicInt(0)
+
+    /** The parsed payloads kept, the least recently used going first; see [parsedPayloadOf]. */
+    private val parsedPayloads = AtomicReference(KeptPayloads(emptyMap(), 0L))
+
+    /** Stamps each use of a kept payload, so the least recently used is known. */
+    private val uses = AtomicLong(0L)
+
+    /** How many payload texts were parsed; see [payloadParses]. */
+    private val parses = AtomicInt(0)
+
+    /** How many payload texts have been parsed so far: a test's measure of what is kept. */
+    val payloadParses: Int
+        get() = parses.load()
 
     /** [table]'s write lock; see [TableWriteLocks]. */
     suspend fun tableWriteLock(table: String): Mutex = tableWriteLocks.of(table)
@@ -125,7 +155,8 @@ internal class QueryCache(
      * [CacheWriteOutcome]); with a start tick it holds the mutations synced so far. The guards and
      * the write are one step under the table's lock, the queue lock and the clear lock, in order.
      * Only a JSON array is written: a blank body stands for an empty list and is stored as `[]`,
-     * and a body of any other shape is refused as untrusted.
+     * and a body of any other shape is refused as untrusted. A written payload may start an
+     * eviction pass, in [backgroundScope] after this returns.
      *
      * @param authoritativeEmpty whether an empty [payload] is the server's real answer (signed in).
      * @param requestStartedAtTick the request's start tick, or `null` for none: never stale.
@@ -212,27 +243,52 @@ internal class QueryCache(
                 }
             }
 
-        // Outside the table lock: eviction takes its own mutex and scans every table.
-        if (outcome == CacheWriteOutcome.WRITTEN && shouldEnforceSizeAfterWrite(rows)) {
-            evictOverBudget()
+        if (outcome == CacheWriteOutcome.WRITTEN) {
+            // The payload it may have replaced was not read, so it counts in full; see
+            // payloadBytesWritten
+            payloadBytesWritten(rows.length.toLong())
+            // Off the read path: a pass takes its own lock and reads every payload's length
+            if (sizeMayBeOverBound()) enforceSizeInBackground()
         }
         return outcome
     }
 
     /**
-     * Whether a size check should follow writing [payload]: when it is large
-     * ([ENFORCEMENT_LARGE_PAYLOAD_CHARS]), or every [ENFORCEMENT_WRITE_INTERVAL]th write, so the
-     * summing scan stays off the per-write path. Never with eviction off.
+     * Moves the running count of cached payload bytes by [delta]: a written payload's length, less
+     * the length of the one it replaced when the writer read it, or less an evicted one's. A writer
+     * that did not read what it replaced adds the whole payload, so the count overstates until the
+     * next pass reads the table; it never understates, which would let the cache grow past its
+     * bound unseen.
      */
-    private fun shouldEnforceSizeAfterWrite(payload: String): Boolean {
-        if (queryCacheLimits.maxPayloadBytes == null) return false
-        val isLargePayload = payload.length >= ENFORCEMENT_LARGE_PAYLOAD_CHARS
-        // Always advance the counter so the cadence reflects the true write count; combine with
-        // the large-payload trigger afterward so both side effects run regardless of order.
-        // fetchAndAdd returns the pre-increment value, so +1 yields the just-completed write's
-        // ordinal — enforcing on every ENFORCEMENT_WRITE_INTERVAL-th write.
-        val cadenceReached = (writeCounter.fetchAndAdd(1) + 1) % ENFORCEMENT_WRITE_INTERVAL == 0
-        return isLargePayload || cadenceReached
+    fun payloadBytesWritten(delta: Long) {
+        if (delta != 0L) payloadBytes.fetchAndAdd(delta)
+    }
+
+    /**
+     * Whether the payloads may be over the bound: counted past it, or not yet read this process.
+     * Never with eviction off.
+     */
+    private fun sizeMayBeOverBound(): Boolean {
+        val max = queryCacheLimits.maxPayloadBytes ?: return false
+        return !payloadBytesMeasured || payloadBytes.load() > max
+    }
+
+    /**
+     * Runs [evictOverBudget] in [backgroundScope], unless a pass is queued or running already: that
+     * one reads the count again before it ends, so a write it did not see still gets its pass. A
+     * failure in the pass stays in the scope.
+     */
+    private fun enforceSizeInBackground() {
+        if (!passQueued.compareAndSet(expectedValue = false, newValue = true)) return
+        val pass = backgroundScope.launch {
+            try {
+                evictOverBudget()
+            } finally {
+                passQueued.store(false)
+            }
+        }
+        // A scope canceled already, as a closed client's is, never runs the pass
+        if (pass.isCancelled) passQueued.store(false)
     }
 
     /**
@@ -246,8 +302,10 @@ internal class QueryCache(
     }
 
     /**
-     * [row]'s rows, parsed once for each text the payload holds. What is kept is dropped whole when
-     * it would pass [PARSED_PAYLOAD_TEXT_KEPT] characters, and when the cache is emptied.
+     * [row]'s rows, parsed once for each text the payload holds and kept while the kept texts fit
+     * in [QueryCacheLimits.parsedPayloadCharsKept] characters; past that the least recently used
+     * goes first. A payload longer than the whole bound is parsed each time and keeps nothing out.
+     * Everything is dropped when the cache is emptied.
      */
     fun parsedPayloadOf(row: CachedQueryRow): ParsedPayload =
         parsedTextOf(row.table, row.cacheKey, row.payload)
@@ -255,83 +313,162 @@ internal class QueryCache(
     /** [parsedPayloadOf] for [text], the rows the query cached under [cacheKey] shows. */
     fun parsedTextOf(table: String, cacheKey: String, text: String): ParsedPayload {
         val key = table to cacheKey
-        parsedPayloads.load()[key]?.let { kept -> if (kept.text == text) return kept }
-        val parsed = ParsedPayload(text, payloadRowsOf(json, text))
-        if (text.length <= PARSED_PAYLOAD_TEXT_KEPT) {
-            parsedPayloads.update { kept ->
-                val total = kept.values.sumOf { held -> held.text.length } + text.length
-                (if (total > PARSED_PAYLOAD_TEXT_KEPT) emptyMap() else kept) + (key to parsed)
+        parsedPayloads.load().byKey[key]?.let { kept ->
+            if (kept.parsed.text == text) {
+                kept.lastUse.store(uses.incrementAndFetch())
+                return kept.parsed
             }
         }
-        return parsed
+        parses.incrementAndFetch()
+        return ParsedPayload(text, payloadRowsOf(json, text)).also { parsed -> keep(key, parsed) }
     }
 
-    /** Forgets every parsed payload, after the cache was emptied. */
-    fun forgetParsedPayloads() {
-        parsedPayloads.store(emptyMap())
+    /**
+     * Keeps [parsed] as the rows of the payload a patch just wrote for [table]/[cacheKey], which it
+     * made from the rows it holds, so the next read of the payload parses nothing; as
+     * [parsedPayloadOf] keeps what it parsed.
+     */
+    fun keepParsed(table: String, cacheKey: String, parsed: ParsedPayload) {
+        keep(table to cacheKey, parsed)
+    }
+
+    /** Keeps [parsed] under [key] within the bound, dropping the least recently used to fit. */
+    private fun keep(key: Pair<String, String>, parsed: ParsedPayload) {
+        val length = parsed.text.length.toLong()
+        if (length > queryCacheLimits.parsedPayloadCharsKept) return
+        val kept = KeptPayload(parsed, uses.incrementAndFetch())
+        parsedPayloads.update { current -> current.with(key, kept, length) }
+    }
+
+    /**
+     * These payloads with [kept] under [key], and with the least recently used dropped, never
+     * [kept], until the texts fit in [QueryCacheLimits.parsedPayloadCharsKept]. A payload kept
+     * under the key before is counted no longer.
+     */
+    private fun KeptPayloads.with(
+        key: Pair<String, String>,
+        kept: KeptPayload,
+        length: Long,
+    ): KeptPayloads {
+        val bound = queryCacheLimits.parsedPayloadCharsKept
+        var chars = chars - (byKey[key]?.parsed?.text?.length ?: 0) + length
+        var entries = byKey + (key to kept)
+        if (chars > bound) {
+            for ((other, held) in entries.entries.sortedBy { (_, held) -> held.lastUse.load() }) {
+                if (chars <= bound) break
+                if (other == key) continue
+                entries = entries - other
+                chars -= held.parsed.text.length
+            }
+        }
+        return KeptPayloads(entries, chars)
+    }
+
+    /**
+     * Forgets every parsed payload and the count of payload bytes, after the cache was emptied: a
+     * clear or a drop. The next written response reads the count again.
+     */
+    fun payloadsEmptied() {
+        emptyings.incrementAndFetch()
+        payloadBytes.store(0L)
+        payloadBytesMeasured = false
+        parsedPayloads.store(KeptPayloads(emptyMap(), 0L))
     }
 
     /**
      * Evicts the payloads fetched longest ago, never one a live reader shows, until the summed
      * payload length is under [QueryCacheLimits.maxPayloadBytes] by its headroom. The length, not
-     * the file size, which never shrinks after a delete; a pass also stops when a batch removes
-     * nothing, or after [MAX_EVICTION_ITERATIONS]. Does nothing with eviction off.
+     * the file size, which never shrinks after a delete. A pass reads every payload's length once,
+     * in eviction order, chooses the rows to delete, deletes them in one transaction, and sets the
+     * running count from what it read; it reads again only when writes during the pass left the
+     * count over the bound, at most [MAX_EVICTION_PASSES] times in all. Does nothing with eviction
+     * off, and nothing but set the count when the payloads are within the bound.
      */
     suspend fun evictOverBudget() {
         val max = queryCacheLimits.maxPayloadBytes ?: return
-
-        // Cheap pre-check outside the lock: eviction triggers only once the cache exceeds the
-        // ceiling, so skip acquiring the mutex when already within budget (the common case even
-        // on the writes that reach enforcement).
-        if (queryCacheDao.totalPayloadBytes() <= max) return
-
-        // Once triggered, drain a little below the ceiling to this hysteresis floor so a burst of
-        // writes crossing the limit doesn't re-trigger a pass on every subsequent write. When
-        // evictionHeadroomBytes is non-positive or meets/exceeds the ceiling the headroom coerces
-        // to
-        // zero and the floor is the ceiling, keeping small-cache configs evicting fully.
-        val evictionFloorBytes =
+        // Once over the bound, a pass drains to this floor below it, so a burst of writes crossing
+        // the bound does not start a pass on every write. A headroom that is not positive, or not
+        // below the bound, leaves the floor at the bound, so a small cache still evicts fully.
+        val floor =
             if (queryCacheLimits.evictionHeadroomBytes in 1L until max)
                 max - queryCacheLimits.evictionHeadroomBytes
             else max
 
         evictionMutex.withLock {
-            var iterations = 0
-            var currentBytes = queryCacheDao.totalPayloadBytes()
-            while (currentBytes > evictionFloorBytes && iterations < MAX_EVICTION_ITERATIONS) {
-                // Coerce to at least one row so a misconfigured non-positive evictionBatchSize
-                // can't stall eviction — a zero-row batch trips the progress guard immediately
-                // and would otherwise leave the cache permanently over budget.
-                val deleted =
-                    queryCacheDao.deleteOldestPayloadRows(
-                        limit = queryCacheLimits.evictionBatchSize.coerceAtLeast(1),
-                        // A payload a live reader shows stays, or the reader would drop to no data
-                        keptCacheKeys = allLiveCacheKeys().take(MAX_KEPT_LIVE_CACHE_KEYS),
-                    )
-                // Progress guard: no rows removed means the cache can't shrink further, so stop
-                // instead of re-measuring the same over-limit size forever.
-                if (deleted == 0) break
-                iterations++
-                currentBytes = queryCacheDao.totalPayloadBytes()
+            repeat(MAX_EVICTION_PASSES) {
+                // Counted within the bound by a pass this one queued behind
+                if (payloadBytesMeasured && payloadBytes.load() <= max) return
+                val emptyingsBefore = emptyings.load()
+                val countedBefore = payloadBytes.load()
+                val lengths = queryCacheDao.payloadLengthsOldestFirst()
+                val total = lengths.sumOf { row -> row.length }
+                val evicted =
+                    if (total > max) rowsToEvict(lengths, atLeast = total - floor) else emptyList()
+                val freed = evicted.sumOf { row -> row.length }
+                if (evicted.isNotEmpty()) deleteInOneTransaction(evicted)
+                if (emptyings.load() == emptyingsBefore) {
+                    // What was read, less what went, plus what was written meanwhile; a write the
+                    // read already saw is counted twice, which overstates until the next pass
+                    payloadBytes.fetchAndAdd(total - freed - countedBefore)
+                    payloadBytesMeasured = true
+                }
+                // Emptied during the pass: nothing read or counted here describes the cache now,
+                // so the next written response reads it again
+                if (emptyings.load() != emptyingsBefore) payloadBytesMeasured = false
+                if (evicted.isEmpty()) return
+                queryShapes.dropOrphans()
             }
-            if (iterations > 0) queryShapes.dropOrphans()
         }
     }
 
-    private companion object {
-        /** Run a size check once every this many written responses. */
-        const val ENFORCEMENT_WRITE_INTERVAL = 32
+    /**
+     * The oldest of [lengths], in their order, whose lengths sum to [atLeast] or more, passing over
+     * the payloads live readers show; fewer when the rest are all shown.
+     */
+    private fun rowsToEvict(lengths: List<PayloadLength>, atLeast: Long): List<PayloadLength> {
+        val kept = allLiveCacheKeys()
+        val chosen = mutableListOf<PayloadLength>()
+        var freed = 0L
+        for (row in lengths) {
+            if (freed >= atLeast) break
+            // A payload a live reader shows stays, or the reader would drop to no data
+            if (row.cacheKey in kept) continue
+            chosen += row
+            freed += row.length
+        }
+        return chosen
+    }
 
-        /** A payload of at least this many characters is followed by a size check at once. */
-        const val ENFORCEMENT_LARGE_PAYLOAD_CHARS = 4 * 1024
+    /** Deletes [rows] in one transaction, by table, [MAX_DELETE_KEYS] keys to a statement. */
+    private suspend fun deleteInOneTransaction(rows: List<PayloadLength>) {
+        queryCacheDao.runInTransaction {
+            rows
+                .groupBy { row -> row.table }
+                .forEach { (table, ofTable) ->
+                    ofTable
+                        .map { row -> row.cacheKey }
+                        .chunked(MAX_DELETE_KEYS)
+                        .forEach { cacheKeys -> queryCacheDao.deletePayloads(table, cacheKeys) }
+                }
+        }
+    }
 
-        /** The most batches one eviction pass deletes, whatever the size it measures. */
-        const val MAX_EVICTION_ITERATIONS = 1_000
+    /** A kept parsed payload, stamped with its last use. */
+    private class KeptPayload(val parsed: ParsedPayload, use: Long) {
+        val lastUse = AtomicLong(use)
+    }
 
-        /** Live signatures eviction passes over at most, within SQLite's 999 bound variables. */
-        const val MAX_KEPT_LIVE_CACHE_KEYS = 500
+    /** The kept parsed payloads by table and cache key, with their texts' summed length. */
+    private class KeptPayloads(val byKey: Map<Pair<String, String>, KeptPayload>, val chars: Long)
 
-        /** The characters of payload text whose parsed rows are kept, about a megabyte of text. */
-        const val PARSED_PAYLOAD_TEXT_KEPT = 1_000_000
+    internal companion object {
+        /**
+         * The most times one call of [evictOverBudget] reads the payloads' lengths: once, and again
+         * only while writes during the pass keep the count over the bound.
+         */
+        const val MAX_EVICTION_PASSES = 4
+
+        /** Signatures one delete statement names at most, within SQLite's 999 bound variables. */
+        const val MAX_DELETE_KEYS = 500
     }
 }

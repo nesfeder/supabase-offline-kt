@@ -23,20 +23,24 @@ From the samples: [SampleSupabaseClient.kt](https://github.com/nesfeder/supabase
 The bound counts the length of the cached responses, the JSON text PostgREST sent, summed over
 every cached list. It does not count the database file, nor the queue, the rejected list or the
 library's own records, which eviction never touches (the rejected list keeps its newest 100
-entries). After a response of 4,096 characters or more, and after every 32nd response, the library
-sums the cached responses; over the bound, it deletes the lists fetched longest ago, ten at a time,
-until the sum is 50 MB below the bound (down to the bound itself when the bound is 50 MB or less),
-so a burst of reads does not start a pass on every read. `Offline.CACHE_SIZE_UNLIMITED` (`-1`)
-turns eviction off; any other value below 4 KiB counts as 4 KiB.
+entries). The library keeps a running count of that length. It reads the cached lists once, in the
+background after the first response of a process is written, and moves the count by each response
+written or list deleted since. A response is returned to its reader before any of this runs. When
+the count passes the bound, a pass runs in the background: it reads every list's length once,
+oldest fetch first, chooses the lists to delete until the count is 50 MB below the bound (down to
+the bound itself when the bound is 50 MB or less), deletes them in one transaction, and sets the
+count from what it read. A burst of reads past the bound costs one pass, not one per read.
+`Offline.CACHE_SIZE_UNLIMITED` (`-1`) turns eviction off; any other value below 4 KiB counts as 4
+KiB.
 
 ## What is evicted
 
 The lists fetched longest ago, by the time the server sent them; a list a write marked stale keeps
-its place by that time too. Up to 500 lists a live reader shows are kept whatever their age, and
-the oldest list nobody reads goes in their place, so a reader never drops to "no data". Past 500
-live lists, or for a reader that starts while a pass is deleting, a list a reader needs can go: a
-`CacheFirstThenNetwork` reader then fetches it again, and a `CacheOnly` reader shows no data. A
-write patched into the table while a pass runs changes the lists still there and brings none back.
+its place by that time too. Every list a live reader shows is kept whatever its age, and the oldest
+list nobody reads goes in its place, so a reader never drops to "no data". For a reader that starts
+while a pass is choosing, a list it needs can go: a `CacheFirstThenNetwork` reader then fetches it
+again, and a `CacheOnly` reader shows no data. A write patched into the table while a pass runs
+changes the lists still there and brings none back.
 
 SQLite keeps the pages a delete frees for its next writes, so the database file does not shrink
 when lists are evicted, and it can be larger than the bound; `clearLocalData()` rewrites the

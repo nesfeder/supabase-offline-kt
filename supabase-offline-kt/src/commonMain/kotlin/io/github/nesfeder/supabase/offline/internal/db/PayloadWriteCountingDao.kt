@@ -76,8 +76,8 @@ internal class PayloadWriteCountingDao(private val delegate: QueryCacheDao) :
     override suspend fun deleteOrphanedQueryShapes(): Int =
         counted(null) { delegate.deleteOrphanedQueryShapes() }
 
-    override suspend fun deleteOldestPayloadRows(limit: Int, keptCacheKeys: List<String>): Int =
-        counted(null) { delegate.deleteOldestPayloadRows(limit, keptCacheKeys) }
+    override suspend fun deletePayloads(table: String, cacheKeys: List<String>): Int =
+        counted(table) { delegate.deletePayloads(table, cacheKeys) }
 
     /** Runs [write], then counts it against [table] whether it returned or failed. */
     private inline fun <T> counted(table: String?, write: () -> T): T =

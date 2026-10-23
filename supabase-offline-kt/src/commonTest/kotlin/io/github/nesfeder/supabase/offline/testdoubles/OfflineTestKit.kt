@@ -68,6 +68,7 @@ import kotlin.time.Clock
 import kotlin.time.Duration
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.flowOf
@@ -98,11 +99,7 @@ internal const val TEST_SUPABASE_KEY: String = "unit-test-anon-key"
 
 /** Cache settings with size-based eviction off — what every test but the eviction tests uses. */
 internal val UNLIMITED_TEST_CACHE_SETTINGS: QueryCacheLimits =
-    QueryCacheLimits(
-        maxPayloadBytes = null,
-        evictionBatchSize = 0,
-        evictionHeadroomBytes = 0,
-    )
+    QueryCacheLimits(maxPayloadBytes = null, evictionHeadroomBytes = 0)
 
 /**
  * Builds the cache and queue components over in-memory DAOs, so a test drives their real logic
@@ -114,6 +111,9 @@ internal val UNLIMITED_TEST_CACHE_SETTINGS: QueryCacheLimits =
  * @param nowMillis the clock rows are stamped with; a fixed `0L` by default.
  * @param identityProvider the identity whose queued writes are shown, or `null` for every one's.
  * @param isCacheOwnedPerIdentity whether the cache belongs to one identity at a time, as with Auth.
+ * @param backgroundScope where an eviction pass a written response starts runs; by default one that
+ *   runs it on the writer's thread, so a test sees the pass done when the write returns. A test of
+ *   what runs before the write returns passes its own test scope and advances it.
  */
 internal fun newTestStore(
     queryCacheDao: QueryCacheDao = FakeQueryCacheDao(),
@@ -133,6 +133,8 @@ internal fun newTestStore(
     onQueriesMarkedStale: (table: String, cacheKeys: Set<String>) -> Unit = { _, _ -> },
     onCacheNotServed: () -> Unit = {},
     versionColumns: VersionColumns = NoVersionColumns,
+    backgroundScope: CoroutineScope =
+        newEngineScope(engineLogger, dispatcher = Dispatchers.Unconfined),
 ): TestStore =
     TestStore(
         queryCacheDao = queryCacheDao,
@@ -152,6 +154,7 @@ internal fun newTestStore(
         onQueriesMarkedStale = onQueriesMarkedStale,
         onCacheNotServed = onCacheNotServed,
         versionColumns = versionColumns,
+        backgroundScope = backgroundScope,
     )
 
 /**

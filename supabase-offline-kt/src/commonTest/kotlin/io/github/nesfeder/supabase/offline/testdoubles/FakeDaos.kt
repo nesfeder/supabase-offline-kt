@@ -5,6 +5,7 @@ package io.github.nesfeder.supabase.offline.testdoubles
 import io.github.nesfeder.supabase.offline.internal.db.CachedQueryRow
 import io.github.nesfeder.supabase.offline.internal.db.MutationDao
 import io.github.nesfeder.supabase.offline.internal.db.MutationRow
+import io.github.nesfeder.supabase.offline.internal.db.PayloadLength
 import io.github.nesfeder.supabase.offline.internal.db.QueryCacheDao
 import io.github.nesfeder.supabase.offline.internal.testing.InMemoryMutationDao
 import io.github.nesfeder.supabase.offline.internal.testing.InMemoryQueryCacheDao
@@ -31,30 +32,9 @@ internal class FakeQueryCacheDao : InMemoryQueryCacheDao() {
     var writes: Int = 0
         private set
 
-    /** Cumulative number of rows removed by [deleteOldestPayloadRows] — for eviction assertions. */
+    /** Cumulative number of rows removed by [deletePayloads] — for eviction assertions. */
     var evictedRows: Int = 0
         private set
-
-    /**
-     * Number of times [deleteOldestPayloadRows] has been invoked — for iteration-cap assertions.
-     */
-    var deleteCallCount: Int = 0
-        private set
-
-    /**
-     * When non-null, [totalPayloadBytes] returns this fixed value instead of summing the live rows.
-     * Lets eviction tests reproduce the pathological "measured size never drops below the limit"
-     * condition that the eviction loop's progress guard and iteration cap defend against.
-     */
-    var fixedTotalPayloadBytes: Long? = null
-
-    /**
-     * When non-null, [deleteOldestPayloadRows] reports this many deleted rows without touching the
-     * backing map. Combined with [fixedTotalPayloadBytes], this holds the measured size pinned
-     * above the limit while every delete claims progress, exercising the hard iteration-cap
-     * backstop.
-     */
-    var forcedDeleteCount: Int? = null
 
     /**
      * Runs inside [allForTable], with the table, after its snapshot is taken and before it is
@@ -161,18 +141,60 @@ internal class FakeQueryCacheDao : InMemoryQueryCacheDao() {
         return changed
     }
 
-    override suspend fun totalPayloadBytes(): Long =
-        fixedTotalPayloadBytes ?: super.totalPayloadBytes()
-
-    override suspend fun deleteOldestPayloadRows(limit: Int, keptCacheKeys: List<String>): Int {
-        deleteCallCount++
-        forcedDeleteCount?.let { forced ->
-            evictedRows += forced
-            return forced
-        }
-        val deleted = super.deleteOldestPayloadRows(limit, keptCacheKeys)
+    override suspend fun deletePayloads(table: String, cacheKeys: List<String>): Int {
+        val deleted = super.deletePayloads(table, cacheKeys)
         evictedRows += deleted
         return deleted
+    }
+}
+
+/**
+ * [delegate], counting what an eviction pass and a patch cost the table: each read of every
+ * payload's length (a sum, or the listing in eviction order), each delete statement of a pass, and
+ * each transaction. A test asserts the counts, and may hold a pass at [afterPayloadLengthsRead].
+ */
+internal class PayloadScanCountingDao(private val delegate: QueryCacheDao) :
+    QueryCacheDao by delegate {
+
+    /** How many times every payload's length was summed ([totalPayloadBytes]). */
+    var payloadSums: Int = 0
+        private set
+
+    /** How many times every payload's length was listed ([payloadLengthsOldestFirst]). */
+    var payloadLengthReads: Int = 0
+        private set
+
+    /** How many delete statements eviction passes ran ([deletePayloads]). */
+    var evictionDeletes: Int = 0
+        private set
+
+    /** How many transactions were run ([runInTransaction]). */
+    var transactions: Int = 0
+        private set
+
+    /** Runs after each listing of the payloads' lengths, before it is returned. */
+    var afterPayloadLengthsRead: (suspend () -> Unit)? = null
+
+    override suspend fun totalPayloadBytes(): Long {
+        payloadSums++
+        return delegate.totalPayloadBytes()
+    }
+
+    override suspend fun payloadLengthsOldestFirst(): List<PayloadLength> {
+        payloadLengthReads++
+        val lengths = delegate.payloadLengthsOldestFirst()
+        afterPayloadLengthsRead?.invoke()
+        return lengths
+    }
+
+    override suspend fun deletePayloads(table: String, cacheKeys: List<String>): Int {
+        evictionDeletes++
+        return delegate.deletePayloads(table, cacheKeys)
+    }
+
+    override suspend fun runInTransaction(block: suspend () -> Unit) {
+        transactions++
+        delegate.runInTransaction(block)
     }
 }
 
