@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.db
 
+import io.github.nesfeder.supabase.offline.internal.storage.VARIANT_BOUND
 import io.github.nesfeder.supabase.offline.internal.storage.VARIANT_SEPARATOR
 
 /**
@@ -51,11 +52,21 @@ internal suspend fun OfflineDatabase.runStorageQueries(): StorageQueryResults {
         .forEach { dao.upsert(it) }
     return StorageQueryResults(
         rowsForObject =
-            dao.forObject("avatars", "u-1/me.png", "u-1/me.png$VARIANT_SEPARATOR")
+            dao.forObject(
+                    "avatars",
+                    "u-1/me.png",
+                    "u-1/me.png$VARIANT_SEPARATOR",
+                    "u-1/me.png$VARIANT_BOUND",
+                )
                 .map { it.key }
                 .sorted(),
         rowsForPercentObject =
-            dao.forObject("avatars", "a%b.png", "a%b.png$VARIANT_SEPARATOR")
+            dao.forObject(
+                    "avatars",
+                    "a%b.png",
+                    "a%b.png$VARIANT_SEPARATOR",
+                    "a%b.png$VARIANT_BOUND",
+                )
                 .map { it.key }
                 .sorted(),
         allKeys = dao.all().map { it.key }.sorted(),

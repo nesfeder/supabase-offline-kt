@@ -5,6 +5,7 @@ package io.github.nesfeder.supabase.offline.internal.storage
 import io.github.nesfeder.supabase.offline.internal.db.REJECTED_MUTATIONS_CACHE_KEY
 import io.github.nesfeder.supabase.offline.internal.db.RESERVED_TABLE_NAME
 import io.github.nesfeder.supabase.offline.testdoubles.FakeBucketApi
+import io.github.nesfeder.supabase.offline.testdoubles.FakeFailingFileSystem
 import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingCachedFileDao
 import io.github.nesfeder.supabase.offline.testdoubles.TestStore
@@ -275,6 +276,44 @@ class FileCacheBoundTest {
             assertNotNull(queryCacheDao.getRow(RESERVED_TABLE_NAME, cacheKey), cacheKey)
         }
         assertEquals(0, queryCacheDao.evictedRows)
+    }
+
+    @Test
+    fun a_file_the_system_refuses_to_look_at_does_not_fail_the_download_over_the_bound() = runTest {
+        // Given — a cached, and a file system that refuses to look at it
+        val fileSystem = FakeFailingFileSystem()
+        val cache =
+            newTestFileCache(
+                baseDirectory = dataDirectory,
+                store = store,
+                fileSystem = fileSystem,
+                maxSizeBytes = 10,
+                nowMillis = { now },
+            )
+        val bucket =
+            StorageTestBucket(
+                newTestBucketApi(
+                    delegate = delegate,
+                    baseDirectory = dataDirectory,
+                    store = store,
+                    cache = cache,
+                ),
+                cache,
+            )
+        download(bucket, "a.bin", size = 6, at = 1 * MINUTE)
+        fileSystem.failMetadataOf = { path -> path.name == "a.bin" }
+
+        // When — a download takes the cache past the bound, and the pass cannot rank a
+        download(bucket, "b.bin", size = 6, at = 2 * MINUTE)
+
+        // Then — the download is cached all the same, and the bound is enforced by the next pass
+        // that can look
+        assertNotNull(store.getStorageByKey(BUCKET, "b.bin"))
+        assertNotNull(store.getStorageByKey(BUCKET, "a.bin"))
+        fileSystem.failMetadataOf = null
+        download(bucket, "c.bin", size = 2, at = 3 * MINUTE)
+        assertNull(store.getStorageByKey(BUCKET, "a.bin"))
+        assertTrue(store.cachedFileDao.totalSizeBytes() <= 10)
     }
 
     private companion object {
