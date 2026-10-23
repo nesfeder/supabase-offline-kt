@@ -5,6 +5,7 @@ package io.github.nesfeder.offlinetasks.data.supabase
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.jan.supabase.postgrest.result.PostgrestResult
 import io.github.nesfeder.offlinetasks.data.AppNetworkStatus
+import io.github.nesfeder.offlinetasks.data.ClientUnavailableException
 import io.github.nesfeder.offlinetasks.data.ColumnConflict
 import io.github.nesfeder.offlinetasks.data.LiveUpdatesStatus
 import io.github.nesfeder.offlinetasks.data.NetworkSwitchedOffException
@@ -26,6 +27,7 @@ import io.github.nesfeder.supabase.offline.testing.cachedFile
 import io.github.nesfeder.supabase.offline.testing.conflictedMutation
 import io.github.nesfeder.supabase.offline.testing.mutationNotQueueableException
 import io.github.nesfeder.supabase.offline.testing.networkDisabledException
+import io.github.nesfeder.supabase.offline.testing.offlineClientClosedException
 import io.github.nesfeder.supabase.offline.testing.pendingMutation
 import io.github.nesfeder.supabase.offline.testing.querySnapshot
 import io.github.nesfeder.supabase.offline.testing.queuedOutcome
@@ -43,6 +45,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNull
+import kotlin.test.assertSame
 import kotlin.test.assertTrue
 import kotlin.time.Instant
 import kotlinx.coroutines.runBlocking
@@ -225,6 +228,22 @@ class LibraryMappingsTest {
                 syncFailedException(isConnectivityFailure = true).toAppFailure(LibraryCall.Sync)
             )
         assertTrue(offline.isConnectivityFailure)
+        assertIs<ClientUnavailableException>(
+            offlineClientClosedException().toAppFailure(LibraryCall.Read)
+        )
+    }
+
+    @Test
+    fun an_illegal_state_other_than_the_closed_client_is_reported_as_it_is() {
+        // Given — the library's failure when local data is cleared while a file downloads, an
+        // IllegalStateException of its own that says nothing about the client
+        val cleared = IllegalStateException("Local data was cleared while the file was downloading")
+
+        // When
+        val failure = cleared.toAppFailure(LibraryCall.Storage("u-1/photo.png"))
+
+        // Then — not taken for a closed client
+        assertSame(cleared, failure)
     }
 
     @Test

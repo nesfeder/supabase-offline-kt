@@ -2,14 +2,20 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.mutationqueue
 
+import io.github.nesfeder.supabase.offline.SyncFailedException
+import io.github.nesfeder.supabase.offline.SyncStopReason
 import io.ktor.http.IllegalHeaderValueException
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertIs
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
-/** What a stopped pass reports as the sync status's last error: never the failure's own text. */
+/**
+ * What a stopped pass reports as the sync status's last error, never the failure's own text, and
+ * the reason the app's report gives for it.
+ */
 class SyncFailuresTest {
 
     @Test
@@ -57,5 +63,32 @@ class SyncFailuresTest {
             assertNull(failure.httpStatus)
             assertNull(failure.code)
         }
+    }
+
+    @Test
+    fun the_stops_no_call_reaches_alone_are_shown_as_the_reason_they_mean() {
+        // Given — a refusal held behind an earlier write, and a header the HTTP client refuses
+        val refusal =
+            SyncFailedException(
+                message = "refused",
+                httpStatus = 409,
+                code = null,
+                isConnectivityFailure = false,
+            )
+        val header = "Bearer eyJhbGciOi.secret-token-tail\n"
+        val badHeader = IllegalHeaderValueException(header, header.length - 1)
+
+        // When
+        val held = stopReasonOf(SyncStop.HeldBehindEarlierMutations(mutationId = 7, refusal))
+        val refusedHeader = stopReasonOf(SyncStop.TransientFailure(badHeader))
+
+        // Then — a pass that could not tell the user waited for the session, as one whose session
+        // did not settle; another sender's hold never ends a call, and nothing failed by it; the
+        // held refusal is the server's, and the header the device's
+        assertEquals(SyncStopReason.SessionNotReady, stopReasonOf(SyncStop.IdentityUnknown))
+        assertEquals(SyncStopReason.Completed, stopReasonOf(SyncStop.HeadInFlight))
+        assertEquals(409, assertIs<SyncStopReason.ServerFailure>(held).error.httpStatus)
+        val local = assertIs<SyncStopReason.LocalFailure>(refusedHeader)
+        assertTrue(local.error.message.orEmpty().startsWith("A request header holds"))
     }
 }

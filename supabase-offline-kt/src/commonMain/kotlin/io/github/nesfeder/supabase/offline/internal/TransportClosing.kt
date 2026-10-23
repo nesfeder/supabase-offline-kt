@@ -4,7 +4,7 @@ package io.github.nesfeder.supabase.offline.internal
 
 import io.github.jan.supabase.SupabaseClient
 import io.github.jan.supabase.annotations.SupabaseInternal
-import io.github.nesfeder.supabase.offline.internal.postgrest.CLIENT_CLOSED_MESSAGE
+import io.github.nesfeder.supabase.offline.OfflineClientClosedException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.isActive
@@ -56,13 +56,13 @@ internal suspend fun isEndedByClosing(
         failure is TransportClosedException -> true
         !isClosed && !isTransportClosed -> false
         failure is CancellationException -> currentCoroutineContext().isActive
-        else -> failure is IllegalStateException && failure.message == CLIENT_CLOSED_MESSAGE
+        else -> failure is OfflineClientClosedException
     }
 
 /**
- * The client's closed error, [IllegalStateException] with [CLIENT_CLOSED_MESSAGE], for a call that
- * [failure] stopped because the client is closing; [failure] itself otherwise. A cancellation is
- * the client's when its caller is still running and the client is closed, or its HTTP client is.
+ * The client's closed error, [OfflineClientClosedException], for a call that [failure] stopped
+ * because the client is closing; [failure] itself otherwise. A cancellation is the client's when
+ * its caller is still running and the client is closed, or its HTTP client is.
  *
  * The error keeps the cancellation as its cause, never the [TransportClosedException], so it does
  * not read as a connectivity failure.
@@ -73,10 +73,9 @@ internal suspend fun closedErrorFor(
     isTransportClosed: Boolean,
 ): Throwable =
     when {
-        failure is TransportClosedException ->
-            IllegalStateException(CLIENT_CLOSED_MESSAGE, failure.cause)
+        failure is TransportClosedException -> OfflineClientClosedException(failure.cause)
         failure is CancellationException &&
             currentCoroutineContext().isActive &&
-            (isClosed || isTransportClosed) -> IllegalStateException(CLIENT_CLOSED_MESSAGE, failure)
+            (isClosed || isTransportClosed) -> OfflineClientClosedException(failure)
         else -> failure
     }

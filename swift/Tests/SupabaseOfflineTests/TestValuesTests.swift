@@ -115,6 +115,32 @@ struct TestValuesTests {
         #expect(defaulted.remainingCount == 0)
         #expect(defaulted.alreadyOnServerCount == 0)
         #expect(defaulted.heldBehindOtherTablesCount == 0)
+        #expect(given.stopReason.kind == .heldBehindOtherTables)
+        #expect(defaulted.stopReason.kind == .completed)
+    }
+
+    @Test func aSyncReportTakesTheStopReasonItIsGiven() {
+        // Given
+        let failure = syncFailedError(message: "stopped", httpStatus: 503, code: "PGRST000")
+
+        // When
+        let reason = syncStopReason(kind: .serverFailure, error: failure)
+        let given = syncReport(remainingCount: 2, stopReason: reason)
+        let disabled = syncReport(stopReason: syncStopReason(kind: .networkDisabled))
+
+        // Then
+        #expect(given.stopReason == reason)
+        #expect(given.stopReason.kind == .serverFailure)
+        #expect(given.stopReason.error?.httpStatus == 503)
+        #expect(given.stopReason.error?.serverError?.code == "PGRST000")
+        #expect(given.stopReason.error?.message == "stopped")
+        #expect(given.remainingCount == 2)
+        #expect(given.syncedCount == 0)
+        #expect(disabled.stopReason.kind == .networkDisabled)
+        #expect(disabled.stopReason.error == nil)
+        #expect(syncStopReason(kind: .localFailure, error: failure) != reason)
+        #expect(SyncStopReason.Kind(rawValue: "serverFailure") == .serverFailure)
+        #expect(SyncStopReason.Kind.sessionNotReady.description == "sessionNotReady")
     }
 
     @Test func aSyncStatusTakesEveryFieldAndDefaultsToAClientThatHasDoneNothing() {
@@ -160,6 +186,26 @@ struct TestValuesTests {
         #expect(defaulted.result == nil)
         #expect(!defaulted.hasPendingMutations)
         #expect(defaulted.refresh == .idle)
+    }
+
+    @Test func aCachedResponseReadsAsTheCachesAtTheTimeGiven() {
+        // When
+        let body = Data(#"[{"id":1}]"#.utf8)
+        let given = cachedResponse(value: [1], data: body, count: 9, fetchedAt: Self.at, hasPendingMutations: true)
+        let defaulted = cachedResponse(value: "done", fetchedAt: Self.at)
+
+        // Then
+        #expect(given.value == [1])
+        #expect(given.data == body)
+        #expect(given.count == 9)
+        #expect(given.isFromCache)
+        #expect(given.fetchedAt == Self.at)
+        #expect(given.hasPendingMutations)
+        #expect(defaulted.isFromCache)
+        #expect(defaulted.fetchedAt == Self.at)
+        #expect(defaulted.data.isEmpty)
+        #expect(defaulted.count == nil)
+        #expect(!defaulted.hasPendingMutations)
     }
 
     @Test func anOfflineResponseTakesEveryFieldAndAnAppliedOutcomeWrapsIt() {

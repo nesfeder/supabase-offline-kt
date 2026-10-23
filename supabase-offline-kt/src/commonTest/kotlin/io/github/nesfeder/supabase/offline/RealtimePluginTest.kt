@@ -93,7 +93,7 @@ class RealtimePluginTest {
             supabase.offline.awaitStatus(RealtimeStatus.Subscribing)
             supabase.close()
             assertEquals(RealtimeStatus.Off, supabase.offline.realtimeStatus.value)
-            assertFailsWith<IllegalStateException> { supabase.offline.disableRealtime() }
+            assertFailsWith<OfflineClientClosedException> { supabase.offline.disableRealtime() }
         }
 
     private fun pluginClient(configure: Offline.Config.() -> Unit): SupabaseClient =

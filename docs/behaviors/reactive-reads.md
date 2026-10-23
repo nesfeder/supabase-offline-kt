@@ -136,7 +136,7 @@ refresh. A failure the read cannot recover from ends the flow after the values b
 refresh that fails is not one, it is reported in `refresh`. When the client closes, a collection
 still running completes: `first()` on one that has not emitted yet throws
 `NoSuchElementException` (`firstOrNull()` returns `null`), and a flow collected after `close()`
-fails with `IllegalStateException`.
+fails with `OfflineClientClosedException`.
 
 ## Behavior matrix
 
@@ -155,9 +155,10 @@ Facts about the engine, one row per condition; the conditions are those of the
 A server's own error (4xx or 5xx) is a refresh failure for `CacheFirstThenNetwork`, and fails a
 `NetworkFirstThenCache` flow even with a warm cache.
 
-A read of a shape the cache cannot hold (`single()`, a `count`, `csv()`, …; see the
+A read of a shape the cache cannot hold (a `count`, `csv()`, …; see the
 [one-shot matrix](read-strategies.md#behavior-matrix)) emits the network's answer once, `Idle`,
-and completes; offline it fails. While the session restores, or after its refresh failed, it waits
+and completes; offline it fails. So does `single()`, whose answer is cached as its list, one row
+long, which a one-shot read answers offline ([One row offline](read-strategies.md#edge-cases)). While the session restores, or after its refresh failed, it waits
 for the session first, as a one-shot read does. Under `CacheOnly` it fails at once with
 `CacheMissException` and sends nothing.
 

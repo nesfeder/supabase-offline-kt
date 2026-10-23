@@ -19,14 +19,17 @@ public sealed interface MutationStrategy {
      *
      * The write is sent at once when nothing of the same user is pending ahead of it, in any table;
      * the result is [MutationOutcome.Applied] with the server's response. Otherwise it waits and
-     * the result is [MutationOutcome.Queued]: no connection or no answer, a `503` or `520` after
-     * which it may not have run, an expired token that could not be refreshed, PostgREST's schema
-     * cache not knowing the table or a column yet (`PGRST204`, `PGRST205`; at the tenth such
-     * refusal, counted at least 30 seconds apart, the write is refused instead), earlier writes
-     * still pending, network access turned off, or a session still restoring. It is then sent by a
-     * later pass, and a refusal is kept on the rejected list instead of being thrown. A write sent
-     * at once that the server refuses otherwise, or fails with another `5xx`, is thrown and does
-     * not stay queued. Cached reads show a queued write at once.
+     * the result is [MutationOutcome.Queued]: no connection or no answer; an answer that says the
+     * request did not finish, so the write may not have run or may pass later (a `408`, `429`,
+     * `502`, `503`, `504`, `520`, `522` or `524`); a `401` for a token PostgREST refused as expired
+     * or unreadable (`PGRST301`, `PGRST303`), as when the device's clock runs behind the server's;
+     * an expired token that could not be refreshed; PostgREST's schema cache not knowing the table
+     * or a column yet (`PGRST204`, `PGRST205`; at the tenth such refusal, counted at least 30
+     * seconds apart, the write is refused instead); earlier writes still pending; network access
+     * turned off; or a session still restoring. It is then sent by a later pass, and a refusal is
+     * kept on the rejected list instead of being thrown. A write sent at once that the server
+     * refuses otherwise, or fails with another `5xx`, such as a `500` from the database, is thrown
+     * and does not stay queued. Cached reads show a queued write at once.
      *
      * Some writes cannot be queued faithfully and are sent at once instead, as with [OnlineOnly]: a
      * dry run (a write carrying `Prefer: tx=rollback`, as supabase-kt 3.8's `dryRun()` writes it)

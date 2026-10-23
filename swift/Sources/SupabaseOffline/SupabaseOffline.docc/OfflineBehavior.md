@@ -52,7 +52,7 @@ later sync, in the order the writes were made, across tables. Reads show it at o
 | When the write is made | What it returns |
 | --- | --- |
 | Nothing waits ahead of it, and the server accepts it | `.applied` |
-| Something waits ahead of it, the network is out of reach, or network access is turned off | `.queued` |
+| Something waits ahead of it, the network is out of reach, the server's answer says a later try may pass (a `503`, a `429`, a token the server holds expired), or network access is turned off | `.queued` |
 | It is sent at once and the server refuses it | It throws ``OfflineError/Code/server`` and leaves the queue |
 | Its task is canceled while it is on the wire | It stays queued, since the server may have it |
 
@@ -79,8 +79,9 @@ Nothing runs when your app returns to the foreground: call
 ``SupabaseOfflineClient/syncPendingMutations(table:)`` then.
 
 A sync sends the user's writes one at a time, in order. A failure that may pass (no connection, a
-`401`, `408`, `429` or `5xx`) stops it with the rest still queued, and
-``SyncStatus/lastSyncError`` says why. A write the server refuses for good moves to the rejected
+`401`, `408`, `429` or `5xx`) stops it with the rest still queued, and the report's
+``SyncReport/stopReason`` and ``SyncStatus/lastSyncError`` say why. A write the server refuses for
+good moves to the rejected
 list, ``SupabaseOfflineClient/rejectedMutations()``, and the sync goes on. The list is kept across
 launches until the app dismisses or retries each entry, and holds the newest 100.
 

@@ -80,10 +80,18 @@ other setting with the default it keeps; see [Configuration](../reference/config
 
 ## When the user changes
 
-The client learns who the user is only from the token the closure returns, so it cannot tell one
-user's cached rows and queued writes from another's: clear them with `clearLocalData()` when the
-user signs out, with the client's network turned off from before the sign-out until the next user
-is signed in. Sync the user's queued writes first if they should still go; turn the network off;
+The client learns who the user is only from the token the closure returns. With
+`identityFromAccessToken: true` in the `Config`, it tells users apart by the token's `sub` claim:
+each user's queued writes wait for that user's token, the cache is dropped when the token names
+another user, and the routine below is not needed
+([Telling users apart by their token](../behaviors/sign-out.md#telling-users-apart-by-their-token)).
+The closure then returns `nil` only when nobody is signed in; when a refresh fails offline, it
+returns `auth.currentSession?.accessToken`, which still names the user.
+
+By default the client cannot tell one user's cached rows and queued writes from another's: clear
+them with `clearLocalData()` when the user signs out, with the client's network turned off from
+before the sign-out until the next user is signed in. Sync the user's queued writes first if they
+should still go; turn the network off;
 sign out, so the closure returns `nil`, clearing even if the sign-out throws; clear; and once the
 next user is signed in, turn the network back on, which makes open live reads fetch again with
 their token. The sample's **Start over** does it, discarding the queued writes rather than sending

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.postgrest
 
+import io.github.nesfeder.supabase.offline.OfflineClientClosedException
 import io.github.nesfeder.supabase.offline.QuerySnapshot
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
 import io.github.nesfeder.supabase.offline.internal.newEngineScope
@@ -26,7 +27,10 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
-/** What a call on a closed client — or a reactive read it was serving — fails with. */
+/**
+ * The message of [OfflineClientClosedException], what a call on a closed client — or a reactive
+ * read it was serving — fails with. Apps match it, so it never changes.
+ */
 internal const val CLIENT_CLOSED_MESSAGE: String = "This offline client is closed"
 
 /**
@@ -131,7 +135,7 @@ internal class LiveQueries(
         // never emit again, or ending it as though the read were done.
         val closedWatcher = launch {
             scope.coroutineContext.job.join()
-            this@channelFlow.close(IllegalStateException(CLIENT_CLOSED_MESSAGE))
+            this@channelFlow.close(OfflineClientClosedException(null))
         }
         try {
             entry.flow

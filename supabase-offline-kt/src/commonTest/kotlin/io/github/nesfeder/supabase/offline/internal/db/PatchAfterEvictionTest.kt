@@ -30,7 +30,6 @@ class PatchAfterEvictionTest {
             queryCacheLimits =
                 QueryCacheLimits(
                     maxPayloadBytes = 40,
-                    evictionBatchSize = 1,
                     evictionHeadroomBytes = 0,
                 ),
         )

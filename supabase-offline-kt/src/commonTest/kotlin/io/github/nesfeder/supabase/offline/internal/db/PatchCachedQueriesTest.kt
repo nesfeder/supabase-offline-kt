@@ -693,7 +693,7 @@ class PatchCachedQueriesTest {
             """[{"id":1,"rating":80},{"id":2,"rating":70}]""",
         )
         val store = buildStore(queryCacheDao, FakeMutationDao())
-        val writesBefore = store.queryCacheDao.writesTo("ratings").second
+        val writesBefore = queryCacheDao.writes
 
         // When — both change within one burst
         store.cachePatcher.patchServerChanges(
@@ -707,7 +707,7 @@ class PatchCachedQueriesTest {
             """[{"id":1,"rating":81},{"id":2,"rating":71}]""",
             queryCacheDao.getRow("ratings", "sig-A")?.payload,
         )
-        assertEquals(1L, store.queryCacheDao.writesTo("ratings").second - writesBefore)
+        assertEquals(1, queryCacheDao.writes - writesBefore)
     }
 
     @Test

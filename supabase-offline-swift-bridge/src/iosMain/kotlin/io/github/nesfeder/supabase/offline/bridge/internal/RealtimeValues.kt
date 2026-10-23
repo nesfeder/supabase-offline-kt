@@ -92,7 +92,7 @@ internal fun RealtimeStatus.toBridge(): BridgeRealtimeStatus =
  * cause, such as a socket that could not be opened, is classified as any failure is.
  */
 private fun stallCauseOf(cause: Throwable): BridgeError {
-    val error = bridgeErrorOf(cause, clientClosing = false)
+    val error = bridgeErrorOf(cause)
     if (error.kind != BridgeErrorKind.UNEXPECTED || cause !is IllegalStateException) return error
     val type = cause::class.simpleName ?: "IllegalStateException"
     return bridgeError(BridgeErrorKind.SERVER, cause.message ?: "The Realtime channel ended", type)

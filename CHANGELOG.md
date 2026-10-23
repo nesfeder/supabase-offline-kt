@@ -15,6 +15,58 @@ All notable changes to this project are recorded in this file. The format follow
 
 ### Added
 
+- `Offline.rejectedMutationList()` and `Offline.conflictedMutationList()` read the rejected and
+  conflicted lists once, the list `rejectedMutations()` and `conflictedMutations()` emit first, as
+  `pendingMutationCount()` reads the queue's count; the Swift package has the same two calls.
+- On Android, `localFileIfCached(path)` gives the cached copy of an object as a `File`, or `null`
+  when none is cached, beside `localUriIfCached(path)`, which gives it as a `Uri`.
+- `OfflineClientClosedException`, the error every call on a closed client throws, and a call the
+  closing stopped. It is an `IllegalStateException` with the message the closed error always had,
+  "This offline client is closed", so an existing `catch (e: IllegalStateException)` or a check of
+  the message keeps working; match the type instead. The testing artifact's
+  `offlineClientClosedException()` builds one.
+- `SyncReport.stopReason` says why a sync returned when it did, and so why writes remain: it
+  completed, the network could not be reached, the server failed in a way that may pass (with its
+  `SyncFailedException`), a failure on the device stopped it, the session was not ready or changed
+  user, network access was off, writes wait behind another table, or local data was cleared. The
+  set is open, so a `when` over it keeps an `else` branch. The Swift package's `SyncReport` has the
+  same `stopReason`, a `SyncStopReason` with an extensible `kind` and the failure as `error`, and
+  the testing artifacts build one with `serverFailureStop`, `localFailureStop` and a `syncReport`
+  overload in Kotlin, and `syncStopReason(kind:error:)` and a `syncReport` overload in Swift.
+- `identityFromAccessToken` in `install(Offline)`, and the same setting in the Swift package's
+  `Config`: a client without the Auth plugin tells its users apart by the `sub` claim of the token
+  its own provider returns, read and never verified. Each user's queued writes are then sent only
+  with that user's token, the caches belong to one user at a time and are dropped when the token
+  names another, and the Realtime channel is joined again for the new user, as with Auth, so a Swift
+  app no longer needs its own sign-out routine. It is off by default, which changes nothing.
+
+### Changed
+
+- The query cache's eviction pass runs in the background after a response is written, where it ran
+  before the read returned, and starts when a running count of the cached lists' length passes the
+  bound, where every response of 4 KiB or more, and every 32nd response, summed every cached list
+  first; a pass reads each list's length once and deletes the lists it chose in one transaction.
+- The testing artifact's `InMemoryStore` keeps an in-memory client's local data for the next
+  client built over it: a client built with `inMemory(clock, store)` or
+  `inMemory(clock, realtime, store)` after an earlier one closed finds its queued writes, which it
+  replays, its rejected and conflicted lists, and its cached queries and files, so a test can
+  simulate an app killed and relaunched. A client built over a store another client holds fails
+  with `IllegalStateException`. The Swift testing product has the same `InMemoryStore` and
+  `inMemory(…, store:)` overloads.
+- `cachedResult(data, supabase, fetchedAt, hasPendingMutations)` in the testing artifact builds a
+  `PostgrestResult` that `isFromCache`, `fetchedAt` and `hasPendingMutations` read as given, for a
+  fake of an app's own repository. The Swift testing product has
+  `cachedResponse(value:data:count:fetchedAt:hasPendingMutations:)`.
+- `FakeRealtime.joinCount`, in Kotlin and Swift, counts the joins the client has handled: once it
+  moves, the client has reported the channel subscribed and asked for the named tables to be read
+  again, so a test that waits for it reports a change after the join instead of racing it.
+
+### Changed
+
+- `FakeRealtime` applies the table's `RealtimeFilter` as the server does: an insert or an update
+  whose record does not meet it is dropped and counted in `droppedReportCount`, and a delete
+  reaches the client whatever the filter. Before, every report to a followed table reached the
+  client, so a test could see a change a device never receives.
 - `realtimeTableStatus` says where each table named in `realtime { }` stands, keyed and ordered as
   named, beside `realtimeStatus`; the Swift package reads it as a `RealtimeTableStatusSequence` of
   `[RealtimeTable: RealtimeStatus]`. `FakeRealtime.failTable` refuses one table in a test, in both
@@ -52,6 +104,18 @@ All notable changes to this project are recorded in this file. The format follow
   the wrong one: such a filter was sent as `owner=in.<id>` or `id=eq.[1]`, the server refused the
   join, and the channel stalled and retried forever. Pass a `List` for `in` and a single value for
   every other operator.
+- A `QueueIfOffline` write sent at once stays queued, instead of being thrown and dropped from the
+  queue, when the server answers `408`, `429`, `502`, `504`, `522` or `524`, or `401` with
+  PostgREST's `PGRST301` or `PGRST303` (a token the server holds expired while the device's clock
+  says it is fresh), as a replay of the same write always has; a later pass sends it. A caller
+  that relied on the exception to show an error now gets `Queued`. A `500` from the database is
+  still thrown.
+- `single()` is cached as its list, one row long, under the key of the list read with the same
+  query, through the guards a list response passes. Offline, or when the network fails,
+  `NetworkFirst`, `CacheFirst` and `CacheOnly` answer it from that list when it holds exactly one
+  row, with the queued writes laid over it; no row or several fail as before. It was never cached,
+  so a detail screen had nothing offline. `maybeSingle()` on supabase-kt 3.8 is cached the same
+  way, and offline answers only its one row, never `null`.
 
 ### Deprecated
 
@@ -59,6 +123,14 @@ All notable changes to this project are recorded in this file. The format follow
 
 ### Fixed
 
+- In the Swift package, a call that failed for a reason of its own while the client closed threw
+  `clientClosed`: any `IllegalStateException` or cancellation met during the close read as the
+  closed client, such as the failure of a download whose local data was cleared. It now keeps its
+  own code, and only the closed client's error is `clientClosed`.
+- A sync pass that a user switch stopped left `SyncStatus.lastSyncError` holding an earlier pass's
+  failure, which was about the previous user's writes; it is now cleared then. A pass stopped
+  because the session is not ready, network access is off or a write waits behind another table
+  still leaves it as it was, since no newer answer came for those writes.
 - A reactive read's refresh asks again, on its retry schedule, for as long as its answers are
   refused as older than a change to the table, and reads `Refreshing` meanwhile; a
   `NetworkFirstThenCache` read whose first fetch is refused that way stays `Refreshing` too. Before,
@@ -151,6 +223,11 @@ All notable changes to this project are recorded in this file. The format follow
   the channel at the old expiry and the named tables were read again; the provider is now asked
   more often as the expiry nears, a later token is sent as soon as it is returned, and a provider
   that failed once is asked again instead of being left until the next join.
+- An empty value in an `in` list with other values, such as `isIn("status", listOf("", "done"))`,
+  is kept on the device as the server keeps it: a queued or cached row whose value is the empty
+  string shows in a cached list read through that filter, and a queued update or delete sends the
+  list whole instead of without the empty value. A list of only the empty value still matches no
+  row, as the server reads it.
 
 ## [0.2.0] - 2026-10-20
 

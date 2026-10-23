@@ -4,6 +4,7 @@ package io.github.nesfeder.supabase.offline.internal.mutationqueue
 
 import io.github.jan.supabase.postgrest.exception.PostgrestRestException
 import io.github.nesfeder.supabase.offline.SyncFailedException
+import io.github.nesfeder.supabase.offline.SyncStopReason
 import io.github.nesfeder.supabase.offline.httpStatusOrNull
 import io.github.nesfeder.supabase.offline.internal.isNetworkOrConnectivityFailure
 import io.ktor.http.IllegalHeaderNameException
@@ -51,6 +52,36 @@ internal fun syncFailureOf(cause: Throwable): SyncFailedException {
         isConnectivityFailure = connectivity,
     )
 }
+
+/**
+ * What the app is told a pass that ended on [stop] returned for. A pass whose identity could not be
+ * told was waiting for the session as much as one whose session did not settle. One stopped by
+ * another sender holding the next write never ends a call's report, since the call waits that
+ * sender out; nothing failed, so it would read as having run to the end.
+ */
+internal fun stopReasonOf(stop: SyncStop?): SyncStopReason =
+    when (stop) {
+        null,
+        SyncStop.HeadInFlight -> SyncStopReason.Completed
+        SyncStop.SessionNotReady,
+        SyncStop.IdentityUnknown -> SyncStopReason.SessionNotReady
+        SyncStop.SessionChanged -> SyncStopReason.SessionChanged
+        SyncStop.NetworkDisabled -> SyncStopReason.NetworkDisabled
+        is SyncStop.HeldBehindOtherTables -> SyncStopReason.HeldBehindOtherTables
+        SyncStop.LocalDataCleared -> SyncStopReason.LocalDataCleared
+        is SyncStop.TransientFailure -> failureReasonOf(syncFailureOf(stop.cause))
+        is SyncStop.HeldBehindEarlierMutations -> failureReasonOf(syncFailureOf(stop.cause))
+    }
+
+/**
+ * The reason a pass that [failure] stopped is given: the network's, the server's or the device's.
+ */
+private fun failureReasonOf(failure: SyncFailedException): SyncStopReason =
+    when {
+        failure.isConnectivityFailure -> SyncStopReason.NetworkUnavailable
+        failure.httpStatus != null -> SyncStopReason.ServerFailure(failure)
+        else -> SyncStopReason.LocalFailure(failure)
+    }
 
 /** Whether this or a cause is Ktor's refusal of a header, whose message quotes the header. */
 private fun Throwable.isIllegalHeader(): Boolean =

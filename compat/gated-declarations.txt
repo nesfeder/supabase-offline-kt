@@ -1,3 +1,5 @@
+supabase-offline-kt/src/commonMain/kotlin/io/github/nesfeder/supabase/offline/internal/testing/InMemoryLocalData.kt|class InMemoryLocalData|OfflineInternal
+supabase-offline-kt/src/commonMain/kotlin/io/github/nesfeder/supabase/offline/internal/testing/KeepLocalDataInMemory.kt|fun keepLocalDataInMemory|OfflineInternal
 supabase-offline-kt/src/commonMain/kotlin/io/github/nesfeder/supabase/offline/internal/testing/KeepLocalDataInMemory.kt|fun keepLocalDataInMemory|OfflineInternal
 supabase-offline-kt/src/commonMain/kotlin/io/github/nesfeder/supabase/offline/internal/testing/ScriptedRealtime.kt|class ScriptedRealtimeChannel|OfflineInternal
 supabase-offline-kt/src/commonMain/kotlin/io/github/nesfeder/supabase/offline/internal/testing/ScriptedRealtime.kt|fun followServerChangesThrough|OfflineInternal

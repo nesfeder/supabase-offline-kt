@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.testing
 
+import io.github.jan.supabase.SupabaseClient
+import io.github.jan.supabase.postgrest.postgrest
 import io.github.jan.supabase.postgrest.result.PostgrestResult
 import io.github.nesfeder.supabase.offline.CacheMissException
 import io.github.nesfeder.supabase.offline.CachedFile
@@ -14,6 +16,7 @@ import io.github.nesfeder.supabase.offline.MutationOutcome
 import io.github.nesfeder.supabase.offline.NetworkDisabledException
 import io.github.nesfeder.supabase.offline.NetworkStatus
 import io.github.nesfeder.supabase.offline.Offline
+import io.github.nesfeder.supabase.offline.OfflineClientClosedException
 import io.github.nesfeder.supabase.offline.OfflineInternal
 import io.github.nesfeder.supabase.offline.PendingMutation
 import io.github.nesfeder.supabase.offline.QuerySnapshot
@@ -24,7 +27,11 @@ import io.github.nesfeder.supabase.offline.ServerError
 import io.github.nesfeder.supabase.offline.SyncFailedException
 import io.github.nesfeder.supabase.offline.SyncReport
 import io.github.nesfeder.supabase.offline.SyncStatus
+import io.github.nesfeder.supabase.offline.SyncStopReason
+import io.github.nesfeder.supabase.offline.fetchedAt
+import io.github.nesfeder.supabase.offline.hasPendingMutations
 import io.github.nesfeder.supabase.offline.internal.testing.ValueConstructors
+import io.github.nesfeder.supabase.offline.isFromCache
 import kotlin.time.Instant
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -97,6 +104,14 @@ public fun mutationNotQueueableException(
 public fun networkDisabledException(
     message: String = "The library's network access is turned off"
 ): NetworkDisabledException = ValueConstructors.networkDisabledException(message)
+
+/**
+ * The failure of a call on a closed client, with the library's own message and no cause, as a test
+ * double of the app's own throws it after its client is closed.
+ */
+@OptIn(OfflineInternal::class)
+public fun offlineClientClosedException(): OfflineClientClosedException =
+    ValueConstructors.offlineClientClosedException()
 
 /**
  * A write waiting in the mutation queue, as [Offline.pendingMutations] lists one.
@@ -182,7 +197,32 @@ public fun querySnapshot(
     ValueConstructors.querySnapshot(result, isFromCache, fetchedAt, hasPendingMutations, refresh)
 
 /**
- * What a call of [Offline.syncPendingMutations] did.
+ * The result of a one-shot read the cache answered, as a fake of the app's own repository returns
+ * it: [PostgrestResult.isFromCache] reads `true`, [PostgrestResult.fetchedAt] the time given, to
+ * the millisecond, and [PostgrestResult.hasPendingMutations] the flag given. The library stamps a
+ * read's result in headers PostgREST never sends, and this one carries the same stamp; a result
+ * built with `PostgrestResult(data, Headers.Empty, supabase.postgrest)` carries none, and reads as
+ * a result supabase-kt returned itself.
+ *
+ * @param data the rows, as the JSON text a read returns.
+ * @param supabase a client with `Postgrest` installed, built on a Ktor `MockEngine`, since
+ *   supabase-kt's `Postgrest` needs a client with an engine.
+ * @param fetchedAt when the rows were fetched from the server.
+ * @param hasPendingMutations whether a queued write changed a row shown.
+ */
+@OptIn(OfflineInternal::class)
+public fun cachedResult(
+    data: String,
+    supabase: SupabaseClient,
+    fetchedAt: Instant,
+    hasPendingMutations: Boolean = false,
+): PostgrestResult =
+    ValueConstructors.cachedResult(data, supabase.postgrest, fetchedAt, hasPendingMutations)
+
+/**
+ * What a call of [Offline.syncPendingMutations] did. Its [SyncReport.stopReason] is the one the
+ * library gives such a report: [SyncStopReason.HeldBehindOtherTables] when
+ * [heldBehindOtherTablesCount] is more than zero, else [SyncStopReason.Completed].
  *
  * @param syncedCount the writes sent and accepted.
  * @param rejected the writes the server refused for good.
@@ -209,7 +249,10 @@ public fun syncReport(
 
 /**
  * What a call of [Offline.syncPendingMutations] did, with the conflicts its replay met; a test sets
- * the conflict fields it reads, and the others keep the values of a pass that met none.
+ * the conflict fields it reads, and the others keep the values of a pass that met none. Its
+ * [SyncReport.stopReason] is the one the library gives such a report:
+ * [SyncStopReason.HeldBehindOtherTables] when [heldBehindOtherTablesCount] is more than zero, else
+ * [SyncStopReason.Completed].
  *
  * @param syncedCount the writes sent and accepted.
  * @param rejected the writes the server refused for good.
@@ -242,6 +285,67 @@ public fun syncReport(
         conflictsKeptServerCount,
         conflicted,
     )
+
+/**
+ * What a call of [Offline.syncPendingMutations] did, and why it returned when it did; every field
+ * but [stopReason], which selects this overload, defaults to the value of a call that sent nothing.
+ * Build a failure's reason with [serverFailureStop] or [localFailureStop]; the others are objects,
+ * such as [SyncStopReason.NetworkUnavailable].
+ *
+ * @param syncedCount the writes sent and accepted.
+ * @param rejected the writes the server refused for good.
+ * @param remainingCount the writes still queued.
+ * @param alreadyOnServerCount of [syncedCount], the writes the server already held.
+ * @param heldBehindOtherTablesCount of [remainingCount], the writes a call for one table held back
+ *   behind an earlier write to another table.
+ * @param conflictsResolvedCount of [syncedCount], the conflicts settled and sent.
+ * @param conflictsKeptServerCount the writes dropped so the server's row stands.
+ * @param conflicted the writes parked on the conflicted list.
+ * @param stopReason why the call returned when it did.
+ */
+@OptIn(OfflineInternal::class)
+public fun syncReport(
+    syncedCount: Int = 0,
+    rejected: List<RejectedMutation> = emptyList(),
+    remainingCount: Int = 0,
+    alreadyOnServerCount: Int = 0,
+    heldBehindOtherTablesCount: Int = 0,
+    conflictsResolvedCount: Int = 0,
+    conflictsKeptServerCount: Int = 0,
+    conflicted: List<ConflictedMutation> = emptyList(),
+    stopReason: SyncStopReason,
+): SyncReport =
+    ValueConstructors.syncReport(
+        syncedCount,
+        rejected,
+        remainingCount,
+        alreadyOnServerCount,
+        heldBehindOtherTablesCount,
+        conflictsResolvedCount,
+        conflictsKeptServerCount,
+        conflicted,
+        stopReason,
+    )
+
+/**
+ * The reason of a sync call the server stopped with a failure that may pass, such as a `503`.
+ *
+ * @param error the failure, as [SyncStatus.lastSyncError] would hold it: build it with
+ *   [syncFailedException], giving its `httpStatus`.
+ */
+@OptIn(OfflineInternal::class)
+public fun serverFailureStop(error: SyncFailedException): SyncStopReason.ServerFailure =
+    ValueConstructors.serverFailureStop(error)
+
+/**
+ * The reason of a sync call a failure on the device stopped, such as the local database failing.
+ *
+ * @param error the failure, as [SyncStatus.lastSyncError] would hold it: build it with
+ *   [syncFailedException], with no `httpStatus`.
+ */
+@OptIn(OfflineInternal::class)
+public fun localFailureStop(error: SyncFailedException): SyncStopReason.LocalFailure =
+    ValueConstructors.localFailureStop(error)
 
 /**
  * Where the library stands with the queue and the network, as [Offline.syncStatus] holds it; every

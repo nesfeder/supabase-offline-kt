@@ -28,6 +28,7 @@ From the samples: [SampleSupabaseClient.kt](https://github.com/nesfeder/supabase
 | [`dataDirectory`](#datadirectory) | `String?` | `null`: the platform's place | Where the database and the file cache live |
 | [`networkAvailability`](#networkavailability) | `Flow<Boolean>?` | `null`: the platform's monitor | The connectivity signal |
 | [`autoSync`](#autosync) | `Boolean` | `true` | Whether queued writes are sent without the app asking |
+| [`identityFromAccessToken`](#identityfromaccesstoken) | `Boolean` | `false` | Whether a client without Auth tells its users apart by its own access token |
 | [`primaryKeys`](#primarykeys), `primaryKey(table, vararg columns)` | `MutableMap<String, List<String>>` | `id` for every table | Each table's key columns |
 | [`versionColumns`](#versioncolumns), `versionColumn(table, column)` | `MutableMap<String, String>` | none: every write replays unchecked | Each table's version column, which guards the replay of a queued update or delete |
 | [`conflictResolver`](#conflictresolver) | `ConflictResolver?` | `null`: the defaults | Settles a conflict a replay finds |
@@ -130,6 +131,16 @@ settles into a user with writes queued, when the network comes back, and, for a 
 Auth, once when it opens with writes an earlier run left queued. `false` stops those three, and you
 call `syncPendingMutations()` yourself; a write queued behind another is still sent as before
 ([When the library sends by itself](../behaviors/sync.md#when-the-library-sends-by-itself)).
+
+### `identityFromAccessToken`
+
+Whether a client without supabase-kt's Auth plugin tells its users apart by the access token its
+own provider returns; `false` by default. Off, such a client has one identity, nobody signed in,
+for the life of the install, and the app clears local data itself when its user changes. On, the
+user is the token's `sub` claim, read and never verified, and the queue, the caches and the
+Realtime channel follow the user as they do with Auth. The plugin ignores it with Auth installed.
+The Swift package's `Config` takes it as `identityFromAccessToken:`. See
+[Telling users apart by their token](../behaviors/sign-out.md#telling-users-apart-by-their-token).
 
 ### `primaryKeys`
 
@@ -316,7 +327,7 @@ out.
 
 | | What happens |
 | --- | --- |
-| At once | Every new call fails with `IllegalStateException`, on the plugin and on any builder or bucket obtained from it. Every flow being collected completes; one collected afterward fails. `syncStatus` keeps its last value. The library's own work stops: refreshes, passes, syncs and Storage calls, whose callers get the closed error, never a cancellation |
+| At once | Every new call fails with `OfflineClientClosedException`, on the plugin and on any builder or bucket obtained from it. Every flow being collected completes; one collected afterward fails. `syncStatus` keeps its last value. The library's own work stops: refreshes, passes, syncs and Storage calls, whose callers get the closed error, never a cancellation |
 | Left to finish | A PostgREST write, a clear, a one-shot `select` that goes to the network, an `rpc`, a read of the cache, and a resumable upload. A write whose answer arrives is applied and never sent again |
 | May still be sent | Through `supabase.close()`, a call made while supabase-kt closes its HTTP client is either still sent or ends as it would offline: answered from the cache, `Queued`, or the closed error |
 | The bound | `close()` returns once the database is released, or after 10 seconds at most, and never throws. Past that, the database is released when the last call finishes, and a new client on it fails until then |
@@ -325,5 +336,6 @@ out.
 
 `Offline.Config.inMemory(clock)`, from the `supabase-offline-kt-testing` artifact, keeps the cache,
 the queue and the file cache in memory for tests, and `inMemory(clock, realtime)` takes a
-`FakeRealtime` in place of the Realtime channel the named tables would open. See
-[Testing your app](../getting-started/testing.md).
+`FakeRealtime` in place of the Realtime channel the named tables would open.
+`inMemory(clock, store)` keeps them in an `InMemoryStore` instead, so a client built over it after
+an earlier one closed finds what that one left. See [Testing your app](../getting-started/testing.md).

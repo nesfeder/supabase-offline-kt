@@ -37,7 +37,7 @@ The channel is joined while three things hold, and left as soon as one stops:
 
 | The channel is joined while… | …and left when |
 | --- | --- |
-| a user is signed in, with the Auth plugin installed (without it, always) | the user signs out |
+| a user is signed in, with the Auth plugin installed (without it, always; with `identityFromAccessToken`, while the token names a user or nobody) | the user signs out |
 | the network is not known down | the network drops, or `disableNetwork()` turns access off |
 | the subscription is on, which it is at start | `disableRealtime()` is called |
 
@@ -136,8 +136,10 @@ the token's `exp`, and more often as the expiry nears, and sends the channel any
 returns that expires later, as soon as it does, so a long session is not closed by the server when
 the token expires. What it cannot see is a change of user: an iOS app, whose core has no Auth
 plugin, brackets a sign-in or sign-out with `disableRealtime()` and `enableRealtime()`, as the iOS
-sample's `applyLiveUpdates()` above does, so the channel is joined again as the new user. A Kotlin
-app with Auth installed needs nothing: the plugin follows the session.
+sample's `applyLiveUpdates()` above does, so the channel is joined again as the new user. With
+`identityFromAccessToken` on, the client sees the change itself: the channel is joined again as the
+user the new token names, at the client's next call, and the bracket is not needed. A Kotlin app
+with Auth installed needs nothing: the plugin follows the session.
 
 ## Manual control
 

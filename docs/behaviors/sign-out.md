@@ -49,8 +49,9 @@ client stays usable.
 
 ## Switching accounts
 
-Facts about the engine, with the Auth plugin installed. The query cache and the Storage file
-cache belong to one identity at a time: a signed-in user, or nobody signed in.
+Facts about the engine, with the Auth plugin installed, or with `identityFromAccessToken` on
+([below](#telling-users-apart-by-their-token)). The query cache and the Storage file cache belong
+to one identity at a time: a signed-in user, or nobody signed in.
 
 - A read never returns what was cached for another identity, and a response or download that
   started before the switch is never written into the new identity's cache.
@@ -61,7 +62,8 @@ cache belong to one identity at a time: a signed-in user, or nobody signed in.
   delivers is never applied to the new user's cache
   ([Applying Realtime events](realtime.md#the-lifecycle)).
 - Without the Auth plugin, or with the app's own token provider, there is one identity, nobody
-  signed in, for the life of the install: the cache is served as it is and never dropped for a
+  signed in, for the life of the install, unless `identityFromAccessToken` is on: the cache is
+  served as it is and never dropped for a
   change of user, since nothing the engine can read tells one user from another. An app whose own
   token provider serves more than one user must call `clearLocalData()` itself when its user
   changes, and only once the provider has stopped returning the outgoing user's token: a live read
@@ -72,6 +74,30 @@ Queued writes follow their owner. A write is recorded with the user who made it;
 writes are never listed, counted, sent, discarded or retried, and their ids do nothing. With Auth
 installed, a queued write is sent with its owner's token or not at all, so user A's writes wait,
 untouched, while user B is signed in, and go when A signs back in.
+
+### Telling users apart by their token
+
+A client without the Auth plugin, with its own token provider (supabase-kt's `accessToken`, or
+`Config.accessToken` in the Swift package), can tell its users apart by the token: set
+`identityFromAccessToken = true` in `install(Offline)`, or pass `identityFromAccessToken: true` to
+the Swift `Config`. The user is then the token's `sub` claim, read and never verified, and every
+fact above holds as with Auth. Each user's queued writes are sent only with that user's token, the
+caches are dropped when the token names another user, and the Realtime channel is joined again for
+the new user.
+
+- No token, or the project's key, is nobody signed in. A token that names no user is no identity: a
+  write made with it is sent at once and never queued, nothing queued is sent, and the cache is
+  neither read nor written for it.
+- The client asks the provider for its token before a write is queued, before the cache is read or
+  written, before each queued write is sent, and once when it opens. A new user is seen at the
+  client's next call, so a live read open across the change shows the last rows until then. Keep
+  the provider quick, as supabase-kt asks.
+- Return no token only when nobody is signed in: no token reads as a sign-out, which drops the
+  cache. When a refresh fails offline, return the session's expired token, which still names its
+  user (with supabase-swift, `auth.currentSession?.accessToken`). A provider that throws keeps the
+  last user's local data, and nothing queued is sent until it answers again; its requests fail.
+- Writes queued before the setting was turned on are nobody's, and are sent only while nobody is
+  signed in. Sync them first.
 
 ## While a stored session restores
 

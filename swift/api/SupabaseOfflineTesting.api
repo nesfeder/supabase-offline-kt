@@ -7,6 +7,7 @@ property FakeRealtime.droppedReportCount | var droppedReportCount: Int { get }
 method FakeRealtime.failChannel(message:) | func failChannel(message: String = "The channel was refused")
 method FakeRealtime.failTable(table:message:schema:) | func failTable(table: String, message: String = "The table's binding was refused", schema: String? = nil)
 init FakeRealtime.init() | init()
+property FakeRealtime.joinCount | var joinCount: Int { get }
 method FakeRealtime.reportDelete(table:oldRecord:schema:) | func reportDelete(table: String, oldRecord: [String : OfflineJSON], schema: String? = nil) throws
 method FakeRealtime.reportInsert(table:record:schema:) | func reportInsert(table: String, record: [String : OfflineJSON], schema: String? = nil) throws
 method FakeRealtime.reportUpdate(table:record:schema:) | func reportUpdate(table: String, record: [String : OfflineJSON], schema: String? = nil) throws
@@ -23,6 +24,8 @@ type.property FakeServer.Response.noConnection | static let noConnection: FakeSe
 type.method FakeServer.Response.status(_:headers:body:) | static func status(_ status: Int, headers: [String : String] = [:], body: Data = Data()) -> FakeServer.Response
 init FakeServer.init() | init()
 init FakeServer.init(respond:) | init(respond: @escaping @Sendable (FakeServer.Request) async -> FakeServer.Response)
+class InMemoryStore | final class InMemoryStore
+init InMemoryStore.init() | init()
 class ManualClock | final class ManualClock
 method ManualClock.advance(by:) | func advance(by duration: Duration)
 init ManualClock.init(now:) | init(now: Date = Date())
@@ -30,8 +33,11 @@ property ManualClock.now | var now: Date { get }
 method ManualClock.set(to:) | func set(to date: Date)
 type.method SupabaseOfflineClient.inMemory(supabaseURL:supabaseKey:config:server:clock:) | static func inMemory(supabaseURL: URL = URL(string: "https://in-memory.supabase.co")!, supabaseKey: String = "in-memory-publishable-key", config: SupabaseOfflineClient.Config = Config(), server: FakeServer = FakeServer(), clock: ManualClock? = nil) -> SupabaseOfflineClient
 type.method SupabaseOfflineClient.inMemory(supabaseURL:supabaseKey:config:server:clock:realtime:) | static func inMemory(supabaseURL: URL = URL(string: "https://in-memory.supabase.co")!, supabaseKey: String = "in-memory-publishable-key", config: SupabaseOfflineClient.Config = Config(), server: FakeServer = FakeServer(), clock: ManualClock? = nil, realtime: FakeRealtime) -> SupabaseOfflineClient
+type.method SupabaseOfflineClient.inMemory(supabaseURL:supabaseKey:config:server:clock:realtime:store:) | static func inMemory(supabaseURL: URL = URL(string: "https://in-memory.supabase.co")!, supabaseKey: String = "in-memory-publishable-key", config: SupabaseOfflineClient.Config = Config(), server: FakeServer = FakeServer(), clock: ManualClock? = nil, realtime: FakeRealtime, store: InMemoryStore) -> SupabaseOfflineClient
+type.method SupabaseOfflineClient.inMemory(supabaseURL:supabaseKey:config:server:clock:store:) | static func inMemory(supabaseURL: URL = URL(string: "https://in-memory.supabase.co")!, supabaseKey: String = "in-memory-publishable-key", config: SupabaseOfflineClient.Config = Config(), server: FakeServer = FakeServer(), clock: ManualClock? = nil, store: InMemoryStore) -> SupabaseOfflineClient
 func cacheMissError(message:) | func cacheMissError(message: String = "No valid cached data found for this query") -> OfflineError
 func cachedFile(path:fetchedAt:sizeBytes:) | func cachedFile(path: String, fetchedAt: Date, sizeBytes: Int) -> CachedFile
+func cachedResponse(value:data:count:fetchedAt:hasPendingMutations:) | func cachedResponse<Value>(value: Value, data: Data = Data(), count: Int? = nil, fetchedAt: Date, hasPendingMutations: Bool = false) -> OfflineResponse<Value> where Value : Sendable
 func conflictedMutation(id:table:operation:createdAt:rowKeys:body:base:server:serverVersion:changedOnServer:conflictingColumns:message:conflictedAt:) | func conflictedMutation(id: Int64, table: String, operation: MutationOperation, createdAt: Date, rowKeys: [[String : OfflineJSON]] = [], body: OfflineJSON? = nil, base: [String : OfflineJSON] = [:], server: [String : OfflineJSON]? = nil, serverVersion: String? = nil, changedOnServer: Set<String> = [], conflictingColumns: Set<String> = [], message: String, conflictedAt: Date) -> ConflictedMutation
 func mutationConflict(mutationId:table:operation:rowKey:base:local:server:changedOnServer:conflictingColumns:) | func mutationConflict(mutationId: Int64, table: String, operation: MutationOperation, rowKey: [String : OfflineJSON], base: [String : OfflineJSON] = [:], local: [String : OfflineJSON]? = nil, server: [String : OfflineJSON]? = nil, changedOnServer: Set<String> = [], conflictingColumns: Set<String> = []) -> MutationConflict
 func mutationNotQueueableError(message:) | func mutationNotQueueableError(message: String = "The write could not be queued, and could not be sent") -> OfflineError
@@ -46,8 +52,10 @@ func serverError(status:code:message:details:hint:) | func serverError(status: I
 func syncFailedError(message:httpStatus:code:isConnectivityFailure:) | func syncFailedError(message: String = "The sync pass stopped with writes still queued", httpStatus: Int? = nil, code: String? = nil, isConnectivityFailure: Bool = false) -> OfflineError
 func syncReport(syncedCount:rejected:remainingCount:alreadyOnServerCount:heldBehindOtherTablesCount:) | func syncReport(syncedCount: Int, rejected: [RejectedMutation] = [], remainingCount: Int = 0, alreadyOnServerCount: Int = 0, heldBehindOtherTablesCount: Int = 0) -> SyncReport
 func syncReport(syncedCount:rejected:remainingCount:alreadyOnServerCount:heldBehindOtherTablesCount:conflictsResolvedCount:conflictsKeptServerCount:conflicted:) | func syncReport(syncedCount: Int, rejected: [RejectedMutation] = [], remainingCount: Int = 0, alreadyOnServerCount: Int = 0, heldBehindOtherTablesCount: Int = 0, conflictsResolvedCount: Int = 0, conflictsKeptServerCount: Int = 0, conflicted: [ConflictedMutation] = []) -> SyncReport
+func syncReport(syncedCount:rejected:remainingCount:alreadyOnServerCount:heldBehindOtherTablesCount:conflictsResolvedCount:conflictsKeptServerCount:conflicted:stopReason:) | func syncReport(syncedCount: Int = 0, rejected: [RejectedMutation] = [], remainingCount: Int = 0, alreadyOnServerCount: Int = 0, heldBehindOtherTablesCount: Int = 0, conflictsResolvedCount: Int = 0, conflictsKeptServerCount: Int = 0, conflicted: [ConflictedMutation] = [], stopReason: SyncStopReason) -> SyncReport
 func syncStatus(network:pendingMutationCount:rejectedMutationCount:isSyncing:lastSyncedAt:lastSyncError:) | func syncStatus(network: NetworkStatus = .unknown, pendingMutationCount: Int = 0, rejectedMutationCount: Int = 0, isSyncing: Bool = false, lastSyncedAt: Date? = nil, lastSyncError: OfflineError? = nil) -> SyncStatus
 func syncStatus(network:pendingMutationCount:rejectedMutationCount:isSyncing:lastSyncedAt:lastSyncError:conflictedMutationCount:) | func syncStatus(network: NetworkStatus = .unknown, pendingMutationCount: Int = 0, rejectedMutationCount: Int = 0, isSyncing: Bool = false, lastSyncedAt: Date? = nil, lastSyncError: OfflineError? = nil, conflictedMutationCount: Int) -> SyncStatus
+func syncStopReason(kind:error:) | func syncStopReason(kind: SyncStopReason.Kind, error: OfflineError? = nil) -> SyncStopReason
 conformance FakeRealtime | Swift.Sendable
 conformance FakeServer | Swift.Sendable
 conformance FakeServer.Request | Swift.Equatable
@@ -56,4 +64,5 @@ conformance FakeServer.Request | Swift.Sendable
 conformance FakeServer.Response | Swift.Equatable
 conformance FakeServer.Response | Swift.Hashable
 conformance FakeServer.Response | Swift.Sendable
+conformance InMemoryStore | Swift.Sendable
 conformance ManualClock | Swift.Sendable

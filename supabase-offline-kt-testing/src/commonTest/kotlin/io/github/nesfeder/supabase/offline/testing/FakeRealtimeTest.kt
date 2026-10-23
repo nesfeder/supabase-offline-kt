@@ -3,23 +3,36 @@
 package io.github.nesfeder.supabase.offline.testing
 
 import io.github.jan.supabase.SupabaseClient
+import io.github.jan.supabase.createSupabaseClient
+import io.github.jan.supabase.postgrest.Postgrest
+import io.github.jan.supabase.postgrest.query.filter.FilterOperator
 import io.github.nesfeder.supabase.offline.Offline
 import io.github.nesfeder.supabase.offline.ReadStrategy
+import io.github.nesfeder.supabase.offline.RealtimeFilter
 import io.github.nesfeder.supabase.offline.RealtimeStatus
 import io.github.nesfeder.supabase.offline.offline
+import io.ktor.client.engine.mock.MockEngine
+import io.ktor.client.engine.mock.respond
+import io.ktor.http.HttpHeaders
+import io.ktor.http.headersOf
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
@@ -202,6 +215,136 @@ class FakeRealtimeTest {
             assertEquals(RealtimeStatus.Off, supabase.offline.realtimeStatus.value)
         }
 
+    @Test
+    fun the_join_count_moves_once_the_join_is_handled_and_a_live_reader_shows_each_change() =
+        runTest(timeout = 2.minutes) {
+            // Given — the server's rows, which the engine answers every read with, and a client
+            // following the table with a live reader of it
+            val serverRows = MutableStateFlow(listOf(row(1, "Buy milk")))
+            val supabase =
+                createSupabaseClient("https://unit-test.supabase.co", "unit-test-anon-key") {
+                    httpEngine = MockEngine {
+                        respond(
+                            JsonArray(serverRows.value).toString(),
+                            headers = headersOf(HttpHeaders.ContentType, "application/json"),
+                        )
+                    }
+                    install(Postgrest) { maxRetries = 0 }
+                    install(Offline) {
+                        inMemory(realtime = fakeRealtime)
+                        realtime { table(TABLE) }
+                    }
+                }
+            val shown = MutableStateFlow("")
+            backgroundScope.launch(Dispatchers.Default) {
+                supabase.offline.from(TABLE).selectAsFlow().collect { snapshot ->
+                    snapshot.result?.let { result -> shown.value = result.data }
+                }
+            }
+
+            // When — the client has handled the join
+            fakeRealtime.joinCount.awaitValue { count -> count >= 1 }
+
+            // Then — it reports the channel subscribed by then
+            assertEquals(RealtimeStatus.Subscribed, supabase.offline.realtimeStatus.value)
+
+            // When — a row is inserted on the server, and its change reported
+            serverRows.value += row(2, "Tea")
+            fakeRealtime.reportInsert(TABLE, row(2, "Tea"))
+
+            // Then — the live reader shows it
+            shown.awaitValue { data -> "Tea" in data && "Buy milk" in data }
+
+            // When — the socket is lost, and the row renamed before the client joins again
+            fakeRealtime.dropChannel()
+            serverRows.value = listOf(row(1, "Buy milk"), row(2, "Green tea"))
+            fakeRealtime.joinCount.awaitValue { count -> count >= 2 }
+
+            // Then — the join's read brings the rename, which no change reported
+            shown.awaitValue { data -> "Green tea" in data }
+            assertEquals(0, fakeRealtime.droppedReportCount)
+            supabase.close()
+        }
+
+    @Test
+    fun a_filtered_table_hears_the_saved_rows_its_filter_admits_and_every_delete() =
+        runTest(timeout = 2.minutes) {
+            // Given — a client following one owner's rows, with a list of the table cached
+            val supabase = watching {
+                realtime { table(TABLE, filter = RealtimeFilter("owner", FilterOperator.EQ, "a")) }
+            }
+            supabase.offline.from(TABLE).select()
+            fakeRealtime.joinCount.awaitValue { count -> count >= 1 }
+
+            // When — another owner's row is inserted, one of the owner's inserted then moved to
+            // another owner, and the cached row, which names no owner, deleted
+            fakeRealtime.reportInsert(TABLE, owned(2, "Tea", owner = "b"))
+            fakeRealtime.reportInsert(TABLE, owned(3, "Bread", owner = "a"))
+            fakeRealtime.reportUpdate(TABLE, owned(3, "Bread, sold", owner = "b"))
+            fakeRealtime.reportDelete(TABLE, buildJsonObject { put("id", 1) })
+
+            // Then — the two the filter turns away were dropped and counted, the rest applied
+            assertEquals(2, fakeRealtime.droppedReportCount)
+            supabase.awaitCachedRead { data -> "Bread" in data && "Buy milk" !in data }
+            val cached =
+                supabase.offline.from(TABLE).select(readStrategy = ReadStrategy.CacheOnly())
+            assertFalse("Tea" in cached.data, cached.data)
+            assertFalse("sold" in cached.data, cached.data)
+            supabase.close()
+        }
+
+    @Test
+    fun each_filter_operator_admits_what_the_server_would_send() =
+        runTest(timeout = 2.minutes) {
+            // Given — for each operator, records it admits and records it turns away; numbers are
+            // compared as numbers (10 is greater than 9, though "10" sorts before "9")
+            val cases =
+                listOf(
+                    RealtimeFilter("n", FilterOperator.EQ, 5) to
+                        listOf(number(5) to true, number(5.0) to true, number(6) to false),
+                    RealtimeFilter("n", FilterOperator.NEQ, 5) to
+                        listOf(number(4) to true, number(5) to false),
+                    RealtimeFilter("n", FilterOperator.GT, 9) to
+                        listOf(number(10) to true, number(9) to false),
+                    RealtimeFilter("n", FilterOperator.GTE, 9) to
+                        listOf(number(9) to true, number(8) to false),
+                    RealtimeFilter("n", FilterOperator.LT, 3) to
+                        listOf(number(2) to true, number(3) to false),
+                    RealtimeFilter("n", FilterOperator.LTE, 3) to
+                        listOf(number(3) to true, number(4) to false),
+                    RealtimeFilter("status", FilterOperator.IN, listOf("open", "doing")) to
+                        listOf(text("doing") to true, text("done") to false),
+                    RealtimeFilter("status", FilterOperator.GT, "b") to
+                        listOf(text("c") to true, text("a") to false),
+                    RealtimeFilter("done", FilterOperator.EQ, false) to
+                        listOf(
+                            buildJsonObject { put("done", false) } to true,
+                            buildJsonObject { put("done", true) } to false,
+                            buildJsonObject { put("done", JsonNull) } to false,
+                            buildJsonObject { put("id", 1) } to false,
+                        ),
+                )
+
+            for ((filter, records) in cases) {
+                // When — a client follows the table through that filter, and each is inserted
+                val fake = FakeRealtime()
+                val supabase = server.supabaseClient {
+                    inMemory(realtime = fake)
+                    realtime { table(TABLE, filter = filter) }
+                }
+                fake.joinCount.awaitValue { count -> count >= 1 }
+                for ((record, admitted) in records) {
+                    val droppedBefore = fake.droppedReportCount
+                    fake.reportInsert(TABLE, record)
+
+                    // Then — only what the filter turns away is dropped
+                    val dropped = fake.droppedReportCount - droppedBefore
+                    assertEquals(if (admitted) 0 else 1, dropped, "$filter on $record")
+                }
+                supabase.close()
+            }
+        }
+
     /** A client of the scripted server, in memory, following what [configure] names. */
     private fun watching(configure: Offline.Config.() -> Unit): SupabaseClient =
         server.supabaseClient {
@@ -231,6 +374,16 @@ class FakeRealtimeTest {
         put("id", id)
         put("title", title)
     }
+
+    private fun owned(id: Int, title: String, owner: String): JsonObject = buildJsonObject {
+        put("id", id)
+        put("title", title)
+        put("owner", owner)
+    }
+
+    private fun number(n: Number): JsonObject = buildJsonObject { put("n", n) }
+
+    private fun text(status: String): JsonObject = buildJsonObject { put("status", status) }
 
     private companion object {
         const val TABLE = "todos"

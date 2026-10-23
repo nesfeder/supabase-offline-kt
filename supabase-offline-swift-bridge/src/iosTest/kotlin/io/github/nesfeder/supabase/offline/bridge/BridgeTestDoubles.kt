@@ -13,6 +13,7 @@ import kotlin.concurrent.atomics.AtomicReference
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.concurrent.atomics.incrementAndFetch
 import kotlin.concurrent.atomics.update
+import kotlin.io.encoding.Base64
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -247,6 +248,21 @@ class FakeAccessTokenProvider(
     }
 }
 
+/** Answers every token request with [token], which a test changes to sign another user in. */
+class SwitchingAccessTokenProvider(@Volatile var token: String?) : BridgeAccessTokenProvider {
+    override fun fetchAccessToken(callback: BridgeAccessTokenCallback) {
+        callback.succeed(token)
+    }
+}
+
+/** An unsigned JWT whose `sub` is [subject], enough for the library to tell users apart. */
+fun userJwt(subject: String): String {
+    val encoder = Base64.UrlSafe.withPadding(Base64.PaddingOption.ABSENT)
+    val header = encoder.encode("""{"alg":"HS256","typ":"JWT"}""".encodeToByteArray())
+    val payload = encoder.encode("""{"sub":"$subject","exp":9999999999}""".encodeToByteArray())
+    return "$header.$payload.signature"
+}
+
 /** Options for a test client of [TEST_URL], configured by [configure]. */
 fun testOptions(configure: BridgeClientOptions.() -> Unit = {}): BridgeClientOptions =
     BridgeClientOptions(
@@ -261,9 +277,10 @@ fun openTestClient(
     server: RecordingServer,
     clock: BridgeClock? = null,
     realtime: BridgeFakeRealtime? = null,
+    store: BridgeInMemoryStore? = null,
     configure: BridgeClientOptions.() -> Unit = {},
 ): BridgeClient {
-    val opened = BridgeTesting.openInMemory(testOptions(configure), server, clock, realtime)
+    val opened = BridgeTesting.openInMemory(testOptions(configure), server, clock, realtime, store)
     return checkNotNull(opened.client) { "the in-memory client did not open: ${opened.error}" }
 }
 

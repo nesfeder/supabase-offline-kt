@@ -56,6 +56,26 @@ struct TestingYourAppListings {
     }
     // --8<-- [end:refusal-test]
 
+    // --8<-- [start:restart-test]
+    @Test func aTodoQueuedBeforeTheAppIsKilledIsSentAfterItRelaunches() async throws {
+        // Given a client that queues a to-do with the network off, then is closed as the app is killed
+        let store = InMemoryStore()
+        let server = FakeServer { _ in .json("[]", status: 201) }
+        let killed = SupabaseOfflineClient.inMemory(config: .init(autoSync: false), server: server, store: store)
+        try await killed.disableNetwork()
+        try await killed.from("todos").insert(Todo(id: UUID(), title: "Buy milk", done: false)).execute()
+        try await killed.close()
+
+        // When the app relaunches over the same store and sends the queue
+        let relaunched = SupabaseOfflineClient.inMemory(config: .init(autoSync: false), server: server, store: store)
+        let report = try await relaunched.syncPendingMutations()
+
+        // Then the write queued before the relaunch is the one sent
+        #expect(report.syncedCount == 1)
+        try await relaunched.close()
+    }
+    // --8<-- [end:restart-test]
+
     // --8<-- [start:realtime-test]
     @Test func aChangeTheServerReportsReachesTheRowsOnTheDevice() async throws {
         // Given a client that follows `todos` through a fake Realtime, and one row read into the cache

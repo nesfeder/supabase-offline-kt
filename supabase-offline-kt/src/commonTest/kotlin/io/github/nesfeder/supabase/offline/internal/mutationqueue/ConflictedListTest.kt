@@ -8,6 +8,9 @@ import io.github.nesfeder.supabase.offline.internal.db.CONFLICTED_MUTATIONS_CACH
 import io.github.nesfeder.supabase.offline.internal.db.MutationRow
 import io.github.nesfeder.supabase.offline.internal.db.RESERVED_TABLE_NAME
 import io.github.nesfeder.supabase.offline.internal.db.storedName
+import io.github.nesfeder.supabase.offline.internal.logging.EngineLogLevel
+import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
+import io.github.nesfeder.supabase.offline.testdoubles.CountingSerializer
 import io.github.nesfeder.supabase.offline.testdoubles.FIRST_VERSION
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
@@ -28,9 +31,9 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 
 /**
- * The conflicted list: one reserved row that survives a reload, bounded as the rejected list is,
- * shown per user, re-queued preconditioned on the server version it recorded, and cleared with
- * local data.
+ * The conflicted list: one reserved row that survives a reload, bounded as the rejected list is
+ * from each entry's size kept beside it, shown per user, re-queued preconditioned on the server
+ * version it recorded, and cleared with local data.
  */
 class ConflictedListTest {
 
@@ -209,6 +212,73 @@ class ConflictedListTest {
         assertNull(queryCacheDao.getRow(RESERVED_TABLE_NAME, CONFLICTED_MUTATIONS_CACHE_KEY))
         assertEquals(0, store.mutationQueue.shownQueueCounts().conflicted)
     }
+
+    @Test
+    fun a_park_encodes_its_own_entry_once_and_no_other() = runTest {
+        // Given — a list that counts how often it encodes an entry to measure it
+        val encodings = CountingSerializer(StoredConflict.serializer())
+        val list =
+            ConflictedMutationList(
+                queryCacheDao = queryCacheDao,
+                json = EngineJson,
+                nowMillis = { NOW },
+                logger = EngineLogger(null, EngineLogLevel.INFO),
+                entrySerializer = encodings,
+            )
+
+        // When — fifty parks, each written as a replay writes it
+        repeat(50) { index -> list.add(conflict(id = index + 1L)) }
+
+        // Then — fifty encodings, one per park; measuring every entry again would take 1,275
+        assertEquals(50, encodings.encodings)
+        assertEquals((1L..50L).toList(), list.conflicts().map { it.id })
+    }
+
+    @Test
+    fun the_sizes_kept_beside_the_entries_match_the_row_in_memory_and_on_reload() = runTest {
+        // Given — a list built up by parks and a dismissal, and the same row loaded afresh
+        val parked = (1..5).map { index -> park(queuedUpdate(owner = USER_A, title = "t$index")) }
+        store.mutationQueue.dismissConflictOf(parked[2].id, USER_A)
+        val inMemory = store.mutationQueue.conflictedList.conflictedRowWith().second
+        val reloaded =
+            newGuardedStore(mutationDao = mutationDao, queryCacheDao = queryCacheDao)
+                .mutationQueue
+                .conflictedList
+                .conflictedRowWith()
+                .second
+
+        // Then — one size per entry, each the entry's encoded length, in memory as on reload
+        val expected =
+            inMemory.entries.map { entry ->
+                EngineJson.encodeToString(StoredConflict.serializer(), entry).length
+            }
+        assertEquals(parked.map { it.id } - parked[2].id, inMemory.entries.map { it.id })
+        assertEquals(expected, inMemory.entrySizes)
+        assertEquals(inMemory.entries, reloaded.entries)
+        assertEquals(expected, reloaded.entrySizes)
+    }
+
+    /** Adds [entry] as the newest conflict and writes the list, as a park does. */
+    private suspend fun ConflictedMutationList.add(entry: StoredConflict) {
+        val (row, list) = conflictedRowWith(add = entry)
+        queryCacheDao.upsert(row)
+        conflictWritten(list)
+    }
+
+    /** A parked update of task 1 with [id], as stored. */
+    private fun conflict(id: Long): StoredConflict =
+        StoredConflict(
+            id = id,
+            table = GUARDED_TABLE,
+            operation = MutationOperation.UPDATE.storedName,
+            bodyJson = """{"title":"mine"}""",
+            createdAtMs = NOW,
+            owner = USER_A,
+            baseVersion = FIRST_VERSION,
+            serverVersion = MOVED_VERSION,
+            message = "The row changed on the server since this write was made",
+            conflictedAtMs = NOW,
+        )
 
     /** Queues an update of task 1 owned by [owner], with a base, and returns its row. */
     private suspend fun queuedUpdate(owner: String, title: String = "mine"): MutationRow {

@@ -11,7 +11,10 @@ import kotlinx.serialization.json.JsonObject
 /**
  * The server's row changes an app's test reports to an in-memory client, in place of a Realtime
  * channel; hand one to [BridgeTesting.openInMemory]. The client joins a channel here as it would
- * Realtime's, and the fake answers each join at once. Records cross as JSON text.
+ * Realtime's, and the fake answers each join at once. A report reaches the client as Realtime would
+ * send it: an insert or an update whose record does not meet the table's filter is dropped, and a
+ * delete is not. The test's fake server plays the server, and must answer with the rows as they are
+ * after each change reported. Records cross as JSON text.
  */
 public class BridgeFakeRealtime {
 
@@ -25,7 +28,17 @@ public class BridgeFakeRealtime {
     public val subscribedTables: Set<String>
         get() = fake.subscribedTables.value
 
-    /** How many reports found no joined channel following their table and were dropped. */
+    /**
+     * How many joins the client has handled: it has reported the channel subscribed and asked for
+     * the named tables to be read again. A test waits for it to move before reporting a change.
+     */
+    public val joinCount: Int
+        get() = fake.joinCount.value
+
+    /**
+     * How many reports were dropped: those that found no joined channel following their table, and
+     * the inserts and updates whose record does not meet the table's filter.
+     */
     public val droppedReportCount: Int
         get() = fake.droppedReportCount
 
@@ -93,6 +106,6 @@ public class BridgeFakeRealtime {
             report(row)
             null
         } catch (failure: Throwable) {
-            bridgeErrorOf(failure, clientClosing = false)
+            bridgeErrorOf(failure)
         }
 }

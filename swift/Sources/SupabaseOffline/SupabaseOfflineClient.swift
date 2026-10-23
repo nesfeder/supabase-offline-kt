@@ -107,6 +107,7 @@ public final class SupabaseOfflineClient: Sendable {
         )
         coreOptions.schema = config.defaultSchema
         coreOptions.accessTokenProvider = config.accessToken.map(AccessTokenRelay.init)
+        coreOptions.identityFromAccessToken = config.identityFromAccessToken
         coreOptions.cacheSizeBytes = config.cacheSize.coreBytes
         coreOptions.fileCacheSizeBytes = config.fileCacheSize.coreBytes
         coreOptions.autoSync = config.autoSync

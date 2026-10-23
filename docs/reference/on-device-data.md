@@ -112,7 +112,8 @@ filters on.
 | --- | --- | --- |
 | `clearLocalData()` | Every cached list, every downloaded file, every queued write (never sent), the rejected list and the conflicted list. The database is rewritten without them, as far as open reads allow ([details](../behaviors/sign-out.md#what-clearlocaldata-deletes)) | The database file itself, empty |
 | A user signs out, or another signs in (with Auth) | Once the session settles as someone else: the cached lists and the downloaded files | The mutation queue, the rejected list and the conflicted list: each user's writes wait for that user |
-| Sign-out without Auth, or with your own token provider | Nothing: there is one identity for the life of the install | Everything |
+| Sign-out without Auth, or with your own token provider, and `identityFromAccessToken` off | Nothing: there is one identity for the life of the install | Everything |
+| The token names another user, or none, with `identityFromAccessToken` on (without Auth) | At the client's next call: the cached lists and the downloaded files | The mutation queue, the rejected list and the conflicted list: each user's writes wait for that user |
 | `close()` | Nothing | Everything, for the next client |
 | Eviction | Cached lists fetched longest ago, past `cacheSizeBytes`; files used least recently, past `fileCacheSizeBytes` | The queue, which is never evicted; the rejected list keeps its newest 100 entries (see [Failures and the rejected list](../behaviors/failures.md#the-rejected-list)) |
 | Uninstalling the app | Everything: it is all in the app's private storage | |
