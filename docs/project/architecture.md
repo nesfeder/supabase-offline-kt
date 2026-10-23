@@ -50,11 +50,11 @@ Everything else lives under `io.github.nesfeder.supabase.offline.internal` and i
 rules hold across every table below and are not repeated in them:
 
 - **The closed error.** Once the plugin is closed, `from` and every suspending call on it, or on a
-  builder or bucket obtained from it, throws `IllegalStateException`, and a flow obtained from it
-  fails with it when collected; a flow being collected at that moment completes instead. What does
-  no work still answers: `syncStatus` (it holds its last value), the getters (`storage`, `config`,
-  the builder's `postgrest`, `table` and `schema`), a bucket's `setHeader` and its URL builders
-  (`publicUrl`, `authenticatedUrl` and the rest), and `close()` itself.
+  builder or bucket obtained from it, throws `OfflineClientClosedException`, and a flow obtained
+  from it fails with it when collected; a flow being collected at that moment completes instead.
+  What does no work still answers: `syncStatus` (it holds its last value), the getters (`storage`,
+  `config`, the builder's `postgrest`, `table` and `schema`), a bucket's `setHeader` and its URL
+  builders (`publicUrl`, `authenticatedUrl` and the rest), and `close()` itself.
 - **supabase-kt's failures pass through.** When the server refuses a request, or a request cannot
   be sent and the library does not answer it from the cache or the queue, the caller gets
   supabase-kt's own exception (`PostgrestRestException`, `RestException`, `HttpRequestException`)
@@ -561,6 +561,7 @@ not yet sent go out.
 | `MutationNotQueueableException` | A write the queue cannot hold could not be sent for want of a connection. |
 | `NetworkDisabledException` | A request that must reach the server was made while network access was off. |
 | `SyncFailedException` | Why a pass stopped with writes queued; `httpStatus` and `code`. |
+| `class OfflineClientClosedException : IllegalStateException` | The closed error: a call on a closed client, or one the closing stopped. It is not an `OfflineException`, so a `catch (e: IllegalStateException)` catches it, and its message is "This offline client is closed", which apps may match. No public constructor. |
 | `Throwable.isNetworkOrConnectivityFailure()` | Whether a failure is the network's rather than the server's: a timeout or an I/O failure, here or in a cause; never a cancellation, and never anything carrying an HTTP status. It is the test the library itself uses to fall back to the cache and to queue. |
 | `Throwable.httpStatusOrNull()` | The HTTP status the server answered with, read from supabase-kt's `RestException` (PostgREST's and Storage's errors), Ktor's `ResponseException` or a `SyncFailedException`, here or in a cause. |
 
@@ -587,7 +588,7 @@ val supabase = createSupabaseClient(url, key) {
 | --- | --- | --- |
 | `Offline.Config.inMemory(clock: Clock = Clock.System)` | Keeps the cache, the mutation queue and the Storage file cache in the client's memory; nothing is written to disk. `clock` is the time the client sees: fetch, queue and rejection times, and so how old a cached read is against a `maxAge`. | Every other setting applies as in an app but `dataDirectory`, which has no effect, and each client starts empty. It watches no monitor: `syncStatus.network` stays `UNKNOWN`, which counts as online, until the test sets `networkAvailability` or calls `disableNetwork()`, the way to take it offline. The client's work runs in the library's scope, so a background failure is logged, never thrown into the test. supabase-kt's own plugins keep their own state: give Storage a `MemoryResumableCache` and Auth a session manager that keeps the session in memory. The client runs on real time: install `Postgrest { maxRetries = 0 }`, or a read the cache cannot answer waits out supabase-kt's transport retries. Use it under Robolectric too. |
 | `appliedOutcome`, `queuedOutcome`, `pendingMutation`, `rejectedMutation`, `serverError`, `mutationConflict`, `conflictedMutation`, `querySnapshot`, `stalledRefresh`, `syncReport`, `syncStatus`, `cachedFile` (with overloads of `pendingMutation`, `syncReport` and `syncStatus` for the conflict fields) | Build the value types, for an app's own test doubles. | Every field is a parameter; the ones a test rarely sets have defaults. |
-| `cacheMissException`, `mutationNotQueueableException`, `networkDisabledException`, `syncFailedException` | Build the exceptions. | `syncFailedException(isConnectivityFailure = true)` is one `isNetworkOrConnectivityFailure()` accepts. |
+| `cacheMissException`, `mutationNotQueueableException`, `networkDisabledException`, `offlineClientClosedException`, `syncFailedException` | Build the exceptions. | `syncFailedException(isConnectivityFailure = true)` is one `isNetworkOrConnectivityFailure()` accepts. |
 
 **The version rule.** Use the testing artifact at exactly the library's version. It calls hooks
 marked `@OfflineInternal`, which change between releases, so its published metadata pins the library
@@ -1242,6 +1243,7 @@ The decisions that shaped the API and the engine, with the date each was settled
 | 2026-10-02 | `autoSync` is read once, when the client opens. | The two triggers it governs must follow one value; one read live and one read at open disagreed. |
 | 2026-10-02 | The network switch is not kept across restarts. | It follows the rule of the offline libraries an app's developer is likely to know: a new client starts with access on. |
 | 2026-10-02 | The exceptions, like every value type, have no public constructor; tests build them with the testing artifact's factories. | The library can then change them without breaking a caller. |
+| 2026-10-22 | The closed error has a type of its own, `OfflineClientClosedException`, an `IllegalStateException` with the message it always had, not an `OfflineException`. | The engine told it apart by its message, an app could only match the message, and the Swift bridge took any `IllegalStateException` met while closing for it, so an unrelated one read as a closed client. Keeping the supertype and the message keeps every existing `catch` and match working. |
 | 2026-10-04 | `syncPendingMutations(table)` keeps the order across tables: it stops at a write with an earlier write of the user queued in another table, and reports what it held back. | The order is the library's first promise, and an app syncing one table expects the rows its writes depend on to go first. |
 | 2026-10-04 | `SyncStatus.lastSyncError` is a `SyncFailedException?`. | It only ever held one; an app reads the server's status and code without a cast, and narrowing it after a release would break binaries. |
 | 2026-10-04 | `syncStatus` follows the queue from the moment the client opens. | Read first at start, it said nothing was waiting while writes were queued. Its cost is a count of the queue after each change, conflated: measured on the Android host, a write queued offline at a depth of 1,000 went from about 0.4 to 0.7–0.9 ms of CPU, its wall time from 134–160 to 180–196 µs; online writes and drains are within the noise in wall time. |

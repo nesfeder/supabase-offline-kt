@@ -14,6 +14,7 @@ io.github.nesfeder.supabase.offline.testing: fun conflictedMutation(id: Long, ta
 io.github.nesfeder.supabase.offline.testing: fun mutationConflict(mutationId: Long, table: String, operation: MutationOperation, rowKey: JsonObject, base: JsonObject = …, local: JsonObject? = …, server: JsonObject? = …, changedOnServer: Set<String> = …, conflictingColumns: Set<String> = …)
 io.github.nesfeder.supabase.offline.testing: fun mutationNotQueueableException(cause: Throwable, message: String = …)
 io.github.nesfeder.supabase.offline.testing: fun networkDisabledException(message: String = …)
+io.github.nesfeder.supabase.offline.testing: fun offlineClientClosedException()
 io.github.nesfeder.supabase.offline.testing: fun pendingMutation(id: Long, table: String, operation: MutationOperation, createdAt: Instant, rowKeys: List<JsonObject> = …, body: JsonElement? = …)
 io.github.nesfeder.supabase.offline.testing: fun pendingMutation(id: Long, table: String, operation: MutationOperation, createdAt: Instant, rowKeys: List<JsonObject> = …, body: JsonElement? = …, baseVersion: String?)
 io.github.nesfeder.supabase.offline.testing: fun querySnapshot(result: PostgrestResult?, isFromCache: Boolean, fetchedAt: Instant?, hasPendingMutations: Boolean = …, refresh: RefreshState = …)

@@ -294,6 +294,9 @@ public final class io/github/nesfeder/supabase/offline/OfflineBucketApi_androidK
 	public static final fun localUriIfCached (Lio/github/nesfeder/supabase/offline/OfflineBucketApi;Ljava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 }
 
+public final class io/github/nesfeder/supabase/offline/OfflineClientClosedException : java/lang/IllegalStateException {
+}
+
 public abstract class io/github/nesfeder/supabase/offline/OfflineException : java/lang/Exception {
 }
 

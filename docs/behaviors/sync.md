@@ -148,10 +148,11 @@ safe: a call that meets a pass already sending the same writes waits for it to l
 what is left, so it returns only once nothing more can be sent now. A pass in progress when local
 data is cleared is canceled first, and its report counts what it sent before.
 
-A sync throws only `IllegalStateException`, when the client is closed or PostgREST is not
-installed. A failure that stops the pass is not thrown: `syncStatus.value.lastSyncError` holds it
-as a `SyncFailedException`, with the HTTP status and the PostgREST or Postgres code and nothing of
-the original message ([Failures and the rejected list](failures.md) has the rejected list).
+A sync throws only `IllegalStateException`: `OfflineClientClosedException` when the client is
+closed, or a plain one when PostgREST is not installed. A failure that stops the pass is not
+thrown: `syncStatus.value.lastSyncError` holds it as a `SyncFailedException`, with the HTTP status
+and the PostgREST or Postgres code and nothing of the original message
+([Failures and the rejected list](failures.md) has the rejected list).
 
 ## The status
 

@@ -97,7 +97,8 @@ public interface Offline : SupabasePlugin<Offline.Config> {
      *
      * @param table the table or view.
      * @return the table's builder.
-     * @throws IllegalStateException when the client is closed, or [Postgrest] is not installed.
+     * @throws OfflineClientClosedException when the client is closed.
+     * @throws IllegalStateException when [Postgrest] is not installed.
      */
     public fun from(table: String): OfflinePostgrestQueryBuilder
 
@@ -108,7 +109,8 @@ public interface Offline : SupabasePlugin<Offline.Config> {
      * @param schema the schema.
      * @param table the table or view.
      * @return the table's builder.
-     * @throws IllegalStateException when the client is closed, or [Postgrest] is not installed.
+     * @throws OfflineClientClosedException when the client is closed.
+     * @throws IllegalStateException when [Postgrest] is not installed.
      */
     public fun from(schema: String, table: String): OfflinePostgrestQueryBuilder
 
@@ -117,7 +119,8 @@ public interface Offline : SupabasePlugin<Offline.Config> {
      *
      * @param table the table or view.
      * @return the table's builder.
-     * @throws IllegalStateException when the client is closed, or [Postgrest] is not installed.
+     * @throws OfflineClientClosedException when the client is closed.
+     * @throws IllegalStateException when [Postgrest] is not installed.
      */
     public operator fun get(table: String): OfflinePostgrestQueryBuilder = from(table)
 
@@ -127,7 +130,8 @@ public interface Offline : SupabasePlugin<Offline.Config> {
      * @param schema the schema.
      * @param table the table or view.
      * @return the table's builder.
-     * @throws IllegalStateException when the client is closed, or [Postgrest] is not installed.
+     * @throws OfflineClientClosedException when the client is closed.
+     * @throws IllegalStateException when [Postgrest] is not installed.
      */
     public operator fun get(schema: String, table: String): OfflinePostgrestQueryBuilder =
         from(schema, table)
@@ -141,7 +145,8 @@ public interface Offline : SupabasePlugin<Offline.Config> {
      * @param function the function's name.
      * @param request the request: the HTTP method, a count, filters on the result.
      * @return the server's response.
-     * @throws IllegalStateException when the client is closed, or [Postgrest] is not installed.
+     * @throws OfflineClientClosedException when the client is closed.
+     * @throws IllegalStateException when [Postgrest] is not installed.
      */
     @Throws(Throwable::class)
     public suspend fun rpc(
@@ -157,7 +162,8 @@ public interface Offline : SupabasePlugin<Offline.Config> {
      * @param parameters the function's arguments, by name.
      * @param request the request: the HTTP method, a count, filters on the result.
      * @return the server's response.
-     * @throws IllegalStateException when the client is closed, or [Postgrest] is not installed.
+     * @throws OfflineClientClosedException when the client is closed.
+     * @throws IllegalStateException when [Postgrest] is not installed.
      */
     @Throws(Throwable::class)
     public suspend fun rpc(
@@ -193,7 +199,7 @@ public interface Offline : SupabasePlugin<Offline.Config> {
      *
      * @param table the table, or `null` for every table.
      * @return the count.
-     * @throws IllegalStateException when the client is closed.
+     * @throws OfflineClientClosedException when the client is closed.
      */
     @Throws(Throwable::class) public suspend fun pendingMutationCount(table: String? = null): Int
 
@@ -219,7 +225,7 @@ public interface Offline : SupabasePlugin<Offline.Config> {
      * it was sent or refused meanwhile, it is another user's, or there is none.
      *
      * @param id the write's [PendingMutation.id].
-     * @throws IllegalStateException when the client is closed.
+     * @throws OfflineClientClosedException when the client is closed.
      */
     @Throws(Throwable::class) public suspend fun discardPendingMutation(id: Long)
 
@@ -249,7 +255,7 @@ public interface Offline : SupabasePlugin<Offline.Config> {
      * user has no entry with this id.
      *
      * @param id the entry's [RejectedMutation.id].
-     * @throws IllegalStateException when the client is closed.
+     * @throws OfflineClientClosedException when the client is closed.
      */
     @Throws(Throwable::class) public suspend fun dismissRejectedMutation(id: Long)
 
@@ -262,7 +268,7 @@ public interface Offline : SupabasePlugin<Offline.Config> {
      * @param id the entry's [RejectedMutation.id].
      * @throws IllegalArgumentException when the entry cannot be retried
      *   ([RejectedMutation.isRetryable] is `false`).
-     * @throws IllegalStateException when the client is closed.
+     * @throws OfflineClientClosedException when the client is closed.
      */
     @Throws(Throwable::class) public suspend fun retryRejectedMutation(id: Long)
 
@@ -299,7 +305,7 @@ public interface Offline : SupabasePlugin<Offline.Config> {
      *   [ConflictResolution.Apply] on an entry that is not an UPDATE of a row the server still
      *   held; and for [ConflictResolution.KeepLocal] on an entry whose row was gone from the server
      *   ([ConflictedMutation.serverVersion] is `null`) or whose body was too large to keep.
-     * @throws IllegalStateException when the client is closed.
+     * @throws OfflineClientClosedException when the client is closed.
      */
     @Throws(Throwable::class)
     public suspend fun resolveConflictedMutation(id: Long, resolution: ConflictResolution)
@@ -309,7 +315,7 @@ public interface Offline : SupabasePlugin<Offline.Config> {
      * when the current user has no entry with this id.
      *
      * @param id the entry's [ConflictedMutation.id].
-     * @throws IllegalStateException when the client is closed.
+     * @throws OfflineClientClosedException when the client is closed.
      */
     @Throws(Throwable::class) public suspend fun dismissConflictedMutation(id: Long)
 
@@ -341,7 +347,8 @@ public interface Offline : SupabasePlugin<Offline.Config> {
      *
      * @param table the table, or `null` for every table.
      * @return what this call sent, what was refused, and what is still queued.
-     * @throws IllegalStateException when the client is closed, or [Postgrest] is not installed.
+     * @throws OfflineClientClosedException when the client is closed.
+     * @throws IllegalStateException when [Postgrest] is not installed.
      */
     @Throws(Throwable::class)
     public suspend fun syncPendingMutations(table: String? = null): SyncReport
@@ -372,7 +379,7 @@ public interface Offline : SupabasePlugin<Offline.Config> {
      * [SyncStatus.network] is [NetworkStatus.DISABLED] as soon as this returns. The switch is not
      * kept: a new client starts with network access on. Calling it again changes nothing.
      *
-     * @throws IllegalStateException when the client is closed.
+     * @throws OfflineClientClosedException when the client is closed.
      */
     @Throws(Throwable::class) public suspend fun disableNetwork()
 
@@ -382,7 +389,7 @@ public interface Offline : SupabasePlugin<Offline.Config> {
      * [SyncStatus.network] is the monitor's again as soon as this returns. Calling it while access
      * is on changes nothing.
      *
-     * @throws IllegalStateException when the client is closed.
+     * @throws OfflineClientClosedException when the client is closed.
      */
     @Throws(Throwable::class) public suspend fun enableNetwork()
 
@@ -399,7 +406,7 @@ public interface Offline : SupabasePlugin<Offline.Config> {
      * returns, and the channel is left right after. Like [disableNetwork], the switch is not kept:
      * a new client starts with it on. Nothing happens without named tables, or while already off.
      *
-     * @throws IllegalStateException when the client is closed.
+     * @throws OfflineClientClosedException when the client is closed.
      */
     @Throws(Throwable::class) public suspend fun disableRealtime()
 
@@ -407,7 +414,7 @@ public interface Offline : SupabasePlugin<Offline.Config> {
      * Joins the channel again after [disableRealtime], as soon as a user is signed in (or [Auth] is
      * not installed) and the network is not known down. Nothing happens while already on.
      *
-     * @throws IllegalStateException when the client is closed.
+     * @throws OfflineClientClosedException when the client is closed.
      */
     @Throws(Throwable::class) public suspend fun enableRealtime()
 
@@ -431,7 +438,7 @@ public interface Offline : SupabasePlugin<Offline.Config> {
      * @param primaryKeys the columns that identify the row, or `null` for the table's primary key
      *   as [Config.primaryKeys] gives it: `id` unless configured there.
      * @param schema the table's schema, or `null` for the client's default schema.
-     * @throws IllegalStateException when the client is closed.
+     * @throws OfflineClientClosedException when the client is closed.
      */
     @Throws(Throwable::class)
     public suspend fun applyServerRecord(
@@ -453,7 +460,7 @@ public interface Offline : SupabasePlugin<Offline.Config> {
      * @param primaryKeys the columns that identify the row, or `null` for the table's primary key
      *   as [Config.primaryKeys] gives it: `id` unless configured there.
      * @param schema the table's schema, or `null` for the client's default schema.
-     * @throws IllegalStateException when the client is closed.
+     * @throws OfflineClientClosedException when the client is closed.
      */
     @Throws(Throwable::class)
     public suspend fun applyServerDelete(
@@ -491,7 +498,7 @@ public interface Offline : SupabasePlugin<Offline.Config> {
      * another identity: at once online, and once the network is back offline, [RefreshState.Paused]
      * meanwhile.
      *
-     * @throws IllegalStateException when the client is closed.
+     * @throws OfflineClientClosedException when the client is closed.
      */
     @Throws(Throwable::class) public suspend fun clearLocalData()
 
@@ -507,7 +514,7 @@ public interface Offline : SupabasePlugin<Offline.Config> {
      * [SupabaseClient.close] to let the calls not yet sent go out.
      *
      * What ends, and when:
-     * - At once, every new call fails with [IllegalStateException]: on the plugin, and on a
+     * - At once, every new call fails with [OfflineClientClosedException]: on the plugin, and on a
      *   builder, bucket or flow obtained from it. [syncStatus] is the exception: it can still be
      *   read, and holds its last value.
      * - At once, every flow being collected completes, whatever its read strategy, so a screen torn
@@ -799,7 +806,8 @@ public val SupabaseClient.offline: Offline
  * @param parameters the function's arguments, an object that encodes to a JSON object.
  * @param request the request: the HTTP method, a count, filters on the result.
  * @return the server's response.
- * @throws IllegalStateException when the client is closed, or [Postgrest] is not installed.
+ * @throws OfflineClientClosedException when the client is closed.
+ * @throws IllegalStateException when [Postgrest] is not installed.
  */
 @Throws(Throwable::class)
 public suspend inline fun <reified T : Any> Offline.rpc(
@@ -821,7 +829,7 @@ public suspend inline fun <reified T : Any> Offline.rpc(
  * @param record the row, an object that encodes to a JSON object.
  * @param primaryKeys the columns that identify the row, or `null` for the table's primary key.
  * @param schema the table's schema, or `null` for the client's default schema.
- * @throws IllegalStateException when the client is closed.
+ * @throws OfflineClientClosedException when the client is closed.
  */
 @Throws(Throwable::class)
 public suspend inline fun <reified T : Any> Offline.applyServerRecord(

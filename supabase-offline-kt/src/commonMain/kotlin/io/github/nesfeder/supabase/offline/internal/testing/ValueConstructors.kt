@@ -14,6 +14,7 @@ import io.github.nesfeder.supabase.offline.MutationOperation
 import io.github.nesfeder.supabase.offline.MutationOutcome
 import io.github.nesfeder.supabase.offline.NetworkDisabledException
 import io.github.nesfeder.supabase.offline.NetworkStatus
+import io.github.nesfeder.supabase.offline.OfflineClientClosedException
 import io.github.nesfeder.supabase.offline.OfflineInternal
 import io.github.nesfeder.supabase.offline.PendingMutation
 import io.github.nesfeder.supabase.offline.QuerySnapshot
@@ -65,6 +66,10 @@ public object ValueConstructors {
     /** A [NetworkDisabledException] with [message]. */
     public fun networkDisabledException(message: String): NetworkDisabledException =
         NetworkDisabledException(message)
+
+    /** An [OfflineClientClosedException] with no cause. */
+    public fun offlineClientClosedException(): OfflineClientClosedException =
+        OfflineClientClosedException(null)
 
     /** A [PendingMutation] with the given fields. */
     public fun pendingMutation(

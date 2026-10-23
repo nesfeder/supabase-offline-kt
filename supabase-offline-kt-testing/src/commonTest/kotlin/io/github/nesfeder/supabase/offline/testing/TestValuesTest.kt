@@ -44,6 +44,7 @@ class TestValuesTest {
         val miss = cacheMissException("nothing cached")
         val notQueueable = mutationNotQueueableException(cause = offline, message = "not queued")
         val disabled = networkDisabledException("switched off")
+        val closed = offlineClientClosedException()
 
         // Then
         assertEquals("nothing cached", miss.message)
@@ -51,6 +52,8 @@ class TestValuesTest {
         assertSame(offline, notQueueable.cause)
         assertTrue(notQueueable.isNetworkOrConnectivityFailure())
         assertEquals("switched off", disabled.message)
+        assertEquals("This offline client is closed", closed.message)
+        assertNull(closed.cause)
     }
 
     @Test

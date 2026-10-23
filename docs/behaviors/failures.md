@@ -34,9 +34,10 @@ From the samples: [LibraryFailures.kt](https://github.com/nesfeder/supabase-offl
   `RestException` (PostgREST's and Storage's errors), a Ktor `ResponseException` or a
   `SyncFailedException`, here or in a cause.
 
-The library's own failures subclass `OfflineException`. The hierarchy is open, so match the ones
-you handle and keep a branch for the rest; everything else is supabase-kt's or the server's
-(`PostgrestRestException`, `RestException`, `HttpRequestException`, `TokenExpiredException`, …):
+The library's own failures subclass `OfflineException`, all but the closed client's (below). The
+hierarchy is open, so match the ones you handle and keep a branch for the rest; everything else is
+supabase-kt's or the server's (`PostgrestRestException`, `RestException`, `HttpRequestException`,
+`TokenExpiredException`, …):
 
 | Exception | When |
 | --- | --- |
@@ -44,6 +45,11 @@ you handle and keep a branch for the rest; everything else is supabase-kt's or t
 | `MutationNotQueueableException` | A write the queue cannot hold could not be sent for want of a connection. Its `cause` is that failure, so it counts as a connectivity failure |
 | `NetworkDisabledException` | A request that must reach the server was made after `disableNetwork()`. It counts as a connectivity failure |
 | `SyncFailedException` | Why a sync pass stopped with writes still queued, as `syncStatus.value.lastSyncError` says. It is never thrown; it carries `httpStatus` and `code` only |
+
+Every call on a closed client throws `OfflineClientClosedException`, and so does a call the
+closing stopped. It is an `IllegalStateException`, not an `OfflineException`, so a
+`catch (e: IllegalStateException)` catches it, and its message is "This offline client is closed".
+Match the type, not the message: another `IllegalStateException` can say nothing about the client.
 
 ## Writes
 

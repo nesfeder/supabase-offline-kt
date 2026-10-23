@@ -6,6 +6,7 @@ import io.github.jan.supabase.postgrest.Postgrest
 import io.github.jan.supabase.storage.Storage
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogLevel
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
+import io.github.nesfeder.supabase.offline.internal.testing.ValueConstructors
 import io.github.nesfeder.supabase.offline.testdoubles.FakeResumableCache
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingLogSink
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
@@ -676,7 +677,7 @@ class SupabaseOfflineClientCloseTest {
         // began, and the client refuses another replay
         assertEquals(0, gaveUp.load())
         assertEquals(sentAtClose, sent.load(), "a request was sent after close()")
-        assertFailsWith<IllegalStateException> { client.syncPendingMutations().syncedCount }
+        assertFailsWith<OfflineClientClosedException> { client.syncPendingMutations().syncedCount }
     }
 
     @Test
@@ -948,33 +949,58 @@ class SupabaseOfflineClientCloseTest {
         client.close()
 
         // Then
-        assertFailsWith<IllegalStateException> { client.from("todos") }
-        assertFailsWith<IllegalStateException> { client.storage.from("avatars") }
-        assertFailsWith<IllegalStateException> { client.syncPendingMutations() }
-        assertFailsWith<IllegalStateException> { client.syncPendingMutations("todos") }
-        assertFailsWith<IllegalStateException> { client.pendingMutationCount() }
-        assertFailsWith<IllegalStateException> { client.pendingMutationCount("todos") }
-        assertFailsWith<IllegalStateException> { client.pendingMutationCountFlow().first() }
-        assertFailsWith<IllegalStateException> { client.pendingMutationCountFlow("todos").first() }
-        assertFailsWith<IllegalStateException> { client.pendingMutations().first() }
-        assertFailsWith<IllegalStateException> { client.discardPendingMutation(1L) }
-        assertFailsWith<IllegalStateException> { client.rejectedMutations().first() }
-        assertFailsWith<IllegalStateException> { client.dismissRejectedMutation(1L) }
-        assertFailsWith<IllegalStateException> { client.retryRejectedMutation(1L) }
-        assertFailsWith<IllegalStateException> { client.conflictedMutations().first() }
-        assertFailsWith<IllegalStateException> {
+        assertFailsWith<OfflineClientClosedException> { client.from("todos") }
+        assertFailsWith<OfflineClientClosedException> { client.storage.from("avatars") }
+        assertFailsWith<OfflineClientClosedException> { client.syncPendingMutations() }
+        assertFailsWith<OfflineClientClosedException> { client.syncPendingMutations("todos") }
+        assertFailsWith<OfflineClientClosedException> { client.pendingMutationCount() }
+        assertFailsWith<OfflineClientClosedException> { client.pendingMutationCount("todos") }
+        assertFailsWith<OfflineClientClosedException> { client.pendingMutationCountFlow().first() }
+        assertFailsWith<OfflineClientClosedException> {
+            client.pendingMutationCountFlow("todos").first()
+        }
+        assertFailsWith<OfflineClientClosedException> { client.pendingMutations().first() }
+        assertFailsWith<OfflineClientClosedException> { client.discardPendingMutation(1L) }
+        assertFailsWith<OfflineClientClosedException> { client.rejectedMutations().first() }
+        assertFailsWith<OfflineClientClosedException> { client.dismissRejectedMutation(1L) }
+        assertFailsWith<OfflineClientClosedException> { client.retryRejectedMutation(1L) }
+        assertFailsWith<OfflineClientClosedException> { client.conflictedMutations().first() }
+        assertFailsWith<OfflineClientClosedException> {
             client.resolveConflictedMutation(1L, ConflictResolution.KeepLocal)
         }
-        assertFailsWith<IllegalStateException> { client.dismissConflictedMutation(1L) }
-        assertFailsWith<IllegalStateException> { client.disableNetwork() }
-        assertFailsWith<IllegalStateException> { client.enableNetwork() }
-        assertFailsWith<IllegalStateException> {
+        assertFailsWith<OfflineClientClosedException> { client.dismissConflictedMutation(1L) }
+        assertFailsWith<OfflineClientClosedException> { client.disableNetwork() }
+        assertFailsWith<OfflineClientClosedException> { client.enableNetwork() }
+        assertFailsWith<OfflineClientClosedException> {
             client.applyServerRecord("todos", buildJsonObject { put("id", 1) })
         }
-        assertFailsWith<IllegalStateException> {
+        assertFailsWith<OfflineClientClosedException> {
             client.applyServerDelete("todos", buildJsonObject { put("id", 1) })
         }
-        assertFailsWith<IllegalStateException> { client.clearLocalData() }
+        assertFailsWith<OfflineClientClosedException> { client.clearLocalData() }
+    }
+
+    @OptIn(OfflineInternal::class)
+    @Test
+    fun the_closed_error_is_still_the_illegal_state_apps_caught_with_the_same_message() = runTest {
+        // Given — a closed client
+        val client = newTestOfflineClient(coordinatorScope = callerScope)
+        client.close()
+
+        // When — a call, caught as apps caught the closed error before it had a type
+        val caught =
+            try {
+                client.pendingMutationCount()
+                null
+            } catch (failure: IllegalStateException) {
+                failure
+            }
+
+        // Then — it is the typed error, with the message apps match, and the testing artifact
+        // builds the same
+        assertIs<OfflineClientClosedException>(caught)
+        assertEquals("This offline client is closed", caught.message)
+        assertEquals(caught.message, ValueConstructors.offlineClientClosedException().message)
     }
 
     private companion object {
