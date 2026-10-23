@@ -143,24 +143,36 @@ class FileCacheUseMarkTest {
     }
 
     @Test
-    fun hundreds_of_files_looked_up_within_a_minute_still_evict_by_their_last_use() = runTest {
-        // Given — more files than the uses kept in memory go unpruned, each looked up ten seconds
-        // after its download, then one of them again a little later
-        val bucket = bucket(maxSizeBytes = 265)
-        repeat(260) { index -> download(bucket, "f-$index.bin", size = 1, at = 1 * MINUTE) }
-        now = 1 * MINUTE + 10_000L
-        repeat(260) { index -> assertNotNull(bucket.cachedFile("f-$index.bin")) }
-        now = 1 * MINUTE + 45_000L
-        assertNotNull(bucket.cachedFile("f-0.bin"))
+    fun hundreds_of_files_looked_up_within_a_minute_are_evicted_in_the_order_they_were_used() =
+        runTest {
+            // Given — more files than the uses kept in memory go unpruned, all written at 1:00,
+            // then
+            // looked up one after another from 1:01, which writes none of those uses to a file;
+            // the first is looked up again at 1:45
+            val bucket = bucket(maxSizeBytes = 265)
+            repeat(260) { index -> download(bucket, "f-$index.bin", size = 1, at = 1 * MINUTE) }
+            repeat(260) { index ->
+                now = 1 * MINUTE + 1_000L + index * 100L
+                assertNotNull(bucket.cachedFile("f-$index.bin"))
+            }
+            now = 1 * MINUTE + 45_000L
+            assertNotNull(bucket.cachedFile("f-0.bin"))
+            assertEquals(260, marks.size)
 
-        // When — a download takes the cache past the bound
-        download(bucket, "big.bin", size = 10, at = 2 * MINUTE)
+            // When — at 2:00 a download takes the cache past its bound, to a low-water mark 31
+            // bytes below the total
+            download(bucket, "big.bin", size = 10, at = 2 * MINUTE)
 
-        // Then — the file used within the grace stays, the rest go by their last use
-        assertNotNull(store.getStorageByKey(BUCKET, "f-0.bin"))
-        assertNotNull(store.getStorageByKey(BUCKET, "big.bin"))
-        assertTrue(store.cachedFileDao.totalSizeBytes() <= 265 - 26)
-    }
+            // Then — the file used within the grace stays; of the rest, the 31 looked up first
+            // went, in the order of their lookups, and the later ones stay
+            assertNotNull(store.getStorageByKey(BUCKET, "f-0.bin"))
+            (1..31).forEach { index -> assertNull(store.getStorageByKey(BUCKET, "f-$index.bin")) }
+            (32 until 260).forEach { index ->
+                assertNotNull(store.getStorageByKey(BUCKET, "f-$index.bin"), "f-$index.bin")
+            }
+            assertNotNull(store.getStorageByKey(BUCKET, "big.bin"))
+            assertTrue(store.cachedFileDao.totalSizeBytes() <= 265 - 26)
+        }
 
     private companion object {
         const val BUCKET = "media"

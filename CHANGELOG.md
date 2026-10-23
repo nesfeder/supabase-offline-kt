@@ -17,6 +17,11 @@ All notable changes to this project are recorded in this file. The format follow
 
 ### Changed
 
+- Concurrent `ensureCachedFile` calls for one uncached object share one download instead of each
+  fetching the whole object, and a bytes or channel download of an object such a call is fetching
+  waits for it and reads its file. A call canceled while another still waits for that download
+  returns at once, and the download goes on for the other; the last caller to cancel still returns
+  only once its partial file is deleted.
 - The rejected list keeps a guarded write's base in each guarded entry, under two new keys
   (`baseVersion`, `baseJson`), so a retry replays guarded. A list an earlier build wrote reads back
   without them, and a retry of such an entry replays unguarded, as it did there.
