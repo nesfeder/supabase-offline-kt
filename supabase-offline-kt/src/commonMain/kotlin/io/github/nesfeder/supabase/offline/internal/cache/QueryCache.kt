@@ -4,6 +4,7 @@ package io.github.nesfeder.supabase.offline.internal.cache
 
 import io.github.nesfeder.supabase.offline.internal.db.CachedQueryRow
 import io.github.nesfeder.supabase.offline.internal.db.PayloadLength
+import io.github.nesfeder.supabase.offline.internal.db.PayloadWriteCountingDao
 import io.github.nesfeder.supabase.offline.internal.db.QueryCacheDao
 import io.github.nesfeder.supabase.offline.internal.db.isReservedTable
 import io.github.nesfeder.supabase.offline.internal.db.requireUserTable
@@ -97,7 +98,7 @@ internal class ParsedPayload(val text: String, val rows: List<JsonElement>?) {
  */
 @OptIn(ExperimentalAtomicApi::class)
 internal class QueryCache(
-    private val queryCacheDao: QueryCacheDao,
+    private val queryCacheDao: PayloadWriteCountingDao,
     private val queryCacheLimits: QueryCacheLimits,
     private val json: Json,
     private val nowMillis: () -> Long,
@@ -469,8 +470,9 @@ internal class QueryCache(
     }
 
     /**
-     * Deletes [rows] in one transaction, [MAX_DELETE_KEYS] to a statement, sparing any fetched
-     * again since they were read (see [QueryCacheDao.deletePayloads]).
+     * Deletes [rows] in one transaction, by table, [MAX_DELETE_KEYS] to a statement, sparing any
+     * fetched again since they were read (see [QueryCacheDao.deletePayloads]). By table, so only
+     * the live readers of a table a row went from read their payloads again.
      *
      * @return how many rows were deleted.
      */
@@ -480,10 +482,15 @@ internal class QueryCache(
         var deleted = 0
         queryCacheDao.runInTransaction {
             rows
-                .map { row -> row.rowId }
-                .chunked(MAX_DELETE_KEYS)
-                .forEach { rowIds ->
-                    deleted += queryCacheDao.deletePayloads(rowIds, fetchedAtOrBefore)
+                .groupBy { row -> row.table }
+                .forEach { (table, ofTable) ->
+                    ofTable
+                        .map { row -> row.rowId }
+                        .chunked(MAX_DELETE_KEYS)
+                        .forEach { rowIds ->
+                            deleted +=
+                                queryCacheDao.deletePayloads(table, rowIds, fetchedAtOrBefore)
+                        }
                 }
         }
         return deleted

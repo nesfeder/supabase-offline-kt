@@ -10,8 +10,6 @@ import io.github.nesfeder.supabase.offline.internal.db.PendingGuardedMutation
 import io.github.nesfeder.supabase.offline.internal.db.QueryCacheDao
 import io.github.nesfeder.supabase.offline.internal.testing.InMemoryMutationDao
 import io.github.nesfeder.supabase.offline.internal.testing.InMemoryQueryCacheDao
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.update
 
 /*
@@ -96,18 +94,6 @@ internal class FakeQueryCacheDao : InMemoryQueryCacheDao() {
         return row
     }
 
-    /**
-     * Runs before [observe] hands each row to its collector, as a slow change notification would; a
-     * test delays it so a reader hears of a payload change after other changes. `null` hands it on
-     * at once.
-     */
-    var beforeObservedRowDelivered: (suspend (table: String, cacheKey: String) -> Unit)? = null
-
-    override fun observe(table: String, cacheKey: String): Flow<CachedQueryRow?> =
-        super.observe(table, cacheKey).onEach {
-            beforeObservedRowDelivered?.invoke(table, cacheKey)
-        }
-
     override suspend fun allForTable(table: String): List<CachedQueryRow> {
         val snapshot = super.allForTable(table)
         onAllForTableSnapshot?.invoke(table)
@@ -143,8 +129,12 @@ internal class FakeQueryCacheDao : InMemoryQueryCacheDao() {
         return changed
     }
 
-    override suspend fun deletePayloads(rowIds: List<Long>, fetchedAtOrBefore: Long): Int {
-        val deleted = super.deletePayloads(rowIds, fetchedAtOrBefore)
+    override suspend fun deletePayloads(
+        table: String,
+        rowIds: List<Long>,
+        fetchedAtOrBefore: Long,
+    ): Int {
+        val deleted = super.deletePayloads(table, rowIds, fetchedAtOrBefore)
         evictedRows += deleted
         return deleted
     }
@@ -191,9 +181,13 @@ internal class PayloadScanCountingDao(private val delegate: QueryCacheDao) :
         return lengths
     }
 
-    override suspend fun deletePayloads(rowIds: List<Long>, fetchedAtOrBefore: Long): Int {
+    override suspend fun deletePayloads(
+        table: String,
+        rowIds: List<Long>,
+        fetchedAtOrBefore: Long,
+    ): Int {
         evictionDeletes++
-        return delegate.deletePayloads(rowIds, fetchedAtOrBefore)
+        return delegate.deletePayloads(table, rowIds, fetchedAtOrBefore)
     }
 
     override suspend fun runInTransaction(block: suspend () -> Unit) {

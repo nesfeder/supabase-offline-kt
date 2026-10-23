@@ -87,11 +87,16 @@ internal class ReservedRowsDatabaseScenarios(
             val lengths = queryCacheDao.payloadLengthsOldestFirst(keptCacheKeys = emptyList())
             var evicted = 0
             queryCacheDao.runInTransaction {
-                evicted +=
-                    queryCacheDao.deletePayloads(
-                        lengths.map { row -> row.rowId },
-                        fetchedAtOrBefore = lengths.last().fetchedAt,
-                    )
+                lengths
+                    .groupBy { row -> row.table }
+                    .forEach { (table, ofTable) ->
+                        evicted +=
+                            queryCacheDao.deletePayloads(
+                                table,
+                                ofTable.map { row -> row.rowId },
+                                fetchedAtOrBefore = lengths.last().fetchedAt,
+                            )
+                    }
             }
 
             // Then — only the cache rows counted, listed oldest fetch first and none kept, and
@@ -100,8 +105,10 @@ internal class ReservedRowsDatabaseScenarios(
                 ShippedDatabaseFixture.CACHED_QUERY_ROWS.sortedBy { fetchedAtOf(it.updatedAt) }
             assertEquals(cached.sumOf { row -> row.payload.length.toLong() }, size)
             assertEquals(
-                cached.map { row -> fetchedAtOf(row.updatedAt) to row.payload.length.toLong() },
-                lengths.map { row -> row.fetchedAt to row.length },
+                cached.map { row ->
+                    Triple(row.table, fetchedAtOf(row.updatedAt), row.payload.length.toLong())
+                },
+                lengths.map { row -> Triple(row.table, row.fetchedAt, row.length) },
             )
             assertTrue(lengths.none { row -> row.kept })
             assertEquals(cached.size, evicted)
@@ -210,7 +217,8 @@ internal class ReservedRowsDatabaseScenarios(
             // read it
             queryCacheDao.upsert(other.copy(updatedAt = other.updatedAt + 1_000L))
             val chosen = lengths.last()
-            val spared = queryCacheDao.deletePayloads(listOf(chosen.rowId), chosen.fetchedAt)
+            val spared =
+                queryCacheDao.deletePayloads(chosen.table, listOf(chosen.rowId), chosen.fetchedAt)
 
             // Then — the refreshed row stays, the newest now
             assertEquals(0, spared)
@@ -221,6 +229,7 @@ internal class ReservedRowsDatabaseScenarios(
             val chosenAgain = again.filter { row -> !row.kept }
             val evicted =
                 queryCacheDao.deletePayloads(
+                    kept.table,
                     chosenAgain.map { row -> row.rowId },
                     chosenAgain.last().fetchedAt,
                 )

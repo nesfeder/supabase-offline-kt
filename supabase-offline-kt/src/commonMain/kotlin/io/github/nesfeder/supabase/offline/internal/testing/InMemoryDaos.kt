@@ -191,6 +191,7 @@ internal open class InMemoryQueryCacheDao : QueryCacheDao {
             .sortedBy { (_, row) -> fetchedAtOf(row.updatedAt) }
             .map { (key, row) ->
                 PayloadLength(
+                    table = row.table,
                     rowId = ids[key] ?: error("A row without a rowid: $key"),
                     fetchedAt = fetchedAtOf(row.updatedAt),
                     length = row.payload.length.toLong(),
@@ -199,13 +200,18 @@ internal open class InMemoryQueryCacheDao : QueryCacheDao {
             }
     }
 
-    override suspend fun deletePayloads(rowIds: List<Long>, fetchedAtOrBefore: Long): Int {
+    override suspend fun deletePayloads(
+        table: String,
+        rowIds: List<Long>,
+        fetchedAtOrBefore: Long,
+    ): Int {
         val named = rowIds.toSet()
         return removeChosen { current ->
             val ids = this.rowIds.value
             current
                 .filter { (key, row) ->
-                    row.table != RESERVED_TABLE_NAME &&
+                    row.table == table &&
+                        row.table != RESERVED_TABLE_NAME &&
                         ids[key] in named &&
                         fetchedAtOf(row.updatedAt) <= fetchedAtOrBefore
                 }

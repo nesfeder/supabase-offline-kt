@@ -812,7 +812,10 @@ the queue and the payload together under the table's snapshot lock (the queue fi
 refresh writes its payload before it retires the replayed writes that payload holds). The head
 send's patch and its row's removal hold the same lock, so a write never shows both patched in and
 still queued, a replayed one never drops out, and a refresh is `Idle` only in an emission showing
-what it fetched.
+what it fetched. A live read hears of payload writes through the cache's count of committed writes
+to each table, not through the database's change notices, which name only the one table every
+payload shares: a write to another table's payloads, or to the engine's own rows, makes it read
+nothing.
 A one-shot read from the cache takes the same snapshot. An idle refresh whose confirmed rows are
 gone (a clear, a drop) is shown `Refreshing` until the read has fetched again.
 
@@ -853,10 +856,11 @@ within theirs.
 in the background after the first response of a process is written, and moved by each payload
 written, less the one it replaced, patched or evicted since. When a written response takes the
 count past the bound, a pass runs in the engine's scope after the response is returned: it reads
-every payload's `rowid`, fetch time and length once, oldest fetch first, chooses the payloads to
-delete down to 50 MB below the bound (or to the bound when it is 50 MB or less), never one of up to
-500 with a live reader, deletes them by `rowid` in one transaction, sparing any fetched again since
-the read, and sets the count from what it read. A response that lands during a pass gets a pass of
+every payload's table, `rowid`, fetch time and length once, oldest fetch first, chooses the payloads
+to delete down to 50 MB below the bound (or to the bound when it is 50 MB or less), never one of up
+to 500 with a live reader, deletes them by table and `rowid` in one transaction, sparing any fetched
+again since the read, and sets the count from what it read. Only the live reads of a table it
+deleted from read again. A response that lands during a pass gets a pass of
 its own. The engine's own records are never counted or evicted.
 
 **Retries and refreshes.** A `NetworkFirst` read with a warm cache, a `CacheFirst` read fetching a
