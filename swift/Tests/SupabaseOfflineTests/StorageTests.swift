@@ -358,6 +358,72 @@ struct StorageTests {
         try await client.close()
     }
 
+    @Test func aTransformationFindsItsOwnCachedCopyAndEvictingItLeavesTheOriginal() async throws {
+        // Given the original and a thumbnail, each downloaded once
+        let storage = FakeStorageServer()
+        let client = Self.makeClient(storage)
+        let bucket = client.storage.from("avatars")
+        let thumbnail = OfflineBucketApi.ImageTransformation(width: 64, height: 64)
+        _ = try await bucket.download(path: "a.png")
+        _ = try await bucket.download(path: "a.png", options: thumbnail)
+
+        // When each copy is looked up, then the thumbnail evicted
+        let variant = try #require(try await bucket.cachedFile(path: "a.png", transform: thumbnail))
+        let otherSize = try await bucket.cachedFile(path: "a.png", transform: .init(width: 32, height: 32))
+        let original = try #require(try await bucket.cachedFile(path: "a.png"))
+        try await bucket.evictCachedFile(path: "a.png", transform: thumbnail)
+        let variantAfterEviction = try await bucket.cachedFile(path: "a.png", transform: thumbnail)
+        let originalAfterEviction = try await bucket.cachedFile(path: "a.png")
+
+        // Then the thumbnail had a copy of its own, and it went alone
+        #expect(variant.path != original.path)
+        #expect(variant.sizeBytes == FakeStorageServer.photo.count)
+        #expect(otherSize == nil)
+        #expect(variantAfterEviction == nil)
+        #expect(originalAfterEviction == original)
+        try await client.close()
+    }
+
+    @Test func evictingAnObjectDropsEveryCopyOfItAndNothingElse() async throws {
+        // Given two objects, one of them with a thumbnail too
+        let storage = FakeStorageServer()
+        let client = Self.makeClient(storage)
+        let bucket = client.storage.from("avatars")
+        let thumbnail = OfflineBucketApi.ImageTransformation(width: 64, height: 64)
+        _ = try await bucket.download(path: "a.png")
+        _ = try await bucket.download(path: "a.png", options: thumbnail)
+        _ = try await bucket.download(path: "b.png")
+
+        // When
+        try await bucket.evictCachedFile(path: "a.png")
+
+        // Then
+        #expect(try await bucket.cachedFile(path: "a.png") == nil)
+        #expect(try await bucket.cachedFile(path: "a.png", transform: thumbnail) == nil)
+        #expect(try await bucket.cachedFile(path: "b.png") != nil)
+        #expect(storage.requests.values.allSatisfy { $0.method == "GET" })
+        try await client.close()
+    }
+
+    @Test func clearingTheFileCacheDeletesEveryFileAndKeepsTheQueue() async throws {
+        // Given a cached file, and a write queued offline
+        let storage = FakeStorageServer()
+        let client = Self.makeClient(storage)
+        let bucket = client.storage.from("avatars")
+        _ = try await bucket.download(path: "a.png")
+        storage.goOffline()
+        _ = try await client.from("todos").insert(TodoRow(id: 3, title: "Tea", done: false)).execute()
+        #expect(try await client.pendingMutationCount() == 1)
+
+        // When
+        try await client.storage.clearFileCache()
+
+        // Then the file is gone, and the write still waits
+        #expect(try await bucket.cachedFile(path: "a.png") == nil)
+        #expect(try await client.pendingMutationCount() == 1)
+        try await client.close()
+    }
+
     // MARK: - Writes
 
     @Test func everyWriteOfflineFailsAtOnceAndIsNeverQueued() async throws {
@@ -714,12 +780,16 @@ struct StorageTests {
         let cached = await #expect(throws: OfflineError.self) { try await bucket.cachedFile(path: "a.png") }
         let publicURL = await #expect(throws: OfflineError.self) { try await bucket.publicURL(path: "a.png") }
         let authenticatedURL = await #expect(throws: OfflineError.self) { try await bucket.authenticatedURL(path: "a.png") }
+        let evicted = await #expect(throws: OfflineError.self) { try await bucket.evictCachedFile(path: "a.png") }
+        let cleared = await #expect(throws: OfflineError.self) { try await client.storage.clearFileCache() }
 
         // Then the URL builders too, as they read the opened client
         #expect(download?.code == .clientClosed)
         #expect(cached?.code == .clientClosed)
         #expect(publicURL?.code == .clientClosed)
         #expect(authenticatedURL?.code == .clientClosed)
+        #expect(evicted?.code == .clientClosed)
+        #expect(cleared?.code == .clientClosed)
         #expect(storage.requests.values.isEmpty)
     }
 }

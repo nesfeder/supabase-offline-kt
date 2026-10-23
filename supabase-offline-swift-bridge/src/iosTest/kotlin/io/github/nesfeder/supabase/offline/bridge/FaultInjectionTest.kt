@@ -324,11 +324,13 @@ class FaultInjectionTest {
             "list" to { valued<String> { storage.list("b", "", null, it) } },
             "info" to { valued<String> { storage.info("b", "p", it) } },
             "exists" to { valued<Boolean> { storage.exists("b", "p", it) } },
-            "cachedFile" to { valued<BridgeCachedFile> { storage.cachedFile("b", "p", it) } },
+            "cachedFile" to { valued<BridgeCachedFile> { storage.cachedFile("b", "p", null, it) } },
             "ensureCachedFile" to
                 {
                     valued<BridgeCachedFile> { storage.ensureCachedFile("b", "p", false, it) }
                 },
+            "evictCachedFile" to { unvalued { storage.evictCachedFile("b", "p", null, it) } },
+            "clearFileCache" to { unvalued { storage.clearFileCache(it) } },
         )
     }
 

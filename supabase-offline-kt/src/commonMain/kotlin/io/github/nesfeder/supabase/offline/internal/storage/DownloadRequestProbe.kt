@@ -126,23 +126,28 @@ internal class DownloadRequestProbe(
                     headers.contains(HttpHeaders.Range) ||
                     headers.contains(HttpHeaders.IfRange) -> Observation.Partial
                 url.encodedPath.startsWith(renderImagePath) ->
-                    Observation.Transformed(canonicalTransform(url))
+                    Observation.Transformed(canonicalTransformOf(url))
                 else -> Observation.Original
             }
         )
     }
-
-    /**
-     * The transform's canonical query: the parameters that change the bytes, sorted by name, or
-     * `render` when there are none.
-     */
-    private fun canonicalTransform(url: Url): String =
-        url.parameters
-            .names()
-            .filter { it !in PARAMETERS_THAT_KEEP_THE_BYTES }
-            .sorted()
-            .joinToString("&") { name ->
-                "$name=${url.parameters.getAll(name).orEmpty().joinToString(",")}"
-            }
-            .ifEmpty { "render" }
 }
+
+/**
+ * The canonical query of the image transform a render URL asks for: the parameters that change the
+ * bytes, sorted by name, or `render` when there are none. A transformed variant's cache entry is
+ * named by it.
+ *
+ * @param url a render URL, as a download's request or supabase-kt's `authenticatedRenderUrl` has
+ *   it.
+ * @return the canonical query.
+ */
+internal fun canonicalTransformOf(url: Url): String =
+    url.parameters
+        .names()
+        .filter { it !in PARAMETERS_THAT_KEEP_THE_BYTES }
+        .sorted()
+        .joinToString("&") { name ->
+            "$name=${url.parameters.getAll(name).orEmpty().joinToString(",")}"
+        }
+        .ifEmpty { "render" }

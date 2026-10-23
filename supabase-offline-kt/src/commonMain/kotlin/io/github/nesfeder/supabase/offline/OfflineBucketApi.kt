@@ -3,6 +3,7 @@
 package io.github.nesfeder.supabase.offline
 
 import io.github.jan.supabase.storage.BucketApi
+import io.github.jan.supabase.storage.ImageTransformation
 
 /**
  * One Storage bucket seen through the offline client: every [BucketApi] operation, plus a file
@@ -40,11 +41,12 @@ import io.github.jan.supabase.storage.BucketApi
  * that does not begin a percent-escape throws [IllegalArgumentException] before anything is sent.
  *
  * The cache is bounded by [Offline.Config.fileCacheSizeBytes], evicting the least recently used
- * files first; clearing local data empties it.
+ * files first; [evictCachedFile] deletes one object's copies, and [OfflineStorage.clearFileCache]
+ * and clearing local data empty it.
  *
  * The members inherited from [BucketApi] keep supabase-kt's declarations, so they declare no
  * `@Throws`: in a framework exported to Swift, one that throws ends the app unless the caller's own
- * bridge catches around it. [cachedFile] and [ensureCachedFile] declare it.
+ * bridge catches around it. [cachedFile], [ensureCachedFile] and [evictCachedFile] declare it.
  *
  * Only the library implements this interface; [OfflineInternal] marks it so.
  */
@@ -62,13 +64,32 @@ public interface OfflineBucketApi : BucketApi {
 
     /**
      * The cached copy of the object at [path], or `null` when none is cached. Never touches the
-     * network. Only an untransformed download or [ensureCachedFile] caches the copy this returns.
+     * network. Only an untransformed download or [ensureCachedFile] caches the copy this returns; a
+     * transformed download's copy is found with a transform.
      *
      * @param path the object path within this bucket.
      * @return the cached file, or `null`.
      * @throws OfflineClientClosedException when the client is closed.
      */
     @Throws(Throwable::class) public suspend fun cachedFile(path: String): CachedFile?
+
+    /**
+     * The cached copy of one image transform of the object at [path], or `null` when none is
+     * cached: the copy a download with the same `transform { … }` caches, and is answered from
+     * offline. Never touches the network. Each transform is a copy of its own, so a thumbnail can
+     * be handed to an image loader as a file. A transform that sets nothing is the untransformed
+     * object, as it is for a download.
+     *
+     * @param path the object path within this bucket.
+     * @param transform the image transform, set as in a download's `transform { … }`.
+     * @return the cached file, or `null`.
+     * @throws IllegalStateException when the client is closed.
+     */
+    @Throws(Throwable::class)
+    public suspend fun cachedFile(
+        path: String,
+        transform: ImageTransformation.() -> Unit,
+    ): CachedFile?
 
     /**
      * The cached copy of the object at [path], downloading it into the cache first when none is
@@ -82,13 +103,42 @@ public interface OfflineBucketApi : BucketApi {
      * @param isPublic whether to download through the public URL rather than the authenticated one.
      * @return the cached file.
      * @throws IllegalArgumentException when [path] cannot be cached (see [OfflineBucketApi]).
-     * @throws IllegalStateException when local data was cleared while the file was downloading;
-     *   when the object was written through this client while it was downloading, twice in a row
-     *   (the first time, it is downloaded again); or when a header set on this bucket made the
-     *   request fetch only part of the object, which cannot be the cached copy.
+     * @throws IllegalStateException when local data or the file cache was cleared while the file
+     *   was downloading; when the object was written through this client, or its copies evicted,
+     *   while it was downloading, twice in a row (the first time, it is downloaded again); or when
+     *   a header set on this bucket made the request fetch only part of the object, which cannot be
+     *   the cached copy.
      * @throws Exception the download's own failure when nothing is cached: supabase-kt's
      *   connectivity error offline, or its REST error from the server.
      */
     @Throws(Throwable::class)
     public suspend fun ensureCachedFile(path: String, isPublic: Boolean = false): CachedFile
+
+    /**
+     * Deletes every cached copy of the object at [path] from this device: the untransformed copy
+     * and each image transform. Nothing is sent, and the object stays on the server; the next
+     * download fetches it again. Other objects' copies stay.
+     *
+     * A download of the object still running is handed to its caller but not cached, as when the
+     * object is written through this bucket: an [ensureCachedFile] running meanwhile downloads it
+     * once more. A path that cannot be cached (see [OfflineBucketApi]) has no copy to delete.
+     *
+     * @param path the object path within this bucket.
+     * @throws IllegalStateException when the client is closed.
+     */
+    @Throws(Throwable::class) public suspend fun evictCachedFile(path: String)
+
+    /**
+     * Deletes the cached copy of one image transform of the object at [path] from this device: the
+     * copy [cachedFile] with the same [transform] returns. The untransformed copy and the other
+     * transforms stay; a transform that sets nothing is the untransformed copy, which goes alone.
+     * Nothing is sent. A download of that transform still running is handed to its caller but not
+     * cached.
+     *
+     * @param path the object path within this bucket.
+     * @param transform the image transform, set as in a download's `transform { … }`.
+     * @throws IllegalStateException when the client is closed.
+     */
+    @Throws(Throwable::class)
+    public suspend fun evictCachedFile(path: String, transform: ImageTransformation.() -> Unit)
 }

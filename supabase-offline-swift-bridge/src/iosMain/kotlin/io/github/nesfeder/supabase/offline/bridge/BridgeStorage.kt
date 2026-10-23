@@ -256,13 +256,50 @@ internal constructor(
     /**
      * The cached copy of [path], or `null` with no error when none is cached; never touches the
      * network.
+     *
+     * @param imageTransform an image transform as for [createSignedUrl], whose cached copy a
+     *   download with it keeps, or `null` for the untransformed object's.
      */
     public fun cachedFile(
         bucket: String,
         path: String,
+        imageTransform: String?,
         completion: (BridgeCachedFile?, BridgeError?) -> Unit,
     ): BridgeCancellable =
-        runner.runOnce("cachedFile", completion) { bucketOf(bucket).cachedFile(path)?.toBridge() }
+        runner.runOnce("cachedFile", completion) {
+            val transformation = imageTransform?.let(::imageTransformOf)
+            val api = bucketOf(bucket)
+            val file =
+                if (transformation == null) api.cachedFile(path)
+                else api.cachedFile(path) { transformation.applyTo(this) }
+            file?.toBridge()
+        }
+
+    /**
+     * Deletes cached copies of [path] from the device; sends nothing.
+     *
+     * @param imageTransform an image transform as for [createSignedUrl], whose cached copy alone
+     *   goes, or `null` for every copy of the object, untransformed and transformed.
+     */
+    public fun evictCachedFile(
+        bucket: String,
+        path: String,
+        imageTransform: String?,
+        completion: (BridgeError?) -> Unit,
+    ): BridgeCancellable =
+        runner.runToCompletion("evictCachedFile", completion) {
+            val transformation = imageTransform?.let(::imageTransformOf)
+            val api = bucketOf(bucket)
+            if (transformation == null) api.evictCachedFile(path)
+            else api.evictCachedFile(path) { transformation.applyTo(this) }
+        }
+
+    /**
+     * Deletes every downloaded file the library keeps on this device; the mutation queue and the
+     * cached rows stay.
+     */
+    public fun clearFileCache(completion: (BridgeError?) -> Unit): BridgeCancellable =
+        runner.runToCompletion("clearFileCache", completion) { offline().storage.clearFileCache() }
 
     /** The cached copy of [path], downloading it into the cache first when none is cached. */
     public fun ensureCachedFile(

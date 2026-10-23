@@ -3,6 +3,7 @@
 package io.github.nesfeder.supabase.offline
 
 import android.net.Uri
+import io.github.jan.supabase.storage.ImageTransformation
 import java.io.File
 
 /**
@@ -48,3 +49,18 @@ public suspend fun OfflineBucketApi.localFileIfCached(path: String): File? =
 @Throws(Throwable::class)
 public suspend fun OfflineBucketApi.localUriIfCached(path: String): Uri? =
     cachedFile(path)?.let { Uri.fromFile(File(it.path)) }
+
+/**
+ * The cached copy of one image transform of the object at [path] as a `file:` [Uri], or `null` when
+ * none is cached: [OfflineBucketApi.cachedFile] with a transform, as a [Uri]. Never touches the
+ * network.
+ *
+ * @param path the object path within this bucket.
+ * @param transform the image transform, set as in a download's `transform { … }`.
+ * @throws IllegalStateException when the client is closed.
+ */
+@Throws(Throwable::class)
+public suspend fun OfflineBucketApi.localUriIfCached(
+    path: String,
+    transform: ImageTransformation.() -> Unit,
+): Uri? = cachedFile(path, transform)?.let { Uri.fromFile(File(it.path)) }

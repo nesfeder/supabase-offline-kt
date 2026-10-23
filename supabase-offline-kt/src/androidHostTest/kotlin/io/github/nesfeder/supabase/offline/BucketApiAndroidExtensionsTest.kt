@@ -7,7 +7,9 @@ import android.net.Uri
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import io.github.jan.supabase.exceptions.UnauthorizedRestException
+import io.github.jan.supabase.storage.storage
 import io.github.nesfeder.supabase.offline.testdoubles.FakeBucketApi
+import io.github.nesfeder.supabase.offline.testdoubles.RecordingStorageServer
 import io.github.nesfeder.supabase.offline.testdoubles.forbiddenRestException
 import io.github.nesfeder.supabase.offline.testdoubles.newTestBucketApi
 import java.io.File
@@ -33,7 +35,8 @@ import org.junit.runner.RunWith
  * The Android storage helpers (`ensureLocalFile`, `ensureLocalUri`, `localFileIfCached`,
  * `localUriIfCached`) on the offline bucket: download-through-cache, cache reuse without the
  * network, a failure thrown rather than turned into "not available", and `null` only from
- * `localFileIfCached` and `localUriIfCached` with nothing cached.
+ * `localFileIfCached` and `localUriIfCached` with nothing cached, for the original and, through
+ * `localUriIfCached`, for an image transform.
  */
 @RunWith(AndroidJUnit4::class)
 class BucketApiAndroidExtensionsTest {
@@ -102,6 +105,30 @@ class BucketApiAndroidExtensionsTest {
         // Then
         assertNull(uri)
         assertEquals(0, fakeBucket.downloadInvocations)
+    }
+
+    @Test
+    fun `localUriIfCached with a transform is that transform's copy as a file uri`() = runTest {
+        // Given — a thumbnail downloaded through supabase-kt's own bucket, which builds the
+        // transformed request
+        val server = RecordingStorageServer()
+        server.objects["avatars/a.png"] = "image".toByteArray()
+        val bucket =
+            newTestBucketApi(
+                delegate = server.supabaseClient().storage.from("avatars"),
+                baseDirectory = baseDir.absolutePath.toPath(),
+            )
+        bucket.downloadAuthenticated("a.png") { transform { size(64, 64) } }
+
+        // When
+        val thumbnail = bucket.localUriIfCached("a.png") { size(64, 64) }
+        val otherSize = bucket.localUriIfCached("a.png") { size(32, 32) }
+
+        // Then
+        val uri = assertNotNull(thumbnail)
+        assertEquals("file", uri.scheme)
+        assertEquals(bucket.cachedFile("a.png") { size(64, 64) }?.path, uri.path)
+        assertNull(otherSize)
     }
 
     @Test

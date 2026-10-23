@@ -917,7 +917,14 @@ internal class OfflineClient(
         tokenIdentity?.requestSession()
             ?: requestSessionFor(authPluginOrNull()?.sessionStatus?.value)
 
-    override val storage: OfflineStorage = OfflineStorage(::bucket)
+    override val storage: OfflineStorage = OfflineStorage(::bucket, ::clearFileCache)
+
+    /**
+     * Empties the Storage file cache alone, under its own lock as [clearLocalData] does: the queue
+     * and the query cache are not touched, so neither of their locks is taken, and nothing a live
+     * read shows changes.
+     */
+    private suspend fun clearFileCache(): Unit = operationGate.call { fileCache.clearFiles() }
 
     /** The bucket [bucketId], caching through the client's file cache. */
     private fun bucket(bucketId: String): OfflineBucketApi {

@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline
 
+import io.github.jan.supabase.storage.ImageTransformation
+
 /**
  * The absolute path of the cached copy of the object at [path], downloading it into the cache first
  * when none is cached: [OfflineBucketApi.ensureCachedFile]'s path. It throws what that throws.
@@ -25,3 +27,18 @@ public suspend fun OfflineBucketApi.ensureLocalPath(
 @Throws(Throwable::class)
 public suspend fun OfflineBucketApi.localPathIfCached(path: String): String? =
     cachedFile(path)?.path
+
+/**
+ * The absolute path of the cached copy of one image transform of the object at [path], or `null`
+ * when none is cached: [OfflineBucketApi.cachedFile] with a transform, as its path. Never touches
+ * the network.
+ *
+ * @param path the object path within this bucket.
+ * @param transform the image transform, set as in a download's `transform { … }`.
+ * @throws IllegalStateException when the client is closed.
+ */
+@Throws(Throwable::class)
+public suspend fun OfflineBucketApi.localPathIfCached(
+    path: String,
+    transform: ImageTransformation.() -> Unit,
+): String? = cachedFile(path, transform)?.path

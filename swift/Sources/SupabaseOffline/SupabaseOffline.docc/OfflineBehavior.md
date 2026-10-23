@@ -98,6 +98,12 @@ returns the kept copy, downloading it first when there is none, and
 ``OfflineBucketApi/cachedFile(path:)`` never touches the network. Uploads, updates, moves, copies and
 removals are never queued, fail at once offline, and drop the copies they make stale.
 
+A transformed download is kept apart from the original, and
+``OfflineBucketApi/cachedFile(path:transform:)`` finds its copy. To free the device's storage,
+``OfflineBucketApi/evictCachedFile(path:)`` deletes one object's copies and
+``OfflineStorage/clearFileCache()`` every kept file; neither sends anything, and both leave the
+queued writes and the cached query results.
+
 An object name holding `%`, `?` or `#` is never kept on the device, and other requests than the URL
 builders, signing and uploads to a signed URL can mistake it for another object: keep those
 characters out of object names. A name that cannot be mapped onto a file safely (a leading `/`, an

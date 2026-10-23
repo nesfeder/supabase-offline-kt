@@ -516,7 +516,8 @@ public interface Offline : SupabasePlugin<Offline.Config> {
      * already belongs to one user at a time (it is dropped when the session settles as someone
      * else), but queued writes stay with the user who made them until this call. Clear before
      * `auth.signOut()`, or in a `finally` around it: offline, `signOut()` throws and keeps the
-     * session, so a clear after it would never run.
+     * session, so a clear after it would never run. To free the device's storage without dropping
+     * queued writes, call [OfflineStorage.clearFileCache] instead.
      *
      * A replay pass in progress is canceled first, and nothing queued is sent once clearing has
      * begun. A write already on the wire is neither applied to the cache nor queued when it

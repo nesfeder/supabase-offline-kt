@@ -3,7 +3,9 @@
 package io.github.nesfeder.supabase.offline
 
 import io.github.jan.supabase.exceptions.UnauthorizedRestException
+import io.github.jan.supabase.storage.storage
 import io.github.nesfeder.supabase.offline.testdoubles.FakeBucketApi
+import io.github.nesfeder.supabase.offline.testdoubles.RecordingStorageServer
 import io.github.nesfeder.supabase.offline.testdoubles.forbiddenRestException
 import io.github.nesfeder.supabase.offline.testdoubles.newTestBucketApi
 import kotlin.random.Random
@@ -53,6 +55,29 @@ class BucketApiIosExtensionsTest {
         // Then
         assertEquals((directory / "storage" / "test-bucket" / "a b" / "test.txt").toString(), path)
         assertEquals(path, offlineApi.localPathIfCached("a b/test.txt"))
+    }
+
+    @Test
+    fun localPathIfCached_with_a_transform_is_that_transforms_copy() = runTest {
+        // Given — a thumbnail downloaded through supabase-kt's own bucket, which builds the
+        // transformed request
+        val server = RecordingStorageServer()
+        server.objects["avatars/a.png"] = "image".encodeToByteArray()
+        val bucket =
+            newTestBucketApi(
+                delegate = server.supabaseClient().storage.from("avatars"),
+                baseDirectory = directory,
+            )
+        bucket.downloadAuthenticated("a.png") { transform { size(64, 64) } }
+
+        // When
+        val thumbnail = bucket.localPathIfCached("a.png") { size(64, 64) }
+        val otherSize = bucket.localPathIfCached("a.png") { size(32, 32) }
+
+        // Then
+        assertEquals(bucket.cachedFile("a.png") { size(64, 64) }?.path, thumbnail)
+        assertTrue(thumbnail.orEmpty().startsWith(directory.toString()))
+        assertNull(otherSize)
     }
 
     @Test

@@ -39,6 +39,18 @@ All notable changes to this project are recorded in this file. The format follow
   with that user's token, the caches belong to one user at a time and are dropped when the token
   names another, and the Realtime channel is joined again for the new user, as with Auth, so a Swift
   app no longer needs its own sign-out routine. It is off by default, which changes nothing.
+- `offline.storage.clearFileCache()` deletes every downloaded Storage file and its record, in every
+  bucket, and leaves the mutation queue, the cached query results and the rejected and conflicted
+  lists, so an app can free the device's storage without dropping writes waiting to sync. A
+  download in flight is handed to its caller but not kept, as across `clearLocalData()`. The Swift
+  package has it as `storage.clearFileCache()`.
+- A bucket's `evictCachedFile(path)` deletes one object's cached copies, the untransformed one and
+  every image transform, and `evictCachedFile(path) { … }` one transform's copy alone; nothing is
+  sent. The Swift package has `evictCachedFile(path:)` and `evictCachedFile(path:transform:)`.
+- `cachedFile(path) { … }` returns the cached copy of one image transform, the one a download with
+  the same `transform { … }` keeps, so a cached thumbnail can be handed to an image loader as a
+  file. `localUriIfCached(path) { … }` on Android and `localPathIfCached(path) { … }` on iOS give it
+  in the platform's terms, and the Swift package has `cachedFile(path:transform:)`.
 
 ### Changed
 

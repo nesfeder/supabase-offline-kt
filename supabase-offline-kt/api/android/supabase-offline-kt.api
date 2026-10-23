@@ -285,8 +285,11 @@ public final class io/github/nesfeder/supabase/offline/Offline$Config {
 
 public abstract interface class io/github/nesfeder/supabase/offline/OfflineBucketApi : io/github/jan/supabase/storage/BucketApi {
 	public abstract fun cachedFile (Ljava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public abstract fun cachedFile (Ljava/lang/String;Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun ensureCachedFile (Ljava/lang/String;ZLkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public static synthetic fun ensureCachedFile$default (Lio/github/nesfeder/supabase/offline/OfflineBucketApi;Ljava/lang/String;ZLkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+	public abstract fun evictCachedFile (Ljava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public abstract fun evictCachedFile (Ljava/lang/String;Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public synthetic fun setHeader (Ljava/lang/String;Ljava/lang/String;)Lio/github/jan/supabase/storage/BucketApi;
 	public abstract fun setHeader (Ljava/lang/String;Ljava/lang/String;)Lio/github/nesfeder/supabase/offline/OfflineBucketApi;
 }
@@ -298,6 +301,7 @@ public final class io/github/nesfeder/supabase/offline/OfflineBucketApi_androidK
 	public static synthetic fun ensureLocalUri$default (Lio/github/nesfeder/supabase/offline/OfflineBucketApi;Ljava/lang/String;ZLkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
 	public static final fun localFileIfCached (Lio/github/nesfeder/supabase/offline/OfflineBucketApi;Ljava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public static final fun localUriIfCached (Lio/github/nesfeder/supabase/offline/OfflineBucketApi;Ljava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public static final fun localUriIfCached (Lio/github/nesfeder/supabase/offline/OfflineBucketApi;Ljava/lang/String;Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 }
 
 public final class io/github/nesfeder/supabase/offline/OfflineClientClosedException : java/lang/IllegalStateException {
@@ -337,6 +341,7 @@ public final class io/github/nesfeder/supabase/offline/OfflinePostgrestQueryBuil
 }
 
 public final class io/github/nesfeder/supabase/offline/OfflineStorage {
+	public final fun clearFileCache (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public final fun from (Ljava/lang/String;)Lio/github/nesfeder/supabase/offline/OfflineBucketApi;
 	public final fun get (Ljava/lang/String;)Lio/github/nesfeder/supabase/offline/OfflineBucketApi;
 }

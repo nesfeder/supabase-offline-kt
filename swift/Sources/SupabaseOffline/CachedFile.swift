@@ -7,7 +7,7 @@ public import Foundation
 ///
 /// The cache may delete the copy when the object is written, moved or deleted through the client,
 /// when the server reports it gone, when the cache passes its size and the copy has not been used
-/// for 30 seconds, and when local data is cleared.
+/// for 30 seconds, when it is evicted or the file cache cleared, and when local data is cleared.
 public struct CachedFile: Sendable, Hashable {
 
     /// The copy's absolute path on this device; from the testing product's in-memory client, a
