@@ -33,6 +33,7 @@ import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -50,6 +51,7 @@ import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
@@ -364,17 +366,27 @@ class OfflinePluginTest {
 
     @Test
     fun the_cache_size_install_sets_bounds_what_the_cache_keeps() = runTest {
-        // When — one read larger than the smallest bound there is, under it and under the default
+        // When — one read larger than the smallest bound there is, under it and under the default;
+        // the bound is enforced by a pass that runs after the response is written, so the bounded
+        // client is asked until that pass has had its effect
         val keptUnderDefault = servedOfflineAfterOneLargeRead(cacheSizeBytes = null)
-        val keptUnderTheBound = servedOfflineAfterOneLargeRead(cacheSizeBytes = 4_096L)
+        val keptUnderTheBound =
+            servedOfflineAfterOneLargeRead(cacheSizeBytes = 4_096L, awaitEviction = true)
 
         // Then — the bound evicted it
         assertTrue(keptUnderDefault)
         assertFalse(keptUnderTheBound)
     }
 
-    /** Whether a read of more than 4 KiB is served from the cache once the network goes. */
-    private suspend fun servedOfflineAfterOneLargeRead(cacheSizeBytes: Long?): Boolean {
+    /**
+     * Whether a read of more than 4 KiB is served from the cache once the network goes. With
+     * [awaitEviction], the cache is asked again on real time, while it still serves the read, for
+     * up to ten seconds: the eviction pass runs in the background after the response is written.
+     */
+    private suspend fun servedOfflineAfterOneLargeRead(
+        cacheSizeBytes: Long?,
+        awaitEviction: Boolean = false,
+    ): Boolean {
         val server =
             RecordingPostgrestServer(
                 answer = { okJson("""[{"id":1,"pad":"${"x".repeat(5_000)}"}]""") }
@@ -389,10 +401,21 @@ class OfflinePluginTest {
             }
         supabase.offline.from("todos").select()
         server.answer = { connectivityFailure() }
-        val served = runCatching {
+        suspend fun served(): Boolean = runCatching {
             supabase.offline.from("todos").select(readStrategy = ReadStrategy.CacheOnly())
         }
             .isSuccess
+        var served = served()
+        if (awaitEviction) {
+            withContext(Dispatchers.Default) {
+                withTimeoutOrNull(10.seconds) {
+                    while (served) {
+                        delay(20.milliseconds)
+                        served = served()
+                    }
+                }
+            }
+        }
         supabase.close()
         return served
     }
