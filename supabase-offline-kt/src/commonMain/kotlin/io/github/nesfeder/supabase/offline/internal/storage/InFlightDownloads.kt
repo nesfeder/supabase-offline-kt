@@ -11,9 +11,12 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.job
 import kotlinx.coroutines.withContext
 
 /**
@@ -44,6 +47,12 @@ internal sealed interface SharedOutcome {
  * its object written, or local data cleared — while the callers already waiting for it keep their
  * place, and the last of them to cancel still stops it.
  *
+ * A canceled waiter stops the download only once it runs again, to leave it, and its dispatcher may
+ * run it after the download has finished. So the download asks, just before it commits, whether any
+ * waiter is still uncanceled ([joinOrStart]'s `ensureWanted`), and stops there when none is: once
+ * every caller's cancellation has reached it, the download commits nothing, however late their
+ * dispatchers run them again.
+ *
  * Downloads are keyed by their cache entry's key, which for the untransformed object is the
  * object's own row key, so the cache forgets a written object's download by that key.
  *
@@ -53,18 +62,30 @@ internal sealed interface SharedOutcome {
 internal class InFlightDownloads(private val onRegistered: (key: String) -> Unit = {}) {
 
     /**
+     * One caller waiting for a download.
+     *
+     * @property job the caller's job; `null` for a caller without one, which nothing cancels.
+     */
+    private class Waiter(val job: Job?) {
+        /** Whether the caller still wants the download: it has not been canceled. */
+        val isWaiting: Boolean
+            get() = job?.isActive != false
+    }
+
+    /**
      * One download in flight.
      *
      * @property outcome the download, whose result is every waiter's.
-     * @property waiters how many callers are waiting for it.
+     * @property waiters the callers waiting for it.
      */
-    private class Download(val outcome: Deferred<Result<CommitOutcome>>, val waiters: Int)
+    private class Download(val outcome: Deferred<Result<CommitOutcome>>, val waiters: List<Waiter>)
 
     /**
      * The register. Replaced whole, so a look at it needs no lock.
      *
      * @property joinable entry key → the download in flight for it, which a caller joins.
-     * @property forgotten the forgotten downloads with callers still waiting, which none joins.
+     * @property forgotten the downloads with callers still waiting that none joins any more: the
+     *   cache forgot them, or every caller had been canceled when they came to commit.
      */
     private class State(val joinable: Map<String, Download>, val forgotten: List<Download>)
 
@@ -78,41 +99,48 @@ internal class InFlightDownloads(private val onRegistered: (key: String) -> Unit
      * flight.
      */
     fun waitersOf(key: String): Int =
-        state.load().joinable[key]?.takeIf { it.outcome.isRunning }?.waiters ?: 0
+        state.load().joinable[key]?.takeIf { it.outcome.isRunning }?.waiters?.size ?: 0
 
     /**
      * Waits for the download of the entry keyed [key] in flight or, when there is none, runs
      * [download] as that download in [scope] and waits for it. A cancellation of the download — the
      * scope's, as no one waiter's reaches it — is thrown; any other failure is handed back.
      *
+     * @param download the download. It calls the `ensureWanted` it is handed just before it
+     *   commits, which throws a [CancellationException] when every caller waiting for it has been
+     *   canceled — some of them perhaps not yet run again to leave it — and from then on lets no
+     *   caller join it.
      * @return how the download ended for this caller.
      */
     suspend fun joinOrStart(
         key: String,
         scope: CoroutineScope,
-        download: suspend () -> CommitOutcome,
+        download: suspend (ensureWanted: () -> Unit) -> CommitOutcome,
     ): SharedOutcome {
+        val waiter = Waiter(currentCoroutineContext()[Job])
         // Not started before it is registered, so no download runs unregistered; registered and
         // not yet started, it is joined all the same. Its failure is handed back as a value, so
         // it never fails the scope, whatever its job
         val own =
             scope.async(start = CoroutineStart.LAZY) {
+                val self = coroutineContext.job
                 try {
-                    Result.success(download())
+                    Result.success(download { ensureWanted(self) })
                 } catch (cancellation: CancellationException) {
                     throw cancellation
                 } catch (failure: Throwable) {
                     Result.failure(failure)
                 }
             }
-        val entered = enter(key, own) ?: error("A download to start was neither started nor joined")
+        val entered =
+            enter(key, own, waiter) ?: error("A download to start was neither started nor joined")
         if (entered === own) {
             onRegistered(key)
             own.start()
         } else {
             own.cancel()
         }
-        return awaitLeaving(entered, joined = entered !== own)
+        return awaitLeaving(entered, waiter, joined = entered !== own)
     }
 
     /**
@@ -121,8 +149,9 @@ internal class InFlightDownloads(private val onRegistered: (key: String) -> Unit
      * @return how the download ended, or `null` when no download was in flight.
      */
     suspend fun join(key: String): SharedOutcome? {
-        val entered = enter(key, own = null) ?: return null
-        return awaitLeaving(entered, joined = true)
+        val waiter = Waiter(currentCoroutineContext()[Job])
+        val entered = enter(key, own = null, waiter) ?: return null
+        return awaitLeaving(entered, waiter, joined = true)
     }
 
     /**
@@ -146,22 +175,23 @@ internal class InFlightDownloads(private val onRegistered: (key: String) -> Unit
     }
 
     /**
-     * Counts the caller among the waiters of the download in flight for [key], or of [own] when
-     * none is.
+     * Counts [waiter] among the waiters of the download in flight for [key], or of [own] when none
+     * is.
      *
      * @return the download the caller waits for, or `null` when there is none and no [own].
      */
     private fun enter(
         key: String,
         own: Deferred<Result<CommitOutcome>>?,
+        waiter: Waiter,
     ): Deferred<Result<CommitOutcome>>? {
         var entered: Download? = null
         state.update { current ->
             val inFlight = current.joinable[key]?.takeIf { it.outcome.isRunning }
             val next =
                 when {
-                    inFlight != null -> Download(inFlight.outcome, inFlight.waiters + 1)
-                    own != null -> Download(own, 1)
+                    inFlight != null -> Download(inFlight.outcome, inFlight.waiters + waiter)
+                    own != null -> Download(own, listOf(waiter))
                     else -> null
                 }
             entered = next
@@ -171,9 +201,10 @@ internal class InFlightDownloads(private val onRegistered: (key: String) -> Unit
         return entered?.outcome
     }
 
-    /** Waits for [download], and leaves its waiters however the wait ends. */
+    /** Waits for [download], and takes [waiter] off its waiters however the wait ends. */
     private suspend fun awaitLeaving(
         download: Deferred<Result<CommitOutcome>>,
+        waiter: Waiter,
         joined: Boolean,
     ): SharedOutcome =
         try {
@@ -184,44 +215,65 @@ internal class InFlightDownloads(private val onRegistered: (key: String) -> Unit
                     onFailure = { failure -> SharedOutcome.Failed(failure, joined) },
                 )
         } finally {
-            withContext(NonCancellable) { leave(download) }
+            withContext(NonCancellable) { leave(download, waiter) }
         }
 
     /**
-     * Takes the caller off [download]'s waiters, wherever the register holds it. The last one to
+     * Throws a [CancellationException] when no caller waiting for [download] is still uncanceled,
+     * and moves the download where no caller joins it, so none joins a download that is stopping;
+     * the canceled callers keep their place, to leave it. A download no caller waits for any more —
+     * the last one has left, and canceled it — throws too.
+     */
+    private fun ensureWanted(download: Job) {
+        var wanted = false
+        state.update { current ->
+            val key = current.keyOf(download)
+            val held =
+                if (key != null) current.joinable.getValue(key)
+                else current.forgotten.firstOrNull { forgotten -> forgotten.outcome === download }
+            wanted = held != null && held.waiters.any { waiter -> waiter.isWaiting }
+            // A joinable download no caller wants goes where none joins it; one already there, or
+            // gone from the register, stays as it is
+            if (wanted || key == null || held == null) current
+            else State(current.joinable - key, current.forgotten + held)
+        }
+        if (!wanted) {
+            throw CancellationException("Every caller waiting for this download was canceled")
+        }
+    }
+
+    /**
+     * Takes [waiter] off [download]'s waiters, wherever the register holds it. The last one to
      * leave a download still running — every caller canceled, then — cancels it and waits for it to
      * stop.
      */
-    private suspend fun leave(download: Deferred<Result<CommitOutcome>>) {
+    private suspend fun leave(download: Deferred<Result<CommitOutcome>>, waiter: Waiter) {
         var last = false
         state.update { current ->
-            val key =
-                current.joinable.entries.firstOrNull { (_, held) -> held.outcome === download }?.key
+            val key = current.keyOf(download)
             if (key != null) {
-                val held = current.joinable.getValue(key)
-                last = held.waiters == 1
+                val others = current.joinable.getValue(key).waiters - waiter
+                last = others.isEmpty()
                 return@update if (last) State(current.joinable - key, current.forgotten)
                 else
-                    State(
-                        current.joinable + (key to Download(download, held.waiters - 1)),
-                        current.forgotten,
-                    )
+                    State(current.joinable + (key to Download(download, others)), current.forgotten)
             }
             val index = current.forgotten.indexOfFirst { held -> held.outcome === download }
             if (index < 0) {
                 last = false
                 return@update current
             }
-            val held = current.forgotten[index]
-            last = held.waiters == 1
-            val others = current.forgotten.filterIndexed { position, _ -> position != index }
-            State(
-                current.joinable,
-                if (last) others else others + Download(download, held.waiters - 1),
-            )
+            val others = current.forgotten[index].waiters - waiter
+            last = others.isEmpty()
+            val rest = current.forgotten.filterIndexed { position, _ -> position != index }
+            State(current.joinable, if (last) rest else rest + Download(download, others))
         }
         if (last && !download.isCompleted) download.cancelAndJoin()
     }
+
+    /** The key [download] is joinable under, or `null` when it is not joinable. */
+    private fun State.keyOf(download: Job): String? =
+        joinable.entries.firstOrNull { (_, held) -> held.outcome === download }?.key
 
     /**
      * Whether this download may still give an outcome: not ended, and not being canceled. A
