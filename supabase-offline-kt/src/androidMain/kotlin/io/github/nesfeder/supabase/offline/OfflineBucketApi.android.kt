@@ -28,6 +28,17 @@ public suspend fun OfflineBucketApi.ensureLocalUri(path: String, isPublic: Boole
     Uri.fromFile(ensureLocalFile(path, isPublic))
 
 /**
+ * The cached copy of the object at [path] as a [File], or `null` when none is cached:
+ * [OfflineBucketApi.cachedFile] as a [File]. Never touches the network.
+ *
+ * @param path the object path within this bucket.
+ * @throws IllegalStateException when the client is closed.
+ */
+@Throws(Throwable::class)
+public suspend fun OfflineBucketApi.localFileIfCached(path: String): File? =
+    cachedFile(path)?.let { File(it.path) }
+
+/**
  * The cached copy of the object at [path] as a `file:` [Uri], or `null` when none is cached:
  * [OfflineBucketApi.cachedFile] as a [Uri]. Never touches the network.
  *

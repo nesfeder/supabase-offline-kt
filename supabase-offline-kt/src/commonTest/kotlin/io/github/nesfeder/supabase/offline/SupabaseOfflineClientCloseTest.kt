@@ -962,9 +962,11 @@ class SupabaseOfflineClientCloseTest {
         assertFailsWith<OfflineClientClosedException> { client.pendingMutations().first() }
         assertFailsWith<OfflineClientClosedException> { client.discardPendingMutation(1L) }
         assertFailsWith<OfflineClientClosedException> { client.rejectedMutations().first() }
+        assertFailsWith<OfflineClientClosedException> { client.rejectedMutationList() }
         assertFailsWith<OfflineClientClosedException> { client.dismissRejectedMutation(1L) }
         assertFailsWith<OfflineClientClosedException> { client.retryRejectedMutation(1L) }
         assertFailsWith<OfflineClientClosedException> { client.conflictedMutations().first() }
+        assertFailsWith<OfflineClientClosedException> { client.conflictedMutationList() }
         assertFailsWith<OfflineClientClosedException> {
             client.resolveConflictedMutation(1L, ConflictResolution.KeepLocal)
         }

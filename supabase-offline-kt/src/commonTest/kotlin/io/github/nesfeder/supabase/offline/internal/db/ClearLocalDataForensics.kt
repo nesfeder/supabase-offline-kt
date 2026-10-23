@@ -126,7 +126,7 @@ internal suspend fun runClearLocalDataForensics(
                 )
             }
         )
-        check((client as OfflineClient).rejectedMutationList().size == 1) {
+        check((client as OfflineClient).persistedRejectedMutations().size == 1) {
             "the rejection was not recorded"
         }
         check(client.pendingMutationCount() == 1) { "the offline write was not queued" }

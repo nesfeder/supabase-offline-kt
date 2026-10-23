@@ -67,8 +67,8 @@ fields are optional, or write those columns yourself. A write whose result you r
 
 A write is queued behind any earlier write of the same user still waiting, in any table, so it
 never overtakes it; the library sends it a moment later. It is also queued while a stored session
-restores, and when it was sent but may not have run (no answer, a `503`). See
-[Writes and the offline queue](../behaviors/mutations.md#what-a-write-returns).
+restores, and when it was sent but may not have run or may pass later (no answer, a `503`, a
+`429`). See [Writes and the offline queue](../behaviors/mutations.md#what-a-write-returns).
 
 ## Writes are not sent when the app comes back
 

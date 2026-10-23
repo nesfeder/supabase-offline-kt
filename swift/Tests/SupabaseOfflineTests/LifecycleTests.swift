@@ -43,6 +43,8 @@ struct LifecycleTests {
             ("pendingMutations().first()", { _ = try await client.pendingMutations().first() }),
             ("pendingMutationCount()", { _ = try await client.pendingMutationCount() }),
             ("rejectedMutations().first()", { _ = try await client.rejectedMutations().first() }),
+            ("rejectedMutationList()", { _ = try await client.rejectedMutationList() }),
+            ("conflictedMutationList()", { _ = try await client.conflictedMutationList() }),
             ("discardPendingMutation", { try await client.discardPendingMutation(id: 1) }),
             ("dismissRejectedMutation", { try await client.dismissRejectedMutation(id: 1) }),
             ("retryRejectedMutation", { try await client.retryRejectedMutation(id: 1) }),

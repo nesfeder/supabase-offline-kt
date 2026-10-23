@@ -13,6 +13,7 @@ import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueue
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.NoVersionColumns
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.PrimaryKeys
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.VersionColumns
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
 
 /**
@@ -67,6 +68,10 @@ internal class CacheComponents(
  * @param onQueriesMarkedStale told the queries a write marked stale, so live ones fetch again.
  * @param onCacheNotServed told that a read or write found the caches another identity's.
  * @param versionColumns each table's version column, which guards a queued write's replay.
+ * @param backgroundScope where the cache's eviction pass runs, after the response that asked for it
+ *   is written: the client's own scope, which closing the client cancels.
+ * @param beforePayloadWriteHeard runs before a live reader hears of a payload write; a test delays
+ *   it so a reader hears of the write after other changes. `null` for none.
  * @return the components, wired.
  */
 internal fun buildCacheComponents(
@@ -87,8 +92,10 @@ internal fun buildCacheComponents(
     onQueriesMarkedStale: (table: String, cacheKeys: Set<String>) -> Unit,
     onCacheNotServed: () -> Unit,
     versionColumns: VersionColumns = NoVersionColumns,
+    backgroundScope: CoroutineScope,
+    beforePayloadWriteHeard: (suspend (table: String) -> Unit)? = null,
 ): CacheComponents {
-    val countingQueryCacheDao = PayloadWriteCountingDao(queryCacheDao)
+    val countingQueryCacheDao = PayloadWriteCountingDao(queryCacheDao, beforePayloadWriteHeard)
     val freshness = CacheFreshness(monotonicTick)
     val cacheOwnership =
         CacheOwnership(
@@ -128,6 +135,7 @@ internal fun buildCacheComponents(
             mutationQueue = mutationQueue,
             tableWriteLocks = tableWriteLocks,
             allLiveCacheKeys = allLiveCacheKeys,
+            backgroundScope = backgroundScope,
         )
     val queryOverlay =
         QueryOverlay(

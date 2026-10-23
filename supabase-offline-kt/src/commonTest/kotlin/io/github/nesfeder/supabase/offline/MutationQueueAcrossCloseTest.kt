@@ -177,8 +177,8 @@ class MutationQueueAcrossCloseTest {
         )
         assertEquals(0, reopened.pendingMutationCount())
         assertTrue(
-            reopened.rejectedMutationList().isEmpty(),
-            "a mutation was rejected: ${reopened.rejectedMutationList()}",
+            reopened.persistedRejectedMutations().isEmpty(),
+            "a mutation was rejected: ${reopened.persistedRejectedMutations()}",
         )
         reopened.close()
     }

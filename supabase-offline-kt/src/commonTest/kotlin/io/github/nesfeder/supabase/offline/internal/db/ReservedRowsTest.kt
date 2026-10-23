@@ -52,7 +52,6 @@ class ReservedRowsTest {
                 queryCacheLimits =
                     QueryCacheLimits(
                         maxPayloadBytes = 100,
-                        evictionBatchSize = 1,
                         evictionHeadroomBytes = 0,
                     ),
             )

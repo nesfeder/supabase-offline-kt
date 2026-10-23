@@ -12,6 +12,7 @@ import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
+import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.gatewayError
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.postgrestError
 import io.github.nesfeder.supabase.offline.testdoubles.newTestMutationQueueReplayer
@@ -32,9 +33,11 @@ import kotlinx.serialization.json.JsonElement
 
 /**
  * A `QueueIfOffline` write at the head of its identity's queue is sent at once, and what the server
- * says decides where it goes: accepted, it leaves the queue; refused or answered with a `5xx`, it
- * leaves the queue and the caller gets the error, as an online write always has; unreachable, it
- * stays queued. It is sent only by the call that made it, and only under the identity that made it.
+ * says decides where it goes: accepted, it leaves the queue; refused, or answered with a `500` from
+ * the database, it leaves the queue and the caller gets the error, as an online write always has;
+ * unreachable, or answered with what a replay keeps queued too (a `503`, a `429`, a `401` for a
+ * token the server holds expired), it stays queued for the next pass. It is sent only by the call
+ * that made it, and only under the identity that made it.
  */
 class HeadSendTest {
 
@@ -299,6 +302,93 @@ class HeadSendTest {
     }
 
     @Test
+    fun a_408_at_the_head_leaves_the_write_queued_for_the_next_pass() = runTest {
+        // Given — the server stopped waiting for the request
+        server.answer = { gatewayError(HttpStatusCode.RequestTimeout) }
+
+        // When / Then
+        assertQueuedThenReplayed()
+    }
+
+    @Test
+    fun a_429_at_the_head_leaves_the_write_queued_for_the_next_pass() = runTest {
+        // Given — the gateway turned the request away before it reached PostgREST
+        server.answer = { gatewayError(HttpStatusCode.TooManyRequests) }
+
+        // When / Then
+        assertQueuedThenReplayed()
+    }
+
+    @Test
+    fun a_502_at_the_head_leaves_the_write_queued_for_the_next_pass() = runTest {
+        // Given
+        server.answer = { gatewayError(HttpStatusCode.BadGateway) }
+
+        // When / Then
+        assertQueuedThenReplayed()
+    }
+
+    @Test
+    fun a_504_at_the_head_leaves_the_write_queued_for_the_next_pass() = runTest {
+        // Given — the gateway gave up on PostgREST, which may have committed the write meanwhile
+        server.answer = { gatewayError(HttpStatusCode.GatewayTimeout) }
+
+        // When / Then
+        assertQueuedThenReplayed()
+    }
+
+    @Test
+    fun a_522_at_the_head_leaves_the_write_queued_for_the_next_pass() = runTest {
+        // Given — Cloudflare could not connect to the origin
+        server.answer = { gatewayError(HttpStatusCode(522, "Connection Timed Out")) }
+
+        // When / Then
+        assertQueuedThenReplayed()
+    }
+
+    @Test
+    fun a_524_at_the_head_leaves_the_write_queued_for_the_next_pass() = runTest {
+        // Given — Cloudflare connected, then stopped waiting for the origin's answer
+        server.answer = { gatewayError(HttpStatusCode(524, "A Timeout Occurred")) }
+
+        // When / Then
+        assertQueuedThenReplayed()
+    }
+
+    @Test
+    fun a_401_with_pgrst301_at_the_head_leaves_the_write_queued_for_the_next_pass() = runTest {
+        // Given — PostgREST refused the token as invalid, as older versions say of an expired one
+        server.answer = {
+            postgrestError(HttpStatusCode.Unauthorized, code = "PGRST301", message = "JWT expired")
+        }
+
+        // When / Then
+        assertQueuedThenReplayed()
+    }
+
+    @Test
+    fun a_401_with_pgrst303_at_the_head_leaves_the_write_queued_for_the_next_pass() = runTest {
+        // Given — the device's clock runs behind the server's, so supabase-kt did not refresh
+        // a token the server holds expired
+        server.answer = {
+            postgrestError(HttpStatusCode.Unauthorized, code = "PGRST303", message = "JWT expired")
+        }
+
+        // When / Then
+        assertQueuedThenReplayed()
+    }
+
+    @Test
+    fun a_401_for_another_reason_at_the_head_is_thrown_and_the_write_leaves_the_queue() = runTest {
+        // Given — a 401 that does not say the token expired
+        server.answer = { postgrestError(HttpStatusCode.Unauthorized, code = "PGRST302") }
+
+        // When / Then
+        assertFailsWith<PostgrestRestException> { rename("A") }
+        assertEquals(0, store.mutationQueue.allPendingMutations().size)
+    }
+
+    @Test
     fun a_write_a_pass_is_sending_is_not_sent_again_at_the_head() = runTest {
         // Given — a queued write that a pass is sending, held open by the server
         session = USER_A
@@ -326,6 +416,27 @@ class HeadSendTest {
         // Then — it went out once
         assertEquals(MutationQueueReplayer.HeadSendOutcome.NotAtHead, outcome)
         assertEquals(1, server.requests.size)
+    }
+
+    /**
+     * Makes a write the server answers as [server] is set to: it must come back `Queued`, still in
+     * the queue, and the next pass must send it again, as it was made, and empty the queue.
+     */
+    private suspend fun assertQueuedThenReplayed() {
+        val outcome = rename("A")
+        assertIs<MutationOutcome.Queued>(outcome)
+        assertEquals(1, store.mutationQueue.allPendingMutations().size)
+
+        server.answer = { okJson("[]") }
+        val report = replayer.sync()
+
+        assertEquals(1, report.syncedCount)
+        assertEquals(0, store.mutationQueue.allPendingMutations().size)
+        assertEquals(2, server.requests.size)
+        val (atTheHead, replayed) = server.requests
+        assertEquals(atTheHead.method, replayed.method)
+        assertEquals(atTheHead.query, replayed.query)
+        assertEquals(atTheHead.body, replayed.body)
     }
 
     private fun patch(title: String): JsonElement =

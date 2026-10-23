@@ -230,7 +230,7 @@ internal constructor(
         completion: (List<BridgeRejectedMutation>?, BridgeError?) -> Unit
     ): BridgeCancellable =
         runner.runOnce("rejectedMutations", completion) {
-            offline.rejectedMutations().first().map { it.toBridge() }
+            offline.rejectedMutationList().map { it.toBridge() }
         }
 
     /** [rejectedMutations] as the list changes; [onCompletion] fires once, when it ends. */
@@ -268,7 +268,7 @@ internal constructor(
         completion: (List<BridgeConflictedMutation>?, BridgeError?) -> Unit
     ): BridgeCancellable =
         runner.runOnce("conflictedMutations", completion) {
-            offline.conflictedMutations().first().map { it.toBridge() }
+            offline.conflictedMutationList().map { it.toBridge() }
         }
 
     /** [conflictedMutations] as the list changes; [onCompletion] fires once, when it ends. */
