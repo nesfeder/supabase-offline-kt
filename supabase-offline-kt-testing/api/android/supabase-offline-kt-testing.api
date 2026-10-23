@@ -33,6 +33,7 @@ public final class io/github/nesfeder/supabase/offline/testing/TestValuesKt {
 	public static synthetic fun mutationNotQueueableException$default (Ljava/lang/Throwable;Ljava/lang/String;ILjava/lang/Object;)Lio/github/nesfeder/supabase/offline/MutationNotQueueableException;
 	public static final fun networkDisabledException (Ljava/lang/String;)Lio/github/nesfeder/supabase/offline/NetworkDisabledException;
 	public static synthetic fun networkDisabledException$default (Ljava/lang/String;ILjava/lang/Object;)Lio/github/nesfeder/supabase/offline/NetworkDisabledException;
+	public static final fun offlineClientClosedException ()Lio/github/nesfeder/supabase/offline/OfflineClientClosedException;
 	public static final fun pendingMutation (JLjava/lang/String;Lio/github/nesfeder/supabase/offline/MutationOperation;Lkotlin/time/Instant;Ljava/util/List;Lkotlinx/serialization/json/JsonElement;)Lio/github/nesfeder/supabase/offline/PendingMutation;
 	public static final fun pendingMutation (JLjava/lang/String;Lio/github/nesfeder/supabase/offline/MutationOperation;Lkotlin/time/Instant;Ljava/util/List;Lkotlinx/serialization/json/JsonElement;Ljava/lang/String;)Lio/github/nesfeder/supabase/offline/PendingMutation;
 	public static synthetic fun pendingMutation$default (JLjava/lang/String;Lio/github/nesfeder/supabase/offline/MutationOperation;Lkotlin/time/Instant;Ljava/util/List;Lkotlinx/serialization/json/JsonElement;ILjava/lang/Object;)Lio/github/nesfeder/supabase/offline/PendingMutation;

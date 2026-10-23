@@ -52,7 +52,7 @@ later sync, in the order the writes were made, across tables. Reads show it at o
 | When the write is made | What it returns |
 | --- | --- |
 | Nothing waits ahead of it, and the server accepts it | `.applied` |
-| Something waits ahead of it, the network is out of reach, or network access is turned off | `.queued` |
+| Something waits ahead of it, the network is out of reach, the server's answer says a later try may pass (a `503`, a `429`, a token the server holds expired), or network access is turned off | `.queued` |
 | It is sent at once and the server refuses it | It throws ``OfflineError/Code/server`` and leaves the queue |
 | Its task is canceled while it is on the wire | It stays queued, since the server may have it |
 

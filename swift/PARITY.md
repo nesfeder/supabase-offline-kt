@@ -55,7 +55,7 @@ Kotlin names are the library's (`io.github.nesfeder.supabase.offline`) unless ma
 | `Code.networkDisabled` | `NetworkDisabledException` | Same |
 | `Code.mutationNotQueueable` | `MutationNotQueueableException` | Same |
 | `Code.syncFailed` | `SyncFailedException` | Same |
-| `Code.clientClosed` | the closed client's `IllegalStateException` | Kotlin uses a standard type; Swift needs a code |
+| `Code.clientClosed` | `OfflineClientClosedException` | Same; the code of an `OfflineError` drops the type's `Offline` |
 | `Code.accessToken` | supabase-kt's access-token provider failure | Same |
 | `Code.invalidRequest` | `IllegalArgumentException` | Swift only: the package's request description can be refused, which Kotlin's typed builders cannot be |
 | `Code.decoding`, `Code.encoding` | kotlinx.serialization's `SerializationException` | `Codable`'s errors; no shared type |
@@ -140,7 +140,7 @@ supabase-swift never matches, because Storage's refusals arrive as `OfflineError
 | `cachedFile(path:)` | `cachedFile(path)` | Kotlin's name |
 | `ensureCachedFile(path:isPublic:)` | `ensureCachedFile(path, isPublic)` | Kotlin's name. A name holding `%`, `?` or `#` is refused (`invalidRequest`) before the client is asked, in the package's own words, where Kotlin's throws `IllegalArgumentException` |
 | `CachedFile` (`path`, `fetchedAt`, `sizeBytes`) | `CachedFile` (`path`, `fetchedAt`, `sizeBytes`) | Kotlin's names; `Date` for `Instant`, `Int` for `Long` |
-| `CachedFile.url` | Android `ensureLocalFile` / `ensureLocalUri`, iOS `ensureLocalPath` | Swift's addition: a file URL beside `path`, for APIs that take a URL |
+| `CachedFile.url` | Android `ensureLocalFile` / `ensureLocalUri` and `localFileIfCached` / `localUriIfCached`, iOS `ensureLocalPath` and `localPathIfCached` | Swift's addition: a file URL beside `path`, for APIs that take a URL |
 | `OfflineBucketApi.UploadOptions` (`contentType`, `upsert`, `userMetadata`) | supabase-kt's `UploadOptionBuilder` (`contentType`, `upsert`, `userMetadata`) | Kotlin's fields; a value for a builder lambda, so not a "builder"; `String` for `ContentType`, `[String: OfflineJSON]` for `JsonObject` |
 | `OfflineBucketApi.ImageTransformation` (`width`, `height`, `resize`, `quality`, `format`) | supabase-kt's `ImageTransformation` (the same) | Kotlin's names; a value for a builder lambda |
 | `ImageTransformation.Resize` (`cover`, `contain`, `fill`) | `ImageTransformation.Resize` (`COVER`, `CONTAIN`, `FILL`) | Kotlin's, lower-camel cases |
@@ -237,11 +237,13 @@ chain written for either upstream compiles against its own platform unchanged. T
 | `rejectedMutations()` | `Offline.rejectedMutations()` | Same; it returns a `RejectedMutationSequence` where Kotlin returns a `Flow<List<RejectedMutation>>` |
 | `RejectedMutationSequence`, `RejectedMutationSequence.Iterator` | `Flow<List<RejectedMutation>>` | An `AsyncSequence` of `[RejectedMutation]` for the `Flow` |
 | `RejectedMutationSequence.first()` | `Flow.first()` | Same, as for the pending list |
+| `rejectedMutationList()` | `Offline.rejectedMutationList()` | Same; `async throws` for `suspend`. The sequence's `first()` reads through it |
 | `dismissRejectedMutation(id:)`, `retryRejectedMutation(id:)` | `Offline.dismissRejectedMutation(id)`, `Offline.retryRejectedMutation(id)` | Same. A retry Kotlin refuses with `IllegalArgumentException` throws `OfflineError.invalidRequest` |
 | `RejectedMutation` (`id`, `table`, `operation`, `createdAt`, `rowKeys`, `body`, `serverError`, `message`, `rejectedAt`, `isRetryable`) | `RejectedMutation` (the same fields) | Same; `Date` for the times, `OfflineJSON` for the row keys and the body, `OfflineError.ServerError` for `ServerError` |
 | `conflictedMutations()` | `Offline.conflictedMutations()` | Same; it returns a `ConflictedMutationSequence` where Kotlin returns a `Flow<List<ConflictedMutation>>` |
 | `ConflictedMutationSequence`, `ConflictedMutationSequence.Iterator` | `Flow<List<ConflictedMutation>>` | An `AsyncSequence` of `[ConflictedMutation]` for the `Flow`, named as `RejectedMutationSequence` is |
 | `ConflictedMutationSequence.first()` | `Flow.first()` | Same, as for the rejected list |
+| `conflictedMutationList()` | `Offline.conflictedMutationList()` | Same; `async throws` for `suspend`. The sequence's `first()` reads through it |
 | `resolveConflictedMutation(id:resolution:)`, `dismissConflictedMutation(id:)` | `Offline.resolveConflictedMutation(id, resolution)`, `Offline.dismissConflictedMutation(id)` | Same. A resolution Kotlin refuses with `IllegalArgumentException` (`hold`, an `apply` with no column or on an entry it does not fit, a `keepLocal` of a row that was gone) throws `OfflineError.invalidRequest` |
 | `MutationConflict` (`mutationId`, `table`, `operation`, `rowKey`, `base`, `local`, `server`, `changedOnServer`, `conflictingColumns`) | `MutationConflict` (the same fields) | Same; `[String: OfflineJSON]` for `JsonObject`, `Set<String>` for the column sets. `rowKey` holds the key values as text taken from the write's filter (`["id": "1"]`), as Kotlin's does |
 | `ConflictResolution` (`keepLocal`, `keepServer`, `apply(columns:)`, `hold`) | `ConflictResolution` (`KeepLocal`, `KeepServer`, `Apply(columns)` built by `ConflictResolution.apply(columns)`, `Hold`) | Lower-camel cases; a case with an associated value for `Apply` and its factory. An empty `columns` is refused where it is used (a resolver's answer holds the write; `resolveConflictedMutation` throws `invalidRequest`), where Kotlin's factory throws `IllegalArgumentException`. An input type, so a later case is additive |
@@ -292,4 +294,5 @@ a parameter and defaults for the rest, as the Kotlin testing artifact's are.
 | `cacheMissError(message:)`, `mutationNotQueueableError(message:)`, `networkDisabledError(message:)` | `cacheMissException(message)`, `mutationNotQueueableException(cause, message)`, `networkDisabledException(message)` | `Error` for `Exception`: each builds an `OfflineError` with that code. Swift's has no `cause`; it is a network failure, as Kotlin's is through its cause |
 | `syncFailedError(message:httpStatus:code:isConnectivityFailure:)` | `syncFailedException(message, httpStatus, code, isConnectivityFailure)` | `Error` for `Exception`; the status and code go in `serverError` |
 | `offlineError(code:message:serverError:isNetworkOrConnectivityFailure:)` | — (supabase-kt's own exceptions have public constructors) | Swift only: any other code, such as `server` or `connectivity` |
+| — | `offlineClientClosedException()` | Not needed: `offlineError(code: .clientClosed, message:)` builds the same error |
 | `cachedFile(path:fetchedAt:sizeBytes:)` | `cachedFile(path, fetchedAt, sizeBytes)` | Same; `Date` for `Instant`, `Int` for `Long` |

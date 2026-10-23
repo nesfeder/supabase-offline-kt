@@ -82,8 +82,9 @@ extension SupabaseOfflineClient {
     /// The current user's writes the server refused for good on replay, and those the client could
     /// no longer replay exactly, oldest first, as the list changes.
     ///
-    /// Iterate it for the list now and each change; ``RejectedMutationSequence/first()`` reads it
-    /// once. Entries stay on the device across restarts until each is dismissed or retried.
+    /// Iterate it for the list now and each change; ``RejectedMutationSequence/first()`` and
+    /// ``rejectedMutationList()`` read it once. Entries stay on the device across restarts until
+    /// each is dismissed or retried.
     public func rejectedMutations() -> RejectedMutationSequence {
         RejectedMutationSequence(
             live: liveSequence { core, yield, finish in
@@ -102,14 +103,21 @@ extension SupabaseOfflineClient {
                 stopper.attach(handle)
                 return handle
             },
-            current: { [self] in
-                try await connection.call { core, complete in
-                    core.rejectedMutations { mutations, failure in
-                        complete(coreResult(mutations, failure) { try requiredValue($0).map(RejectedMutation.init(core:)) })
-                    }
-                }
-            }
+            current: { [self] in try await rejectedMutationList() }
         )
+    }
+
+    /// The current user's entries on the rejected list, oldest first, read once: the list
+    /// ``rejectedMutations()`` gives first.
+    ///
+    /// - Throws: ``OfflineError``: `clientClosed` once the client is closed, `decoding` for an
+    ///   entry the package cannot read.
+    public func rejectedMutationList() async throws -> [RejectedMutation] {
+        try await connection.call { core, complete in
+            core.rejectedMutations { mutations, failure in
+                complete(coreResult(mutations, failure) { try requiredValue($0).map(RejectedMutation.init(core:)) })
+            }
+        }
     }
 
     /// Removes an entry from the rejected list for good; its write is lost. An id that is not one of
@@ -139,9 +147,10 @@ extension SupabaseOfflineClient {
     /// The current user's writes parked because their row moved on the server and the conflict was
     /// not settled during the replay, oldest first, as the list changes.
     ///
-    /// Iterate it for the list now and each change; ``ConflictedMutationSequence/first()`` reads it
-    /// once. Only a write to a table with a version column (``Config/versionColumns``) is ever
-    /// parked, and entries stay on the device across restarts until each is resolved or dismissed.
+    /// Iterate it for the list now and each change; ``ConflictedMutationSequence/first()`` and
+    /// ``conflictedMutationList()`` read it once. Only a write to a table with a version column
+    /// (``Config/versionColumns``) is ever parked, and entries stay on the device across restarts
+    /// until each is resolved or dismissed.
     public func conflictedMutations() -> ConflictedMutationSequence {
         ConflictedMutationSequence(
             live: liveSequence { core, yield, finish in
@@ -160,14 +169,21 @@ extension SupabaseOfflineClient {
                 stopper.attach(handle)
                 return handle
             },
-            current: { [self] in
-                try await connection.call { core, complete in
-                    core.conflictedMutations { mutations, failure in
-                        complete(coreResult(mutations, failure) { try requiredValue($0).map(ConflictedMutation.init(core:)) })
-                    }
-                }
-            }
+            current: { [self] in try await conflictedMutationList() }
         )
+    }
+
+    /// The current user's entries on the conflicted list, oldest first, read once: the list
+    /// ``conflictedMutations()`` gives first.
+    ///
+    /// - Throws: ``OfflineError``: `clientClosed` once the client is closed, `decoding` for an
+    ///   entry the package cannot read.
+    public func conflictedMutationList() async throws -> [ConflictedMutation] {
+        try await connection.call { core, complete in
+            core.conflictedMutations { mutations, failure in
+                complete(coreResult(mutations, failure) { try requiredValue($0).map(ConflictedMutation.init(core:)) })
+            }
+        }
     }
 
     /// Settles an entry of the conflicted list: ``ConflictResolution/keepLocal`` and

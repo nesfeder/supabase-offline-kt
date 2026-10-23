@@ -455,6 +455,7 @@ method SupabaseOfflineClient.applyServerRecord(table:record:primaryKeys:schema:)
 method SupabaseOfflineClient.applyServerRecord(table:record:primaryKeys:schema:) | func applyServerRecord(table: String, record: some Encodable, primaryKeys: [String]? = nil, schema: String? = nil) async throws
 method SupabaseOfflineClient.clearLocalData() | func clearLocalData() async throws
 method SupabaseOfflineClient.close() | func close() async throws
+method SupabaseOfflineClient.conflictedMutationList() | func conflictedMutationList() async throws -> [ConflictedMutation]
 method SupabaseOfflineClient.conflictedMutations() | func conflictedMutations() -> ConflictedMutationSequence
 method SupabaseOfflineClient.disableNetwork() | func disableNetwork() async throws
 method SupabaseOfflineClient.disableRealtime() | func disableRealtime() async throws
@@ -470,6 +471,7 @@ method SupabaseOfflineClient.pendingMutationCount(table:) | func pendingMutation
 method SupabaseOfflineClient.pendingMutationCountSequence(table:) | func pendingMutationCountSequence(table: String? = nil) -> PendingMutationCountSequence
 method SupabaseOfflineClient.pendingMutations(table:) | func pendingMutations(table: String? = nil) -> PendingMutationSequence
 property SupabaseOfflineClient.realtimeStatus | var realtimeStatus: RealtimeStatusSequence { get }
+method SupabaseOfflineClient.rejectedMutationList() | func rejectedMutationList() async throws -> [RejectedMutation]
 method SupabaseOfflineClient.rejectedMutations() | func rejectedMutations() -> RejectedMutationSequence
 method SupabaseOfflineClient.resolveConflictedMutation(id:resolution:) | func resolveConflictedMutation(id: Int64, resolution: ConflictResolution) async throws
 method SupabaseOfflineClient.retryRejectedMutation(id:) | func retryRejectedMutation(id: Int64) async throws

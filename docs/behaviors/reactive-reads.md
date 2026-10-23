@@ -136,7 +136,7 @@ refresh. A failure the read cannot recover from ends the flow after the values b
 refresh that fails is not one, it is reported in `refresh`. When the client closes, a collection
 still running completes: `first()` on one that has not emitted yet throws
 `NoSuchElementException` (`firstOrNull()` returns `null`), and a flow collected after `close()`
-fails with `IllegalStateException`.
+fails with `OfflineClientClosedException`.
 
 ## Behavior matrix
 

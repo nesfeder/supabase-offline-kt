@@ -31,6 +31,7 @@
 - ``pendingMutationCountSequence(table:)``
 - ``discardPendingMutation(id:)``
 - ``rejectedMutations()``
+- ``rejectedMutationList()``
 - ``retryRejectedMutation(id:)``
 - ``dismissRejectedMutation(id:)``
 - ``syncPendingMutations(table:)``
@@ -38,6 +39,7 @@
 ### Conflicts
 
 - ``conflictedMutations()``
+- ``conflictedMutationList()``
 - ``resolveConflictedMutation(id:resolution:)``
 - ``dismissConflictedMutation(id:)``
 

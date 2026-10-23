@@ -55,23 +55,23 @@ internal fun PostgrestResult.toBridge(): BridgeQueryResult =
     )
 
 /** One emission of a live read. */
-internal fun QuerySnapshot.toBridge(clientClosing: Boolean): BridgeQuerySnapshot =
+internal fun QuerySnapshot.toBridge(): BridgeQuerySnapshot =
     BridgeQuerySnapshot(
         data = result?.data,
         isFromCache = isFromCache,
         fetchedAtEpochMillis = fetchedAt?.toEpochMilliseconds(),
         hasPendingMutations = hasPendingMutations,
-        refresh = refresh.toBridge(clientClosing),
+        refresh = refresh.toBridge(),
     )
 
 /** A refresh state; a stall carries its cause as an error value. */
-private fun RefreshState.toBridge(clientClosing: Boolean): BridgeRefreshState =
+private fun RefreshState.toBridge(): BridgeRefreshState =
     when (this) {
         RefreshState.Idle -> BridgeRefreshState(BridgeRefreshKind.IDLE, null)
         RefreshState.Refreshing -> BridgeRefreshState(BridgeRefreshKind.REFRESHING, null)
         RefreshState.Paused -> BridgeRefreshState(BridgeRefreshKind.PAUSED, null)
         is RefreshState.Stalled ->
-            BridgeRefreshState(BridgeRefreshKind.STALLED, bridgeErrorOf(cause, clientClosing))
+            BridgeRefreshState(BridgeRefreshKind.STALLED, bridgeErrorOf(cause))
     }
 
 /** A write's outcome. */
@@ -206,8 +206,7 @@ internal fun SyncStatus.toBridge(): BridgeSyncStatus =
 
 /** [SyncStatus.lastSyncError] as a value: a [SyncFailedException], or, defensively, anything. */
 private fun lastSyncErrorOf(failure: Throwable) =
-    if (failure is SyncFailedException) syncFailedError(failure)
-    else bridgeErrorOf(failure, clientClosing = false)
+    if (failure is SyncFailedException) syncFailedError(failure) else bridgeErrorOf(failure)
 
 /** The network status. */
 private fun NetworkStatus.toBridge(): BridgeNetworkStatus =

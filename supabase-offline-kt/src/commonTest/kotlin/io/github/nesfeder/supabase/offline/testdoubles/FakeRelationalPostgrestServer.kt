@@ -315,14 +315,14 @@ internal class FakeRelationalPostgrestServer(
         return when (operator) {
             "eq" -> content == operand
             "neq" -> content != null && content != operand
-            "in" ->
-                content != null &&
-                    operand
-                        .removePrefix("(")
-                        .removeSuffix(")")
-                        .split(',')
-                        .map { listed -> listed.trim().removeSurrounding("\"") }
-                        .contains(content)
+            "in" -> {
+                val listed =
+                    operand.removePrefix("(").removeSuffix(")").split(',').map { listed ->
+                        listed.trim().removeSurrounding("\"")
+                    }
+                // PostgREST reads a list of one empty element, `()` or `("")`, as the empty list
+                content != null && listed != listOf("") && content in listed
+            }
             // A prefix pattern only (`abc*`), enough to stand for an operator the engine does not
             // evaluate itself
             "like" -> content != null && content.startsWith(operand.removeSuffix("*"))

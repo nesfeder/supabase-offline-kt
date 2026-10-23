@@ -62,6 +62,7 @@ import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentity
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentityReader
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.RejectedMutation as EngineRejectedMutation
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.StoredConflict
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.StoredRejection
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.SyncReport as EngineSyncReport
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.SyncStop
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.VersionColumns
@@ -234,6 +235,11 @@ internal class OfflineClient(
     watchedTables: List<WatchedTable> = emptyList(),
     /** Where those changes come from; `null` follows nothing. */
     serverChangeFeed: ServerChangeFeed? = null,
+    /**
+     * Runs before a live reader hears of a payload write; `LiveReadSourceOrderTest` delays it so a
+     * reader hears of the write after other changes. `null` for none.
+     */
+    beforePayloadWriteHeard: (suspend (table: String) -> Unit)? = null,
 ) : Offline {
 
     /**
@@ -351,6 +357,8 @@ internal class OfflineClient(
             },
             onCacheNotServed = { cacheOwnerChecks.tryEmit(Unit) },
             versionColumns = versionColumns,
+            backgroundScope = clientScope,
+            beforePayloadWriteHeard = beforePayloadWriteHeard,
         )
 
     /*
@@ -875,10 +883,18 @@ internal class OfflineClient(
 
     override fun rejectedMutations(): Flow<List<RejectedMutation>> =
         operationGate.callCollecting(
-            mutationQueue.shownRejectionsFlow().map { entries ->
-                entries.map { entry -> entry.toRejectedMutation(EngineJson, primaryKeys).shown() }
-            }
+            mutationQueue.shownRejectionsFlow().map { entries -> rejectedMutationsOf(entries) }
         )
+
+    override suspend fun rejectedMutationList(): List<RejectedMutation> = operationGate.call {
+        rejectedMutationsOf(mutationQueue.shownRejections())
+    }
+
+    /** The rejected list's [entries] as the app sees them. */
+    private fun rejectedMutationsOf(entries: List<StoredRejection>): List<RejectedMutation> =
+        entries.map { entry ->
+            entry.toRejectedMutation(EngineJson, primaryKeys).shown()
+        }
 
     override suspend fun dismissRejectedMutation(id: Long): Unit = operationGate.call {
         val identity = queueIdentityReader.current() ?: return@call
@@ -898,10 +914,18 @@ internal class OfflineClient(
 
     override fun conflictedMutations(): Flow<List<ConflictedMutation>> =
         operationGate.callCollecting(
-            mutationQueue.shownConflictsFlow().map { entries ->
-                entries.map { entry -> entry.toConflictedMutation(EngineJson, primaryKeys) }
-            }
+            mutationQueue.shownConflictsFlow().map { entries -> conflictedMutationsOf(entries) }
         )
+
+    override suspend fun conflictedMutationList(): List<ConflictedMutation> = operationGate.call {
+        conflictedMutationsOf(mutationQueue.shownConflicts())
+    }
+
+    /** The conflicted list's [entries] as the app sees them. */
+    private fun conflictedMutationsOf(entries: List<StoredConflict>): List<ConflictedMutation> =
+        entries.map { entry ->
+            entry.toConflictedMutation(EngineJson, primaryKeys)
+        }
 
     override suspend fun resolveConflictedMutation(id: Long, resolution: ConflictResolution): Unit =
         operationGate.call {
@@ -1453,11 +1477,12 @@ internal class OfflineClient(
      * Every identity's persisted rejected mutations, oldest first; for tests that look past
      * [rejectedMutations]. Throws if the persisted list cannot be decoded.
      */
-    internal suspend fun rejectedMutationList(): List<EngineRejectedMutation> = operationGate.call {
-        mutationQueue.rejectedList.rejections().map { entry ->
-            entry.toRejectedMutation(EngineJson, primaryKeys)
+    internal suspend fun persistedRejectedMutations(): List<EngineRejectedMutation> =
+        operationGate.call {
+            mutationQueue.rejectedList.rejections().map { entry ->
+                entry.toRejectedMutation(EngineJson, primaryKeys)
+            }
         }
-    }
 
     /* ───────────────────────────── Guards ───────────────────────────── */
 

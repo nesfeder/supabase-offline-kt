@@ -14,6 +14,7 @@ import io.github.nesfeder.supabase.offline.MutationOutcome
 import io.github.nesfeder.supabase.offline.NetworkDisabledException
 import io.github.nesfeder.supabase.offline.NetworkStatus
 import io.github.nesfeder.supabase.offline.Offline
+import io.github.nesfeder.supabase.offline.OfflineClientClosedException
 import io.github.nesfeder.supabase.offline.OfflineInternal
 import io.github.nesfeder.supabase.offline.PendingMutation
 import io.github.nesfeder.supabase.offline.QuerySnapshot
@@ -98,6 +99,14 @@ public fun mutationNotQueueableException(
 public fun networkDisabledException(
     message: String = "The library's network access is turned off"
 ): NetworkDisabledException = ValueConstructors.networkDisabledException(message)
+
+/**
+ * The failure of a call on a closed client, with the library's own message and no cause, as a test
+ * double of the app's own throws it after its client is closed.
+ */
+@OptIn(OfflineInternal::class)
+public fun offlineClientClosedException(): OfflineClientClosedException =
+    ValueConstructors.offlineClientClosedException()
 
 /**
  * A write waiting in the mutation queue, as [Offline.pendingMutations] lists one.
