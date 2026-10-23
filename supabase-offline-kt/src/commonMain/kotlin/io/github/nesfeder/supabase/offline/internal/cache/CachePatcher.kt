@@ -164,6 +164,7 @@ internal class CachePatcher(
         table: String,
         keyColumns: List<String>,
         changes: List<ServerRowChange>,
+        applies: suspend () -> Boolean = { true },
     ) {
         requireUserTable(table)
         if (changes.isEmpty()) return
@@ -193,7 +194,7 @@ internal class CachePatcher(
                 )
             }
         }
-        patchWithWrites(table, writes, liveCacheKeys = null, guardTick)
+        patchWithWrites(table, writes, liveCacheKeys = null, guardTick, applies)
     }
 
     /**
@@ -201,13 +202,16 @@ internal class CachePatcher(
      * [patchReturnedRows] one per returned row, [patchServerChanges] one per change the server
      * reported. Overlays [writes], in order, on every cached query of [table], creates the payloads
      * live queries without one now admit, and marks stale a query it may leave wrong
-     * ([patchMayLeaveWrong]). A cache not the current identity's is left alone.
+     * ([patchMayLeaveWrong]). A cache not the current identity's is left alone, and so is one a
+     * patch no longer [applies] to, asked under the table's lock before anything is written: a
+     * server change from a channel left for another user does not.
      */
     private suspend fun patchWithWrites(
         table: String,
         writes: List<MutationRow>,
         liveCacheKeys: Set<String>?,
         guardTick: Long,
+        applies: suspend () -> Boolean = { true },
     ) {
         if (!ownership.cacheServesCurrentIdentity()) return
         val toFetchAgain = mutableSetOf<String>()
@@ -219,6 +223,7 @@ internal class CachePatcher(
                     cached.mapTo(mutableSetOf()) { row -> row.cacheKey }
             // Only a patch that may write claims an unowned cache for the current identity
             if (cached.isEmpty() && uncachedLive.isEmpty()) return@withLock
+            if (!applies()) return@withLock
             if (!ownership.cacheTakesWritesOfCurrentIdentity()) return@withLock
             val parsed = cached.map { row -> row to queryCache.parsedPayloadOf(row) }
             val shapes = queryCache.queryShapes.shapesOf(table)

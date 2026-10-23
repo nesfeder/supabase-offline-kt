@@ -23,6 +23,7 @@ import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -32,25 +33,29 @@ import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.yield
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 
 /**
- * The follower joins while the subscription is on, a user is signed in and the network is not known
- * down, leaves otherwise, reads the watched tables again on each join, applies what arrives in
- * order, each table's waiting changes as one batch, discards a backlog past the cap and reads the
- * tables again instead, and joins again after a channel that ended, waiting longer each time until
- * an edge or a follow that lasted.
+ * The follower joins while the subscription is on, there is an identity to subscribe for and the
+ * network is not known down, leaves otherwise, joins again for another identity, reads the watched
+ * tables again on each join, applies what arrives in order, each table's waiting changes as one
+ * batch for the identity joined for, discards a backlog past the cap and reads the tables again
+ * instead, and joins again after a channel that ended, waiting longer each time until an edge or a
+ * follow that lasted; a channel that ended is logged at DEBUG, and the warning comes with the
+ * rejoin.
  */
 class ServerChangeFollowerTest {
 
     private val feed = FakeServerChangeFeed()
-    private val sessionReady = MutableSharedFlow<Boolean>(replay = 1)
+    private val sessionIdentity = MutableSharedFlow<String?>(replay = 1)
     private val network = MutableStateFlow(NetworkStatus.UNKNOWN)
     private val wakeUps = MutableSharedFlow<Unit>()
     private val applied = mutableListOf<List<ServerChangeEvent.Change>>()
+    private val appliedFor = mutableListOf<String>()
     private val staled = mutableListOf<Pair<String, String>>()
     private val logs = RecordingLogSink()
 
@@ -63,7 +68,8 @@ class ServerChangeFollowerTest {
         markStale: suspend (String, String) -> Unit = { table, schema ->
             staled += table to schema
         },
-        apply: suspend (List<ServerChangeEvent.Change>) -> Unit = { changes ->
+        currentIdentity: () -> String? = { sessionIdentity.replayCache.firstOrNull() },
+        apply: suspend (String, List<ServerChangeEvent.Change>) -> Unit = { _, changes ->
             applied += changes
         },
     ): ServerChangeFollower =
@@ -72,7 +78,8 @@ class ServerChangeFollowerTest {
             tables = tables,
             feed = feed,
             defaultSchema = { SCHEMA },
-            sessionReady = sessionReady,
+            sessionIdentity = sessionIdentity,
+            currentIdentity = currentIdentity,
             networkStatuses = network,
             wakeUps = wakeUps,
             apply = apply,
@@ -94,7 +101,7 @@ class ServerChangeFollowerTest {
         val scope = newScope()
         val follower =
             newFollower(scope, markStale = { _, _ -> throw IllegalStateException("db locked") })
-        sessionReady.emit(true)
+        sessionIdentity.emit(USER)
         follower.start()
         runCurrent()
 
@@ -118,7 +125,7 @@ class ServerChangeFollowerTest {
         // Given
         val scope = newScope()
         val follower = newFollower(scope)
-        sessionReady.emit(true)
+        sessionIdentity.emit(USER)
         follower.start()
         runCurrent()
 
@@ -141,11 +148,11 @@ class ServerChangeFollowerTest {
         assertEquals(RealtimeStatus.Subscribing, follower.state.value)
 
         // When / Then — no user pauses it; a user joins anew
-        sessionReady.emit(false)
+        sessionIdentity.emit(null)
         runCurrent()
         assertEquals(RealtimeStatus.Paused, follower.state.value)
         assertTrue(feed.follows.value[1].isLeft)
-        sessionReady.emit(true)
+        sessionIdentity.emit(USER)
         runCurrent()
         assertEquals(3, feed.follows.value.size)
 
@@ -171,14 +178,14 @@ class ServerChangeFollowerTest {
         // Given — following
         val scope = newScope()
         val follower = newFollower(scope)
-        sessionReady.emit(true)
+        sessionIdentity.emit(USER)
         follower.start()
         runCurrent()
         assertEquals(1, feed.follows.value.size)
 
         // When — the network goes from unknown to online, and the session settles anew
         network.value = NetworkStatus.ONLINE
-        sessionReady.emit(true)
+        sessionIdentity.emit(USER)
         runCurrent()
 
         // Then — the same follow
@@ -192,14 +199,14 @@ class ServerChangeFollowerTest {
         // Given — joined, with an apply that refuses a batch holding one record
         val scope = newScope()
         val follower =
-            newFollower(scope) { changes ->
+            newFollower(scope) { _, changes ->
                 if (
                     changes.any { change -> change is ServerChangeEvent.Saved && change.id == "t2" }
                 )
                     error("refused")
                 applied += changes
             }
-        sessionReady.emit(true)
+        sessionIdentity.emit(USER)
         follower.start()
         runCurrent()
         val follow = feed.follows.value.single()
@@ -245,7 +252,7 @@ class ServerChangeFollowerTest {
                     scope,
                     tables = listOf(WatchedTable(TABLE), WatchedTable("audit", schema = "app")),
                 )
-            sessionReady.emit(true)
+            sessionIdentity.emit(USER)
             follower.start()
             runCurrent()
             val follow = feed.follows.value.single()
@@ -296,11 +303,11 @@ class ServerChangeFollowerTest {
                     scope,
                     tables = listOf(WatchedTable(TABLE), WatchedTable("audit", schema = "app")),
                     backlogCapacity = 10,
-                ) { changes ->
+                ) { _, changes ->
                     if (changes.first().table == "audit") release.await()
                     applied += changes
                 }
-            sessionReady.emit(true)
+            sessionIdentity.emit(USER)
             follower.start()
             runCurrent()
             val follow = feed.follows.value.single()
@@ -382,7 +389,7 @@ class ServerChangeFollowerTest {
                     }
                 },
             )
-        sessionReady.emit(true)
+        sessionIdentity.emit(USER)
         follower.start()
         runCurrent()
         follow = feed.follows.value.single()
@@ -412,11 +419,11 @@ class ServerChangeFollowerTest {
         val release = CompletableDeferred<Unit>()
         val scope = newScope()
         val follower =
-            newFollower(scope, feed = bounded) { changes ->
+            newFollower(scope, feed = bounded) { _, changes ->
                 release.await()
                 applied += changes
             }
-        sessionReady.emit(true)
+        sessionIdentity.emit(USER)
         follower.start()
         runCurrent()
         val channel = assertNotNull(opened)
@@ -451,7 +458,7 @@ class ServerChangeFollowerTest {
         // Given — following
         val scope = newScope()
         val follower = newFollower(scope)
-        sessionReady.emit(true)
+        sessionIdentity.emit(USER)
         follower.start()
         runCurrent()
 
@@ -483,7 +490,7 @@ class ServerChangeFollowerTest {
         // Given — stalled, with a 2-second wait ahead
         val scope = newScope()
         val follower = newFollower(scope)
-        sessionReady.emit(true)
+        sessionIdentity.emit(USER)
         follower.start()
         runCurrent()
         feed.follows.value[0].fail(IllegalStateException("refused"))
@@ -509,7 +516,7 @@ class ServerChangeFollowerTest {
         // Given — two quick failures, so the next wait would be 4 s
         val scope = newScope()
         val follower = newFollower(scope)
-        sessionReady.emit(true)
+        sessionIdentity.emit(USER)
         follower.start()
         runCurrent()
         feed.follows.value[0].fail(IllegalStateException("refused"))
@@ -542,7 +549,7 @@ class ServerChangeFollowerTest {
         // Given
         val scope = newScope()
         val follower = newFollower(scope)
-        sessionReady.emit(true)
+        sessionIdentity.emit(USER)
         follower.start()
         runCurrent()
 
@@ -561,7 +568,7 @@ class ServerChangeFollowerTest {
         // Given / When
         val scope = newScope()
         val follower = newFollower(scope, tables = emptyList())
-        sessionReady.emit(true)
+        sessionIdentity.emit(USER)
         follower.start()
         runCurrent()
 
@@ -580,7 +587,7 @@ class ServerChangeFollowerTest {
                 scope,
                 tables = listOf(WatchedTable("audit", schema = "app"), WatchedTable(TABLE)),
             )
-        sessionReady.emit(true)
+        sessionIdentity.emit(USER)
         follower.start()
         runCurrent()
 
@@ -600,7 +607,7 @@ class ServerChangeFollowerTest {
         // Given — joined
         val scope = newScope()
         val follower = newFollower(scope)
-        sessionReady.emit(true)
+        sessionIdentity.emit(USER)
         follower.start()
         runCurrent()
         feed.follows.value[0].join()
@@ -616,6 +623,226 @@ class ServerChangeFollowerTest {
         assertTrue(feed.follows.value[0].isLeft)
     }
 
+    @Test
+    fun another_identity_leaves_and_joins_again_and_a_new_session_of_the_same_one_does_not() =
+        runTest {
+            // Given — joined for one user, with a change applied
+            val scope = newScope()
+            val follower = newFollower(scope)
+            sessionIdentity.emit(USER)
+            follower.start()
+            runCurrent()
+            val first = feed.follows.value.single()
+            first.join()
+            first.saved(TABLE, row("t1"))
+            runCurrent()
+            assertEquals(1, applied.size)
+
+            // When — the same user's session settles anew
+            sessionIdentity.emit(USER)
+            runCurrent()
+
+            // Then — the same channel
+            assertEquals(1, feed.follows.value.size)
+            assertTrue(!first.isLeft)
+            assertEquals(RealtimeStatus.Subscribed, follower.state.value)
+
+            // When — another user signs in, with no sign-out first
+            sessionIdentity.emit(OTHER_USER)
+            runCurrent()
+
+            // Then — left, joined again, the table read again on the join, and the new channel's
+            // changes applied
+            assertTrue(first.isLeft)
+            val second = feed.follows.value[1]
+            assertEquals(RealtimeStatus.Subscribing, follower.state.value)
+            staled.clear()
+            second.join()
+            second.saved(TABLE, row("t2"))
+            runCurrent()
+            assertEquals(listOf(TABLE to SCHEMA), staled)
+            assertEquals(listOf(ServerChangeEvent.Saved(TABLE, SCHEMA, row("t2"))), applied.last())
+            assertEquals(RealtimeStatus.Subscribed, follower.state.value)
+            scope.cancel()
+        }
+
+    @Test
+    fun a_batch_taken_for_a_follow_another_user_has_replaced_is_dropped() = runTest {
+        // Given — joined for one user, with an apply held on its first batch past any cancellation,
+        // as a patch inside the cache's locks is
+        val release = CompletableDeferred<Unit>()
+        var held = false
+        val scope = newScope()
+        val follower =
+            newFollower(scope) { identity, changes ->
+                if (!held) {
+                    held = true
+                    withContext(NonCancellable) { release.await() }
+                }
+                appliedFor += identity
+                applied += changes
+            }
+        sessionIdentity.emit(USER)
+        follower.start()
+        runCurrent()
+        val first = feed.follows.value.single()
+        first.join()
+        first.saved(TABLE, row("held"))
+        runCurrent()
+        first.saved(TABLE, row("behind"))
+        runCurrent()
+
+        // When — another user signs in while the batch is held, and the hold is released
+        sessionIdentity.emit(OTHER_USER)
+        runCurrent()
+        release.complete(Unit)
+        runCurrent()
+
+        // Then — the held batch finished, for the user it was joined for, the one behind it was
+        // dropped, said at DEBUG, and the new user's channel was joined only then
+        assertEquals<List<List<ServerChangeEvent.Change>>>(
+            listOf(listOf(ServerChangeEvent.Saved(TABLE, SCHEMA, row("held")))),
+            applied,
+        )
+        assertEquals(listOf(USER), appliedFor)
+        val debug =
+            logs.entriesAt(EngineLogLevel.DEBUG).single { "no longer the session's" in it.message }
+        assertTrue("1 change(s) to $TABLE" in debug.message, debug.message)
+        assertTrue(first.isLeft)
+        assertEquals(2, feed.follows.value.size)
+        assertEquals(RealtimeStatus.Subscribing, follower.state.value)
+        scope.cancel()
+    }
+
+    @Test
+    fun a_channel_that_ended_is_logged_at_debug_and_the_warning_comes_with_the_rejoin() = runTest {
+        // Given — following
+        val scope = newScope()
+        val follower = newFollower(scope)
+        sessionIdentity.emit(USER)
+        follower.start()
+        runCurrent()
+
+        // When — the channel ends
+        feed.follows.value[0].fail(IllegalStateException("closed"))
+        runCurrent()
+
+        // Then — stalled, said at DEBUG by the failure's type, and no warning yet
+        assertIs<RealtimeStatus.Stalled>(follower.state.value)
+        val debug = logs.entriesAt(EngineLogLevel.DEBUG).single { "channel ended" in it.message }
+        assertTrue("IllegalStateException" in debug.message, debug.message)
+        assertTrue("closed" !in debug.message, debug.message)
+        assertEquals(emptyList(), logs.entriesAt(EngineLogLevel.WARNING))
+
+        // When — the wait is over
+        advanceTimeBy(1.seconds)
+        runCurrent()
+
+        // Then — joined again, with the warning
+        assertEquals(2, feed.follows.value.size)
+        val warning = logs.entriesAt(EngineLogLevel.WARNING).single().message
+        assertTrue("channel ended" in warning && "joining again" in warning, warning)
+        assertTrue("closed" !in warning, warning)
+        scope.cancel()
+    }
+
+    @Test
+    fun a_channel_that_ended_as_the_follow_paused_leaves_no_warning() = runTest {
+        // Given — following
+        val scope = newScope()
+        val follower = newFollower(scope)
+        sessionIdentity.emit(USER)
+        follower.start()
+        runCurrent()
+
+        // When — the channel ends, and the user signs out before the wait is over
+        feed.follows.value[0].fail(IllegalStateException("disconnected"))
+        runCurrent()
+        sessionIdentity.emit(null)
+        runCurrent()
+        advanceTimeBy(5.seconds)
+        runCurrent()
+
+        // Then — paused, nothing joined again, and no warning
+        assertEquals(RealtimeStatus.Paused, follower.state.value)
+        assertEquals(1, feed.follows.value.size)
+        assertEquals(emptyList(), logs.entriesAt(EngineLogLevel.WARNING))
+        scope.cancel()
+    }
+
+    @Test
+    fun what_a_channel_reports_after_stop_leaves_the_state_off() = runTest {
+        // Given — joined, and the client closed before its scope ended
+        val scope = newScope()
+        val follower = newFollower(scope)
+        sessionIdentity.emit(USER)
+        follower.start()
+        runCurrent()
+        feed.follows.value[0].join()
+        runCurrent()
+        follower.stop()
+        assertEquals(RealtimeStatus.Off, follower.state.value)
+
+        // When — the channel ends after that, and is joined again
+        feed.follows.value[0].fail(IllegalStateException("disconnected"))
+        runCurrent()
+        advanceTimeBy(1.seconds)
+        runCurrent()
+        feed.follows.value[1].join()
+        runCurrent()
+
+        // Then — off throughout
+        assertEquals(RealtimeStatus.Off, follower.state.value)
+        scope.cancel()
+    }
+
+    @Test
+    fun a_batch_taken_once_the_session_is_another_users_is_dropped_before_the_inputs_say_so() =
+        runTest {
+            // Given — joined for one user, with the session's identity read fresh, and an apply
+            // held on its first batch
+            var sessionNow: String? = USER
+            val release = CompletableDeferred<Unit>()
+            var held = false
+            val scope = newScope()
+            val follower =
+                newFollower(scope, currentIdentity = { sessionNow }) { _, changes ->
+                    if (!held) {
+                        held = true
+                        withContext(NonCancellable) { release.await() }
+                    }
+                    applied += changes
+                }
+            sessionIdentity.emit(USER)
+            follower.start()
+            runCurrent()
+            val first = feed.follows.value.single()
+            first.join()
+            first.saved(TABLE, row("held"))
+            runCurrent()
+            first.saved(TABLE, row("behind"))
+            runCurrent()
+
+            // When — the session is another user's before the follower's inputs say so, and the
+            // hold is released
+            sessionNow = OTHER_USER
+            release.complete(Unit)
+            runCurrent()
+
+            // Then — the batch behind the held one was dropped all the same, and the follow is
+            // still the first user's until the inputs change
+            assertEquals<List<List<ServerChangeEvent.Change>>>(
+                listOf(listOf(ServerChangeEvent.Saved(TABLE, SCHEMA, row("held")))),
+                applied,
+            )
+            assertTrue(
+                logs.entriesAt(EngineLogLevel.DEBUG).any { "no longer the session's" in it.message }
+            )
+            assertTrue(!first.isLeft)
+            assertEquals(1, feed.follows.value.size)
+            scope.cancel()
+        }
+
     private fun row(id: String) = buildJsonObject { put("id", id) }
 
     private val ServerChangeEvent.Saved.id: String?
@@ -624,6 +851,8 @@ class ServerChangeFollowerTest {
     private companion object {
         const val TABLE = "tasks"
         const val SCHEMA = "public"
+        const val USER = "user:a"
+        const val OTHER_USER = "user:b"
 
         /** A value no log may carry. */
         const val PRIVATE = "someone@example.com"

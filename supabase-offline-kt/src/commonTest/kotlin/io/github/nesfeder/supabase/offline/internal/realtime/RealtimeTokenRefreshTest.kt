@@ -16,6 +16,7 @@ import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
@@ -23,14 +24,20 @@ import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 
 /**
- * Without the Auth plugin, the channel's token is sent again a little before the token the provider
- * returns expires, and again before each later expiry; a provider that has not refreshed yet is
- * asked again later; a token without a readable expiry schedules nothing.
+ * Without the Auth plugin, the provider's token is sent to the channel once at the start and then
+ * whenever the provider returns one that expires later: the provider is asked a minute before the
+ * sent token's expiry, and more often as the expiry nears, so a token rotated late goes out as soon
+ * as it is returned, and not before the lead after a send, so a provider minting a token on every
+ * call is not asked over and over; a provider or a send that fails is asked again after the retry
+ * wait, a provider that keeps failing is warned about once; an expired token is not sent; a token
+ * without a readable expiry schedules nothing.
  */
 class RealtimeTokenRefreshTest {
 
     private val logs = RecordingLogSink()
-    private val refreshedAt = mutableListOf<Long>()
+
+    /** When each token was sent, in scheduler milliseconds, with its expiry in seconds. */
+    private val sent = mutableListOf<Pair<Long, Long>>()
 
     /** The scheduler's time as the refresher's clock. */
     private fun TestScope.clock(): Clock =
@@ -38,145 +45,277 @@ class RealtimeTokenRefreshTest {
             override fun now(): Instant = Instant.fromEpochMilliseconds(testScheduler.currentTime)
         }
 
+    /** A refresher over [accessToken] that records each send, with the test's clock. */
+    private fun TestScope.newRefresher(
+        accessToken: suspend () -> String?,
+        refresh: suspend (String) -> Unit = { token -> record(token) },
+    ): RealtimeTokenRefresher =
+        RealtimeTokenRefresher(
+            accessToken = accessToken,
+            refresh = refresh,
+            clock = clock(),
+            engineLogger = logs.asEngineLogger(),
+            lead = 1.minutes,
+            retryWait = 30.seconds,
+        )
+
+    private fun TestScope.record(token: String) {
+        sent += testScheduler.currentTime to jwtExpiryOrNull(token)!!.epochSeconds
+    }
+
     @Test
-    fun the_token_is_sent_again_a_minute_before_each_expiry() = runTest {
-        // Given — a token that expires in ten minutes, then one that expires in thirty
-        var token = jwt(expiresAtSeconds = 600)
+    fun the_token_is_sent_at_the_start_and_again_a_minute_before_each_expiry() = runTest {
+        // Given — a provider whose token expires in ten minutes, and that has a fresh one, good
+        // for thirty, once asked within the last minute
         val refresher =
-            RealtimeTokenRefresher(
-                accessToken = { token },
-                refresh = {
-                    refreshedAt += testScheduler.currentTime
-                    token = jwt(expiresAtSeconds = 1800)
-                },
-                clock = clock(),
-                engineLogger = logs.asEngineLogger(),
-                lead = 1.minutes,
+            newRefresher(
+                accessToken = {
+                    when {
+                        testScheduler.currentTime < 540_000L -> jwt(expiresAtSeconds = 600)
+                        testScheduler.currentTime < 1_740_000L -> jwt(expiresAtSeconds = 1800)
+                        else -> jwt(expiresAtSeconds = 3600)
+                    }
+                }
             )
 
         // When
         val keeping = launch { refresher.keepFresh() }
+        runCurrent()
+
+        // Then — the token the join went out with is sent once, so its expiry is known here
+        assertEquals(listOf(0L to 600L), sent)
+
+        // When / Then — nothing until a minute before the expiry, then the fresh token, then the
+        // next one a minute before its expiry
         advanceTimeBy(9.minutes - 1.seconds)
         runCurrent()
-        assertEquals(emptyList(), refreshedAt)
+        assertEquals(1, sent.size)
         advanceTimeBy(1.seconds)
         runCurrent()
-
-        // Then — refreshed at nine minutes, and again at twenty-nine
-        assertEquals(listOf(540_000L), refreshedAt)
+        assertEquals(listOf(0L to 600L, 540_000L to 1800L), sent)
         advanceTimeBy(20.minutes)
         runCurrent()
-        assertEquals(listOf(540_000L, 1_740_000L), refreshedAt)
+        assertEquals(listOf(0L to 600L, 540_000L to 1800L, 1_740_000L to 3600L), sent)
         keeping.cancel()
     }
 
     @Test
-    fun a_provider_that_has_not_refreshed_yet_is_asked_again_later() = runTest {
-        // Given — a provider that still returns the old token after the first refresh
-        var refreshes = 0
-        val stale = jwt(expiresAtSeconds = 600)
+    fun a_token_rotated_late_is_sent_as_soon_as_the_provider_returns_it() = runTest {
+        // Given — a provider that still returns the old token a minute before its expiry and
+        // thirty seconds later, and rotates it only 25 seconds before the expiry
         val refresher =
-            RealtimeTokenRefresher(
-                accessToken = { if (refreshes < 2) stale else jwt(expiresAtSeconds = 7200) },
-                refresh = {
-                    refreshedAt += testScheduler.currentTime
-                    refreshes++
-                },
-                clock = clock(),
-                engineLogger = logs.asEngineLogger(),
-                lead = 1.minutes,
-                retryWait = 30.seconds,
+            newRefresher(
+                accessToken = {
+                    if (testScheduler.currentTime < 575_000L) jwt(expiresAtSeconds = 600)
+                    else jwt(expiresAtSeconds = 7200)
+                }
+            )
+
+        // When — asked a minute before, then after the retry wait, then after half of what is
+        // left
+        val keeping = launch { refresher.keepFresh() }
+        advanceTimeBy(9.minutes + 30.seconds)
+        runCurrent()
+
+        // Then — the old token was not sent again
+        assertEquals(listOf(0L to 600L), sent)
+
+        // When — the next ask, fifteen seconds later, finds the rotated token
+        advanceTimeBy(15.seconds)
+        runCurrent()
+
+        // Then — sent at once, well before the old expiry, so the server never closes the channel
+        assertEquals(listOf(0L to 600L, 585_000L to 7200L), sent)
+        keeping.cancel()
+    }
+
+    @Test
+    fun a_provider_that_fails_is_asked_again_after_the_retry_wait() = runTest {
+        // Given — a provider that fails the first time it is asked
+        var asks = 0
+        val refresher =
+            newRefresher(
+                accessToken = {
+                    if (asks++ == 0) throw IllegalStateException("secret token text")
+                    jwt(expiresAtSeconds = 600)
+                }
             )
 
         // When
         val keeping = launch { refresher.keepFresh() }
-        advanceTimeBy(9.minutes + 31.seconds)
         runCurrent()
 
-        // Then — asked again after the retry wait, never in a tight loop, then before the new
-        // token's expiry
-        assertEquals(listOf(540_000L, 570_000L), refreshedAt)
-        advanceTimeBy(7141.seconds - (9.minutes + 31.seconds))
+        // Then — the failure is logged by its type, never its text, and nothing is sent yet
+        assertEquals(emptyList(), sent)
+        val warning = logs.entriesAt(EngineLogLevel.WARNING).single().message
+        assertTrue("IllegalStateException" in warning, warning)
+        assertTrue("secret" !in warning, warning)
+
+        // When — the retry wait is over
+        advanceTimeBy(30.seconds)
         runCurrent()
-        assertEquals(listOf(540_000L, 570_000L, 7_140_000L), refreshedAt)
+
+        // Then — asked again, and the token sent
+        assertEquals(listOf(30_000L to 600L), sent)
         keeping.cancel()
     }
+
+    @Test
+    fun a_send_that_fails_is_logged_by_type_and_tried_again_after_the_retry_wait() = runTest {
+        // Given — a send that fails the first time
+        var sends = 0
+        val refresher =
+            newRefresher(
+                accessToken = { jwt(expiresAtSeconds = 600) },
+                refresh = { token ->
+                    if (sends++ == 0) throw IllegalStateException("secret token text")
+                    record(token)
+                },
+            )
+
+        // When
+        val keeping = launch { refresher.keepFresh() }
+        runCurrent()
+        assertEquals(emptyList(), sent)
+        val warning = logs.entriesAt(EngineLogLevel.WARNING).single().message
+        assertTrue("IllegalStateException" in warning, warning)
+        assertTrue("secret" !in warning, warning)
+        advanceTimeBy(30.seconds)
+        runCurrent()
+
+        // Then — sent after the wait, and not again while the provider holds the same token
+        assertEquals(listOf(30_000L to 600L), sent)
+        advanceTimeBy(5.minutes)
+        runCurrent()
+        assertEquals(1, sent.size)
+        keeping.cancel()
+    }
+
+    @Test
+    fun an_expired_token_the_provider_keeps_returning_is_asked_for_at_the_retry_wait() = runTest {
+        // Given — a provider stuck on a token that expires in two minutes
+        var asks = 0
+        val refresher =
+            newRefresher(
+                accessToken = {
+                    asks++
+                    jwt(expiresAtSeconds = 120)
+                }
+            )
+
+        // When — the expiry comes and goes
+        val keeping = launch { refresher.keepFresh() }
+        advanceTimeBy(2.minutes)
+        runCurrent()
+        val asksAtExpiry = asks
+        advanceTimeBy(5.minutes)
+        runCurrent()
+
+        // Then — asked within the last minute more and more often, never under a second apart,
+        // and every thirty seconds once expired; the token sent once
+        assertTrue(asksAtExpiry in 6..12, "$asksAtExpiry asks before the expiry")
+        assertEquals(asksAtExpiry + 10, asks)
+        assertEquals(listOf(0L to 120L), sent)
+        keeping.cancel()
+    }
+
+    @Test
+    fun a_provider_that_mints_a_token_on_every_call_is_asked_once_until_the_lead() = runTest {
+        // Given — a provider that takes a second and returns a token good for an hour from then
+        val refresher =
+            newRefresher(
+                accessToken = {
+                    delay(1.seconds)
+                    jwt(expiresAtSeconds = testScheduler.currentTime / 1000 + 3600)
+                }
+            )
+
+        // When — the first token is sent, and 59 minutes pass
+        val keeping = launch { refresher.keepFresh() }
+        advanceTimeBy(59.minutes)
+        runCurrent()
+
+        // Then — sent once, at the second the provider answered, and not asked again before a
+        // minute before that token's expiry
+        assertEquals(listOf(1_000L to 3601L), sent)
+
+        // When — the lead is reached: asked again, answered a second later with a later token
+        advanceTimeBy(3.seconds)
+        runCurrent()
+
+        // Then
+        assertEquals(listOf(1_000L to 3601L, 3_542_000L to 7142L), sent)
+        keeping.cancel()
+    }
+
+    @Test
+    fun a_provider_that_keeps_failing_is_warned_about_once_and_asked_until_it_answers() = runTest {
+        // Given — a provider that fails three times
+        var asks = 0
+        val refresher =
+            newRefresher(
+                accessToken = {
+                    if (asks++ < 3) throw IllegalStateException("secret token text")
+                    jwt(expiresAtSeconds = 600)
+                }
+            )
+
+        // When — the first ask fails, and two retries after it
+        val keeping = launch { refresher.keepFresh() }
+        advanceTimeBy(1.minutes)
+        runCurrent()
+
+        // Then — one warning, the rest at DEBUG, nothing sent yet
+        assertEquals(1, logs.entriesAt(EngineLogLevel.WARNING).size)
+        assertEquals(
+            2,
+            logs.entriesAt(EngineLogLevel.DEBUG).count { "provider failed" in it.message },
+        )
+        assertEquals(emptyList(), sent)
+
+        // When — the next retry is answered
+        advanceTimeBy(30.seconds)
+        runCurrent()
+
+        // Then
+        assertEquals(listOf(90_000L to 600L), sent)
+        keeping.cancel()
+    }
+
+    @Test
+    fun an_expired_token_is_not_sent_and_the_provider_is_asked_again_after_the_retry_wait() =
+        runTest {
+            // Given — a provider that returns an expired token twice, then a live one
+            var asks = 0
+            val refresher =
+                newRefresher(accessToken = { jwt(expiresAtSeconds = if (asks++ < 2) 0 else 600) })
+
+            // When
+            val keeping = launch { refresher.keepFresh() }
+            advanceTimeBy(1.minutes)
+            runCurrent()
+
+            // Then — the expired token never went out, said at DEBUG only; the live one did
+            assertEquals(listOf(60_000L to 600L), sent)
+            assertTrue(logs.entriesAt(EngineLogLevel.WARNING).isEmpty())
+            assertTrue(logs.entriesAt(EngineLogLevel.DEBUG).any { "already expired" in it.message })
+            keeping.cancel()
+        }
 
     @Test
     fun a_token_without_a_readable_expiry_schedules_nothing() = runTest {
         // Given
-        val refresher =
-            RealtimeTokenRefresher(
-                accessToken = { "an-opaque-token" },
-                refresh = { refreshedAt += testScheduler.currentTime },
-                clock = clock(),
-                engineLogger = logs.asEngineLogger(),
-            )
+        val refresher = newRefresher(accessToken = { "an-opaque-token" })
 
         // When
         refresher.keepFresh()
         advanceTimeBy(2.minutes)
         runCurrent()
 
-        // Then — returned, nothing refreshed, said so at DEBUG only
-        assertEquals(emptyList(), refreshedAt)
+        // Then — returned, nothing sent, said so at DEBUG only
+        assertEquals(emptyList(), sent)
         assertTrue(logs.entriesAt(EngineLogLevel.DEBUG).isNotEmpty())
         assertTrue(logs.entriesAt(EngineLogLevel.WARNING).isEmpty())
-    }
-
-    @Test
-    fun a_provider_that_fails_is_logged_by_type_and_nothing_is_scheduled() = runTest {
-        // Given
-        val refresher =
-            RealtimeTokenRefresher(
-                accessToken = { throw IllegalStateException("secret token text") },
-                refresh = { refreshedAt += testScheduler.currentTime },
-                clock = clock(),
-                engineLogger = logs.asEngineLogger(),
-            )
-
-        // When
-        refresher.keepFresh()
-
-        // Then
-        assertEquals(emptyList(), refreshedAt)
-        val warning = logs.entriesAt(EngineLogLevel.WARNING).single().message
-        assertTrue("IllegalStateException" in warning, warning)
-        assertTrue("secret" !in warning, warning)
-    }
-
-    @Test
-    fun a_refresh_that_fails_is_logged_by_type_and_asked_again_after_the_retry_wait() = runTest {
-        // Given — a token that expires in ten minutes, and a refresh that fails the first time
-        var refreshes = 0
-        val refresher =
-            RealtimeTokenRefresher(
-                accessToken = { jwt(expiresAtSeconds = 600) },
-                refresh = {
-                    refreshedAt += testScheduler.currentTime
-                    if (refreshes++ == 0) throw IllegalStateException("secret token text")
-                },
-                clock = clock(),
-                engineLogger = logs.asEngineLogger(),
-                lead = 1.minutes,
-                retryWait = 30.seconds,
-            )
-
-        // When
-        val keeping = launch { refresher.keepFresh() }
-        advanceTimeBy(9.minutes + 1.seconds)
-        runCurrent()
-
-        // Then — the failure is logged by its type, never its text, and the refresh is asked for
-        // again after the wait (and the provider's unchanged expiry waits once more)
-        assertEquals(listOf(540_000L), refreshedAt)
-        val warning = logs.entriesAt(EngineLogLevel.WARNING).single().message
-        assertTrue("IllegalStateException" in warning, warning)
-        assertTrue("secret" !in warning, warning)
-        advanceTimeBy(1.minutes)
-        runCurrent()
-        assertEquals(listOf(540_000L, 600_000L), refreshedAt)
-        keeping.cancel()
     }
 
     @Test

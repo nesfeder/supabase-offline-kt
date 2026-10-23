@@ -121,6 +121,20 @@ All notable changes to this project are recorded in this file. The format follow
 - An object whose path has a segment that starts with a letter and a colon (`u:42/a.png`) is now
   cached; `ensureCachedFile` no longer refuses it, and channel downloads of it no longer fetch every
   time.
+- A sign-in as another user without a sign-out first, as an anonymous session signing into an
+  account does, kept the Realtime channel joined as the old user, so the new user's named tables
+  were not read again and a change still arriving for the old user could be applied to the new
+  user's cache; the channel is now left and joined again as the new user, and a change from the
+  old user's channel is dropped.
+- `supabase.close()` with the Realtime plugin installed before Offline could leave `realtimeStatus`
+  at `Stalled`, and it and a sign-out that disconnects Realtime logged a warning that the channel
+  ended and would be joined again; the status now ends at `Off` at close, and a channel that ended
+  is logged as a warning only when it is joined again.
+- Without the Auth plugin, a token the app's provider rotated after the refresh a minute before
+  the expiry was not sent to the channel until a minute before its own expiry, so the server closed
+  the channel at the old expiry and the named tables were read again; the provider is now asked
+  more often as the expiry nears, a later token is sent as soon as it is returned, and a provider
+  that failed once is asked again instead of being left until the next join.
 
 ## [0.2.0] - 2026-10-20
 

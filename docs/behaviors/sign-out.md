@@ -56,6 +56,10 @@ cache belong to one identity at a time: a signed-in user, or nobody signed in.
   started before the switch is never written into the new identity's cache.
 - When the session settles into a different identity, both caches are dropped. The mutation queue
   is kept whole: each identity's writes wait for it.
+- The Realtime channel for the named tables follows the identity too: it is left and joined again
+  as the new user, who reads the named tables again, and a change the old user's channel still
+  delivers is never applied to the new user's cache
+  ([Applying Realtime events](realtime.md#the-lifecycle)).
 - Without the Auth plugin, or with the app's own token provider, there is one identity, nobody
   signed in, for the life of the install: the cache is served as it is and never dropped for a
   change of user, since nothing the engine can read tells one user from another. An app whose own

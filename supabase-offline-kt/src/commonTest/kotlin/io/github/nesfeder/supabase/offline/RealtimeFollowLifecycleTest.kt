@@ -5,33 +5,45 @@ package io.github.nesfeder.supabase.offline
 import io.github.jan.supabase.SupabaseClient
 import io.github.jan.supabase.auth.auth
 import io.github.nesfeder.supabase.offline.internal.OfflineClient
+import io.github.nesfeder.supabase.offline.internal.db.LiveReadConsistency.onRealThreads
+import io.github.nesfeder.supabase.offline.internal.db.RecordedLiveList
 import io.github.nesfeder.supabase.offline.internal.realtime.WatchedTable
+import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeServerChangeFeed
+import io.github.nesfeder.supabase.offline.testdoubles.RecordingLogSink
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
 import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
 import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClientWithAuth
 import io.github.nesfeder.supabase.offline.testdoubles.signInForTest
+import io.github.nesfeder.supabase.offline.testdoubles.testJwt
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 
 /**
  * The client joins the channel for its watched tables while a user is signed in (or there is no
  * Auth plugin), the network is not known down and the subscription is on; it leaves on sign-out,
- * when the network is known down or switched off, when the app switches it off, and at close. Each
- * test awaits what the feed saw, within a bound.
+ * when the network is known down or switched off, when the app switches it off, and at close; a
+ * sign-in as another user leaves and joins again for them, and nothing the old user's channel still
+ * delivers reaches the new user's cache. Each test awaits what the feed saw, within a bound.
  */
 class RealtimeFollowLifecycleTest {
 
@@ -93,6 +105,128 @@ class RealtimeFollowLifecycleTest {
             assertTrue(!first.isLeft)
             assertEquals(RealtimeStatus.Subscribed, client.realtimeStatus.value)
             client.close()
+        }
+
+    @Test
+    fun signing_in_as_another_user_leaves_and_joins_again_and_reads_the_table_again() =
+        runTest(timeout = 2.minutes) {
+            onRealThreads {
+                // Given — a server that answers each user with their own rows, the channel
+                // joined for user A, and a live list showing A's row
+                var rowsOfB = listOf(row("b1", "B's milk"))
+                val server =
+                    RecordingPostgrestServer(
+                        answer = { request -> okJson(rowsFor(request.authorization, rowsOfB)) }
+                    )
+                val supabase = newTestSupabaseClientWithAuth(server.engine)
+                val client = newWatchingClient(supabase)
+                supabase.signInForTest(USER_A)
+                val first = feed.awaitFollow(0)
+                first.join()
+                client.awaitState(RealtimeStatus.Subscribed)
+                val list = RecordedLiveList(client, TABLE)
+                list.await { seen -> seen.titles == listOf("A's milk") && !seen.isFromCache }
+
+                // When — user B signs in, with no sign-out first
+                supabase.signInForTest(USER_B)
+
+                // Then — A's channel is left and one is joined for B, and the list shows B's row
+                first.awaitLeft()
+                val second = feed.awaitFollow(1)
+                client.awaitState(RealtimeStatus.Subscribing)
+                list.await { seen -> seen.titles == listOf("B's milk") && !seen.isFromCache }
+
+                // When — a row only the server has, then the join for B
+                rowsOfB = listOf(row("b1", "B's milk"), row("b2", "B's eggs"))
+                val readsBefore = server.readsAs(USER_B)
+                second.join()
+                client.awaitState(RealtimeStatus.Subscribed)
+
+                // Then — the join read the table again, as B
+                list.await { seen ->
+                    seen.titles == listOf("B's milk", "B's eggs") && !seen.isFromCache
+                }
+                assertTrue(server.readsAs(USER_B) > readsBefore)
+                list.stop()
+                client.close()
+            }
+        }
+
+    @Test
+    fun a_change_the_old_users_channel_still_delivers_never_reaches_the_new_users_cache() =
+        runTest(timeout = 2.minutes) {
+            onRealThreads {
+                // Given — the channel joined for user A, a live list showing A's row, and a
+                // cache that records every payload written and parks the next patch of the
+                // table inside its write
+                val cache = FakeQueryCacheDao()
+                val logs = RecordingLogSink()
+                val server =
+                    RecordingPostgrestServer(
+                        answer = { request ->
+                            okJson(rowsFor(request.authorization, listOf(row("b1", "B's milk"))))
+                        }
+                    )
+                val supabase = newTestSupabaseClientWithAuth(server.engine)
+                val client =
+                    newTestOfflineClient(
+                        supabase = supabase,
+                        queryCacheDao = cache,
+                        engineLogger = logs.asEngineLogger(),
+                        watchedTables = listOf(WatchedTable(TABLE)),
+                        serverChangeFeed = feed,
+                        networkAvailability = monitor,
+                    )
+                supabase.signInForTest(USER_A)
+                val first = feed.awaitFollow(0)
+                first.join()
+                client.awaitState(RealtimeStatus.Subscribed)
+                val list = RecordedLiveList(client, TABLE)
+                list.await { seen -> seen.titles == listOf("A's milk") && !seen.isFromCache }
+                val written = MutableStateFlow<List<String>>(emptyList())
+                cache.onUpsert = { row -> written.update { payloads -> payloads + row.payload } }
+                val parked = CompletableDeferred<Unit>()
+                val release = CompletableDeferred<Unit>()
+                cache.onAllForTableSnapshot = { table ->
+                    if (table == TABLE && parked.complete(Unit)) {
+                        withContext(NonCancellable) { release.await() }
+                    }
+                }
+
+                // When — A's channel delivers a change that is parked in its patch, then another
+                // that waits behind it; B signs in and the cache is emptied for B while the
+                // patch is parked; then the patch goes on
+                first.saved(TABLE, row("a2-late", "A's eggs"))
+                withTimeout(10.seconds) { parked.await() }
+                first.saved(TABLE, row("theirs-x", "Theirs"))
+                supabase.signInForTest(USER_B)
+                withTimeout(10.seconds) {
+                    while (
+                        logs.entries.none { entry ->
+                            "settled into another identity" in entry.message
+                        }
+                    ) {
+                        delay(20)
+                    }
+                }
+                release.complete(Unit)
+
+                // Then — A's channel is left and B's joined, the list shows B's row after the
+                // join, and neither change was ever written: the parked one started before the
+                // cache was emptied, and the one behind it came from a channel that is no longer
+                // the session's
+                first.awaitLeft()
+                val second = feed.awaitFollow(1)
+                second.join()
+                list.await { seen -> seen.titles == listOf("B's milk") && !seen.isFromCache }
+                list.stop()
+                val payloads = written.value
+                assertTrue(
+                    payloads.none { payload -> "a2-late" in payload || "theirs-x" in payload },
+                    "a change of the old user's channel was written: $payloads",
+                )
+                client.close()
+            }
         }
 
     @Test
@@ -204,7 +338,29 @@ class RealtimeFollowLifecycleTest {
         }
     }
 
+    /** The rows the server answers a request carrying [authorization] with: each user's own. */
+    private fun rowsFor(authorization: String?, rowsOfB: List<JsonObject>): String =
+        when (authorization) {
+            "Bearer ${testJwt(USER_A)}" -> listOf(row("a1", "A's milk")).toString()
+            "Bearer ${testJwt(USER_B)}" -> rowsOfB.toString()
+            else -> "[]"
+        }
+
+    /** How many reads of the table [server] saw under [user]'s token. */
+    private fun RecordingPostgrestServer.readsAs(user: String): Int = requests.count { request ->
+        request.method == "GET" &&
+            request.table == TABLE &&
+            request.authorization == "Bearer ${testJwt(user)}"
+    }
+
+    private fun row(id: String, title: String): JsonObject = buildJsonObject {
+        put("id", id)
+        put("title", title)
+    }
+
     private companion object {
         const val TABLE = "tasks"
+        const val USER_A = "user-a"
+        const val USER_B = "user-b"
     }
 }

@@ -711,6 +711,31 @@ class PatchCachedQueriesTest {
     }
 
     @Test
+    fun a_batch_of_server_changes_that_no_longer_applies_under_the_lock_writes_nothing() = runTest {
+        // Given — a cached row, and a batch whose channel was left for another user by the
+        // time the patch holds the table's lock
+        val queryCacheDao = FakeQueryCacheDao()
+        queryCacheDao.seedPayload("ratings", "sig-A", """[{"id":1,"rating":80}]""")
+        val store = buildStore(queryCacheDao, FakeMutationDao())
+        val writesBefore = store.queryCacheDao.writesTo("ratings").second
+
+        // When
+        store.cachePatcher.patchServerChanges(
+            table = "ratings",
+            keyColumns = listOf("id"),
+            changes = listOf(saved(id = 1, rating = 90)),
+            applies = { false },
+        )
+
+        // Then — nothing written
+        assertEquals(0L, store.queryCacheDao.writesTo("ratings").second - writesBefore)
+        assertEquals(
+            """[{"id":1,"rating":80}]""",
+            queryCacheDao.getRow("ratings", "sig-A")?.payload,
+        )
+    }
+
+    @Test
     fun an_empty_batch_of_server_changes_patches_nothing() = runTest {
         // Given
         val queryCacheDao = FakeQueryCacheDao()

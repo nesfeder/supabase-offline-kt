@@ -167,7 +167,9 @@ internal class SupabaseRealtimeFeed(
 
         /**
          * The feed over the Realtime plugin installed in [supabase]. Without the Auth plugin, and
-         * with the client's own token provider, it refreshes each channel's token itself.
+         * with the client's own token provider, it keeps each channel's token current itself,
+         * handing Realtime the token its own provider resolves: the client's, unless the app gave
+         * the Realtime plugin a token or a provider of its own, which the join uses too.
          *
          * @throws IllegalStateException when the Realtime plugin is not installed.
          */
@@ -177,16 +179,20 @@ internal class SupabaseRealtimeFeed(
             engineLogger: EngineLogger,
             clock: Clock,
         ): SupabaseRealtimeFeed {
-            checkNotNull(supabase.pluginManager.getPluginOrNull(Realtime)) {
-                REALTIME_NOT_INSTALLED_MESSAGE
-            }
-            val provider = supabase.accessToken
+            val realtime =
+                checkNotNull(supabase.pluginManager.getPluginOrNull(Realtime)) {
+                    REALTIME_NOT_INSTALLED_MESSAGE
+                }
             val refresher =
-                if (supabase.pluginManager.getPluginOrNull(Auth) != null || provider == null) null
+                if (
+                    supabase.pluginManager.getPluginOrNull(Auth) != null ||
+                        supabase.accessToken == null
+                )
+                    null
                 else
                     RealtimeTokenRefresher(
-                        accessToken = provider,
-                        refresh = { supabase.realtime.setAuth() },
+                        accessToken = { realtime.config.accessToken(supabase) },
+                        refresh = { token -> realtime.setAuth(token) },
                         clock = clock,
                         engineLogger = engineLogger,
                     )
