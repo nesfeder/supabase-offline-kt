@@ -3,6 +3,7 @@ public final class io/github/nesfeder/supabase/offline/testing/FakeRealtime {
 	public final fun dropChannel ()V
 	public final fun failChannel (Ljava/lang/Throwable;)V
 	public final fun getDroppedReportCount ()I
+	public final fun getJoinCount ()Lkotlinx/coroutines/flow/StateFlow;
 	public final fun getSubscribedTables ()Lkotlinx/coroutines/flow/StateFlow;
 	public final fun reportDelete (Ljava/lang/String;Lkotlinx/serialization/json/JsonObject;Ljava/lang/String;)V
 	public static synthetic fun reportDelete$default (Lio/github/nesfeder/supabase/offline/testing/FakeRealtime;Ljava/lang/String;Lkotlinx/serialization/json/JsonObject;Ljava/lang/String;ILjava/lang/Object;)V
@@ -15,8 +16,16 @@ public final class io/github/nesfeder/supabase/offline/testing/FakeRealtime {
 public final class io/github/nesfeder/supabase/offline/testing/InMemoryKt {
 	public static final fun inMemory (Lio/github/nesfeder/supabase/offline/Offline$Config;Lkotlin/time/Clock;)V
 	public static final fun inMemory (Lio/github/nesfeder/supabase/offline/Offline$Config;Lkotlin/time/Clock;Lio/github/nesfeder/supabase/offline/testing/FakeRealtime;)V
+	public static final fun inMemory (Lio/github/nesfeder/supabase/offline/Offline$Config;Lkotlin/time/Clock;Lio/github/nesfeder/supabase/offline/testing/FakeRealtime;Lio/github/nesfeder/supabase/offline/testing/InMemoryStore;)V
+	public static final fun inMemory (Lio/github/nesfeder/supabase/offline/Offline$Config;Lkotlin/time/Clock;Lio/github/nesfeder/supabase/offline/testing/InMemoryStore;)V
 	public static synthetic fun inMemory$default (Lio/github/nesfeder/supabase/offline/Offline$Config;Lkotlin/time/Clock;ILjava/lang/Object;)V
 	public static synthetic fun inMemory$default (Lio/github/nesfeder/supabase/offline/Offline$Config;Lkotlin/time/Clock;Lio/github/nesfeder/supabase/offline/testing/FakeRealtime;ILjava/lang/Object;)V
+	public static synthetic fun inMemory$default (Lio/github/nesfeder/supabase/offline/Offline$Config;Lkotlin/time/Clock;Lio/github/nesfeder/supabase/offline/testing/FakeRealtime;Lio/github/nesfeder/supabase/offline/testing/InMemoryStore;ILjava/lang/Object;)V
+	public static synthetic fun inMemory$default (Lio/github/nesfeder/supabase/offline/Offline$Config;Lkotlin/time/Clock;Lio/github/nesfeder/supabase/offline/testing/InMemoryStore;ILjava/lang/Object;)V
+}
+
+public final class io/github/nesfeder/supabase/offline/testing/InMemoryStore {
+	public fun <init> ()V
 }
 
 public final class io/github/nesfeder/supabase/offline/testing/TestValuesKt {
@@ -24,6 +33,8 @@ public final class io/github/nesfeder/supabase/offline/testing/TestValuesKt {
 	public static final fun cacheMissException (Ljava/lang/String;)Lio/github/nesfeder/supabase/offline/CacheMissException;
 	public static synthetic fun cacheMissException$default (Ljava/lang/String;ILjava/lang/Object;)Lio/github/nesfeder/supabase/offline/CacheMissException;
 	public static final fun cachedFile (Ljava/lang/String;Lkotlin/time/Instant;J)Lio/github/nesfeder/supabase/offline/CachedFile;
+	public static final fun cachedResult (Ljava/lang/String;Lio/github/jan/supabase/SupabaseClient;Lkotlin/time/Instant;Z)Lio/github/jan/supabase/postgrest/result/PostgrestResult;
+	public static synthetic fun cachedResult$default (Ljava/lang/String;Lio/github/jan/supabase/SupabaseClient;Lkotlin/time/Instant;ZILjava/lang/Object;)Lio/github/jan/supabase/postgrest/result/PostgrestResult;
 	public static final fun conflictedMutation (JLjava/lang/String;Lio/github/nesfeder/supabase/offline/MutationOperation;Lkotlin/time/Instant;Ljava/util/List;Lkotlinx/serialization/json/JsonElement;Lkotlinx/serialization/json/JsonObject;Lkotlinx/serialization/json/JsonObject;Ljava/lang/String;Ljava/util/Set;Ljava/util/Set;Ljava/lang/String;Lkotlin/time/Instant;)Lio/github/nesfeder/supabase/offline/ConflictedMutation;
 	public static synthetic fun conflictedMutation$default (JLjava/lang/String;Lio/github/nesfeder/supabase/offline/MutationOperation;Lkotlin/time/Instant;Ljava/util/List;Lkotlinx/serialization/json/JsonElement;Lkotlinx/serialization/json/JsonObject;Lkotlinx/serialization/json/JsonObject;Ljava/lang/String;Ljava/util/Set;Ljava/util/Set;Ljava/lang/String;Lkotlin/time/Instant;ILjava/lang/Object;)Lio/github/nesfeder/supabase/offline/ConflictedMutation;
 	public static final fun localFailureStop (Lio/github/nesfeder/supabase/offline/SyncFailedException;)Lio/github/nesfeder/supabase/offline/SyncStopReason$LocalFailure;

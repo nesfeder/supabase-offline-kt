@@ -335,5 +335,6 @@ out.
 
 `Offline.Config.inMemory(clock)`, from the `supabase-offline-kt-testing` artifact, keeps the cache,
 the queue and the file cache in memory for tests, and `inMemory(clock, realtime)` takes a
-`FakeRealtime` in place of the Realtime channel the named tables would open. See
-[Testing your app](../getting-started/testing.md).
+`FakeRealtime` in place of the Realtime channel the named tables would open.
+`inMemory(clock, store)` keeps them in an `InMemoryStore` instead, so a client built over it after
+an earlier one closed finds what that one left. See [Testing your app](../getting-started/testing.md).

@@ -444,6 +444,33 @@ public func offlineResponse<Value: Sendable>(
     )
 }
 
+/// The answer to a one-shot read the cache answered, as a fake of the app's own repository returns
+/// one: `isFromCache` reads `true`, `fetchedAt` the time given, and `hasPendingMutations` the flag
+/// given.
+///
+/// - Parameters:
+///   - value: The decoded rows.
+///   - data: The body as the cache holds it; by default, empty.
+///   - count: The total a count asked for.
+///   - fetchedAt: When the rows were fetched from the server.
+///   - hasPendingMutations: Whether a queued write changed one of the rows.
+public func cachedResponse<Value: Sendable>(
+    value: Value,
+    data: Data = Data(),
+    count: Int? = nil,
+    fetchedAt: Date,
+    hasPendingMutations: Bool = false
+) -> OfflineResponse<Value> {
+    offlineResponse(
+        value: value,
+        data: data,
+        count: count,
+        isFromCache: true,
+        fetchedAt: fetchedAt,
+        hasPendingMutations: hasPendingMutations
+    )
+}
+
 /// The failure of a read that may use only the cache and found nothing there:
 /// `OfflineError.Code.cacheMiss`.
 public func cacheMissError(message: String = "No valid cached data found for this query") -> OfflineError {

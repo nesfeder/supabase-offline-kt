@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.testing
 
+import io.github.jan.supabase.SupabaseClient
+import io.github.jan.supabase.postgrest.postgrest
 import io.github.jan.supabase.postgrest.result.PostgrestResult
 import io.github.nesfeder.supabase.offline.CacheMissException
 import io.github.nesfeder.supabase.offline.CachedFile
@@ -26,7 +28,10 @@ import io.github.nesfeder.supabase.offline.SyncFailedException
 import io.github.nesfeder.supabase.offline.SyncReport
 import io.github.nesfeder.supabase.offline.SyncStatus
 import io.github.nesfeder.supabase.offline.SyncStopReason
+import io.github.nesfeder.supabase.offline.fetchedAt
+import io.github.nesfeder.supabase.offline.hasPendingMutations
 import io.github.nesfeder.supabase.offline.internal.testing.ValueConstructors
+import io.github.nesfeder.supabase.offline.isFromCache
 import kotlin.time.Instant
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -190,6 +195,29 @@ public fun querySnapshot(
     refresh: RefreshState = RefreshState.Idle,
 ): QuerySnapshot =
     ValueConstructors.querySnapshot(result, isFromCache, fetchedAt, hasPendingMutations, refresh)
+
+/**
+ * The result of a one-shot read the cache answered, as a fake of the app's own repository returns
+ * it: [PostgrestResult.isFromCache] reads `true`, [PostgrestResult.fetchedAt] the time given, to
+ * the millisecond, and [PostgrestResult.hasPendingMutations] the flag given. The library stamps a
+ * read's result in headers PostgREST never sends, and this one carries the same stamp; a result
+ * built with `PostgrestResult(data, Headers.Empty, supabase.postgrest)` carries none, and reads as
+ * a result supabase-kt returned itself.
+ *
+ * @param data the rows, as the JSON text a read returns.
+ * @param supabase a client with `Postgrest` installed, built on a Ktor `MockEngine`, since
+ *   supabase-kt's `Postgrest` needs a client with an engine.
+ * @param fetchedAt when the rows were fetched from the server.
+ * @param hasPendingMutations whether a queued write changed a row shown.
+ */
+@OptIn(OfflineInternal::class)
+public fun cachedResult(
+    data: String,
+    supabase: SupabaseClient,
+    fetchedAt: Instant,
+    hasPendingMutations: Boolean = false,
+): PostgrestResult =
+    ValueConstructors.cachedResult(data, supabase.postgrest, fetchedAt, hasPendingMutations)
 
 /**
  * What a call of [Offline.syncPendingMutations] did. Its [SyncReport.stopReason] is the one the

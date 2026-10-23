@@ -154,13 +154,47 @@ class ScriptedRealtimeTest {
         }
 
     @Test
+    fun the_join_hook_runs_once_the_client_has_handled_each_join() =
+        runTest(timeout = 2.minutes) {
+            // Given — a client following a table through scripted channels, each channel hooked
+            val supabase =
+                createSupabaseClient(TEST_SUPABASE_URL, TEST_SUPABASE_KEY) {
+                    httpEngine = MockEngine { respondOk("[]") }
+                    install(Postgrest)
+                    install(Offline) {
+                        openInMemory()
+                        followServerChangesThrough { channel -> channels.trySend(channel) }
+                        realtime { table("tasks") }
+                    }
+                }
+            val offline = supabase.offline
+            val statusesAtJoin = Channel<RealtimeStatus>(Channel.UNLIMITED)
+            val first = channels.receiveWithin()
+            first.onJoinHandled { statusesAtJoin.trySend(offline.realtimeStatus.value) }
+
+            // When — the channel joins, ends, and the next one joins
+            first.join()
+            val firstJoin = statusesAtJoin.receiveWithin()
+            first.end()
+            val second = channels.receiveWithin()
+            second.onJoinHandled { statusesAtJoin.trySend(offline.realtimeStatus.value) }
+            second.join()
+
+            // Then — each hook ran after the client reported the channel subscribed, once
+            assertEquals(RealtimeStatus.Subscribed, firstJoin)
+            assertEquals(RealtimeStatus.Subscribed, statusesAtJoin.receiveWithin())
+            assertTrue(statusesAtJoin.tryReceive().isFailure)
+            supabase.close()
+        }
+
+    @Test
     fun a_stalled_status_is_built_for_a_test_double() {
         // Given / When / Then
         val cause = IllegalStateException("refused")
         assertSame(cause, ValueConstructors.stalledRealtime(cause).cause)
     }
 
-    private suspend fun Channel<ScriptedRealtimeChannel>.receiveWithin(): ScriptedRealtimeChannel =
+    private suspend fun <T> Channel<T>.receiveWithin(): T =
         withContext(Dispatchers.Default) { withTimeout(10.seconds) { receive() } }
 
     private suspend fun Offline.awaitStatus(matches: (RealtimeStatus) -> Boolean): RealtimeStatus =

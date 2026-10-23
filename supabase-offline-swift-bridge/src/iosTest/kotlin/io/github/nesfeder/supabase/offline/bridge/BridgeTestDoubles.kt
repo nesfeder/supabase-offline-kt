@@ -277,9 +277,10 @@ fun openTestClient(
     server: RecordingServer,
     clock: BridgeClock? = null,
     realtime: BridgeFakeRealtime? = null,
+    store: BridgeInMemoryStore? = null,
     configure: BridgeClientOptions.() -> Unit = {},
 ): BridgeClient {
-    val opened = BridgeTesting.openInMemory(testOptions(configure), server, clock, realtime)
+    val opened = BridgeTesting.openInMemory(testOptions(configure), server, clock, realtime, store)
     return checkNotNull(opened.client) { "the in-memory client did not open: ${opened.error}" }
 }
 

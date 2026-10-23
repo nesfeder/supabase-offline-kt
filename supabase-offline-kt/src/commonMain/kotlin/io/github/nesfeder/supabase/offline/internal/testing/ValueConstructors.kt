@@ -4,6 +4,7 @@
 
 package io.github.nesfeder.supabase.offline.internal.testing
 
+import io.github.jan.supabase.postgrest.Postgrest
 import io.github.jan.supabase.postgrest.result.PostgrestResult
 import io.github.nesfeder.supabase.offline.CacheMissException
 import io.github.nesfeder.supabase.offline.CachedFile
@@ -26,6 +27,8 @@ import io.github.nesfeder.supabase.offline.SyncFailedException
 import io.github.nesfeder.supabase.offline.SyncReport
 import io.github.nesfeder.supabase.offline.SyncStatus
 import io.github.nesfeder.supabase.offline.SyncStopReason
+import io.github.nesfeder.supabase.offline.internal.postgrest.ResultProvenance
+import io.github.nesfeder.supabase.offline.internal.postgrest.provenancedResult
 import io.github.nesfeder.supabase.offline.isNetworkOrConnectivityFailure
 import kotlin.experimental.ExperimentalObjCRefinement
 import kotlin.native.HiddenFromObjC
@@ -109,6 +112,28 @@ public object ValueConstructors {
         hasPendingMutations: Boolean,
         refresh: RefreshState,
     ): QuerySnapshot = QuerySnapshot(result, isFromCache, fetchedAt, hasPendingMutations, refresh)
+
+    /**
+     * A [PostgrestResult] of [data] stamped as a read the cache answered, as a one-shot read's is:
+     * fetched at [fetchedAt], to the millisecond, and showing a queued write when
+     * [hasPendingMutations].
+     */
+    public fun cachedResult(
+        data: String,
+        postgrest: Postgrest,
+        fetchedAt: Instant,
+        hasPendingMutations: Boolean,
+    ): PostgrestResult =
+        provenancedResult(
+            data = data,
+            postgrest = postgrest,
+            provenance =
+                ResultProvenance(
+                    isFromCache = true,
+                    fetchedAtMillis = fetchedAt.toEpochMilliseconds(),
+                    hasPendingMutations = hasPendingMutations,
+                ),
+        )
 
     /**
      * A [SyncReport] with the given fields. Its stop reason is the one the library gives such a
