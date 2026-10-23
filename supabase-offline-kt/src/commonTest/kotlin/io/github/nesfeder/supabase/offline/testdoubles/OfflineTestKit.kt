@@ -273,6 +273,7 @@ internal fun newTestOfflineClient(
     watchedTables: List<WatchedTable> = emptyList(),
     serverChangeFeed: ServerChangeFeed? = null,
     conflictPolicyTimeout: Duration = CONFLICT_POLICY_TIMEOUT,
+    beforePayloadWriteHeard: (suspend (table: String) -> Unit)? = null,
 ): OfflineClient =
     OfflineClient(
         supabaseClient = supabase,
@@ -301,6 +302,7 @@ internal fun newTestOfflineClient(
         syncFile = syncFile,
         watchedTables = watchedTables,
         serverChangeFeed = serverChangeFeed,
+        beforePayloadWriteHeard = beforePayloadWriteHeard,
     )
 
 /**

@@ -5,7 +5,7 @@ package io.github.nesfeder.supabase.offline.internal.cache
 import io.github.nesfeder.supabase.offline.MutationOperation
 import io.github.nesfeder.supabase.offline.internal.db.CachedQueryRow
 import io.github.nesfeder.supabase.offline.internal.db.MutationRow
-import io.github.nesfeder.supabase.offline.internal.db.QueryCacheDao
+import io.github.nesfeder.supabase.offline.internal.db.PayloadWriteCountingDao
 import io.github.nesfeder.supabase.offline.internal.db.isStaleStamp
 import io.github.nesfeder.supabase.offline.internal.db.knownOperation
 import io.github.nesfeder.supabase.offline.internal.db.requireUserTable
@@ -42,7 +42,7 @@ import kotlinx.serialization.json.jsonPrimitive
  */
 @OptIn(ExperimentalAtomicApi::class)
 internal class CachePatcher(
-    private val queryCacheDao: QueryCacheDao,
+    private val queryCacheDao: PayloadWriteCountingDao,
     private val json: Json,
     private val nowMillis: () -> Long,
     private val freshness: CacheFreshness,

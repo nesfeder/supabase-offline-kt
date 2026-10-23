@@ -856,10 +856,11 @@ within theirs.
 in the background after the first response of a process is written, and moved by each payload
 written, less the one it replaced, patched or evicted since. When a written response takes the
 count past the bound, a pass runs in the engine's scope after the response is returned: it reads
-every payload's `rowid`, fetch time and length once, oldest fetch first, chooses the payloads to
-delete down to 50 MB below the bound (or to the bound when it is 50 MB or less), never one of up to
-500 with a live reader, deletes them by `rowid` in one transaction, sparing any fetched again since
-the read, and sets the count from what it read. A response that lands during a pass gets a pass of
+every payload's table, `rowid`, fetch time and length once, oldest fetch first, chooses the payloads
+to delete down to 50 MB below the bound (or to the bound when it is 50 MB or less), never one of up
+to 500 with a live reader, deletes them by table and `rowid` in one transaction, sparing any fetched
+again since the read, and sets the count from what it read. Only the live reads of a table it
+deleted from read again. A response that lands during a pass gets a pass of
 its own. The engine's own records are never counted or evicted.
 
 **Retries and refreshes.** A `NetworkFirst` read with a warm cache, a `CacheFirst` read fetching a

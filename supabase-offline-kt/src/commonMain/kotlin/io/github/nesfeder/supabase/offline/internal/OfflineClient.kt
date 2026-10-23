@@ -41,7 +41,6 @@ import io.github.nesfeder.supabase.offline.internal.cache.monotonicTickSource
 import io.github.nesfeder.supabase.offline.internal.db.CachedFileDao
 import io.github.nesfeder.supabase.offline.internal.db.DatabaseScrub
 import io.github.nesfeder.supabase.offline.internal.db.MutationDao
-import io.github.nesfeder.supabase.offline.internal.db.PayloadWriteCountingDao
 import io.github.nesfeder.supabase.offline.internal.db.QueryCacheDao
 import io.github.nesfeder.supabase.offline.internal.db.isReservedTable
 import io.github.nesfeder.supabase.offline.internal.db.storedName
@@ -234,6 +233,11 @@ internal class OfflineClient(
     watchedTables: List<WatchedTable> = emptyList(),
     /** Where those changes come from; `null` follows nothing. */
     serverChangeFeed: ServerChangeFeed? = null,
+    /**
+     * Runs before a live reader hears of a payload write; `LiveReadSourceOrderTest` delays it so a
+     * reader hears of the write after other changes. `null` for none.
+     */
+    beforePayloadWriteHeard: (suspend (table: String) -> Unit)? = null,
 ) : Offline {
 
     /**
@@ -352,18 +356,13 @@ internal class OfflineClient(
             onCacheNotServed = { cacheOwnerChecks.tryEmit(Unit) },
             versionColumns = versionColumns,
             backgroundScope = clientScope,
+            beforePayloadWriteHeard = beforePayloadWriteHeard,
         )
 
     /*
-     * The parts the client calls. The internal ones are not private for one test each, which no
-     * public call can drive deterministically.
+     * The parts the client calls. The three internal ones are not private for one test each, which
+     * no public call can drive deterministically.
      */
-
-    /**
-     * The cached queries' table, every write to it counted. `LiveReadSourceOrderTest` holds back a
-     * live reader's news of a payload write through it.
-     */
-    internal val queryCacheWrites: PayloadWriteCountingDao = components.queryCacheDao
 
     /**
      * The watermarks and the clear lock. `ClearLocalDataDuringWritesTest` reads the tick a response

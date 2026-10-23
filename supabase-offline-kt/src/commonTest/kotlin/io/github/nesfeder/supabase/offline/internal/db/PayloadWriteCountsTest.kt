@@ -2,15 +2,22 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.db
 
+import io.github.nesfeder.supabase.offline.internal.cache.QueryCacheLimits
 import io.github.nesfeder.supabase.offline.internal.testing.InMemoryQueryCacheDao
+import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
+import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
+import kotlin.coroutines.CoroutineContext
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withContext
 
 /**
  * The counts a live reader hears of payload writes through: a write to its table, or to every
@@ -78,6 +85,49 @@ class PayloadWriteCountsTest {
         assertNull(dao.get(TABLE, CACHE_KEY))
     }
 
+    @Test
+    fun a_write_that_outlives_its_transaction_is_counted_as_it_returns() = runTest {
+        // Given — the context a transaction's block runs in, kept past its end
+        var blockContext: CoroutineContext? = null
+        dao.runInTransaction { blockContext = currentCoroutineContext() }
+        val before = dao.writesTo(TABLE)
+
+        // When — a write made in that context, but for its finished job, once the transaction has
+        // returned
+        withContext(blockContext!!.minusKey(Job)) { dao.upsert(rowOf(TABLE)) }
+
+        // Then — it is counted at once
+        assertEquals(before.first to before.second + 1, dao.writesTo(TABLE))
+    }
+
+    @Test
+    fun an_eviction_pass_is_counted_against_the_tables_it_deleted_from_alone() = runTest {
+        // Given — a bounded cache whose oldest lists are all another table's
+        val table = FakeQueryCacheDao()
+        repeat(10) { index ->
+            table.seedPayload(OTHER_TABLE, "old-$index", arrayOfLength(1_000), index.toLong())
+        }
+        table.seedPayload(TABLE, CACHE_KEY, arrayOfLength(1_000), updatedAt = 100L)
+        var clock = 1_000L
+        val store =
+            newTestStore(
+                queryCacheDao = table,
+                queryCacheLimits =
+                    QueryCacheLimits(maxPayloadBytes = 5_000L, evictionHeadroomBytes = 0L),
+                nowMillis = { clock++ },
+                backgroundScope = backgroundScope,
+            )
+        val before = store.queryCacheDao.writesTo(TABLE)
+
+        // When — a response of the other table goes over the bound, and the pass it starts runs
+        store.queryCache.cacheResponse(OTHER_TABLE, "new", arrayOfLength(1_000))
+        runCurrent()
+
+        // Then — the other table's oldest lists went, and the table's readers heard of nothing
+        assertEquals(4, table.rowsOf(OTHER_TABLE).size)
+        assertEquals(before, store.queryCacheDao.writesTo(TABLE))
+    }
+
     /** Each time a reader of [table] hears of a write, collected in the test's background. */
     private fun TestScope.heardOf(table: String): List<Unit> {
         val heard = mutableListOf<Unit>()
@@ -90,6 +140,9 @@ class PayloadWriteCountsTest {
         const val TABLE = "tasks"
         const val OTHER_TABLE = "projects"
         const val CACHE_KEY = "list"
+
+        /** A payload of [length] characters shaped as a JSON array. */
+        fun arrayOfLength(length: Int): String = "[" + "x".repeat(length - 2) + "]"
 
         fun rowOf(table: String, cacheKey: String = CACHE_KEY) =
             CachedQueryRow(table = table, cacheKey = cacheKey, payload = "[]", updatedAt = 1L)

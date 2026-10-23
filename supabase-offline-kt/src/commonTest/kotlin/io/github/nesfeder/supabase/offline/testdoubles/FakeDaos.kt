@@ -129,8 +129,12 @@ internal class FakeQueryCacheDao : InMemoryQueryCacheDao() {
         return changed
     }
 
-    override suspend fun deletePayloads(rowIds: List<Long>, fetchedAtOrBefore: Long): Int {
-        val deleted = super.deletePayloads(rowIds, fetchedAtOrBefore)
+    override suspend fun deletePayloads(
+        table: String,
+        rowIds: List<Long>,
+        fetchedAtOrBefore: Long,
+    ): Int {
+        val deleted = super.deletePayloads(table, rowIds, fetchedAtOrBefore)
         evictedRows += deleted
         return deleted
     }
@@ -177,9 +181,13 @@ internal class PayloadScanCountingDao(private val delegate: QueryCacheDao) :
         return lengths
     }
 
-    override suspend fun deletePayloads(rowIds: List<Long>, fetchedAtOrBefore: Long): Int {
+    override suspend fun deletePayloads(
+        table: String,
+        rowIds: List<Long>,
+        fetchedAtOrBefore: Long,
+    ): Int {
         evictionDeletes++
-        return delegate.deletePayloads(rowIds, fetchedAtOrBefore)
+        return delegate.deletePayloads(table, rowIds, fetchedAtOrBefore)
     }
 
     override suspend fun runInTransaction(block: suspend () -> Unit) {
