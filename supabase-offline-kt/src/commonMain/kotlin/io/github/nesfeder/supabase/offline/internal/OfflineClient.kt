@@ -234,6 +234,11 @@ internal class OfflineClient(
     watchedTables: List<WatchedTable> = emptyList(),
     /** Where those changes come from; `null` follows nothing. */
     serverChangeFeed: ServerChangeFeed? = null,
+    /**
+     * Runs before a live reader hears of a payload write; `LiveReadSourceOrderTest` delays it so a
+     * reader hears of the write after other changes. `null` for none.
+     */
+    beforePayloadWriteHeard: (suspend (table: String) -> Unit)? = null,
 ) : Offline {
 
     /**
@@ -351,6 +356,8 @@ internal class OfflineClient(
             },
             onCacheNotServed = { cacheOwnerChecks.tryEmit(Unit) },
             versionColumns = versionColumns,
+            backgroundScope = clientScope,
+            beforePayloadWriteHeard = beforePayloadWriteHeard,
         )
 
     /*

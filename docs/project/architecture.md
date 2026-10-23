@@ -260,8 +260,8 @@ What a `QueueIfOffline` write returns:
 | Nothing of the user waits ahead of it, the session is settled, and the server accepts it | `Applied`, and the cache is patched with the rows the server returned, or with the rows sent when it returned none |
 | Something of the user waits ahead of it, in any table, or the session is still restoring | `Queued`, and a pass is requested |
 | Network access is off | `Queued`: nothing is sent and no pass is requested; a later trigger sends it |
-| Sent at once, and it may not have run: no connection or no answer, a `503` or `520`, an expired token that could not be refreshed, or PostgREST's schema cache not knowing the table or a column yet (`PGRST204`, `PGRST205`) before its tenth such refusal, counted at least 30 seconds apart | `Queued`, with no pass requested; a later trigger sends it |
-| Sent at once, and the server answered with any other status: a refusal, a `408` or `429`, another `5xx`, or the tenth schema-cache refusal | The server's exception is thrown, and the write leaves the queue |
+| Sent at once, and it may not have run or may pass when sent again: no connection or no answer, a `408`, `429`, `502`, `503`, `504`, `520`, `522` or `524`, a `401` for a token PostgREST holds expired or cannot read (`PGRST301`, `PGRST303`), an expired token that could not be refreshed, or PostgREST's schema cache not knowing the table or a column yet (`PGRST204`, `PGRST205`) before its tenth such refusal, counted at least 30 seconds apart | `Queued`, with no pass requested; a later trigger sends it |
+| Sent at once, and the server answered with any other status: a refusal, another `401`, another `5xx` (a `500` from the database among them), or the tenth schema-cache refusal | The server's exception is thrown, and the write leaves the queue |
 | Local data was cleared while it was on the wire | `Applied` without a cache patch, or its failure |
 | The queue cannot hold it faithfully (below) | Sent directly: `Applied`, or its failure; for want of a connection, `MutationNotQueueableException` |
 | The caller is canceled while it is on the wire | It stays queued, since the server may have it, and a pass sends it |
@@ -814,7 +814,10 @@ the queue and the payload together under the table's snapshot lock (the queue fi
 refresh writes its payload before it retires the replayed writes that payload holds). The head
 send's patch and its row's removal hold the same lock, so a write never shows both patched in and
 still queued, a replayed one never drops out, and a refresh is `Idle` only in an emission showing
-what it fetched.
+what it fetched. A live read hears of payload writes through the cache's count of committed writes
+to each table, not through the database's change notices, which name only the one table every
+payload shares: a write to another table's payloads, or to the engine's own rows, makes it read
+nothing.
 A one-shot read from the cache takes the same snapshot. An idle refresh whose confirmed rows are
 gone (a clear, a drop) is shown `Refreshing` until the read has fetched again.
 
@@ -851,10 +854,16 @@ live readers fetch again. Stale means "refresh when you can": `CacheFirst` fetch
 again online and serves it offline within its `maxAge`, and `NetworkFirst` and `CacheOnly` serve it
 within theirs.
 
-**Eviction.** After a response of 4 K characters or more, and after every 32nd response, the engine
-sums the payloads' length. Over the bound, it deletes the payloads fetched longest ago, ten at a
-time, down to 50 MB below the bound (or to the bound when it is 50 MB or less), never one of up to
-500 queries with a live reader. The engine's own records are never counted or evicted.
+**Eviction.** The engine keeps a running count of the payloads' length: read once from the table,
+in the background after the first response of a process is written, and moved by each payload
+written, less the one it replaced, patched or evicted since. When a written response takes the
+count past the bound, a pass runs in the engine's scope after the response is returned: it reads
+every payload's table, `rowid`, fetch time and length once, oldest fetch first, chooses the payloads
+to delete down to 50 MB below the bound (or to the bound when it is 50 MB or less), never one of up
+to 500 with a live reader, deletes them by table and `rowid` in one transaction, sparing any fetched
+again since the read, and sets the count from what it read. Only the live reads of a table it
+deleted from read again. A response that lands during a pass gets a pass of
+its own. The engine's own records are never counted or evicted.
 
 **Retries and refreshes.** A `NetworkFirst` read with a warm cache, a `CacheFirst` read fetching a
 stale payload again, a `NetworkFirstThenCache` read's first request with a warm cache, and every
@@ -931,12 +940,14 @@ send record and any stale rejected entry are deleted, both under the table's sna
 live read sees one without the other, and the caller gets `Applied`; if the patch, the delete or the
 read of the queue that follows (whether anything waits behind it) fails, the caller still gets
 `Applied`, since the server has the write, and the failure is logged. A refusal is likewise thrown
-as the server's error whatever that read does. A failure that may not have run keeps the row. The
-send record is cleared only on proof that the write did not run: every attempt the HTTP engine made
-failed before connecting (each retry an app plugin made, and each attempt an engine carried as a
-suppressed exception, must prove it too), PostgREST answered `503` with `PGRST000` or `PGRST002`,
-the token could not be refreshed, the schema cache did not know the table or a column, or network
-access was off. Anything else that answers deletes the row and throws: the immediate refusal.
+as the server's error whatever that read does. A failure that may not have run, or may pass when
+sent again, keeps the row; one list names those answers for the head send and for replay, which
+never rejects a write on them. The send record is cleared only on proof that the write did not run:
+every attempt the HTTP engine made failed before connecting (each retry an app plugin made, and
+each attempt an engine carried as a suppressed exception, must prove it too), PostgREST answered
+`503` with `PGRST000` or `PGRST002`, the token could not be refreshed, the schema cache did not know
+the table or a column, or network access was off. Anything else that answers deletes the row and
+throws: the immediate refusal.
 
 **Dry runs.** A dry run is never queued. Whether the server rolled it back is read from its
 `Preference-Applied` answer, and only a rolled-back write is left out of the cache. PostgREST rolls
@@ -1257,6 +1268,7 @@ The decisions that shaped the API and the engine, with the date each was settled
 | 2026-10-18 | Conflicts are detected on replay, per table, when the app names a version column, and settled by the app's resolver or the defaults; what is not settled is parked on a conflicted list. | A replay after a lost answer, or after another device's edit, overwrote that edit out of sight. A precondition on a column the server's trigger moves is the one check PostgREST evaluates atomically; the per-column classification keeps a change to other columns from reading as a conflict, and the defaults keep the last write winning column by column, so an app that sets nothing loses nothing it had. |
 | 2026-10-05 | A pattern list the server would read as another list (empty, or a pattern that is empty, `NULL`, edged with white space or holding a brace) is refused, before anything is sent or queued. | supabase-kt quotes a pattern only when it holds one of `,.:()`, and `LIKE ALL` over no pattern matches every row, so a queued delete with `likeAll(column, listOf(""))` reached every row the user's policies admit. As with two filters on one column, the request is refused rather than rewritten, so it stays supabase-kt's own; a test pins what supabase-kt sends, so the canary shows the day it quotes these. |
 | 2026-10-22 | An `in` element, or a value inside an `or` or `and` group, holding `"` or `\` and none of `,.:()` is refused, before anything is sent or queued; `RealtimeFilter` refuses `in` without a non-empty list and another operator with a collection. | supabase-kt escapes such a value but quotes it only beside one of `,.:()`, and PostgREST reads an unquoted element or group value with its escapes, so `isIn("title", listOf("Say \"hi\""))` matched nothing while the overlay, which strips the escapes, showed the row until the next refresh, and a queued delete with such a group changed nothing out of sight. As with the other misread filters, the request is refused rather than rewritten; a test pins what supabase-kt sends. A Realtime `in` with one value, or `eq` with a list, was sent as `owner=in.<id>` or `id=eq.[1]`, which the server refuses, so the channel stalled and retried forever. |
+| 2026-10-22 | A write sent at once stays queued on every answer that says the request did not finish (`408`, `429`, `502`, `503`, `504`, `520`, `522`, `524`) and on a `401` for a token PostgREST holds expired or cannot read (`PGRST301`, `PGRST303`); one list serves the head send and replay. | The head threw on answers a replay keeps queued: a `504` after the database committed led a caller's retry to duplicate a write that landed, a `429` dropped a write that never ran, and a device clock behind the server's lost writes to a `401`. A `500` from the database is still thrown, since sending the write again gets the same answer. |
 
 ### What it deliberately does not do
 
@@ -1283,7 +1295,7 @@ What the library promises, each with the tests that pin it:
 | --- | --- |
 | A user's queued writes are sent in the order they were made, across tables, and none overtakes an earlier one of the same user, in any pass: a pass for one table stops at a write with an earlier one queued in another table. `OnlineOnly` writes, writes the queue cannot hold, `rpc` and Storage writes are never queued, so they go around the queue. | `WriteAheadOrderTest`, `MutationQueueReplayOrderTest`, `OnlineWriteJoinsQueueTest`, `HeadSendTest`, `SyncReportTest` |
 | With Auth installed, a queued write is sent with its owner's token or not at all. A PostgREST configured with its own `jwtToken` is not checked. | `ReplayTokenBindingTest`, `ReplayOwnerCheckTest`, `PerIdentityQueueTest` |
-| No write leaves the queue silently. It leaves when the server accepts it; when the server refuses it for good on replay, or its schema-cache refusals reach the bound (it goes to the rejected list); when the library can no longer replay it exactly as it was made (the rejected list too); when, sent at once, it fails with any status but `503` or `520` (the error is thrown to its caller); when a conflict is settled with `KeepServer` (counted in `conflictsKeptServerCount`) or parked (the conflicted list); or when the app discards it or clears local data. A failure that may pass leaves it queued. | `MutationQueueTransientFailureTest`, `SchemaCacheMissTest`, `HeadSendTest`, `DiscardPendingMutationTest`, `RejectedMutationListTest`, `GuardedReplayOutcomesTest`, `ConflictedListTest`, `UnknownOperationRowAndroidTest`, `UnknownOperationRowIosTest` |
+| No write leaves the queue silently. It leaves when the server accepts it; when the server refuses it for good on replay, or its schema-cache refusals reach the bound (it goes to the rejected list); when the library can no longer replay it exactly as it was made (the rejected list too); when, sent at once, it fails with a status that does not keep it queued, a refusal or a `500` from the database among them (the error is thrown to its caller); when a conflict is settled with `KeepServer` (counted in `conflictsKeptServerCount`) or parked (the conflicted list); or when the app discards it or clears local data. A failure that may pass leaves it queued. | `MutationQueueTransientFailureTest`, `SchemaCacheMissTest`, `HeadSendTest`, `DiscardPendingMutationTest`, `RejectedMutationListTest`, `GuardedReplayOutcomesTest`, `ConflictedListTest`, `UnknownOperationRowAndroidTest`, `UnknownOperationRowIosTest` |
 | On a table whose configured key matches a unique key on the server, a keyed INSERT whose send may have reached the server is never inserted twice. | `MutationQueueIdempotentReplayTest`, `UnconfirmedSendProofTest`, `UndeliveredRequestsAndroidTest`, `UndeliveredRequestsIosTest` |
 | Answering a read from the cache sends no request. | `CachedReadsSendNothingTest` |
 | On a table with a version column, a queued UPDATE or DELETE that pins one cached row is applied only while the server's row has the version the device saw; a row that moved is never overwritten without the resolver or the defaults deciding, and the device's own earlier writes never read as a conflict. | `MutationBaseCaptureTest`, `GuardedReplayRequestTest`, `GuardedReplayOutcomesTest`, `BaseForwardingTest`, `ConflictPolicyTest`, `ConflictResolverTest` |

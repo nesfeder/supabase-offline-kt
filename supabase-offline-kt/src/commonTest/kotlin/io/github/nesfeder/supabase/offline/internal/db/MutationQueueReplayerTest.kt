@@ -8,6 +8,8 @@ import io.github.jan.supabase.SupabaseClient
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.nesfeder.supabase.offline.MutationOperation
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueueReplayer
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentity
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.SyncStop
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.awaitSettledSession
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeRemoteTable
@@ -27,12 +29,17 @@ import io.ktor.http.HttpStatusCode
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
+import kotlin.test.assertIs
+import kotlin.test.assertTrue
 import kotlin.time.ExperimentalTime
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 
 /**
@@ -562,6 +569,230 @@ class MutationQueueReplayerTest {
         assertEquals(1, remoteTable.recordedDeleteCount, "a fully captured filter still replays")
         assertEquals(0, store.pendingMutationCount())
     }
+
+    @Test
+    fun a_sync_that_meets_a_running_pass_waits_for_the_pass_and_runs_once_more_not_once_per_write() =
+        runTest {
+            // Given — three queued INSERTs, and a pass of the library's own sending them, each
+            // held at the server until the test lets it through
+            val dao = FakeMutationDao()
+            repeat(3) { index -> dao.insert(insertRow("""[{"n":"$index"}]""")) }
+            val store = buildStore(dao)
+            val client = testClient()
+            val answers = List(3) { CompletableDeferred<Unit>() }
+            var sends = 0
+            val remoteTable =
+                FakeRemoteTable(
+                    table = table,
+                    postgrest = client.postgrest,
+                    onInsert = {
+                        answers[sends++].await()
+                        postgrestResultOf("[]", client.postgrest)
+                    },
+                )
+            var passes = 0
+            val replayer =
+                newTestMutationQueueReplayer(
+                    store = store,
+                    supabase = client,
+                    remoteTableFor = { _, _ -> remoteTable },
+                    passEnded = { _, _ -> passes++ },
+                )
+            val own = async { replayer.sync() }
+            runCurrent()
+
+            // When — the app syncs while that pass has the first write on the wire, and the
+            // server then answers one write at a time
+            val app = async { replayer.syncWaitingOutOtherSenders() }
+            runCurrent()
+            val passesWhileHeld = passes
+            answers.forEach { answer ->
+                answer.complete(Unit)
+                runCurrent()
+            }
+
+            // Then — the library's pass sent all three; the app's call ran one pass that found
+            // the head in flight, waited the whole pass out, and ran one more: three passes in
+            // all, not one per write
+            assertEquals(3, own.await().syncedCount)
+            val report = app.await()
+            assertEquals(0 to 0, report.syncedCount to report.remainingCount)
+            assertEquals(null, report.stop)
+            assertEquals(1, passesWhileHeld)
+            assertEquals(3, passes)
+            assertEquals(3, remoteTable.recordedInsertBodies.size)
+            assertEquals(0, store.pendingMutationCount())
+        }
+
+    @Test
+    fun a_sync_behind_a_pass_whose_caller_was_canceled_waits_for_its_write_then_runs_once_more() =
+        runTest {
+            // Given — three queued INSERTs; a pass of the library's own has the first on the wire,
+            // held at the server, and the app's sync waits behind it
+            val dao = FakeMutationDao()
+            repeat(3) { index -> dao.insert(insertRow("""[{"n":"$index"}]""")) }
+            val store = buildStore(dao)
+            val client = testClient()
+            val answers = List(3) { CompletableDeferred<Unit>() }
+            var sends = 0
+            val remoteTable =
+                FakeRemoteTable(
+                    table = table,
+                    postgrest = client.postgrest,
+                    onInsert = {
+                        answers[sends++].await()
+                        postgrestResultOf("[]", client.postgrest)
+                    },
+                )
+            var passes = 0
+            val replayer =
+                newTestMutationQueueReplayer(
+                    store = store,
+                    supabase = client,
+                    remoteTableFor = { _, _ -> remoteTable },
+                    // A sync that ran pass after pass behind the held write would never suspend,
+                    // and the scheduler would never come back to the test: fail it instead
+                    passEnded = { _, _ ->
+                        passes++
+                        check(passes <= 4) { "the sync ran $passes passes behind one held write" }
+                    },
+                )
+            val own = async { replayer.sync() }
+            runCurrent()
+            val app = async { replayer.syncWaitingOutOtherSenders() }
+            runCurrent()
+
+            // When — the pass's caller gives up while the write is on the wire; the pass finishes
+            // that request, which the server then answers, and the two writes after it
+            own.cancel()
+            runCurrent()
+            val passesAfterTheCancel = passes
+            val waitingAfterTheCancel = !app.isCompleted
+            answers.forEach { answer ->
+                answer.complete(Unit)
+                runCurrent()
+            }
+
+            // Then — the app's call waited for the held write to land, then ran one more pass
+            // that sent the other two: one pass that found the head in flight and one after,
+            // however long the write was on the wire
+            assertTrue(own.isCancelled)
+            assertEquals(1, passesAfterTheCancel)
+            assertTrue(waitingAfterTheCancel)
+            val report = app.await()
+            assertEquals(2 to 0, report.syncedCount to report.remainingCount)
+            assertEquals(null, report.stop)
+            assertEquals(2, passes)
+            assertEquals(3, remoteTable.recordedInsertBodies.size)
+            assertEquals(0, store.pendingMutationCount())
+        }
+
+    @Test
+    fun a_sync_behind_a_pass_that_stops_early_waits_it_out_then_sends_what_it_left() = runTest {
+        // Given — three queued INSERTs; a pass of the library's own has the first on the wire,
+        // held at the server, which will answer the second with a 503
+        val dao = FakeMutationDao()
+        repeat(3) { index -> dao.insert(insertRow("""[{"n":"$index"}]""")) }
+        val store = buildStore(dao)
+        val client = testClient()
+        val unavailable = responseExceptionWithStatus(HttpStatusCode.ServiceUnavailable)
+        val held = CompletableDeferred<Unit>()
+        var sends = 0
+        val remoteTable =
+            FakeRemoteTable(
+                table = table,
+                postgrest = client.postgrest,
+                onInsert = {
+                    when (++sends) {
+                        1 -> held.await()
+                        2 -> throw unavailable
+                    }
+                    postgrestResultOf("[]", client.postgrest)
+                },
+            )
+        var passes = 0
+        val replayer =
+            newTestMutationQueueReplayer(
+                store = store,
+                supabase = client,
+                remoteTableFor = { _, _ -> remoteTable },
+                passEnded = { _, _ -> passes++ },
+            )
+        val own = async { replayer.sync() }
+        runCurrent()
+        val app = async { replayer.syncWaitingOutOtherSenders() }
+        runCurrent()
+
+        // When — the server answers the first write, refuses the second for the moment, and
+        // accepts what comes after
+        held.complete(Unit)
+        runCurrent()
+
+        // Then — the library's pass stopped at the 503 with two writes queued; the app's call
+        // waited it out, then ran one pass that sent them both: three passes in all
+        val ownReport = own.await()
+        assertEquals(1, ownReport.syncedCount)
+        assertIs<SyncStop.TransientFailure>(ownReport.stop)
+        val report = app.await()
+        assertEquals(2 to 0, report.syncedCount to report.remainingCount)
+        assertEquals(null, report.stop)
+        assertEquals(3, passes)
+        assertEquals(
+            listOf("""[{"n":"0"}]""", """[{"n":"1"}]""", """[{"n":"1"}]""", """[{"n":"2"}]"""),
+            remoteTable.recordedInsertBodies.map { it.toString() },
+        )
+        assertEquals(0, store.pendingMutationCount())
+    }
+
+    @Test
+    fun a_sync_that_meets_a_send_at_the_head_waits_for_that_send_then_sends_what_is_left() =
+        runTest {
+            // Given — two queued INSERTs; the first is being sent at the head of the queue, held
+            // at the server
+            val dao = FakeMutationDao()
+            val first = dao.insert(insertRow("""[{"n":"a"}]"""))
+            dao.insert(insertRow("""[{"n":"b"}]"""))
+            val store = buildStore(dao)
+            val client = testClient()
+            val remoteTable =
+                FakeRemoteTable(
+                    table = table,
+                    postgrest = client.postgrest,
+                    onInsert = { postgrestResultOf("[]", client.postgrest) },
+                )
+            val replayer = replayer(store, client, remoteTable)
+            val answered = CompletableDeferred<Unit>()
+            val head = async {
+                replayer.sendAtHead(
+                    mutationId = first,
+                    identity = QueueIdentity.Anonymous,
+                    send = {
+                        answered.await()
+                        postgrestResultOf("[]", client.postgrest)
+                    },
+                    onAccepted = {},
+                )
+            }
+            runCurrent()
+
+            // When — the app syncs while that send is on the wire, which then lands
+            val sync = async { replayer.syncWaitingOutOtherSenders() }
+            runCurrent()
+            val returnedWhileHeld = sync.isCompleted
+            answered.complete(Unit)
+            runCurrent()
+
+            // Then — the send landed; the sync waited for it, then sent the second write, once
+            assertIs<MutationQueueReplayer.HeadSendOutcome.Sent>(head.await())
+            assertFalse(returnedWhileHeld)
+            val report = sync.await()
+            assertEquals(1 to 0, report.syncedCount to report.remainingCount)
+            assertEquals(
+                listOf("""[{"n":"b"}]"""),
+                remoteTable.recordedInsertBodies.map { it.toString() },
+            )
+            assertEquals(0, store.pendingMutationCount())
+        }
 
     // ── Test helpers ──────────────────────────────────────────────────────────────
 

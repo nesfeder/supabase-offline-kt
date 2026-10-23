@@ -294,6 +294,11 @@ internal fun inListMembersOf(value: String): List<String>? =
  *   / `cd` / `ov`. The two wrappers are tokenized differently because supabase-kt encodes them
  *   differently — see [splitPostgrestListValue].
  *
+ * An `in` list keeps every element, an empty one included, as PostgREST's list parser does: `(,a)`
+ * and `("",a)` are the empty string and `a`. A list of exactly one empty element, `()` or `("")`,
+ * is the empty list, which PostgREST sends as `= ANY('{}')` and which matches no row. In an array
+ * literal or a bare list an empty element is dropped.
+ *
  * A wrapped-but-empty value (`()` / `{}`) returns an empty list — distinct from `null` — so replay
  * can reproduce the caller's original empty filter instead of dropping the condition and broadening
  * the mutation's target set. `null` means "unparseable"; callers skip the condition only in that
@@ -314,13 +319,23 @@ private fun parseArray(raw: String?): List<Any>? {
 
     // Comma-separated form, with or without the PostgREST list wrapper
     val unwrapped = trimmed.stripPostgrestListWrapper()
-    val elements = splitPostgrestListValue(trimmed).filter { it.isNotEmpty() }
+    val elements = splitPostgrestListValue(trimmed)
+    if (trimmed.hasEscapedListWrapper()) {
+        return if (elements == ONE_EMPTY_ELEMENT) emptyList() else elements
+    }
+    val kept = elements.filter { it.isNotEmpty() }
     return when {
-        elements.isNotEmpty() -> elements
+        kept.isNotEmpty() -> kept
         unwrapped != trimmed -> emptyList()
         else -> null
     }
 }
+
+/**
+ * The elements of `()` and `("")`, a list PostgREST reads as the empty list: its renderer sends a
+ * list of one empty element as `= ANY('{}')`.
+ */
+private val ONE_EMPTY_ELEMENT = listOf("")
 
 /** Decodes a JSON array of strings, or `null` when [raw] is not one. */
 private fun decodeJsonStringList(raw: String): List<String>? = runCatching {

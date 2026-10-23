@@ -105,4 +105,32 @@ class OfflineConfigMappingTest {
             Offline.createConfig { fileCacheSizeBytes = 1_024L }.fileCacheBoundOrNull(),
         )
     }
+
+    @Test
+    fun the_payload_text_kept_parsed_follows_the_cache_bound() {
+        // Then — a thirty-second of the bound, at least 1 MiB and at most 4 MiB; the most with no
+        // bound
+        assertEquals(
+            3_276_800L,
+            Offline.createConfig {}.toQueryCacheLimits().parsedPayloadCharsKept,
+        )
+        assertEquals(
+            1L shl 20,
+            Offline.createConfig { cacheSizeBytes = 8_192L }
+                .toQueryCacheLimits()
+                .parsedPayloadCharsKept,
+        )
+        assertEquals(
+            4L shl 20,
+            Offline.createConfig { cacheSizeBytes = 1L shl 30 }
+                .toQueryCacheLimits()
+                .parsedPayloadCharsKept,
+        )
+        assertEquals(
+            4L shl 20,
+            Offline.createConfig { cacheSizeBytes = CACHE_SIZE_UNLIMITED }
+                .toQueryCacheLimits()
+                .parsedPayloadCharsKept,
+        )
+    }
 }
