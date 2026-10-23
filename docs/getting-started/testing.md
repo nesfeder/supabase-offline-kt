@@ -49,7 +49,7 @@ constraint, and that works in one direction only:
 your app. What differs:
 
 - **Each client starts empty**, and a second client over the same configuration shares nothing with
-  the first.
+  the first, unless both are built over one `InMemoryStore` ([below](#simulate-a-relaunch)).
 - **No connectivity monitor.** `syncStatus.value.network` stays `UNKNOWN`, which counts as online,
   until the test sets `networkAvailability` or calls `disableNetwork()`.
 - **The clock** is the time the client records: when rows were fetched and writes queued, and so
@@ -92,36 +92,83 @@ From the samples: [OfflineTaskRepositoryTest.kt](https://github.com/nesfeder/sup
     --8<-- "ApiTourTests.swift:offline-test"
     ```
 
+## Simulate a relaunch
+
+Each in-memory client starts empty. To test what your app does after it is killed and relaunched
+(a write queued offline is sent, a rejected write is still listed, a cached list still shows),
+build both clients over one `InMemoryStore` with `inMemory(store = store)`. The second finds what
+the first left when it closed: the queued writes, which it replays, the rejected and conflicted
+lists, the cached queries and the cached files. Nothing a close does clears the store;
+`clearLocalData()` does. What the library keeps only while a client runs starts over, as after a
+real relaunch: the status's `lastSyncedAt` and `lastSyncError`, the `disableNetwork()` and
+`disableRealtime()` switches, and the waits between failed passes.
+
+One client holds a store at a time, as one holds a database: building a client over a store
+another holds, open or still closing, fails with an `IllegalStateException`, since both would
+replay the same queued writes. Close the first client before building the next. In this test from
+the testing artifact's own suite, `store` is an `InMemoryStore()` and `server.supabaseClient { … }`
+builds a client on the test's `MockEngine` with `install(Offline) { … }`:
+
+From the tests: [InMemoryStoreTest.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/supabase-offline-kt-testing/src/commonTest/kotlin/io/github/nesfeder/supabase/offline/testing/InMemoryStoreTest.kt)
+
+```kotlin
+--8<-- "InMemoryStoreTest.kt:relaunch"
+```
+
+The relaunched client replays the write by itself once it opens, with `autoSync` on. In Swift,
+`SupabaseOfflineClient.inMemory(…, store:)` takes the testing product's `InMemoryStore` the same
+way.
+
 ## Report Realtime changes
 
 A test of an app that names tables in `realtime { }` gives the in-memory client a `FakeRealtime`
 in place of a Realtime channel, so `install(Realtime)` is not needed. The client joins the fake's
 channel as it would Realtime's (signed in or without Auth, the network not known down, the
-subscription on), and `subscribedTables` says which tables it follows now; wait for a table there
-before reporting a change to it, since nothing is replayed. Each report reaches the cached queries
-as `applyServerRecord` and `applyServerDelete` apply a record; a report to a table nothing follows
-is dropped and counted in `droppedReportCount`. `failChannel(cause)` ends the channel as a server
-that refuses it would, and `dropChannel()` as a lost socket: `realtimeStatus` reads `Stalled`, and
-the client joins again after a short wait.
+subscription on). `subscribedTables` says which tables it follows as soon as it opens their
+channels, and `joinCount` moves once it has handled a join: it has reported `Subscribed` and asked
+for the joined tables' cached queries to be read again, since nothing is replayed. Wait for
+`joinCount` before reporting a change, or the join may be handled after it.
+
+Each report reaches the cached queries as `applyServerRecord` and `applyServerDelete` apply a
+record, as Realtime would send it. A report to a table nothing follows is dropped and counted in
+`droppedReportCount`, and so is an insert or an update whose record does not meet the table's
+`RealtimeFilter`, which the server evaluates before it sends: numbers are compared as numbers,
+other values as text, and a missing or `null` column meets no filter. A delete reaches the client
+whatever the filter, as Realtime sends a delete to every subscriber of the table.
+`failChannel(cause)` ends every table's channel as a server that refuses them would, and
+`dropChannel()` as a lost socket: `realtimeStatus` reads `Stalled`, and the client joins again
+after a short wait. `failTable(table, cause)` refuses one table alone, as a server refuses a
+binding: its entry in `realtimeTableStatus` reads `Stalled` while the other tables stay joined
+and keep receiving reports.
+
+The `MockEngine` plays the server, and the fake only the channel. The client reads the named tables
+from the engine on every join, and reads a query again after a change that met a read in flight or
+that it cannot apply to the query exactly. So the engine must answer with the rows as they are
+after each change the test reports, as a server would; an engine that still answers with the rows
+from before has those reads take the change back out of the cache.
 
 ```kotlin
+var tasks = JsonArray(emptyList()) // the server's rows: the engine answers every read with them
 val fakeRealtime = FakeRealtime()
 val supabase = createSupabaseClient(url, key) {
-    httpEngine = MockEngine { request -> … }
+    httpEngine = MockEngine { respond(tasks.toString(), headers = jsonHeaders) }
     install(Postgrest) { maxRetries = 0 }
     install(Offline) {
         inMemory(realtime = fakeRealtime)
         realtime { table("tasks") }
     }
 }
-fakeRealtime.subscribedTables.first { "tasks" in it }
-fakeRealtime.reportInsert("tasks", buildJsonObject { put("id", "t1"); put("title", "Milk") })
+fakeRealtime.joinCount.first { it > 0 }
+val milk = buildJsonObject { put("id", "t1"); put("title", "Milk") }
+tasks = JsonArray(tasks + milk) // the row is on the server, then its change is sent
+fakeRealtime.reportInsert("tasks", milk)
+tasks = JsonArray(emptyList())
 fakeRealtime.reportDelete("tasks", buildJsonObject { put("id", "t1") })
 ```
 
 In Swift, `SupabaseOfflineClient.inMemory(…, realtime:)` takes the testing product's `FakeRealtime`
-the same way, with `reportInsert(table:record:)` and the rest; the Swift API reference's Testing
-your app article has the listing.
+the same way, with `joinCount`, `reportInsert(table:record:)` and the rest; the Swift API
+reference's Testing your app article has the listing.
 
 ## Stage a conflict
 
@@ -190,10 +237,13 @@ From the samples: [LibraryMappingsTest.kt](https://github.com/nesfeder/supabase-
 | `pendingMutation`, `rejectedMutation`, `serverError` | The queue's values; an overload of `pendingMutation` takes `baseVersion` |
 | `mutationConflict`, `conflictedMutation` | What a resolver is shown, and an entry of the conflicted list |
 | `querySnapshot`, `stalledRefresh` | A live read's emission, and a stalled refresh |
+| `cachedResult` | A one-shot read's result as the cache answered it: `isFromCache`, `fetchedAt` and `hasPendingMutations` read as given |
 | `syncReport`, `syncStatus` | What a sync returns, and the status; overloads take the conflict counts, `conflicted` and `conflictedMutationCount` |
 | `cachedFile` | A Storage file in the cache |
-| `cacheMissException`, `mutationNotQueueableException`, `networkDisabledException`, `syncFailedException` | The exceptions; `syncFailedException(isConnectivityFailure = true)` is one `isNetworkOrConnectivityFailure()` accepts |
+| `cacheMissException`, `mutationNotQueueableException`, `networkDisabledException`, `offlineClientClosedException`, `syncFailedException` | The exceptions; `syncFailedException(isConnectivityFailure = true)` is one `isNetworkOrConnectivityFailure()` accepts |
 
 Every field is a parameter, and the ones a test rarely sets have defaults. The factories that take
 a `PostgrestResult` need one built over a client with an engine, since supabase-kt's `Postgrest`
-needs one: `PostgrestResult(data, Headers.Empty, supabase.postgrest)`.
+needs one: `PostgrestResult(data, Headers.Empty, supabase.postgrest)`, which reads as a result
+supabase-kt returned itself, or `cachedResult(data, supabase, fetchedAt)`, which reads as the
+cache's.

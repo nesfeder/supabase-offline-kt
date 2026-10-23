@@ -11,7 +11,10 @@ import kotlinx.serialization.json.JsonObject
 /**
  * The server's row changes an app's test reports to an in-memory client, in place of a Realtime
  * channel; hand one to [BridgeTesting.openInMemory]. The client joins a channel here as it would
- * Realtime's, and the fake answers each join at once. Records cross as JSON text.
+ * Realtime's, and the fake answers each join at once. A report reaches the client as Realtime would
+ * send it: an insert or an update whose record does not meet the table's filter is dropped, and a
+ * delete is not. The test's fake server plays the server, and must answer with the rows as they are
+ * after each change reported. Records cross as JSON text.
  */
 public class BridgeFakeRealtime {
 
@@ -25,7 +28,17 @@ public class BridgeFakeRealtime {
     public val subscribedTables: Set<String>
         get() = fake.subscribedTables.value
 
-    /** How many reports found no joined channel following their table and were dropped. */
+    /**
+     * How many joins the client has handled: it has reported the channel subscribed and asked for
+     * the named tables to be read again. A test waits for it to move before reporting a change.
+     */
+    public val joinCount: Int
+        get() = fake.joinCount.value
+
+    /**
+     * How many reports were dropped: those that found no joined channel following their table, and
+     * the inserts and updates whose record does not meet the table's filter.
+     */
     public val droppedReportCount: Int
         get() = fake.droppedReportCount
 
@@ -60,16 +73,29 @@ public class BridgeFakeRealtime {
         reporting(oldRecord) { row -> fake.reportDelete(table, row, schema) }
 
     /**
-     * Ends the joined channel as a server that refuses the join or closes the channel: the client
-     * reports the channel stalled, with [message], and joins again after a short wait.
+     * Ends every joined channel as a server that refuses the joins or closes the channels: the
+     * client reports the channels stalled, with [message], and joins each again after a short wait.
      */
     public fun failChannel(message: String) {
         fake.failChannel(IllegalStateException(message))
     }
 
-    /** Ends the joined channel as a lost socket: the client joins again after a short wait. */
+    /**
+     * Ends every joined channel as a lost socket: the client joins each again after a short wait.
+     */
     public fun dropChannel() {
         fake.dropChannel()
+    }
+
+    /**
+     * Ends the channel of [table] alone as a server that refuses that table's binding: the client
+     * reports that table stalled, with [message], keeps the other tables joined, and joins [table]
+     * again after a short wait.
+     *
+     * @param schema the table's schema, or `null` for the client's default schema.
+     */
+    public fun failTable(table: String, message: String, schema: String?) {
+        fake.failTable(table, IllegalStateException(message), schema)
     }
 
     private inline fun reporting(text: String, report: (JsonObject) -> Unit): BridgeError? =
@@ -80,6 +106,6 @@ public class BridgeFakeRealtime {
             report(row)
             null
         } catch (failure: Throwable) {
-            bridgeErrorOf(failure, clientClosing = false)
+            bridgeErrorOf(failure)
         }
 }

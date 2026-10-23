@@ -84,6 +84,7 @@ your test scripts: see <doc:TestingYourApp>.
 - ``RejectedMutation``
 - ``RejectedMutationSequence``
 - ``SyncReport``
+- ``SyncStopReason``
 
 ### Conflicts
 
@@ -101,6 +102,7 @@ your test scripts: see <doc:TestingYourApp>.
 ### Realtime
 
 - ``RealtimeStatusSequence``
+- ``RealtimeTableStatusSequence``
 - ``RealtimeStatus``
 
 ### Errors

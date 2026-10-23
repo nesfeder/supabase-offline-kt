@@ -9,6 +9,8 @@ import io.github.jan.supabase.postgrest.Postgrest
 import io.github.jan.supabase.postgrest.query.filter.FilterOperator
 import io.github.jan.supabase.realtime.Realtime
 import io.github.jan.supabase.realtime.RealtimeMessage
+import io.github.jan.supabase.realtime.channel
+import io.github.jan.supabase.realtime.realtime
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingLogSink
 import io.github.nesfeder.supabase.offline.testdoubles.ScriptedRealtimeWebsocket
 import io.github.nesfeder.supabase.offline.testdoubles.ScriptedRealtimeWebsocketFactory
@@ -17,6 +19,7 @@ import kotlin.io.encoding.Base64
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 import kotlin.time.Clock
@@ -24,7 +27,9 @@ import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.ClosedReceiveChannelException
@@ -54,6 +59,10 @@ import kotlinx.serialization.json.putJsonObject
  * names each table with its schema and filter, a subscribed channel reports joined and then each
  * change as sent, a burst of changes reaches a slow collector whole and in order, a refused join
  * ends the feed, a close from the server ends it too, and a canceled collector leaves the channel.
+ * With a channel per table on one socket, a refused channel is left on the server while another
+ * table's keeps receiving, supabase-kt's read loop that its own rejoin stopped is freed by closing
+ * a socket that holds only this library's channels and never one that holds an app's, and a channel
+ * left while joining is left on the server.
  */
 class SupabaseRealtimeFeedTest {
 
@@ -237,6 +246,146 @@ class SupabaseRealtimeFeedTest {
         }
 
     @Test
+    fun a_refused_channel_is_left_and_another_tables_channel_keeps_receiving() =
+        runTest(timeout = 2.minutes) {
+            withContext(Dispatchers.Default) {
+                // Given — a Realtime plugin that gives up on a channel after one refusal, and two
+                // tables followed, each on a channel of its own, both joined
+                val ownSockets = ScriptedRealtimeWebsocketFactory()
+                val own = newTestSupabaseClient {
+                    install(Postgrest)
+                    install(Realtime) {
+                        websocketFactory = ownSockets
+                        heartbeatInterval = 1.hours
+                        reconnectDelay = 1.hours
+                        maxAttempts = 1
+                    }
+                }
+                val ownFeed = SupabaseRealtimeFeed(own, logs.asEngineLogger())
+                val two = followTwoTables(ownFeed, ownSockets)
+
+                // When — the server refuses the tasks binding
+                two.socket.answer(bindingRefused(two.tasksJoin.topic))
+
+                // Then — the tasks feed ends, and its channel is left on the server, which would
+                // otherwise keep it and keep trying its binding
+                val ended = withTimeout(10.seconds) { two.tasksOutcome.receive() }
+                assertTrue(ended.exceptionOrNull() is ServerChangeFeedEndedException, "$ended")
+                assertEquals(two.tasksJoin.topic, two.socket.awaitSent("phx_leave").topic)
+
+                // And — the audit channel keeps receiving on the socket, which stays open
+                two.socket.answer(
+                    change(
+                        two.auditJoin.topic,
+                        ids = listOf(1),
+                        data = insert(buildJsonObject { put("id", "a1") }),
+                    )
+                )
+                assertEquals(
+                    ServerChangeEvent.Saved("audit", "public", buildJsonObject { put("id", "a1") }),
+                    two.auditEvents.receiveWithin(),
+                )
+                assertFalse(two.socket.disconnected.isCompleted)
+                two.auditFollow.cancelAndJoin()
+                own.close()
+            }
+            supabase.close()
+        }
+
+    @Test
+    fun a_rejoin_that_stops_the_read_loop_closes_a_socket_that_holds_only_the_librarys_channels() =
+        runTest(timeout = 2.minutes) {
+            withContext(Dispatchers.Default) {
+                // Given — two tables followed, each on a channel of its own, both joined, with
+                // supabase-kt's rejoin after a refusal on, and a heartbeat that never gives up
+                val two = followTwoTables(feed, sockets)
+
+                // When — the server refuses the tasks binding
+                two.socket.answer(bindingRefused(two.tasksJoin.topic))
+
+                // Then — supabase-kt's rejoin leaves the channel from inside the read loop, which
+                // then waits for a reply only it could read; the socket is closed, which frees it
+                assertEquals(two.tasksJoin.topic, two.socket.awaitSent("phx_leave").topic)
+                two.socket.awaitDisconnected()
+                val tasksEnded = withTimeout(10.seconds) { two.tasksOutcome.receive() }
+                assertTrue(tasksEnded.exceptionOrNull() is ServerChangeFeedEndedException)
+
+                // And — the audit feed ends with the socket, for the follower to join it again
+                val auditEnded = withTimeout(10.seconds) { two.auditOutcome.receive() }
+                assertTrue(auditEnded.exceptionOrNull() is ServerChangeFeedEndedException)
+            }
+            supabase.close()
+        }
+
+    @Test
+    fun a_leave_never_closes_a_socket_that_holds_an_apps_own_channel() =
+        runTest(timeout = 2.minutes) {
+            withContext(Dispatchers.Default) {
+                // Given — an app's own channel on the socket beside the library's, joined
+                val appChannel = supabase.channel("app-presence")
+                val events = Channel<ServerChangeEvent>(Channel.UNLIMITED)
+                val outcome = Channel<Result<Unit>>(Channel.UNLIMITED)
+                launch {
+                    outcome.send(
+                        runCatching {
+                            feed.follow(listOf(WatchedTable("tasks")), "public").collect {
+                                events.send(it)
+                            }
+                        }
+                    )
+                }
+                val socket = sockets.awaitSocket(0)
+                val join = socket.awaitSent("phx_join")
+                socket.answer(joinTaken(join, join.bindings()))
+                assertEquals(ServerChangeEvent.Joined, events.receiveWithin())
+
+                // When — the server refuses the binding, and supabase-kt's rejoin stops the loop
+                socket.answer(bindingRefused(join.topic))
+
+                // Then — the feed ends, and the socket stays open: closing it would end the app's
+                // channel for good
+                val ended = withTimeout(10.seconds) { outcome.receive() }
+                assertTrue(ended.exceptionOrNull() is ServerChangeFeedEndedException, "$ended")
+                assertFalse(socket.disconnected.isCompleted)
+                assertTrue(supabase.realtime.subscriptions.containsKey(appChannel.topic))
+            }
+            supabase.close()
+        }
+
+    @Test
+    fun a_channel_left_while_joining_is_left_on_the_server() =
+        runTest(timeout = 2.minutes) {
+            withContext(Dispatchers.Default) {
+                // Given — the audit channel joined, which keeps the socket open, and the tasks
+                // channel's join not answered yet
+                val auditEvents = Channel<ServerChangeEvent>(Channel.UNLIMITED)
+                val auditFollow = launch {
+                    feed.follow(listOf(WatchedTable("audit")), "public").collect {
+                        auditEvents.send(it)
+                    }
+                }
+                val socket = sockets.awaitSocket(0)
+                val auditJoin = socket.awaitSent("phx_join")
+                socket.answer(joinTaken(auditJoin, auditJoin.bindings()))
+                assertEquals(ServerChangeEvent.Joined, auditEvents.receiveWithin())
+                val tasksFollow = launch {
+                    feed.follow(listOf(WatchedTable("tasks")), "public").collect {}
+                }
+                val tasksJoin = socket.awaitSent("phx_join")
+
+                // When — the tasks follow is canceled before the server answers
+                tasksFollow.cancelAndJoin()
+
+                // Then — a leave goes out for it, so the server does not keep a channel nobody
+                // reads
+                assertEquals(tasksJoin.topic, socket.awaitSent("phx_leave").topic)
+                assertFalse(socket.disconnected.isCompleted)
+                auditFollow.cancelAndJoin()
+            }
+            supabase.close()
+        }
+
+    @Test
     fun a_refused_join_ends_the_feed() =
         runTest(timeout = 2.minutes) {
             withContext(Dispatchers.Default) {
@@ -399,6 +548,87 @@ class SupabaseRealtimeFeedTest {
             }
             supabase.close()
         }
+
+    /** Two tables followed through [feed], each on a channel of its own, both joined. */
+    private class TwoTables(
+        val socket: ScriptedRealtimeWebsocket,
+        val tasksJoin: RealtimeMessage,
+        val auditJoin: RealtimeMessage,
+        val tasksOutcome: Channel<Result<Unit>>,
+        val auditOutcome: Channel<Result<Unit>>,
+        val auditEvents: Channel<ServerChangeEvent>,
+        val auditFollow: Job,
+    )
+
+    /**
+     * Follows `tasks` and `audit` through [feed], one follow each, as the follower does, and joins
+     * both on the socket [factory] opens.
+     */
+    private suspend fun CoroutineScope.followTwoTables(
+        feed: SupabaseRealtimeFeed,
+        factory: ScriptedRealtimeWebsocketFactory,
+    ): TwoTables {
+        val tasksEvents = Channel<ServerChangeEvent>(Channel.UNLIMITED)
+        val auditEvents = Channel<ServerChangeEvent>(Channel.UNLIMITED)
+        val tasksOutcome = Channel<Result<Unit>>(Channel.UNLIMITED)
+        val auditOutcome = Channel<Result<Unit>>(Channel.UNLIMITED)
+        launch {
+            tasksOutcome.send(
+                runCatching {
+                    feed.follow(listOf(WatchedTable("tasks")), "public").collect {
+                        tasksEvents.send(it)
+                    }
+                }
+            )
+        }
+        val auditFollow = launch {
+            auditOutcome.send(
+                runCatching {
+                    feed.follow(listOf(WatchedTable("audit")), "public").collect {
+                        auditEvents.send(it)
+                    }
+                }
+            )
+        }
+        val socket = factory.awaitSocket(0)
+        val joins = listOf(socket.awaitSent("phx_join"), socket.awaitSent("phx_join"))
+        for (join in joins) socket.answer(joinTaken(join, join.bindings()))
+        assertEquals(ServerChangeEvent.Joined, tasksEvents.receiveWithin())
+        assertEquals(ServerChangeEvent.Joined, auditEvents.receiveWithin())
+        return TwoTables(
+            socket = socket,
+            tasksJoin = joins.single { join -> join.boundTable() == "tasks" },
+            auditJoin = joins.single { join -> join.boundTable() == "audit" },
+            tasksOutcome = tasksOutcome,
+            auditOutcome = auditOutcome,
+            auditEvents = auditEvents,
+            auditFollow = auditFollow,
+        )
+    }
+
+    /** The `postgres_changes` bindings a join carries. */
+    private fun RealtimeMessage.bindings(): List<JsonElement> =
+        assertNotNull(payload["config"]?.jsonObject?.get("postgres_changes")?.jsonArray)
+
+    /** The table of a join's one binding. */
+    private fun RealtimeMessage.boundTable(): String? =
+        bindings().single().jsonObject["table"]?.jsonPrimitive?.contentOrNull
+
+    /**
+     * The server's word that a channel's binding is refused, as it sends one after the join reply:
+     * a system message with an error status, which names no binding supabase-kt reads.
+     */
+    private fun bindingRefused(topic: String): RealtimeMessage =
+        RealtimeMessage(
+            topic,
+            "system",
+            buildJsonObject {
+                put("status", "error")
+                put("extension", "postgres_changes")
+                put("message", "Unable to subscribe to changes with given parameters")
+            },
+            null,
+        )
 
     /** A JWT whose payload carries [expiresAtSeconds] as `exp`. */
     private fun jwt(expiresAtSeconds: Long): String {

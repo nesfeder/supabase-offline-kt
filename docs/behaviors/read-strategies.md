@@ -84,8 +84,19 @@ returned itself reads `false`, `null` and `false`, and a read the cache never ho
 
 ## Edge cases
 
-**One row offline.** `single()` is never cached. Read the list and pick the row out on the device,
-as the [sample app](../samples/android.md)'s task detail does:
+**One row offline.** `single()` asks for the rows the list read of the same query does, as one
+object, so it is cached as that list, one row long: a `single()` and the list read with the same
+filters, columns, order and range share one cached payload, and either one fills it. Online,
+`single()` returns the server's object as it came. Offline, or when the network fails, under
+`NetworkFirst`, `CacheFirst` and `CacheOnly`, the cached list answers it when it holds exactly one
+row, with the user's queued writes laid over it, as one object marked as from the cache;
+`CacheFirst` answers from it first, without a request. No row or several answer nothing: the read
+fails as it would with nothing cached, and `CacheOnly` throws `CacheMissException`.
+`maybeSingle()` (supabase-kt 3.8) asks the server the same way and is cached and answered the same
+way, but offline it cannot answer no row with `null`: nothing in its request tells it from
+`single()`, and its blank answer online stands for no row and for several, so it is not stored. A
+row never read with its own query is not answered from another cached list. Read the list and pick
+the row out on the device, as the [sample app](../samples/android.md)'s task detail does:
 
 From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/OfflineTaskRepository.kt) · [TaskDetailModel.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Detail/TaskDetailModel.swift)
 
@@ -131,11 +142,12 @@ From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabas
   refresh again, every ten seconds by default), supabase-kt sends requests on the anon key, which
   row-level security can answer with fewer rows, or none, so nothing such a request returns is
   cached. A read the cache can answer for the stored user sends nothing. A list read that needs
-  the server waits for the session to settle, a few seconds at most, and asks again; a read of a
-  shape the cache cannot hold (`single()`, a `count`, …) waits the same way before it is sent. If
-  the session never settles, a `NetworkFirst` read with the query cached, or a `CacheFirst` read of
-  a list marked stale, serves the cached rows, with a warning; with nothing cached, or under
-  `NetworkOnly`, the read returns the anon key's answer uncached, with a warning.
+  the server waits for the session to settle, a few seconds at most, and asks again; `single()`
+  and a read of a shape the cache cannot hold (a `count`, `head`, …) wait the same way before they
+  are sent, once. If the session never settles, a `NetworkFirst` read with the query cached, or a
+  `CacheFirst` read of a list marked stale, serves the cached rows, or the one cached row a
+  `single()` asks for, with a warning; with nothing cached, or under `NetworkOnly`, the read
+  returns the anon key's answer uncached, with a warning.
 - **An expired session offline.** A `NetworkFirst` read throws supabase-kt's
   `TokenExpiredException`, since supabase-kt cannot refresh the token, instead of serving the
   cache; `CacheFirst` and `CacheOnly` reads the cache can answer send nothing and are served.
@@ -182,15 +194,17 @@ response, laid over what a read returns.
 | **Session restoring** | Sends, then waits for the session (300, 900 and 2,400 ms, woken early when it settles) and asks again. Settled as the stored user: the user's answer, cached. Settled signed out: the anonymous answer; the rows cached for the last user are dropped and never served. Never settles: the last answer, uncached. | As `NetworkOnly`; never settles with the query cached within `maxAge`: the cached payload with the overlay, marked stale or not. | A payload of the stored user's within `maxAge`, not marked stale: that payload, no request. Otherwise as `NetworkOnly`; never settles with a payload marked stale within `maxAge`: that payload with the overlay. | The cached payload, no request. |
 | **Session refresh failed** | As **Session restoring**, the wait woken early when the refresh lands. | As **Session restoring**. | As **Session restoring**. | The cached payload, no request. |
 
-**A read of another shape.** `single()`, `maybeSingle()` (supabase-kt 3.8), `head`, a `count`
-(with rows or without), `csv()`, `geojson()`, `stripNulls()` and `explain()` do not return a plain
+**A read of another shape.** `head`, a `count` (with rows or without), `csv()`, `geojson()`,
+`stripNulls()` and `explain()`, `single()` with `stripNulls()` among them, do not return a plain
 list, so their answer is neither stored nor overlaid. Under every strategy but `CacheOnly` such a
 read goes to the network, and offline throws as `NetworkOnly` does; under `CacheOnly` it sends
 nothing and throws `CacheMissException`. While the session restores, or after its refresh failed,
 it waits for the session as a list read does (300, 900 and 2,400 ms, woken early when the session
-settles), then is sent once, settled or not: on supabase-kt 3.8, `maybeSingle()` with no row then
-returns supabase-kt's empty result. The shape is read from the request supabase-kt builds, before
-anything is sent; a read whose request cannot be built (no token to be had) fails as sending it
-would, and is never answered from the list.
+settles), then is sent once, settled or not. `single()` and `maybeSingle()` (supabase-kt 3.8) wait
+the same way and are cached as their list, one row long (see **One row offline** above); on
+supabase-kt 3.8, `maybeSingle()` with no row returns supabase-kt's empty result, which is not
+stored. The shape is read from the request supabase-kt builds, before anything is sent; a read
+whose request cannot be built (no token to be had) fails as sending it would, and is never
+answered from the list.
 
 **The request lambda and schemas.**

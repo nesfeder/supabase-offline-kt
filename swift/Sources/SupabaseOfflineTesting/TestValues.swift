@@ -117,7 +117,9 @@ public func serverError(
     OfflineError.ServerError(status: status, code: code, message: message, details: details, hint: hint)
 }
 
-/// What a call of `SupabaseOfflineClient.syncPendingMutations(table:)` did.
+/// What a call of `SupabaseOfflineClient.syncPendingMutations(table:)` did. Its `stopReason` is the
+/// one the client gives such a report: held behind other tables when `heldBehindOtherTablesCount` is
+/// more than zero, else completed.
 ///
 /// - Parameters:
 ///   - syncedCount: The writes sent and accepted.
@@ -143,7 +145,8 @@ public func syncReport(
 }
 
 /// What a call of `SupabaseOfflineClient.syncPendingMutations(table:)` did, with the conflicts it
-/// settled, dropped and parked.
+/// settled, dropped and parked. Its `stopReason` is the one the client gives such a report: held
+/// behind other tables when `heldBehindOtherTablesCount` is more than zero, else completed.
 ///
 /// - Parameters:
 ///   - syncedCount: The writes sent and accepted.
@@ -176,6 +179,59 @@ public func syncReport(
         conflictsKeptServerCount: conflictsKeptServerCount,
         conflicted: conflicted
     )
+}
+
+/// What a call of `SupabaseOfflineClient.syncPendingMutations(table:)` did, and why it returned when
+/// it did; every field but `stopReason`, which selects this overload, defaults to the value of a call
+/// that sent nothing.
+///
+/// - Parameters:
+///   - syncedCount: The writes sent and accepted.
+///   - rejected: The writes refused for good.
+///   - remainingCount: The writes still queued.
+///   - alreadyOnServerCount: Of `syncedCount`, the inserts whose rows the server already held.
+///   - heldBehindOtherTablesCount: Of `remainingCount`, the writes a sync of one table held back
+///     behind an earlier write to another table.
+///   - conflictsResolvedCount: Of `syncedCount`, the guarded writes sent once their conflict was
+///     settled.
+///   - conflictsKeptServerCount: The guarded writes dropped because the server's row stands.
+///   - conflicted: The guarded writes parked on the conflicted list.
+///   - stopReason: Why the call returned when it did; build one with
+///     ``syncStopReason(kind:error:)``.
+public func syncReport(
+    syncedCount: Int = 0,
+    rejected: [RejectedMutation] = [],
+    remainingCount: Int = 0,
+    alreadyOnServerCount: Int = 0,
+    heldBehindOtherTablesCount: Int = 0,
+    conflictsResolvedCount: Int = 0,
+    conflictsKeptServerCount: Int = 0,
+    conflicted: [ConflictedMutation] = [],
+    stopReason: SyncStopReason
+) -> SyncReport {
+    SyncReport(
+        syncedCount: syncedCount,
+        rejected: rejected,
+        remainingCount: remainingCount,
+        alreadyOnServerCount: alreadyOnServerCount,
+        heldBehindOtherTablesCount: heldBehindOtherTablesCount,
+        conflictsResolvedCount: conflictsResolvedCount,
+        conflictsKeptServerCount: conflictsKeptServerCount,
+        conflicted: conflicted,
+        stopReason: stopReason
+    )
+}
+
+/// Why a call of `SupabaseOfflineClient.syncPendingMutations(table:)` returned when it did, as
+/// `SyncReport.stopReason` holds it.
+///
+/// - Parameters:
+///   - kind: The reason, such as `SyncStopReason.Kind.networkUnavailable`.
+///   - error: For `SyncStopReason.Kind.serverFailure` and `SyncStopReason.Kind.localFailure`, the
+///     failure, as ``syncFailedError(message:httpStatus:code:isConnectivityFailure:)`` builds it;
+///     `nil` for every other kind.
+public func syncStopReason(kind: SyncStopReason.Kind, error: OfflineError? = nil) -> SyncStopReason {
+    SyncStopReason(kind: kind, error: error)
 }
 
 /// Where the client stands with the queue and the network, as `SupabaseOfflineClient.syncStatus`
@@ -383,6 +439,33 @@ public func offlineResponse<Value: Sendable>(
         data: data,
         count: count,
         isFromCache: isFromCache,
+        fetchedAt: fetchedAt,
+        hasPendingMutations: hasPendingMutations
+    )
+}
+
+/// The answer to a one-shot read the cache answered, as a fake of the app's own repository returns
+/// one: `isFromCache` reads `true`, `fetchedAt` the time given, and `hasPendingMutations` the flag
+/// given.
+///
+/// - Parameters:
+///   - value: The decoded rows.
+///   - data: The body as the cache holds it; by default, empty.
+///   - count: The total a count asked for.
+///   - fetchedAt: When the rows were fetched from the server.
+///   - hasPendingMutations: Whether a queued write changed one of the rows.
+public func cachedResponse<Value: Sendable>(
+    value: Value,
+    data: Data = Data(),
+    count: Int? = nil,
+    fetchedAt: Date,
+    hasPendingMutations: Bool = false
+) -> OfflineResponse<Value> {
+    offlineResponse(
+        value: value,
+        data: data,
+        count: count,
+        isFromCache: true,
         fetchedAt: fetchedAt,
         hasPendingMutations: hasPendingMutations
     )

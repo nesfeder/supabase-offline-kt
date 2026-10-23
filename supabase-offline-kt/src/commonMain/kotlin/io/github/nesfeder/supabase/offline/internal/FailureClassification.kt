@@ -36,6 +36,48 @@ internal fun Throwable.httpStatusOrNull(): Int? {
     return null
 }
 
+/** The PostgREST error code carried by this throwable or a cause, or `null`. */
+internal fun Throwable.postgrestCodeOrNull(): String? {
+    var current: Throwable? = this
+    while (current != null) {
+        if (current is PostgrestRestException) return current.code
+        current = current.cause
+    }
+    return null
+}
+
+/**
+ * Statuses that say a request did not finish, so the same request may pass when sent again: the
+ * server stopped waiting for it (`408`), asked the client to slow down (`429`), or PostgREST, or a
+ * gateway in front of it, got no usable answer from what serves the request (`502`, `503`, `504`,
+ * and Cloudflare's `520`, `522`, `524`). A replay never rejects a write on one, and a write sent at
+ * once stays queued on one.
+ */
+internal val MAY_PASS_LATER_STATUSES: Set<Int> = setOf(408, 429, 502, 503, 504, 520, 522, 524)
+
+/**
+ * PostgREST's codes for an access token it refused before running anything: one it could not decode
+ * or verify (`PGRST301`), or one whose claims it rejected, an expiry already past by the server's
+ * clock among them (`PGRST303`). supabase-kt refreshes by the device's clock, so a device whose
+ * clock runs behind the server's sends a token the server holds expired; a later send carries a
+ * refreshed one.
+ */
+internal val REFUSED_TOKEN_CODES: Set<String> = setOf("PGRST301", "PGRST303")
+
+/**
+ * Whether this failure is an answer after which the same write may pass when sent again: a status
+ * in [MAY_PASS_LATER_STATUSES], or a `401` whose PostgREST code is in [REFUSED_TOKEN_CODES]. A
+ * replay keeps a write queued on each of them, since [isPermanentMutationFailure] is `false` for
+ * each; a write sent at once stays queued on one instead of being thrown.
+ */
+internal fun Throwable.mayPassWhenSentAgain(): Boolean {
+    val status = httpStatusOrNull() ?: return false
+    if (status in MAY_PASS_LATER_STATUSES) return true
+    return status == HTTP_UNAUTHORIZED && postgrestCodeOrNull() in REFUSED_TOKEN_CODES
+}
+
+private const val HTTP_UNAUTHORIZED = 401
+
 /**
  * Returns `true` if this throwable's status marks a **permanent** mutation failure – i.e. one that
  * will not succeed when retried. The replayer asks only after ruling out PostgREST's schema-cache
@@ -59,12 +101,11 @@ internal fun Int.isPermanentMutationFailureStatus(): Boolean {
     // supabase-kt's auto-refresh completes. Dropping the mutation here would silently lose the
     // user's queued write; instead we keep it and let a later sync retry once the refreshed token
     // is in place.
-    if (status == 401) return false
+    if (status == HTTP_UNAUTHORIZED) return false
 
-    // Transient-ish client codes we don't want to auto-drop:
-    // 408: Request Timeout
-    // 429: Too Many Requests (rate limit)
-    if (status == 408 || status == 429) return false
+    // An answer that says the request did not finish (a 408 or a 429 among the 4xx) may pass later:
+    // the same list keeps a write sent at once queued, so the two paths cannot disagree on one
+    if (status in MAY_PASS_LATER_STATUSES) return false
 
     // Treat all other 4xx (403 / 404 / 409 / 422, …) as permanent: the request itself is "bad"
     // and will not start succeeding just by retrying. A schema-cache miss is decided before this

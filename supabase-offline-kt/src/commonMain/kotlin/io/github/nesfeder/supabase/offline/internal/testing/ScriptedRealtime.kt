@@ -11,8 +11,10 @@ import io.github.nesfeder.supabase.offline.internal.realtime.ServerChangeEvent
 import io.github.nesfeder.supabase.offline.internal.realtime.ServerChangeFeed
 import io.github.nesfeder.supabase.offline.internal.realtime.toRealtimeTable
 import kotlin.concurrent.atomics.AtomicInt
+import kotlin.concurrent.atomics.AtomicReference
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.concurrent.atomics.incrementAndFetch
+import kotlin.concurrent.atomics.update
 import kotlin.experimental.ExperimentalObjCRefinement
 import kotlin.native.HiddenFromObjC
 import kotlinx.coroutines.CompletableDeferred
@@ -47,6 +49,9 @@ internal constructor(
     private val dropped = AtomicInt(0)
 
     private val left = CompletableDeferred<Unit>()
+
+    /** What [onJoinHandled] asked to run after each join the client handled. */
+    private val joinHandledActions = AtomicReference<List<() -> Unit>>(emptyList())
 
     /** How many reported events were dropped because the channel's capacity was full. */
     internal val droppedCount: Int
@@ -90,10 +95,23 @@ internal constructor(
         left.invokeOnCompletion { action() }
     }
 
+    /**
+     * Runs [action] after each [join] the client has handled: it has reported the channel
+     * subscribed, marked the named tables' cached queries stale and asked their live readers to
+     * fetch again, though those fetches may still be in flight. Register it before joining.
+     */
+    public fun onJoinHandled(action: () -> Unit) {
+        joinHandledActions.update { actions -> actions + action }
+    }
+
     /** Hands every reported event to [collector] until the channel ends or the client leaves. */
     internal suspend fun emitInto(collector: FlowCollector<ServerChangeEvent>) {
         try {
-            for (event in events) collector.emit(event)
+            for (event in events) {
+                // The client handles a join inside the emit: it returns once the join is handled
+                collector.emit(event)
+                if (event == ServerChangeEvent.Joined) joinHandledActions.load().forEach { it() }
+            }
         } finally {
             left.complete(Unit)
         }

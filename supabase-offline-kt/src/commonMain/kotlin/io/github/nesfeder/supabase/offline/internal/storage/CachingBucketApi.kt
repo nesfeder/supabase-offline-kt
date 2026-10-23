@@ -181,9 +181,9 @@ internal class CachingBucketApi(
             // looks at the cache first, so a call that missed just before a commit downloads
             // nothing.
             val shared =
-                cache.downloadsInFlight.joinOrStart(entry.key, backgroundScope) {
+                cache.downloadsInFlight.joinOrStart(entry.key, backgroundScope) { ensureWanted ->
                     if (cache.useCachedCopy(entry) != null) CommitOutcome.COMMITTED
-                    else downloadIntoCache(entry, path, isPublic)
+                    else downloadIntoCache(entry, path, isPublic, ensureWanted)
                 }
             val outcome =
                 when (shared) {
@@ -231,12 +231,16 @@ internal class CachingBucketApi(
      * [ensureCachedFile] of [path] shares. A request that fetched only part of the object, by a
      * header set on this bucket, is refused: the fragment cannot be the cached copy.
      *
+     * @param ensureWanted throws a cancellation when every caller waiting for this download has
+     *   been canceled; called just before the commit, so a download they all gave up leaves no
+     *   file.
      * @return what the commit said.
      */
     private suspend fun downloadIntoCache(
         entry: FileCacheEntry,
         path: String,
         isPublic: Boolean,
+        ensureWanted: () -> Unit,
     ): CommitOutcome {
         val sentUnsettled = isSessionUnsettled()
         val file = OwnedTemporaryFile()
@@ -280,6 +284,10 @@ internal class CachingBucketApi(
                         "which cannot be the cached copy"
                 )
             }
+            // The download runs in the client's scope, so a caller's cancellation reaches it only
+            // once that caller runs again to leave it, which may be after this point: the file
+            // goes, rather than become a copy no caller waits for any more
+            ensureWanted()
             val outcome = cache.commit(written.temporary, start)
             if (outcome == CommitOutcome.COMMITTED) file.temporary = null
             return outcome

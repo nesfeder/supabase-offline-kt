@@ -5,6 +5,8 @@ package io.github.nesfeder.supabase.offline.internal.postgrest
 import io.github.jan.supabase.SupabaseClient
 import io.github.jan.supabase.auth.Auth
 import io.github.jan.supabase.auth.status.SessionStatus
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.AccessTokenIdentity
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentity
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.isSettledSessionStatus
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -33,13 +35,16 @@ import kotlinx.coroutines.flow.merge
  * - **Auth session settled** — the session status becoming one [trustPolicy] trusts: signed in or
  *   signed out, or only signed in under [ResponseTrustPolicy.AUTHENTICATED_SESSION_ONLY]. Covers
  *   the cold-start race where session restore takes longer than the fast ladder, plus recovery from
- *   a failed token refresh. Empty when the Auth plugin is not installed.
+ *   a failed token refresh. Empty when the Auth plugin is not installed, unless the identity is
+ *   told from the access token: then the token naming an identity a read trusts.
  * - **Connectivity regained** — [reconnections]: the network becoming reachable again, as the
  *   connectivity monitor or the app's own signal says, or the app turning network access back on.
  *
  * @param supabase The underlying online client whose auth session status is observed.
  * @param reconnections One [Unit] each time the network becomes reachable again.
  * @param trustPolicy which session statuses a read trusts, and so which ones wake it.
+ * @param tokenIdentityStates the identity the access token names, as it changes, for a client that
+ *   tells users apart by it; `null` otherwise.
  * @return A merged edge-triggered accelerator flow, or an effectively-empty flow when no source is
  *   available.
  */
@@ -47,6 +52,7 @@ internal fun refreshWakeUps(
     supabase: SupabaseClient,
     reconnections: Flow<Unit>,
     trustPolicy: ResponseTrustPolicy = ResponseTrustPolicy.SETTLED_SESSION,
+    tokenIdentityStates: Flow<AccessTokenIdentity.State>? = null,
 ): Flow<Unit> {
     val sessionReady: (SessionStatus) -> Boolean =
         when (trustPolicy) {
@@ -55,10 +61,21 @@ internal fun refreshWakeUps(
                 status is SessionStatus.Authenticated
             }
         }
+    val tokenReady: (AccessTokenIdentity.State) -> Boolean =
+        when (trustPolicy) {
+            ResponseTrustPolicy.SETTLED_SESSION -> { state ->
+                state.settled != null
+            }
+            ResponseTrustPolicy.AUTHENTICATED_SESSION_ONLY -> { state ->
+                state.settled is QueueIdentity.User
+            }
+        }
     val authWakeUps =
         supabase.pluginManager.getPluginOrNull(Auth)?.sessionStatus?.let { statuses ->
             risingEdges(statuses.map(sessionReady))
-        } ?: emptyFlow()
+        }
+            ?: tokenIdentityStates?.let { states -> risingEdges(states.map(tokenReady)) }
+            ?: emptyFlow()
     return merge(authWakeUps, reconnections)
 }
 

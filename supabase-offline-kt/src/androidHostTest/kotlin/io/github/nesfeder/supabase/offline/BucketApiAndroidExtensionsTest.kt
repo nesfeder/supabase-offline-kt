@@ -32,10 +32,11 @@ import okio.Path.Companion.toPath
 import org.junit.runner.RunWith
 
 /**
- * The Android storage helpers (`ensureLocalFile`, `ensureLocalUri`, `localUriIfCached`) on the
- * offline bucket: download-through-cache, cache reuse without the network, a failure thrown rather
- * than turned into "not available", and `null` only from `localUriIfCached` with nothing cached,
- * for the original and for an image transform.
+ * The Android storage helpers (`ensureLocalFile`, `ensureLocalUri`, `localFileIfCached`,
+ * `localUriIfCached`) on the offline bucket: download-through-cache, cache reuse without the
+ * network, a failure thrown rather than turned into "not available", and `null` only from
+ * `localFileIfCached` and `localUriIfCached` with nothing cached, for the original and, through
+ * `localUriIfCached`, for an image transform.
  */
 @RunWith(AndroidJUnit4::class)
 class BucketApiAndroidExtensionsTest {
@@ -142,6 +143,36 @@ class BucketApiAndroidExtensionsTest {
         // Then
         assertNotNull(uri)
         assertTrue(uri.path.orEmpty().contains("cached.txt"))
+    }
+
+    @Test
+    fun `localFileIfCached returns null if not cached`() = runTest {
+        // Given — nothing cached
+
+        // When
+        val file = offlineApi.localFileIfCached("missing.txt")
+
+        // Then
+        assertNull(file)
+        assertEquals(0, fakeBucket.downloadInvocations)
+    }
+
+    @Test
+    fun `localFileIfCached returns the cached file without the network`() = runTest {
+        // Given — a download populates the cache, then the network fails
+        fakeBucket.onDownload = { "cached content".toByteArray() }
+        offlineApi.downloadPublic("cached.txt") {}
+        fakeBucket.onDownload = { throw IOException("Network error") }
+
+        // When
+        val file = offlineApi.localFileIfCached("cached.txt")
+
+        // Then — cachedFile's copy, the file localUriIfCached names, read without a download
+        assertNotNull(file)
+        assertEquals(File(assertNotNull(offlineApi.cachedFile("cached.txt")).path), file)
+        assertEquals("cached content", file.readText())
+        assertEquals(Uri.fromFile(file), offlineApi.localUriIfCached("cached.txt"))
+        assertEquals(1, fakeBucket.downloadInvocations)
     }
 
     @Test

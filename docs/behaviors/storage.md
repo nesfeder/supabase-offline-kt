@@ -77,11 +77,11 @@ right after a download can leave, is deleted too, and the object is downloaded a
 asked for. Open it soon, or copy it if it must outlive those. **Nothing revalidates a cached
 file**: compare `fetchedAt` with your own rule, and download again when it is too old.
 
-On Android, three helpers give the cached copy in the platform's terms: `ensureLocalUri` and
+On Android, four helpers give the cached copy in the platform's terms: `ensureLocalUri` and
 `ensureLocalFile` are `ensureCachedFile` as a `Uri` or a `File`, throwing what it throws, and
-`localUriIfCached` is `cachedFile` as a `Uri`, with a transform or without; on iOS,
-`ensureLocalPath(path)` and `localPathIfCached(path)` give the absolute path the same way, and
-`localPathIfCached(path) { … }` a transform's. The sample draws thumbnails from
+`localUriIfCached` is `cachedFile` as a `Uri`, with a transform or without, and `localFileIfCached`
+as a `File`; on iOS, `ensureLocalPath(path)` and `localPathIfCached(path)` give the absolute path
+the same way, and `localPathIfCached(path) { … }` a transform's. The sample draws thumbnails from
 `localUriIfCached` and the viewer from `ensureLocalUri`, and Share copies the file from
 `ensureLocalFile` out of the cache, since another app reads it later and a `file:` URI cannot leave
 the app:

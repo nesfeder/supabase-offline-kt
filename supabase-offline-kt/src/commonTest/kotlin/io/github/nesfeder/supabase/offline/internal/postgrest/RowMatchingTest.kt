@@ -103,6 +103,24 @@ class RowMatchingTest {
     }
 
     @Test
+    fun an_empty_member_of_an_in_list_is_kept_as_postgrest_keeps_it() {
+        // A list with more members keeps an empty one, quoted or not
+        assertEquals(RowMatch.MATCHES, match("in", text(""), "(\"\",a)"))
+        assertEquals(RowMatch.MATCHES, match("in", text("a"), "(\"\",a)"))
+        assertEquals(RowMatch.EXCLUDED, match("in", text("b"), "(\"\",a)"))
+        assertEquals(RowMatch.EXCLUDED, match("in", JsonNull, "(\"\",a)"))
+        assertEquals(RowMatch.MATCHES, match("in", text(""), "(,a)"))
+        assertEquals(RowMatch.MATCHES, match("in", text(""), "(a,,b)"))
+        assertEquals(RowMatch.MATCHES, match("in", text("b"), "(a,,b)"))
+        assertEquals(RowMatch.MATCHES, match("in", text(""), "(,)"))
+        // A list of exactly one empty member is the empty list: PostgREST sends `= ANY('{}')`
+        assertEquals(RowMatch.EXCLUDED, match("in", text(""), "(\"\")"))
+        assertEquals(RowMatch.EXCLUDED, match("in", text("a"), "(\"\")"))
+        assertEquals(RowMatch.EXCLUDED, match("in", JsonNull, "(\"\")"))
+        assertEquals(RowMatch.EXCLUDED, match("in", text(""), "()"))
+    }
+
+    @Test
     fun in_matches_a_member_and_is_unknown_when_a_member_is_unknown() {
         assertEquals(RowMatch.MATCHES, match("in", text("b"), "(a,b,c)"))
         assertEquals(RowMatch.EXCLUDED, match("in", text("d"), "(a,b,c)"))

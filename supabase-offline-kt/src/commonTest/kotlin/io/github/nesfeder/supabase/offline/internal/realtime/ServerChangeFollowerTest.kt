@@ -4,16 +4,20 @@
 
 package io.github.nesfeder.supabase.offline.internal.realtime
 
+import io.github.jan.supabase.postgrest.query.filter.FilterOperator
 import io.github.nesfeder.supabase.offline.NetworkStatus
 import io.github.nesfeder.supabase.offline.OfflineInternal
 import io.github.nesfeder.supabase.offline.RealtimeStatus
+import io.github.nesfeder.supabase.offline.RealtimeTable
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogLevel
+import io.github.nesfeder.supabase.offline.internal.realtime.ServerChangeFollower.Companion.aggregateOf
 import io.github.nesfeder.supabase.offline.internal.testing.ScriptedRealtimeChannel
 import io.github.nesfeder.supabase.offline.internal.testing.scriptedServerChangeFeed
 import io.github.nesfeder.supabase.offline.testdoubles.FakeServerChangeFeed
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingLogSink
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
@@ -41,12 +45,13 @@ import kotlinx.serialization.json.put
 
 /**
  * The follower joins while the subscription is on, there is an identity to subscribe for and the
- * network is not known down, leaves otherwise, joins again for another identity, reads the watched
- * tables again on each join, applies what arrives in order, each table's waiting changes as one
- * batch for the identity joined for, discards a backlog past the cap and reads the tables again
- * instead, and joins again after a channel that ended, waiting longer each time until an edge or a
- * follow that lasted; a channel that ended is logged at DEBUG, and the warning comes with the
- * rejoin.
+ * network is not known down, leaves otherwise, joins again for another identity, follows each table
+ * on a channel of its own, reads a table again on each of its joins, applies what arrives in order,
+ * each table's waiting changes as one batch for the identity joined for, discards a backlog past
+ * the cap and reads the table again instead, and joins a table again after its channel ended,
+ * waiting longer each time until an edge or a follow that lasted, while the other tables stay
+ * joined; a channel that ended is logged at DEBUG, and the warning comes with the rejoin. The
+ * tables' statuses sum up to one, a stall first.
  */
 class ServerChangeFollowerTest {
 
@@ -243,130 +248,328 @@ class ServerChangeFollowerTest {
     }
 
     @Test
-    fun interleaved_changes_of_two_tables_keep_each_tables_order_in_the_batches_handed_on() =
-        runTest {
-            // Given — following two tables, joined
-            val scope = newScope()
-            val follower =
-                newFollower(
-                    scope,
-                    tables = listOf(WatchedTable(TABLE), WatchedTable("audit", schema = "app")),
-                )
-            sessionIdentity.emit(USER)
-            follower.start()
-            runCurrent()
-            val follow = feed.follows.value.single()
-            follow.join()
-            runCurrent()
+    fun each_table_is_followed_on_a_channel_of_its_own_and_keeps_its_order() = runTest {
+        // Given — following two tables, each of its channel joined
+        val scope = newScope()
+        val follower = newFollower(scope, tables = listOf(WatchedTable(TABLE), AUDIT))
+        sessionIdentity.emit(USER)
+        follower.start()
+        runCurrent()
+        val (tasks, audit) = feed.follows.value
+        assertEquals(listOf(WatchedTable(TABLE)), tasks.tables)
+        assertEquals(listOf(AUDIT), audit.tables)
+        tasks.join()
+        audit.join()
+        runCurrent()
 
-            // When — the tables' changes arrive interleaved, and wait together
-            follow.saved(TABLE, row("t1"))
-            follow.saved("audit", row("a1"), schema = "app")
-            follow.saved(TABLE, row("t2"))
-            follow.deleted("audit", row("a1"), schema = "app")
-            follow.deleted(TABLE, row("t1"))
-            runCurrent()
+        // When — the tables' changes arrive interleaved, each on its own channel
+        tasks.saved(TABLE, row("t1"))
+        audit.saved("audit", row("a1"), schema = "app")
+        tasks.saved(TABLE, row("t2"))
+        audit.deleted("audit", row("a1"), schema = "app")
+        tasks.deleted(TABLE, row("t1"))
+        runCurrent()
 
-            // Then — one batch per table, each holding its table's changes in the order sent
-            assertEquals(2, applied.size, "$applied")
-            assertTrue(
-                applied.all { batch -> batch.map { it.table to it.schema }.toSet().size == 1 },
-                "$applied",
-            )
-            assertEquals(
-                listOf(
-                    ServerChangeEvent.Saved(TABLE, SCHEMA, row("t1")),
-                    ServerChangeEvent.Saved(TABLE, SCHEMA, row("t2")),
-                    ServerChangeEvent.Deleted(TABLE, SCHEMA, row("t1")),
-                ),
-                applied.flatten().filter { change -> change.table == TABLE },
-            )
-            assertEquals(
-                listOf(
-                    ServerChangeEvent.Saved("audit", "app", row("a1")),
-                    ServerChangeEvent.Deleted("audit", "app", row("a1")),
-                ),
-                applied.flatten().filter { change -> change.table == "audit" },
-            )
-            scope.cancel()
-        }
+        // Then — one batch per table, each holding its table's changes in the order sent
+        assertEquals(2, applied.size, "$applied")
+        assertTrue(
+            applied.all { batch -> batch.map { it.table to it.schema }.toSet().size == 1 },
+            "$applied",
+        )
+        assertEquals(
+            listOf(
+                ServerChangeEvent.Saved(TABLE, SCHEMA, row("t1")),
+                ServerChangeEvent.Saved(TABLE, SCHEMA, row("t2")),
+                ServerChangeEvent.Deleted(TABLE, SCHEMA, row("t1")),
+            ),
+            applied.flatten().filter { change -> change.table == TABLE },
+        )
+        assertEquals(
+            listOf(
+                ServerChangeEvent.Saved("audit", "app", row("a1")),
+                ServerChangeEvent.Deleted("audit", "app", row("a1")),
+            ),
+            applied.flatten().filter { change -> change.table == "audit" },
+        )
+        scope.cancel()
+    }
 
     @Test
-    fun a_backlog_past_the_cap_is_discarded_with_what_was_taken_and_every_table_read_again_once() =
-        runTest {
-            // Given — following two tables with a cap of ten, joined, and an apply that holds
-            // audit's batch
-            val release = CompletableDeferred<Unit>()
-            val scope = newScope()
-            val follower =
-                newFollower(
-                    scope,
-                    tables = listOf(WatchedTable(TABLE), WatchedTable("audit", schema = "app")),
-                    backlogCapacity = 10,
-                ) { _, changes ->
-                    if (changes.first().table == "audit") release.await()
-                    applied += changes
-                }
-            sessionIdentity.emit(USER)
-            follower.start()
-            runCurrent()
-            val follow = feed.follows.value.single()
-            follow.join()
-            runCurrent()
-            staled.clear()
+    fun a_refused_table_stalls_alone_and_the_others_keep_receiving() = runTest {
+        // Given — following two tables, both joined
+        val scope = newScope()
+        val follower = newFollower(scope, tables = listOf(WatchedTable(TABLE), AUDIT))
+        sessionIdentity.emit(USER)
+        follower.start()
+        runCurrent()
+        val (tasks, audit) = feed.follows.value
+        tasks.join()
+        audit.join()
+        runCurrent()
+        assertEquals(
+            mapOf(
+                TASKS_NAMED to RealtimeStatus.Subscribed,
+                AUDIT_NAMED to RealtimeStatus.Subscribed,
+            ),
+            follower.tableState.value,
+        )
+        assertEquals(RealtimeStatus.Subscribed, follower.state.value)
+        staled.clear()
 
-            // When — an audit change and a tasks change are taken together, so the applier sits
-            // in audit's batch with the tasks change in hand, and more changes than the cap arrive
-            follow.saved("audit", row("a1"), schema = "app")
-            follow.saved(TABLE, row("taken"))
+        // When — the server refuses the tasks binding
+        val refusal = IllegalStateException("column renamed")
+        tasks.fail(refusal)
+        runCurrent()
+
+        // Then — tasks alone stalls; audit's channel stays joined and its changes still apply
+        val tasksStatus = assertIs<RealtimeStatus.Stalled>(follower.tableState.value[TASKS_NAMED])
+        assertEquals(refusal.message, tasksStatus.cause.message)
+        assertEquals(RealtimeStatus.Subscribed, follower.tableState.value[AUDIT_NAMED])
+        assertEquals(tasksStatus, follower.state.value)
+        assertFalse(audit.isLeft)
+        audit.saved("audit", row("a1"), schema = "app")
+        runCurrent()
+        assertEquals(listOf(ServerChangeEvent.Saved("audit", "app", row("a1"))), applied.last())
+
+        // When — the wait is over, and the binding is accepted again
+        advanceTimeBy(1.seconds)
+        runCurrent()
+        val rejoined = feed.follows.value.last()
+        rejoined.join()
+        runCurrent()
+
+        // Then — tasks alone was joined again and read again; audit's channel was never left
+        assertEquals(3, feed.follows.value.size)
+        assertEquals(listOf(WatchedTable(TABLE)), rejoined.tables)
+        assertFalse(audit.isLeft)
+        assertEquals(listOf(TABLE to SCHEMA), staled)
+        assertEquals(RealtimeStatus.Subscribed, follower.tableState.value[TASKS_NAMED])
+        assertEquals(RealtimeStatus.Subscribed, follower.state.value)
+        scope.cancel()
+    }
+
+    @Test
+    fun a_table_refused_again_and_again_waits_longer_each_time_on_its_own() = runTest {
+        // Given — following two tables, both joined
+        val scope = newScope()
+        val follower = newFollower(scope, tables = listOf(WatchedTable(TABLE), AUDIT))
+        sessionIdentity.emit(USER)
+        follower.start()
+        runCurrent()
+        val (tasks, audit) = feed.follows.value
+        tasks.join()
+        audit.join()
+        runCurrent()
+
+        // When / Then — each refusal of tasks doubles its wait, 1 s, then 2 s, then 4 s
+        tasks.fail(IllegalStateException("refused"))
+        runCurrent()
+        for ((attempt, wait) in listOf(1.seconds, 2.seconds, 4.seconds).withIndex()) {
+            advanceTimeBy(wait - 1.milliseconds)
             runCurrent()
-            repeat(11) { index ->
-                follow.saved(
-                    TABLE,
-                    buildJsonObject {
-                        put("id", "t$index")
-                        put("title", PRIVATE)
-                    },
-                )
-            }
+            assertEquals(attempt + 2, feed.follows.value.size, "before the wait of $wait")
+            advanceTimeBy(1.milliseconds)
             runCurrent()
-
-            // Then — nothing is marked or logged while the applier is held: the re-read must
-            // follow what it applies, not race it
-            assertEquals(emptyList(), staled)
-            assertEquals(emptyList(), logs.entriesAt(EngineLogLevel.WARNING))
-
-            // When — audit's batch goes through
-            release.complete(Unit)
+            assertEquals(attempt + 3, feed.follows.value.size, "after the wait of $wait")
+            val next = feed.follows.value.last()
+            assertEquals(listOf(WatchedTable(TABLE)), next.tables)
+            next.fail(IllegalStateException("refused"))
             runCurrent()
-
-            // Then — the tasks change taken before the discard is never applied, each table is
-            // marked stale once, and one warning names the count, the tables with their schema,
-            // and nothing of a record
-            assertEquals<List<List<ServerChangeEvent.Change>>>(
-                listOf(listOf(ServerChangeEvent.Saved("audit", "app", row("a1")))),
-                applied,
-            )
-            assertEquals(listOf(TABLE to SCHEMA, "audit" to "app"), staled)
-            val warning = logs.entriesAt(EngineLogLevel.WARNING).single().message
-            assertTrue("12 change(s)" in warning, warning)
-            assertTrue("$TABLE, app.audit" in warning, warning)
-            assertTrue(PRIVATE !in warning, warning)
-
-            // When — a change arrives after the discard
-            follow.saved(TABLE, row("after"))
-            runCurrent()
-
-            // Then — it is applied, and nothing more is marked or logged
-            assertEquals(
-                listOf(ServerChangeEvent.Saved(TABLE, SCHEMA, row("after"))),
-                applied.last(),
-            )
-            assertEquals(2, staled.size)
-            assertEquals(1, logs.entriesAt(EngineLogLevel.WARNING).size)
-            assertEquals(RealtimeStatus.Subscribed, follower.state.value)
-            scope.cancel()
         }
+
+        // Then — audit was joined once, and is still
+        assertEquals(1, feed.follows.value.count { follow -> follow.tables == listOf(AUDIT) })
+        assertFalse(audit.isLeft)
+        assertEquals(RealtimeStatus.Subscribed, follower.tableState.value[AUDIT_NAMED])
+        scope.cancel()
+    }
+
+    @Test
+    fun every_table_reads_off_paused_or_joining_at_once_in_the_order_named() = runTest {
+        // Given — two tables, the first with a schema and a filter
+        val filtered =
+            WatchedTable(
+                "audit",
+                schema = "app",
+                filter = WatchedTableFilter("status", FilterOperator.EQ, "open"),
+            )
+        val scope = newScope()
+        val follower = newFollower(scope, tables = listOf(filtered, WatchedTable(TABLE)))
+
+        // Then — paused before the start, keyed as the configuration names each table, in order
+        assertEquals(
+            listOf(filtered.toRealtimeTable(), TASKS_NAMED),
+            follower.tableState.value.keys.toList(),
+        )
+        assertTrue(follower.tableState.value.values.all { it == RealtimeStatus.Paused })
+        assertEquals(RealtimeStatus.Paused, follower.state.value)
+
+        // When / Then — following: both joining, then both subscribed
+        sessionIdentity.emit(USER)
+        follower.start()
+        runCurrent()
+        assertTrue(follower.tableState.value.values.all { it == RealtimeStatus.Subscribing })
+        assertEquals(RealtimeStatus.Subscribing, follower.state.value)
+        feed.follows.value[0].join()
+        runCurrent()
+        assertEquals(RealtimeStatus.Subscribing, follower.state.value)
+        feed.follows.value[1].join()
+        runCurrent()
+        assertEquals(RealtimeStatus.Subscribed, follower.state.value)
+
+        // When / Then — the network known down pauses both; the switch off makes both off
+        network.value = NetworkStatus.OFFLINE
+        runCurrent()
+        assertTrue(follower.tableState.value.values.all { it == RealtimeStatus.Paused })
+        assertEquals(RealtimeStatus.Paused, follower.state.value)
+        follower.setEnabled(false)
+        assertTrue(follower.tableState.value.values.all { it == RealtimeStatus.Off })
+        assertEquals(RealtimeStatus.Off, follower.state.value)
+
+        // When / Then — stopped, both stay off
+        scope.cancel()
+        follower.stop()
+        assertTrue(follower.tableState.value.values.all { it == RealtimeStatus.Off })
+    }
+
+    @Test
+    fun the_tables_statuses_sum_up_to_a_stall_first_then_a_join_in_flight() {
+        // Given
+        val first = RealtimeStatus.Stalled(IllegalStateException("first"))
+        val second = RealtimeStatus.Stalled(IllegalStateException("second"))
+        fun of(tasks: RealtimeStatus, audit: RealtimeStatus) =
+            aggregateOf(mapOf(TASKS_NAMED to tasks, AUDIT_NAMED to audit))
+
+        // Then
+        assertEquals(RealtimeStatus.Off, aggregateOf(emptyMap()))
+        assertEquals(RealtimeStatus.Off, of(RealtimeStatus.Off, RealtimeStatus.Off))
+        assertEquals(RealtimeStatus.Paused, of(RealtimeStatus.Paused, RealtimeStatus.Paused))
+        assertEquals(
+            RealtimeStatus.Subscribing,
+            of(RealtimeStatus.Subscribed, RealtimeStatus.Subscribing),
+        )
+        assertEquals(
+            RealtimeStatus.Subscribed,
+            of(RealtimeStatus.Subscribed, RealtimeStatus.Subscribed),
+        )
+        assertEquals(first, of(RealtimeStatus.Subscribing, first))
+        assertEquals(first, of(RealtimeStatus.Subscribed, first))
+        assertEquals(second, of(second, first))
+    }
+
+    @Test
+    fun a_backlog_past_the_cap_is_discarded_and_its_table_alone_is_read_again_once() = runTest {
+        // Given — following two tables with a cap of ten, both joined, and an apply that holds
+        // tasks' first batch
+        val release = CompletableDeferred<Unit>()
+        val scope = newScope()
+        val follower =
+            newFollower(scope, tables = listOf(WatchedTable(TABLE), AUDIT), backlogCapacity = 10) {
+                _,
+                changes ->
+                if (changes.first().table == TABLE && applied.none { it.first().table == TABLE })
+                    release.await()
+                applied += changes
+            }
+        sessionIdentity.emit(USER)
+        follower.start()
+        runCurrent()
+        val (tasks, audit) = feed.follows.value
+        tasks.join()
+        audit.join()
+        runCurrent()
+        staled.clear()
+        tasks.saved(TABLE, row("held"))
+        runCurrent()
+
+        // When — more tasks changes than the cap arrive while that batch is applied
+        repeat(11) { index ->
+            tasks.saved(
+                TABLE,
+                buildJsonObject {
+                    put("id", "t$index")
+                    put("title", PRIVATE)
+                },
+            )
+        }
+        runCurrent()
+
+        // Then — nothing is marked or logged while the applier is held: the re-read must follow
+        // what it applies, not race it; audit's changes still apply meanwhile
+        assertEquals(emptyList(), staled)
+        assertEquals(emptyList(), logs.entriesAt(EngineLogLevel.WARNING))
+        audit.saved("audit", row("a1"), schema = "app")
+        runCurrent()
+        assertEquals(listOf(ServerChangeEvent.Saved("audit", "app", row("a1"))), applied.last())
+
+        // When — the held batch goes through
+        release.complete(Unit)
+        runCurrent()
+
+        // Then — tasks alone is marked stale, once, and one warning names the count and the
+        // table, and nothing of a record
+        assertEquals(listOf(TABLE to SCHEMA), staled)
+        val warning = logs.entriesAt(EngineLogLevel.WARNING).single().message
+        assertTrue("11 change(s) to $TABLE" in warning, warning)
+        assertTrue(PRIVATE !in warning, warning)
+
+        // When — a change arrives after the discard
+        tasks.saved(TABLE, row("after"))
+        runCurrent()
+
+        // Then — it is applied, and nothing in between was
+        assertEquals(
+            listOf(
+                ServerChangeEvent.Saved(TABLE, SCHEMA, row("held")),
+                ServerChangeEvent.Saved(TABLE, SCHEMA, row("after")),
+            ),
+            applied.flatten().filter { change -> change.table == TABLE },
+        )
+        assertEquals(1, logs.entriesAt(EngineLogLevel.WARNING).size)
+        assertEquals(RealtimeStatus.Subscribed, follower.state.value)
+        scope.cancel()
+    }
+
+    @Test
+    fun a_change_taken_before_a_discard_is_never_applied() = runTest {
+        // Given — a cap of ten, a feed that delivers two tables' changes on one channel, and an
+        // apply that holds audit's batch
+        val release = CompletableDeferred<Unit>()
+        val scope = newScope()
+        val follower =
+            newFollower(scope, backlogCapacity = 10) { _, changes ->
+                if (changes.first().table == "audit") release.await()
+                applied += changes
+            }
+        sessionIdentity.emit(USER)
+        follower.start()
+        runCurrent()
+        val follow = feed.follows.value.single()
+        follow.join()
+        runCurrent()
+        staled.clear()
+
+        // When — an audit change and a tasks change are taken together, so the applier sits in
+        // audit's batch with the tasks change in hand, and more changes than the cap arrive
+        follow.saved("audit", row("a1"), schema = "app")
+        follow.saved(TABLE, row("taken"))
+        runCurrent()
+        repeat(11) { index -> follow.saved(TABLE, row("t$index")) }
+        runCurrent()
+        release.complete(Unit)
+        runCurrent()
+
+        // Then — the tasks change taken before the discard is never applied, and the count
+        // holds it
+        assertEquals<List<List<ServerChangeEvent.Change>>>(
+            listOf(listOf(ServerChangeEvent.Saved("audit", "app", row("a1")))),
+            applied,
+        )
+        assertEquals(listOf(TABLE to SCHEMA), staled)
+        val warning = logs.entriesAt(EngineLogLevel.WARNING).single().message
+        assertTrue("12 change(s)" in warning, warning)
+        scope.cancel()
+    }
 
     @Test
     fun discards_during_the_re_read_are_folded_into_one_warning_and_marked_again() = runTest {
@@ -579,26 +782,24 @@ class ServerChangeFollowerTest {
     }
 
     @Test
-    fun a_join_reads_every_watched_table_again_in_its_own_schema() = runTest {
+    fun a_join_reads_its_table_again_in_its_own_schema() = runTest {
         // Given — a table of another schema and one of the default schema
         val scope = newScope()
-        val follower =
-            newFollower(
-                scope,
-                tables = listOf(WatchedTable("audit", schema = "app"), WatchedTable(TABLE)),
-            )
+        val follower = newFollower(scope, tables = listOf(AUDIT, WatchedTable(TABLE)))
         sessionIdentity.emit(USER)
         follower.start()
         runCurrent()
+        val (audit, tasks) = feed.follows.value
 
-        // When
-        val follow = feed.follows.value.single()
-        follow.join()
+        // When / Then — each join reads its own table again, in its own schema
+        audit.join()
         runCurrent()
-
-        // Then
-        assertEquals(SCHEMA, follow.defaultSchema)
+        assertEquals(listOf("audit" to "app"), staled)
+        tasks.join()
+        runCurrent()
         assertEquals(listOf("audit" to "app", TABLE to SCHEMA), staled)
+        assertEquals(SCHEMA, audit.defaultSchema)
+        assertEquals(SCHEMA, tasks.defaultSchema)
         scope.cancel()
     }
 
@@ -853,6 +1054,13 @@ class ServerChangeFollowerTest {
         const val SCHEMA = "public"
         const val USER = "user:a"
         const val OTHER_USER = "user:b"
+
+        /** A table of another schema, beside [TABLE]. */
+        val AUDIT = WatchedTable("audit", schema = "app")
+
+        /** [TABLE] and [AUDIT] as the configuration names them. */
+        val TASKS_NAMED: RealtimeTable = WatchedTable(TABLE).toRealtimeTable()
+        val AUDIT_NAMED: RealtimeTable = AUDIT.toRealtimeTable()
 
         /** A value no log may carry. */
         const val PRIVATE = "someone@example.com"

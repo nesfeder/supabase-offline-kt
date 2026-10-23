@@ -19,7 +19,9 @@ import kotlinx.coroutines.test.runTest
 /**
  * The register of downloads in flight, on its own: a caller joins a download registered and not yet
  * started, as one still running, and never one that has ended or been forgotten; a forgotten
- * download keeps its waiters, and the last of them to cancel still stops it.
+ * download keeps its waiters, and the last of them to cancel still stops it. A download that comes
+ * to commit once every caller has been canceled, before the last of them has run again to leave it,
+ * stops there.
  */
 class InFlightDownloadsTest {
 
@@ -183,6 +185,102 @@ class InFlightDownloadsTest {
         assertFalse(firstOutcome.joined)
         assertTrue(secondOutcome.joined)
         assertEquals("refused", secondOutcome.cause.message)
+    }
+
+    @Test
+    fun a_download_every_caller_has_given_up_stops_before_it_commits() = runTest {
+        // Given — a download held until released, with one caller waiting for it
+        val downloads = InFlightDownloads()
+        val release = CompletableDeferred<Unit>()
+        var committed = false
+        var joinableWhileStopping: Boolean? = null
+        val caller = backgroundScope.async {
+            downloads.joinOrStart(KEY, backgroundScope) { ensureWanted ->
+                release.await()
+                try {
+                    ensureWanted()
+                } finally {
+                    joinableWhileStopping = downloads.isInFlight(KEY)
+                }
+                committed = true
+                CommitOutcome.COMMITTED
+            }
+        }
+        testScheduler.runCurrent()
+        assertEquals(1, downloads.waitersOf(KEY))
+
+        // When — the caller is canceled, and the download comes to commit before the caller has run
+        // again to leave it, which would stop it
+        release.complete(Unit)
+        caller.cancel()
+        testScheduler.runCurrent()
+
+        // Then — the download stopped short of its commit, joinable by no caller meanwhile, and the
+        // caller ended canceled
+        assertFalse(committed)
+        assertEquals(false, joinableWhileStopping)
+        assertTrue(caller.isCancelled)
+        assertFalse(downloads.isInFlight(KEY))
+        assertEquals(0, downloads.waitersOf(KEY))
+    }
+
+    @Test
+    fun a_forgotten_download_every_caller_has_given_up_stops_before_it_commits() = runTest {
+        // Given — a download held until released, with one caller waiting for it, that the
+        // register has forgotten, as a write of the object makes it
+        val downloads = InFlightDownloads()
+        val release = CompletableDeferred<Unit>()
+        var committed = false
+        val caller = backgroundScope.async {
+            downloads.joinOrStart(KEY, backgroundScope) { ensureWanted ->
+                release.await()
+                ensureWanted()
+                committed = true
+                CommitOutcome.COMMITTED
+            }
+        }
+        testScheduler.runCurrent()
+        downloads.forget(KEY)
+
+        // When — the caller is canceled, and the download comes to commit before the caller has
+        // left it
+        release.complete(Unit)
+        caller.cancel()
+        testScheduler.runCurrent()
+
+        // Then
+        assertFalse(committed)
+        assertTrue(caller.isCancelled)
+    }
+
+    @Test
+    fun a_download_a_caller_still_waits_for_commits_though_another_has_canceled() = runTest {
+        // Given — a download held until released, which one caller started and another joined
+        val downloads = InFlightDownloads()
+        val release = CompletableDeferred<Unit>()
+        val first = backgroundScope.async {
+            downloads.joinOrStart(KEY, backgroundScope) { ensureWanted ->
+                release.await()
+                ensureWanted()
+                CommitOutcome.COMMITTED
+            }
+        }
+        testScheduler.runCurrent()
+        val second = backgroundScope.async { downloads.join(KEY) }
+        testScheduler.runCurrent()
+        assertEquals(2, downloads.waitersOf(KEY))
+
+        // When — the caller that started it is canceled, and the download comes to commit before
+        // that caller has left it
+        release.complete(Unit)
+        first.cancel()
+        testScheduler.runCurrent()
+
+        // Then — the download committed for the caller still waiting
+        val secondOutcome = assertIs<SharedOutcome.Ended>(second.await())
+        assertEquals(CommitOutcome.COMMITTED, secondOutcome.outcome)
+        assertTrue(first.isCancelled)
+        assertEquals(0, downloads.waitersOf(KEY))
     }
 
     private companion object {

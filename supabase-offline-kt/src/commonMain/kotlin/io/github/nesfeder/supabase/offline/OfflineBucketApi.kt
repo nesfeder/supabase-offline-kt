@@ -69,7 +69,7 @@ public interface OfflineBucketApi : BucketApi {
      *
      * @param path the object path within this bucket.
      * @return the cached file, or `null`.
-     * @throws IllegalStateException when the client is closed.
+     * @throws OfflineClientClosedException when the client is closed.
      */
     @Throws(Throwable::class) public suspend fun cachedFile(path: String): CachedFile?
 

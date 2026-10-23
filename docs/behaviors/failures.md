@@ -34,9 +34,10 @@ From the samples: [LibraryFailures.kt](https://github.com/nesfeder/supabase-offl
   `RestException` (PostgREST's and Storage's errors), a Ktor `ResponseException` or a
   `SyncFailedException`, here or in a cause.
 
-The library's own failures subclass `OfflineException`. The hierarchy is open, so match the ones
-you handle and keep a branch for the rest; everything else is supabase-kt's or the server's
-(`PostgrestRestException`, `RestException`, `HttpRequestException`, `TokenExpiredException`, …):
+The library's own failures subclass `OfflineException`, all but the closed client's (below). The
+hierarchy is open, so match the ones you handle and keep a branch for the rest; everything else is
+supabase-kt's or the server's (`PostgrestRestException`, `RestException`, `HttpRequestException`,
+`TokenExpiredException`, …):
 
 | Exception | When |
 | --- | --- |
@@ -44,6 +45,11 @@ you handle and keep a branch for the rest; everything else is supabase-kt's or t
 | `MutationNotQueueableException` | A write the queue cannot hold could not be sent for want of a connection. Its `cause` is that failure, so it counts as a connectivity failure |
 | `NetworkDisabledException` | A request that must reach the server was made after `disableNetwork()`. It counts as a connectivity failure |
 | `SyncFailedException` | Why a sync pass stopped with writes still queued, as `syncStatus.value.lastSyncError` says. It is never thrown; it carries `httpStatus` and `code` only |
+
+Every call on a closed client throws `OfflineClientClosedException`, and so does a call the
+closing stopped. It is an `IllegalStateException`, not an `OfflineException`, so a
+`catch (e: IllegalStateException)` catches it, and its message is "This offline client is closed".
+Match the type, not the message: another `IllegalStateException` can say nothing about the client.
 
 ## Writes
 
@@ -55,8 +61,12 @@ you handle and keep a branch for the rest; everything else is supabase-kt's or t
 | `NetworkDisabledException` | An `OnlineOnly` write was made while network access is off |
 | `IllegalArgumentException` | An UPDATE or DELETE named two top-level filters on one column, a pattern list the server would misread, or an `in` element or group value holding `"` or `\` the server would read with its escapes; nothing was sent or queued |
 
-A `QueueIfOffline` write that may not have run is not thrown: it returns `Queued`
-([What a write returns](mutations.md#what-a-write-returns)). When you show a refusal, show
+A `QueueIfOffline` write that may not have run, or may pass when sent again, is not thrown: no
+connection or no answer, a `408`, `429`, `502`, `503`, `504`, `520`, `522` or `524`, or a `401` for
+a token PostgREST holds expired or cannot read (`PGRST301`, `PGRST303`). It returns `Queued`, and a
+later pass sends it ([What a write returns](mutations.md#what-a-write-returns)); a replay keeps a
+write queued on each of these answers too. Another `5xx`, such as a `500` from the database, is
+thrown. When you show a refusal, show
 PostgREST's own `error` and `code`, or your own words keyed on the code: the exception's `message`
 carries the request's URL with its filter values, so keep it out of the screen and out of crash
 reports ([Security and privacy](../help/security.md)).
@@ -70,9 +80,11 @@ with a `5xx` holds every later write of its user behind it: when it will never g
 
 ## The rejected list
 
-It is kept on the device across restarts until each entry is dismissed or retried. Each entry is a
-`RejectedMutation`: the table, the operation, the rows' keys, the body, the server's answer as a
-`ServerError` (`status`, `code`, `message`, `details`, `hint`), and whether it can be retried.
+It is kept on the device across restarts until each entry is dismissed or retried.
+`rejectedMutations()` follows it as it changes, and `rejectedMutationList()` reads it once, as the
+flow's first list. Each entry is a `RejectedMutation`: the table, the operation, the rows' keys, the
+body, the server's answer as a `ServerError` (`status`, `code`, `message`, `details`, `hint`), and
+whether it can be retried.
 
 From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/OfflineTaskRepository.kt) · [LibraryMappings.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/LibraryMappings.kt) · [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift) · [QueueWording.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Sync/QueueWording.swift)
 

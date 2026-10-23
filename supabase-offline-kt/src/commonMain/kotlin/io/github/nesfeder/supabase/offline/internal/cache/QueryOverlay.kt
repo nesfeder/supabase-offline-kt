@@ -267,11 +267,11 @@ internal class QueryOverlay(
      * changed a shown row; with no payload, mutations are overlaid onto an empty list, and another
      * identity's cache counts as none.
      *
-     * Every change of the payload, the table's mutations, the session or [alongside] reads all of
-     * them again, as one view: [alongside] first, then the cache's owner, then the mutations and
-     * the payload together ([readTogether]). So an emission never pairs a payload with mutations,
-     * an owner or a value of [alongside] it was not current with, whatever order the changes arrive
-     * in.
+     * Every write to the table's cached payloads, change of its mutations, of the session or of
+     * [alongside] reads all of them again, as one view: [alongside] first, then the cache's owner,
+     * then the mutations and the payload together ([readTogether]). So an emission never pairs a
+     * payload with mutations, an owner or a value of [alongside] it was not current with, whatever
+     * order the changes arrive in.
      *
      * @param alongside a value its writer publishes after writing the payload it describes, such as
      *   a refresh's progress.
@@ -289,9 +289,9 @@ internal class QueryOverlay(
             // change in between is read too
             emit(reader.read(alongside))
             merge(
-                    // Room tells every payload's readers of any payload's write: only a change of
-                    // this one is a reason to read again
-                    queryCacheDao.observe(table, cacheKey).distinctUntilChanged().map {},
+                    // A write to this table's payloads, once committed; another table's, or the
+                    // engine's reserved rows', costs a comparison and no read
+                    queryCacheDao.writeChangesOf(table),
                     mutationQueue.mutationChangesOf(table),
                     identityChanges.map {},
                     alongside.map {},

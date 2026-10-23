@@ -37,7 +37,10 @@ dropped when the session settles as someone else, and nothing cached for one use
 the next. Queued writes stay with the user who made them, and are sent only with that user's
 token. Call `clearLocalData()` when a user signs out for good, to delete their unsent writes too;
 see [Signing out and switching users](../behaviors/sign-out.md). Without Auth there is one
-identity for the life of the install.
+identity for the life of the install, unless `identityFromAccessToken` tells users apart by their
+access token. Its `sub` claim is read and never verified: it decides only which local data a user
+is shown and whose queued writes are sent, never what the server allows. Row-level security, which
+verifies the token, still decides that.
 
 ## Logs
 
