@@ -15,6 +15,12 @@ All notable changes to this project are recorded in this file. The format follow
 
 ### Added
 
+- `Offline.rejectedMutationList()` and `Offline.conflictedMutationList()` read the rejected and
+  conflicted lists once, the list `rejectedMutations()` and `conflictedMutations()` emit first, as
+  `pendingMutationCount()` reads the queue's count; the Swift package has the same two calls.
+- On Android, `localFileIfCached(path)` gives the cached copy of an object as a `File`, or `null`
+  when none is cached, beside `localUriIfCached(path)`, which gives it as a `Uri`.
+
 ### Changed
 
 - The query cache's eviction pass runs in the background after a response is written, where it ran

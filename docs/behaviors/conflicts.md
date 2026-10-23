@@ -301,14 +301,14 @@ stateDiagram-v2
     Queued --> [*]: sent and applied
 ```
 
-`conflictedMutations()` is the current user's entries as a `Flow<List<ConflictedMutation>>`
-(Swift: a `ConflictedMutationSequence`), oldest first, kept on the device across restarts. Each
-entry holds the write's `id`, `table`, `operation`, `createdAt`, `rowKeys` and `body`; the `base`;
-the `server` row and its `serverVersion` when the replay read it; `changedOnServer` and
-`conflictingColumns`; a `message` saying why it was parked; and `conflictedAt`. Besides the
-resolver's `Hold`, a write is parked when the resolver throws or takes 30 seconds, when its third
-send still finds the row moved, and when the server's row comes back without a version to
-precondition the resend on.
+`conflictedMutations()` is the current user's entries as a `Flow<List<ConflictedMutation>>` (Swift:
+a `ConflictedMutationSequence`), oldest first, kept on the device across restarts.
+`conflictedMutationList()` reads the same list once, as the flow's first list. Each entry holds the
+write's `id`, `table`, `operation`, `createdAt`, `rowKeys` and `body`; the `base`; the `server` row
+and its `serverVersion` when the replay read it; `changedOnServer` and `conflictingColumns`; a
+`message` saying why it was parked; and `conflictedAt`. Besides the resolver's `Hold`, a write is
+parked when the resolver throws or takes 30 seconds, when its third send still finds the row moved,
+and when the server's row comes back without a version to precondition the resend on.
 
 - `resolveConflictedMutation(id, KeepLocal)`, or with `ConflictResolution.apply(columns)`, queues
   the write again at the end of the user's queue, under a new id, preconditioned on the entry's

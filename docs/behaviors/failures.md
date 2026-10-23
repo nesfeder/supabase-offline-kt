@@ -74,9 +74,11 @@ with a `5xx` holds every later write of its user behind it: when it will never g
 
 ## The rejected list
 
-It is kept on the device across restarts until each entry is dismissed or retried. Each entry is a
-`RejectedMutation`: the table, the operation, the rows' keys, the body, the server's answer as a
-`ServerError` (`status`, `code`, `message`, `details`, `hint`), and whether it can be retried.
+It is kept on the device across restarts until each entry is dismissed or retried.
+`rejectedMutations()` follows it as it changes, and `rejectedMutationList()` reads it once, as the
+flow's first list. Each entry is a `RejectedMutation`: the table, the operation, the rows' keys, the
+body, the server's answer as a `ServerError` (`status`, `code`, `message`, `details`, `hint`), and
+whether it can be retried.
 
 From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/OfflineTaskRepository.kt) · [LibraryMappings.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/LibraryMappings.kt) · [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift) · [QueueWording.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Sync/QueueWording.swift)
 

@@ -16,6 +16,7 @@ import io.github.nesfeder.supabase.offline.testdoubles.RecordingBackendServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
+import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.postgrestError
 import io.github.nesfeder.supabase.offline.testdoubles.TestStore
 import io.github.nesfeder.supabase.offline.testdoubles.assertClientClosedError
 import io.github.nesfeder.supabase.offline.testdoubles.idleCoroutineScope
@@ -23,6 +24,7 @@ import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
 import io.github.nesfeder.supabase.offline.testdoubles.openInMemory
 import io.github.nesfeder.supabase.offline.testdoubles.signInForTest
+import io.ktor.http.HttpStatusCode
 import kotlin.random.Random
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -148,6 +150,27 @@ class OfflinePluginTest {
         // Then — the queue is per identity, which only Auth can tell: the signed-out write is not
         // the user's
         assertEquals(0, supabase.offline.pendingMutationCount())
+    }
+
+    @Test
+    fun the_plugin_reads_the_rejected_and_conflicted_lists_once() = runTest {
+        // Given — a write queued offline, which the server then refuses for good
+        val server = RecordingPostgrestServer(answer = { connectivityFailure() })
+        val supabase = pluginClient(server)
+        supabase.offline.from("todos").insert(buildJsonArray { add(buildJsonObject {}) })
+        server.answer = { postgrestError(HttpStatusCode.Forbidden) }
+        supabase.offline.syncPendingMutations()
+
+        // When
+        val rejected = supabase.offline.rejectedMutationList()
+        val conflicted = supabase.offline.conflictedMutationList()
+
+        // Then — what the flows emit first
+        assertEquals(listOf("todos"), rejected.map { it.table })
+        assertEquals(supabase.offline.rejectedMutations().first(), rejected)
+        assertEquals(emptyList(), conflicted)
+        assertEquals(supabase.offline.conflictedMutations().first(), conflicted)
+        supabase.close()
     }
 
     @Test

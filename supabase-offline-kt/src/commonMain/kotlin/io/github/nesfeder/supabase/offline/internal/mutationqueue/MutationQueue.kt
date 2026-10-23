@@ -922,9 +922,17 @@ internal class MutationQueue(
     /** The conflicted mutations the app is shown, oldest first, as they change. */
     fun shownConflictsFlow(): Flow<List<StoredConflict>> =
         combine(conflictedList.conflictsFlow(), identityChanges) { entries, _ ->
-                shownTo(identityProvider(), entries) { entry -> entry.owner }
+                shownConflictsOf(entries)
             }
             .distinctUntilChanged()
+
+    /** The conflicted mutations the app is shown now, oldest first, as [shownConflictsFlow]. */
+    suspend fun shownConflicts(): List<StoredConflict> =
+        shownConflictsOf(conflictedList.conflicts())
+
+    /** The conflicted list's [entries] the app is shown under the current identity. */
+    private suspend fun shownConflictsOf(entries: List<StoredConflict>): List<StoredConflict> =
+        shownTo(identityProvider(), entries) { entry -> entry.owner }
 
     /** The conflicted mutation [id] when the app is shown it, as [shownRejection] decides. */
     suspend fun shownConflict(id: Long, identity: String): StoredConflict? =
@@ -1010,9 +1018,17 @@ internal class MutationQueue(
     /** The rejected mutations the app is shown, oldest first, as they change. */
     fun shownRejectionsFlow(): Flow<List<StoredRejection>> =
         combine(rejectedList.rejectionsFlow(), identityChanges) { entries, _ ->
-                shownTo(identityProvider(), entries) { entry -> entry.owner }
+                shownRejectionsOf(entries)
             }
             .distinctUntilChanged()
+
+    /** The rejected mutations the app is shown now, oldest first, as [shownRejectionsFlow]. */
+    suspend fun shownRejections(): List<StoredRejection> =
+        shownRejectionsOf(rejectedList.rejections())
+
+    /** The rejected list's [entries] the app is shown under the current identity. */
+    private suspend fun shownRejectionsOf(entries: List<StoredRejection>): List<StoredRejection> =
+        shownTo(identityProvider(), entries) { entry -> entry.owner }
 
     /**
      * The rejected mutation [id] when the app is shown it: [identity]'s, or ownerless and

@@ -283,8 +283,8 @@ What is waiting and what was refused:
   write is lost.
 - Discarding the write at the head of the queue lets the writes behind it go, with no call from the
   app.
-- `rejectedMutations` lists the current user's refused writes only; another user can neither see,
-  retry nor dismiss one by guessing its id.
+- `rejectedMutations` and `rejectedMutationList` list the current user's refused writes only;
+  another user can neither see, retry nor dismiss one by guessing its id.
 - `retryRejectedMutation` queues the write again, and it is sent.
 - A refusal whose body was too large to keep says so (`isRetryable` is `false`), and retrying it
   throws.

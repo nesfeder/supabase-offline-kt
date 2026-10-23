@@ -245,6 +245,16 @@ public interface Offline : SupabasePlugin<Offline.Config> {
     public fun rejectedMutations(): Flow<List<RejectedMutation>>
 
     /**
+     * The current user's refused writes on the rejected list, oldest first, read once: the list
+     * [rejectedMutations] emits first. See [rejectedMutations] for whose they are and how long they
+     * stay.
+     *
+     * @return the list.
+     * @throws IllegalStateException when the client is closed.
+     */
+    @Throws(Throwable::class) public suspend fun rejectedMutationList(): List<RejectedMutation>
+
+    /**
      * Removes a refused write from the rejected list for good. Nothing happens when the current
      * user has no entry with this id.
      *
@@ -284,6 +294,16 @@ public interface Offline : SupabasePlugin<Offline.Config> {
      * @return the flow of lists.
      */
     public fun conflictedMutations(): Flow<List<ConflictedMutation>>
+
+    /**
+     * The current user's parked writes on the conflicted list, oldest first, read once: the list
+     * [conflictedMutations] emits first. See [conflictedMutations] for whose they are and how long
+     * they stay.
+     *
+     * @return the list.
+     * @throws IllegalStateException when the client is closed.
+     */
+    @Throws(Throwable::class) public suspend fun conflictedMutationList(): List<ConflictedMutation>
 
     /**
      * Settles a parked write. [ConflictResolution.KeepLocal] and [ConflictResolution.Apply] queue
