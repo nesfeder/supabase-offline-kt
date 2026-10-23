@@ -243,6 +243,34 @@ class StorageEvictCachedFileTest {
     }
 
     @Test
+    fun evicting_a_transform_whose_row_recorded_an_earlier_file_deletes_that_file_too() = runTest {
+        // Given — a thumbnail's row recording the file an earlier path mapping gave it
+        val client = newClient()
+        val bucket = client.storage.from(BUCKET)
+        val earlier = dataDirectory / "storage" / BUCKET / "earlier" / "thumbnail.png"
+        FileSystem.SYSTEM.createDirectories(assertNotNull(earlier.parent))
+        FileSystem.SYSTEM.write(earlier) { writeUtf8(CONTENT) }
+        cachedFileDao.upsert(
+            cachedFileRowOf(
+                BUCKET,
+                "$PATH${VARIANT_SEPARATOR}height=64&width=64",
+                earlier,
+                size = CONTENT.length.toLong(),
+                eTag = null,
+                fetchedAtMillis = 0L,
+            )
+        )
+
+        // When
+        bucket.evictCachedFile(PATH) { size(64, 64) }
+
+        // Then — the row and the file it recorded are gone
+        assertEquals(emptyList(), cachedFileDao.all())
+        assertFalse(FileSystem.SYSTEM.exists(earlier))
+        client.close()
+    }
+
+    @Test
     fun a_download_on_the_wire_when_its_object_is_evicted_is_handed_over_but_not_cached() =
         runTest {
             // Given — a download parked at the server
