@@ -8,15 +8,26 @@ import io.github.jan.supabase.auth.Auth
 import io.github.jan.supabase.auth.MemoryCodeVerifierCache
 import io.github.jan.supabase.auth.user.UserSession
 import io.github.jan.supabase.postgrest.Postgrest
+import io.github.jan.supabase.postgrest.exception.PostgrestRestException
+import io.github.jan.supabase.postgrest.query.Count
+import io.github.jan.supabase.postgrest.query.request.SelectRequestBuilder
+import io.github.nesfeder.supabase.offline.internal.logging.EngineLogLevel
 import io.github.nesfeder.supabase.offline.testdoubles.FakeHeldSessionManager
 import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
+import io.github.nesfeder.supabase.offline.testdoubles.RecordingLogSink
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
+import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.postgrestError
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
 import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
 import io.github.nesfeder.supabase.offline.testdoubles.testJwt
+import io.ktor.client.engine.mock.respond
+import io.ktor.http.HttpStatusCode
+import io.ktor.http.headersOf
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertIs
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -25,18 +36,45 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.test.currentTime
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 
 /**
  * Reads made while a stored session is still restoring, under the default trust rule: a read that
  * needs the network waits for the session and caches only the user's answer; a read the cache
- * answers sends nothing. Requests made meanwhile carry the anon key, which RLS answers with
- * nothing.
+ * answers sends nothing; a read of a shape the cache cannot hold waits too, and is sent once the
+ * session has settled. Requests made meanwhile carry the anon key, which RLS answers with nothing.
  */
 class ReadsWhileRestoringTest {
 
     private val queryCacheDao = FakeQueryCacheDao()
+    private val logs = RecordingLogSink()
+
+    /**
+     * The read shapes the cache cannot hold that a screen reads with at cold start, each with the
+     * user's answer: `single()` fails on the anon key (PostgREST's `PGRST116`), and a count is 0.
+     */
+    private val otherShapes: List<Triple<String, SelectRequestBuilder.() -> Unit, String>> =
+        listOf(
+            Triple(
+                "single",
+                {
+                    filter { eq("id", 1) }
+                    single()
+                },
+                ONE_ROW,
+            ),
+            Triple("count", { count(Count.EXACT) }, USER_ROWS),
+            Triple(
+                "head",
+                {
+                    head = true
+                    count(Count.EXACT)
+                },
+                "",
+            ),
+        )
 
     /**
      * A table handle of a client whose stored session restores until [sessions] is released, with
@@ -62,12 +100,34 @@ class ReadsWhileRestoringTest {
         val dispatcher = StandardTestDispatcher(testScheduler)
         val server =
             RecordingPostgrestServer(
-                // The user's token sees the user's rows; the anon key sees none
                 answer = { request ->
-                    okJson(
-                        if (request.authorization.orEmpty().contains(testJwt("u-1"))) USER_ROWS
-                        else "[]"
-                    )
+                    // The user's token sees the user's rows; the anon key sees none
+                    val mine = request.authorization.orEmpty().contains(testJwt("u-1"))
+                    when {
+                        // A HEAD read: how many rows the token sees
+                        request.method == "HEAD" ->
+                            respond(
+                                "",
+                                HttpStatusCode.OK,
+                                headersOf("Content-Range", if (mine) "*/1" else "*/0"),
+                            )
+                        // A single object: the user's row, or PostgREST's "no rows" on the anon key
+                        request.accept.orEmpty().startsWith(OBJECT) ->
+                            if (mine) okJson(ONE_ROW)
+                            else
+                                postgrestError(
+                                    HttpStatusCode.NotAcceptable,
+                                    code = "PGRST116",
+                                    message = "no rows",
+                                )
+                        // A read with a count: the rows the token sees, and how many
+                        request.prefer.orEmpty().contains("count=") ->
+                            okJson(
+                                if (mine) USER_ROWS else "[]",
+                                mapOf("Content-Range" to if (mine) "0-0/1" else "*/0"),
+                            )
+                        else -> okJson(if (mine) USER_ROWS else "[]")
+                    }
                 },
                 engineDispatcher = dispatcher,
             )
@@ -87,6 +147,7 @@ class ReadsWhileRestoringTest {
             newTestOfflineClient(
                 supabase = supabase,
                 queryCacheDao = queryCacheDao,
+                engineLogger = logs.asEngineLogger(),
                 coordinatorScope = backgroundScope,
             )
         // The plugin starts loading the stored session, the load the held store keeps waiting
@@ -217,8 +278,144 @@ class ReadsWhileRestoringTest {
         assertEquals(RefreshState.Idle, first.await().refresh)
     }
 
+    @Test
+    fun a_read_of_another_shape_waits_for_the_session_and_is_sent_once_as_the_user() = runTest {
+        otherShapes.forEach { (name, request, usersAnswer) ->
+            listOf(ReadStrategy.NetworkOnly, ReadStrategy.NetworkFirst(), ReadStrategy.CacheFirst())
+                .forEach { strategy ->
+                    // Given — a session still restoring
+                    val (server, items, sessions) = restoringClient()
+
+                    // When — the read starts before the session has loaded
+                    val read = async { items.select(readStrategy = strategy, request = request) }
+                    advanceTimeBy(1.seconds)
+                    runCurrent()
+
+                    // Then — it waits, and nothing was sent on the anon key
+                    assertTrue(
+                        !read.isCompleted,
+                        "$name via $strategy returned while the session was restoring",
+                    )
+                    assertEquals(
+                        0,
+                        server.requests.size,
+                        "$name via $strategy was sent while the session was restoring",
+                    )
+
+                    // When — the session settles as the user
+                    sessions.release()
+                    runCurrent()
+
+                    // Then — at once, one request, with the user's token, and the user's answer,
+                    // not stored
+                    assertTrue(
+                        read.isCompleted,
+                        "$name via $strategy did not wake when the session settled",
+                    )
+                    assertEquals(usersAnswer, read.await().data, "$name via $strategy")
+                    assertEquals(1, server.requests.size, "$name via $strategy")
+                    assertTrue(
+                        server.requests.single().authorization.orEmpty().contains(testJwt("u-1")),
+                        "$name via $strategy was sent on the anon key",
+                    )
+                    assertTrue(
+                        queryCacheDao.rowsOf(TABLE).isEmpty(),
+                        "$name via $strategy was stored",
+                    )
+                }
+        }
+    }
+
+    @Test
+    fun a_read_of_another_shape_whose_session_never_settles_is_sent_once_after_the_wait() =
+        runTest {
+            // Given — a session that stays restoring
+            val (server, items, _) = restoringClient()
+
+            // When — a single() the anon key has no row for
+            val read = async {
+                runCatching {
+                    items.select(readStrategy = ReadStrategy.NetworkOnly) {
+                        filter { eq("id", 1) }
+                        single()
+                    }
+                }
+            }
+            advanceTimeBy(3.seconds)
+            runCurrent()
+
+            // Then — still waiting (300, 900 and 2,400 ms), nothing sent
+            assertTrue(!read.isCompleted, "the read gave up before the wait ran out")
+            assertEquals(0, server.requests.size)
+
+            // When — the wait runs out
+            advanceTimeBy(1.seconds)
+            runCurrent()
+
+            // Then — sent once, on the anon key, with a warning, and PostgREST's "no rows" is what
+            // the caller gets
+            assertEquals(1, server.requests.size)
+            val failure = assertIs<PostgrestRestException>(read.await().exceptionOrNull())
+            assertEquals(HttpStatusCode.NotAcceptable.value, failure.statusCode)
+            val warnings = logs.entriesAt(EngineLogLevel.WARNING).map { entry -> entry.message }
+            assertTrue(
+                warnings.any { message -> "sending the request as it is" in message },
+                "got $warnings",
+            )
+        }
+
+    @Test
+    fun a_cache_only_read_of_another_shape_fails_at_once_while_the_session_restores() = runTest {
+        // Given
+        val (server, items, _) = restoringClient()
+
+        // When / Then — refused before anything is sent, with no wait for the session
+        assertFailsWith<CacheMissException> {
+            items.select(readStrategy = ReadStrategy.CacheOnly()) {
+                filter { eq("id", 1) }
+                single()
+            }
+        }
+        assertEquals(0L, currentTime)
+        assertEquals(0, server.requests.size)
+    }
+
+    @Test
+    fun a_reactive_read_of_another_shape_waits_for_the_session_before_it_emits() = runTest {
+        // Given — a session still restoring
+        val (server, items, sessions) = restoringClient()
+
+        // When
+        val first = async {
+            items
+                .selectAsFlow(readStrategy = FlowReadStrategy.NetworkFirstThenCache) {
+                    filter { eq("id", 1) }
+                    single()
+                }
+                .first()
+        }
+        advanceTimeBy(1.seconds)
+        runCurrent()
+
+        // Then — nothing emitted, nothing sent
+        assertTrue(!first.isCompleted, "the read emitted while the session was restoring")
+        assertEquals(0, server.requests.size)
+
+        // When — the session settles as the user
+        sessions.release()
+        runCurrent()
+
+        // Then — at once, the user's row, from one request with the user's token
+        assertTrue(first.isCompleted, "the read did not wake when the session settled")
+        assertEquals(ONE_ROW, first.await().result?.data)
+        assertEquals(1, server.requests.size)
+        assertTrue(server.requests.single().authorization.orEmpty().contains(testJwt("u-1")))
+    }
+
     private companion object {
         const val TABLE = "todos"
         const val USER_ROWS = """[{"id":1,"title":"mine"}]"""
+        const val ONE_ROW = """{"id":1,"title":"mine"}"""
+        const val OBJECT = "application/vnd.pgrst.object+json"
     }
 }

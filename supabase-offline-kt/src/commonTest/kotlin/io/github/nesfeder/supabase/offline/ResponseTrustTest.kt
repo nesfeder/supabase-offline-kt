@@ -11,6 +11,8 @@ import io.github.jan.supabase.auth.MemorySessionManager
 import io.github.jan.supabase.auth.SessionManager
 import io.github.jan.supabase.auth.user.UserSession
 import io.github.jan.supabase.postgrest.Postgrest
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentity
+import io.github.nesfeder.supabase.offline.internal.postgrest.RequestSession
 import io.github.nesfeder.supabase.offline.internal.postgrest.ResponseTrustPolicy
 import io.github.nesfeder.supabase.offline.testdoubles.FakeHeldSessionManager
 import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
@@ -21,6 +23,8 @@ import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
 import io.github.nesfeder.supabase.offline.testdoubles.testJwt
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CoroutineScope
@@ -358,6 +362,36 @@ class ResponseTrustTest {
             assertEquals(rows, queryCacheDao.getRow(TABLE, TABLE)?.payload)
             assertEquals(RefreshState.Idle, observed.refresh)
             assertEquals(1, server.reads())
+        }
+    }
+
+    @Test
+    fun a_one_shot_read_sent_under_a_stored_session_not_yet_settled_asks_again_under_both_rules() {
+        // Given — the sessions a stored user's request goes out under before its token is on the
+        // wire, and what the session can be by the time the request answers
+        val user = RequestSession.SignedIn(QueueIdentity.User("u-1"))
+        val unsettled = listOf(RequestSession.Restoring, RequestSession.RefreshFailed)
+
+        ResponseTrustPolicy.entries.forEach { policy ->
+            unsettled.forEach { before ->
+                (unsettled + user + RequestSession.SignedOut).forEach { after ->
+                    listOf(true, false).forEach { isEmpty ->
+                        // Then — asked again, whatever the response held
+                        assertTrue(
+                            policy.oneShotAsksAgain(before, after, isEmpty),
+                            "$policy: $before then $after, empty = $isEmpty",
+                        )
+                    }
+                }
+            }
+
+            // Then — not a request that went out with the user's token, even when the refresh
+            // failed while it was on the wire: its answer is the user's
+            assertFalse(policy.oneShotAsksAgain(user, user, isEmpty = true), "$policy")
+            assertFalse(
+                policy.oneShotAsksAgain(user, RequestSession.RefreshFailed, isEmpty = false),
+                "$policy",
+            )
         }
     }
 

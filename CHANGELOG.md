@@ -37,6 +37,17 @@ All notable changes to this project are recorded in this file. The format follow
 - Each change a followed table received was applied as its own pass over the table's cached
   queries, so a burst ran far behind the connection; the changes waiting for a table are now
   applied as one pass, in the order the server sent them.
+- A one-shot read made while a stored session's token refresh has failed waits for the session,
+  as it does while one restores. supabase-kt sends the anon key meanwhile, and tries the refresh
+  again every ten seconds by default; the read returned the anon key's answer, empty under
+  row-level security, as the server's. When the session does not settle within the wait, a
+  `NetworkFirst` read with the query cached, or a `CacheFirst` read of a list marked stale, serves
+  the cached rows rather than that answer. A `NetworkFirstThenCache` read waits the same way
+  before its first emission. A read answered after the session settled asks again at once.
+- A read of a shape the cache cannot hold (`single()`, `maybeSingle()`, `head`, a `count`, …)
+  waits for a session that is restoring, or whose refresh failed, before it is sent. It went out
+  at once on the anon key, where a detail screen's `single()` failed with `PGRST116` and a `count`
+  read 0 at cold start.
 
 ## [0.2.0] - 2026-10-20
 
