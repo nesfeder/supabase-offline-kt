@@ -318,7 +318,9 @@ internal class MutationQueue(
      * [owner] whose row is one of [rows], which the server returned: their version and their
      * columns become the row's. Only [owner]'s writes: a base is what the device's user saw, so on
      * a shared device another user's queued write keeps its own base and meets the change as a
-     * conflict. Runs inside the caller's transaction, under the queue lock.
+     * conflict. Runs inside the caller's transaction, under the queue lock, so it reads only the
+     * later guarded writes of [owner], their filters and bases and never their bodies
+     * ([MutationDao.pendingGuardedAfter]), and decodes a filter only for those.
      *
      * @param owner The completed mutation's owner, as stored; `null` for a mutation with none.
      * @return Whether any base moved.
@@ -339,11 +341,10 @@ internal class MutationQueue(
         }
         if (returnedByKey.isEmpty()) return false
         var forwarded = false
-        mutationDao.pendingForTable(table).forEach { pending ->
-            if (pending.id <= afterId || pending.baseVersion == null) return@forEach
-            // The owner's exactly: a row with none was queued by a store with no session model,
-            // as the completed write then was too, and under a session model a pass adopts every
-            // ownerless row, under the send lock, before it sends anything
+        mutationDao.pendingGuardedAfter(table, afterId, owner).forEach { pending ->
+            // The owner's exactly, as the query asks: a row with none was queued by a store with
+            // no session model, as the completed write then was too, and under a session model a
+            // pass adopts every ownerless row, under the send lock, before it sends anything
             if (pending.owner != owner) return@forEach
             val filter = decodeFilterOrNull(pending.filterJson, json) ?: return@forEach
             val key =
@@ -351,7 +352,7 @@ internal class MutationQueue(
                     ?: return@forEach
             val returned = returnedByKey[key] ?: return@forEach
             val version = versionTextOf(returned[versionColumn]) ?: return@forEach
-            val earlier = parsedBaseOf(pending)
+            val earlier = parsedBaseOf(pending.baseJson)
             val refreshed =
                 earlier.keys.associateWith { column ->
                     returned[column] ?: earlier.getValue(column)
@@ -362,9 +363,9 @@ internal class MutationQueue(
         return forwarded
     }
 
-    /** [mutation]'s base row as stored; empty when it has none or it no longer parses. */
-    private fun parsedBaseOf(mutation: MutationRow): JsonObject =
-        mutation.baseJson?.let(::jsonObjectOrNull) ?: JsonObject(emptyMap())
+    /** A base row as stored in [baseJson]; empty when there is none or it no longer parses. */
+    private fun parsedBaseOf(baseJson: String?): JsonObject =
+        baseJson?.let(::jsonObjectOrNull) ?: JsonObject(emptyMap())
 
     /** [text] as a JSON object, or `null` when it is not one or does not parse. */
     private fun jsonObjectOrNull(text: String): JsonObject? = jsonObjectOrNull(text, json)
@@ -511,6 +512,13 @@ internal class MutationQueue(
         val adopts = mayAdoptOwnerlessMutations(identity)
         return if (table == null) mutationDao.pendingOwnedBy(identity, adopts)
         else mutationDao.pendingOwnedByInTable(identity, adopts, table)
+    }
+
+    /** How many mutations [pendingMutationsOf] would return, without reading them. */
+    suspend fun pendingMutationCountOf(identity: String, table: String? = null): Int {
+        val adopts = mayAdoptOwnerlessMutations(identity)
+        return if (table == null) mutationDao.countPendingOwnedBy(identity, adopts)
+        else mutationDao.countPendingOwnedByInTable(identity, adopts, table)
     }
 
     /** Whether [identity] has a mutation to replay, in any table. Reads the owner index only. */
@@ -965,9 +973,7 @@ internal class MutationQueue(
     /** How many pending mutations the app is shown, of [table] or of every table. */
     suspend fun shownPendingMutationCount(table: String?): Int {
         val identity = identityProvider() ?: return 0
-        val adopts = mayAdoptOwnerlessMutations(identity)
-        return if (table == null) mutationDao.countPendingOwnedBy(identity, adopts)
-        else mutationDao.countPendingOwnedByInTable(identity, adopts, table)
+        return pendingMutationCountOf(identity, table)
     }
 
     /**
@@ -1187,8 +1193,8 @@ internal class MutationQueue(
      * Retires [table]'s synced mutations that every cached payload of the table already holds
      * ([CachedQueryRow.syncedThrough]), when no live query is waiting for its first payload, and
      * the oldest beyond the newest [MAX_RETAINED_SYNCED_PER_TABLE] whatever still shows them. No
-     * clock is read, so a clock set back or forward neither keeps one nor retires one. Caller holds
-     * the table's write lock.
+     * clock is read, so a clock set back or forward neither keeps one nor retires one, and no body
+     * is read: ids and sequences decide. Caller holds the table's write lock.
      */
     private suspend fun retireSyncedMutationsOf(table: String) {
         val synced = mutationDao.syncedForTable(table)

@@ -128,6 +128,25 @@ internal interface MutationDao {
     )
     suspend fun pendingForTable(table: String): List<MutationRow>
 
+    /**
+     * The guarded pending mutations of [table] queued after [afterId] by [owner] (`null` for the
+     * mutations with no recorded owner), in insertion order, as far as a base forward needs them:
+     * the filter and base, never the body. A replayed write that returned its row refreshes the
+     * bases of the later writes to that row with this, so it reads no body and no unguarded row.
+     */
+    @Query(
+        "SELECT id, filter_json, base_json, owner FROM mutation_cache " +
+            "WHERE table_name = :table AND synced_at_ms IS NULL AND id > :afterId " +
+            "AND base_version IS NOT NULL " +
+            "AND ((:owner IS NULL AND owner IS NULL) OR owner = :owner) " +
+            "ORDER BY id ASC"
+    )
+    suspend fun pendingGuardedAfter(
+        table: String,
+        afterId: Long,
+        owner: String?,
+    ): List<PendingGuardedMutation>
+
     /** All pending mutations across all tables, in insertion order (by [MutationRow.id]). */
     @Query("SELECT * FROM mutation_cache WHERE synced_at_ms IS NULL ORDER BY id ASC")
     suspend fun pendingAll(): List<MutationRow>
@@ -213,12 +232,17 @@ internal interface MutationDao {
     /** The mutation [id], pending or synced, or `null` when it is not queued. */
     @Query("SELECT * FROM mutation_cache WHERE id = :id") suspend fun byId(id: Long): MutationRow?
 
-    /** [table]'s synced mutations still retained for the overlay, oldest replay first. */
+    /**
+     * [table]'s synced mutations still retained for the overlay, oldest replay first: their ids and
+     * sequences only, which is all retirement decides by, so a table's bodies are not read to
+     * retire it.
+     */
     @Query(
-        "SELECT * FROM mutation_cache WHERE table_name = :table AND synced_at_ms IS NOT NULL " +
+        "SELECT id, sync_sequence FROM mutation_cache " +
+            "WHERE table_name = :table AND synced_at_ms IS NOT NULL " +
             "ORDER BY sync_sequence ASC, id ASC"
     )
-    suspend fun syncedForTable(table: String): List<MutationRow>
+    suspend fun syncedForTable(table: String): List<SyncedMutationRef>
 
     /** Every table with a synced mutation retained for the overlay. */
     @Query("SELECT DISTINCT table_name FROM mutation_cache WHERE synced_at_ms IS NOT NULL")
@@ -289,6 +313,26 @@ internal interface MutationDao {
         block()
     }
 }
+
+/**
+ * What a base forward reads of a guarded pending mutation ([MutationDao.pendingGuardedAfter]): the
+ * columns of [MutationRow] of the same names.
+ */
+internal data class PendingGuardedMutation(
+    val id: Long,
+    @ColumnInfo(name = "filter_json") val filterJson: String?,
+    @ColumnInfo(name = "base_json") val baseJson: String?,
+    val owner: String?,
+)
+
+/**
+ * What retirement reads of a synced mutation ([MutationDao.syncedForTable]): the columns of
+ * [MutationRow] of the same names.
+ */
+internal data class SyncedMutationRef(
+    val id: Long,
+    @ColumnInfo(name = "sync_sequence") val syncSequence: Long?,
+)
 
 /**
  * Runs [block] in one write transaction, as [MutationDao.runInTransaction] does, and returns its
