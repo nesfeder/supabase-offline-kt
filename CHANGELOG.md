@@ -40,6 +40,12 @@ All notable changes to this project are recorded in this file. The format follow
   the wrong one: such a filter was sent as `owner=in.<id>` or `id=eq.[1]`, the server refused the
   join, and the channel stalled and retried forever. Pass a `List` for `in` and a single value for
   every other operator.
+- A `QueueIfOffline` write sent at once stays queued, instead of being thrown and dropped from the
+  queue, when the server answers `408`, `429`, `502`, `504`, `522` or `524`, or `401` with
+  PostgREST's `PGRST301` or `PGRST303` (a token the server holds expired while the device's clock
+  says it is fresh), as a replay of the same write always has; a later pass sends it. A caller
+  that relied on the exception to show an error now gets `Queued`. A `500` from the database is
+  still thrown.
 
 ### Deprecated
 
@@ -139,6 +145,11 @@ All notable changes to this project are recorded in this file. The format follow
   the channel at the old expiry and the named tables were read again; the provider is now asked
   more often as the expiry nears, a later token is sent as soon as it is returned, and a provider
   that failed once is asked again instead of being left until the next join.
+- An empty value in an `in` list with other values, such as `isIn("status", listOf("", "done"))`,
+  is kept on the device as the server keeps it: a queued or cached row whose value is the empty
+  string shows in a cached list read through that filter, and a queued update or delete sends the
+  list whole instead of without the empty value. A list of only the empty value still matches no
+  row, as the server reads it.
 
 ## [0.2.0] - 2026-10-20
 
