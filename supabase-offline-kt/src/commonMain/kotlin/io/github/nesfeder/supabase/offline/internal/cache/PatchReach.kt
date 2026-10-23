@@ -6,12 +6,11 @@ import io.github.nesfeder.supabase.offline.MutationOperation
 import io.github.nesfeder.supabase.offline.internal.db.MutationRow
 import io.github.nesfeder.supabase.offline.internal.db.knownOperation
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.primaryKeyOf
-import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 import io.github.nesfeder.supabase.offline.internal.postgrest.QueryAdmission
 import io.github.nesfeder.supabase.offline.internal.postgrest.QueryShape
+import io.github.nesfeder.supabase.offline.internal.postgrest.RowFilter
 import io.github.nesfeder.supabase.offline.internal.postgrest.RowMatch
 import io.github.nesfeder.supabase.offline.internal.postgrest.decodeFilterOrNull
-import io.github.nesfeder.supabase.offline.internal.postgrest.rowMatch
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -91,9 +90,8 @@ private fun mayLeaveWrong(
             else updateMayLeaveWrong(write, target, json)
         }
         MutationOperation.DELETE -> {
-            val filter = decodeFilterOrNull(write.filterJson, json)
-            filter != null &&
-                target.rows.any { row -> reachIsUnknown(row, filter, target.keyColumns) }
+            val filter = filterOf(write, target, json)
+            filter != null && target.rows.any { row -> reachIsUnknown(row, filter) }
         }
         MutationOperation.UPSERT -> upsertMayLeaveWrong(write, target, json, conflictColumnsOf)
         else -> false
@@ -116,18 +114,14 @@ private fun keyedUpdateMayLeaveWrong(
 }
 
 private fun updateMayLeaveWrong(write: MutationRow, target: PatchTarget, json: Json): Boolean {
-    val filter = decodeFilterOrNull(write.filterJson, json) ?: return false
+    val filter = filterOf(write, target, json) ?: return false
     val patch = json.parseToJsonElement(write.bodyJson) as? JsonObject ?: return false
-    if (target.rows.any { row -> reachIsUnknown(row, filter, target.keyColumns) }) return true
+    if (target.rows.any { row -> reachIsUnknown(row, filter) }) return true
     val mayJoin = mayGainRowsBy(patch, target.shape)
-    if (
-        mayJoin &&
-            target.sameSelectRows.any { row -> reachIsUnknown(row, filter, target.keyColumns) }
-    )
-        return true
+    if (mayJoin && target.sameSelectRows.any { row -> reachIsUnknown(row, filter) }) return true
     val admission = target.admission
     return target.otherSelectRows.any { row ->
-        when (rowMatch(row, filter, target.keyColumns)) {
+        when (filter.match(row)) {
             RowMatch.MATCHES -> !admission.admits(row) && admission.admits(JsonObject(row + patch))
             RowMatch.UNKNOWN -> mayJoin
             RowMatch.EXCLUDED -> false
@@ -163,13 +157,19 @@ private fun upsertMayLeaveWrong(
 }
 
 /**
+ * [write]'s filter, made ready once to judge every row of [target] ([RowFilter]), or `null` when it
+ * has none that decodes.
+ */
+private fun filterOf(write: MutationRow, target: PatchTarget, json: Json): RowFilter? =
+    decodeFilterOrNull(write.filterJson, json)?.let { filter ->
+        RowFilter(filter, target.keyColumns)
+    }
+
+/**
  * Whether [filter]'s reach of [row] is unknown: a row, not a stray value, the engine cannot judge.
  */
-private fun reachIsUnknown(
-    row: JsonElement,
-    filter: FilterDescriptor,
-    keyColumns: Set<String>,
-): Boolean = row is JsonObject && rowMatch(row, filter, keyColumns) == RowMatch.UNKNOWN
+private fun reachIsUnknown(row: JsonElement, filter: RowFilter): Boolean =
+    row is JsonObject && filter.match(row) == RowMatch.UNKNOWN
 
 /**
  * Whether an UPDATE setting [patch]'s columns may bring rows into a query of [shape]: its filters

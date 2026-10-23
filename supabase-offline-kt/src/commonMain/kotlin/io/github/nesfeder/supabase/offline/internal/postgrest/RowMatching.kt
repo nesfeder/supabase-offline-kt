@@ -45,7 +45,8 @@ internal val EVALUATED_OPERATORS: Set<FilterOperator> =
     setOf(FilterOperator.EQ, FilterOperator.NEQ, FilterOperator.IN, FilterOperator.IS)
 
 /**
- * [filter] against [row]: its conditions combined by its mode.
+ * [filter] against [row]: its conditions combined by its mode. Code judging many rows builds one
+ * [RowFilter] and keeps it: this builds one for the row.
  *
  * @param uuidColumns columns read as Postgres reads a `uuid`, such as a table's key: one UUID in
  *   any letter case, braces or hyphens is one value.
@@ -58,15 +59,21 @@ internal fun rowMatch(
 
 /**
  * [filter] made ready to judge many rows, as [rowMatch] does: each condition's operator is
- * resolved, and its column read, once rather than for every row.
+ * resolved, and its column read, once rather than for every row, and what its value needs parsed
+ * ([RowCondition]) is parsed once.
  *
  * @param uuidColumns see [rowMatch].
+ * @param listParser see [RowCondition].
  */
-internal class RowFilter(filter: FilterDescriptor, uuidColumns: Set<String> = emptySet()) {
+internal class RowFilter(
+    filter: FilterDescriptor,
+    uuidColumns: Set<String> = emptySet(),
+    listParser: (String) -> List<String>? = ::inListMembersOf,
+) {
 
     private val isAnd = filter.mode == FilterDescriptor.Mode.AND
     private val conditions =
-        filter.conditions.map { condition -> RowCondition(condition, uuidColumns) }
+        filter.conditions.map { condition -> RowCondition(condition, uuidColumns, listParser) }
 
     /**
      * Whether [match] can answer [RowMatch.MATCHES] for some row: not when every row needs a
