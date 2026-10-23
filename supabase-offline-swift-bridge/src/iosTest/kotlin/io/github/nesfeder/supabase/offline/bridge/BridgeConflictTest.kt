@@ -138,7 +138,11 @@ class BridgeConflictTest {
         assertEquals(listOf("title"), first.conflictingColumns)
         assertEquals(entries.map { it.id }, lists.awaitValue { it.size == 2 }.map { it.id })
 
-        // When — the first is kept and the second dismissed; Hold and Apply without columns refused
+        // When — the first is kept and the second dismissed; Hold and Apply without columns
+        // refused. The network goes off first: keeping a write asks for a pass whatever autoSync
+        // says, and with the network on, that pass could send the kept write before the queue is
+        // read below
+        awaitErrorOnly { client.disableNetwork(it) }
         val held = awaitErrorOnly {
             client.resolveConflictedMutation(first.id, BridgeConflictDecision.HOLD, null, it)
         }
