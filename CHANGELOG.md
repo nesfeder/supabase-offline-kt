@@ -21,7 +21,6 @@ All notable changes to this project are recorded in this file. The format follow
   before the read returned, and starts when a running count of the cached lists' length passes the
   bound, where every response of 4 KiB or more, and every 32nd response, summed every cached list
   first; a pass reads each list's length once and deletes the lists it chose in one transaction.
-  Every list a live reader shows is kept, where before at most 500 were.
 - The rejected list keeps a guarded write's base in each guarded entry, under two new keys
   (`baseVersion`, `baseJson`), so a retry replays guarded. A list an earlier build wrote reads back
   without them, and a retry of such an entry replays unguarded, as it did there.

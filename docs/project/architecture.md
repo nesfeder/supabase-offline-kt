@@ -91,7 +91,7 @@ The settings:
 
 | Setting | Default | What it sets |
 | --- | --- | --- |
-| `cacheSizeBytes: Long` | 100 MiB | The most the cached query results may hold, counted as the summed length of the cached responses, not the database file. Past it, the results fetched longest ago are evicted, never one a live reader shows. Any other value below 4 KiB counts as 4 KiB; `CACHE_SIZE_UNLIMITED` turns eviction off. |
+| `cacheSizeBytes: Long` | 100 MiB | The most the cached query results may hold, counted as the summed length of the cached responses, not the database file. Past it, the results fetched longest ago are evicted, never one of up to 500 queries a live reader shows. Any other value below 4 KiB counts as 4 KiB; `CACHE_SIZE_UNLIMITED` turns eviction off. |
 | `fileCacheSizeBytes: Long` | 256 MiB | The most the Storage file cache may hold. Past it, the least recently used files are deleted, never one being read or used in the last 30 seconds. Any other value below zero counts as zero; `CACHE_SIZE_UNLIMITED` turns eviction off. |
 | `dataDirectory: String?` | `null` | Where the database, `supabase_offline.db`, and the file cache live. `null` is the platform's place: the app's database directory and `<filesDir>/supabase_offline` on Android, `Library/Application Support` on iOS, where a database found in `Documents`, an earlier default, is first moved with its files. When this directory has no database and the default place has one no client holds, the first client moves it here, unsent writes included, and then its file cache; when it cannot, it opens the one it can without leaving queued writes behind, and logs a warning. |
 | `networkAvailability: Flow<Boolean>?` | `null` | The app's own connectivity signal, `true` while online, in place of the platform's monitor. `null` uses the monitor. |
@@ -854,11 +854,13 @@ within theirs.
 
 **Eviction.** The engine keeps a running count of the payloads' length: read once from the table,
 in the background after the first response of a process is written, and moved by each payload
-written or evicted since. When a written response takes the count past the bound, a pass runs in
-the engine's scope after the response is returned: it reads every payload's length once, oldest
-fetch first, chooses the payloads to delete down to 50 MB below the bound (or to the bound when it
-is 50 MB or less), never one with a live reader, deletes them in one transaction and sets the
-count from what it read. The engine's own records are never counted or evicted.
+written, less the one it replaced, patched or evicted since. When a written response takes the
+count past the bound, a pass runs in the engine's scope after the response is returned: it reads
+every payload's `rowid`, fetch time and length once, oldest fetch first, chooses the payloads to
+delete down to 50 MB below the bound (or to the bound when it is 50 MB or less), never one of up to
+500 with a live reader, deletes them by `rowid` in one transaction, sparing any fetched again since
+the read, and sets the count from what it read. A response that lands during a pass gets a pass of
+its own. The engine's own records are never counted or evicted.
 
 **Retries and refreshes.** A `NetworkFirst` read with a warm cache, a `CacheFirst` read fetching a
 stale payload again, a `NetworkFirstThenCache` read's first request with a warm cache, and every

@@ -13,6 +13,7 @@ import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runCurrent
@@ -142,6 +143,36 @@ class EvictionPassCostTest {
         runCurrent()
         assertEquals(2, counting.payloadLengthReads)
         assertEquals(0, counting.evictionDeletes)
+    }
+
+    @Test
+    fun a_list_fetched_again_during_a_pass_is_not_evicted() = runTest {
+        // Given five lists at a bound of three, and the oldest fetched again while the pass reads
+        // the table: the pass chose it from what it read, but it is the newest list now
+        seedRows(5, length = 1_000)
+        val store = store(maxPayloadBytes = 3_000L)
+        var reads = 0
+        counting.afterPayloadLengthsRead = {
+            if (++reads == 1) {
+                store.queryCache.cacheResponse(TABLE, "items?page=0", arrayOfLength(1_000))
+            }
+        }
+
+        // When a pass runs
+        store.queryCache.evictOverBudget()
+
+        // Then the refreshed list stayed, the next oldest went, and the pass, finding a chosen
+        // row left in place, read the table again and took the next instead
+        assertNotNull(fake.getRow(TABLE, "items?page=0"))
+        assertNull(fake.getRow(TABLE, "items?page=1"))
+        assertNull(fake.getRow(TABLE, "items?page=2"))
+        assertNotNull(fake.getRow(TABLE, "items?page=3"))
+        assertEquals(2, counting.payloadLengthReads)
+        assertEquals(3_000L, fake.totalPayloadBytes())
+
+        // And the count is right: the pass the refresh asked for finds nothing to read
+        runCurrent()
+        assertEquals(2, counting.payloadLengthReads)
     }
 
     /** Seeds [count] lists of [TABLE], `items?page=0` the oldest, each [length] characters. */

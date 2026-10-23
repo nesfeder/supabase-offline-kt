@@ -15,9 +15,9 @@ import io.github.nesfeder.supabase.offline.internal.mutationqueue.PrimaryKeys
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.primaryKeyOf
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 import io.github.nesfeder.supabase.offline.internal.postgrest.QueryShape
+import io.github.nesfeder.supabase.offline.internal.postgrest.RowFilter
 import io.github.nesfeder.supabase.offline.internal.postgrest.RowMatch
 import io.github.nesfeder.supabase.offline.internal.postgrest.encodeFilter
-import io.github.nesfeder.supabase.offline.internal.postgrest.rowMatch
 import kotlin.concurrent.atomics.AtomicLong
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.concurrent.atomics.decrementAndFetch
@@ -275,8 +275,9 @@ internal class CachePatcher(
                     )
             }
             val created = livePayloadsFor(table, uncachedLive, shapes, writes, known, batch, keyed)
-            toFetchAgain += created.toFetchAgain
             val changed = writePatches(guardTick, patches, created.payloads) ?: return@withLock
+            // Once the patch landed: a clear that voided it has its live readers fetch anyway
+            toFetchAgain += created.toFetchAgain
             for ((patch, landed) in patches.zip(changed)) {
                 // A row not changed was evicted since the snapshot: a patch never brings a deleted
                 // list back, and its reader has nothing to fetch again for
@@ -406,12 +407,12 @@ internal class CachePatcher(
             val shapes = queryCache.queryShapes.shapesOf(table)
             val cached = queryCacheDao.allForTable(table)
             val toMark = mutableListOf<PayloadPatch>()
+            val narrowed = narrowing?.let { filter -> RowFilter(filter) }
             for (row in cached) {
                 val reached =
-                    narrowing == null ||
+                    narrowed == null ||
                         queryCache.parsedPayloadOf(row).rows.orEmpty().any { element ->
-                            element !is JsonObject ||
-                                rowMatch(element, narrowing) != RowMatch.EXCLUDED
+                            element !is JsonObject || narrowed.match(element) != RowMatch.EXCLUDED
                         } ||
                         (patch != null && mayGainRowsBy(patch, shapes[row.cacheKey]))
                 if (!reached) continue

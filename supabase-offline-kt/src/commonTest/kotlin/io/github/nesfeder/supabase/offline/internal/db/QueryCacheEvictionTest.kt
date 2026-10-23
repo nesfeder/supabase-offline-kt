@@ -32,9 +32,10 @@ import kotlinx.coroutines.test.runTest
  * construction; it reads again only while writes during the pass keep the count over the bound, and
  * a bounded number of times. These tests lock in the oldest-first order, the unlimited-cache
  * short-circuit, the small-cache hysteresis handling, that a write of any size starts a pass once
- * the cache is past its bound, that every live reader's payload is kept, and deadlock-free
- * concurrent writes. The pass a written response starts runs in the test's background scope, so a
- * test that writes runs what is due (`runCurrent`) to see it.
+ * the cache is past its bound, that a write during a pass gets one too, that up to 500 live
+ * readers' payloads are kept, and deadlock-free concurrent writes. The pass a written response
+ * starts runs in the test's background scope, so a test that writes runs what is due (`runCurrent`)
+ * to see it.
  */
 class QueryCacheEvictionTest {
 
@@ -213,23 +214,49 @@ class QueryCacheEvictionTest {
     }
 
     @Test
-    fun a_live_readers_payload_is_kept_however_many_readers_there_are() = runTest {
-        // Given 600 cached lists far over the bound, 550 of them shown by live readers: more than
-        // the 500 an SQL delete could once be told to keep
+    fun up_to_500_live_readers_payloads_are_kept_whatever_their_age() = runTest {
+        // Given 600 cached lists far over the bound, the 550 oldest shown by live readers
         seedRows(600, length = 100)
-        val live = (0 until 550).mapTo(mutableSetOf()) { index -> "sig-$index" }
+        val live = (0 until 550).mapTo(LinkedHashSet()) { index -> "sig-$index" }
         val store = buildStore(maxPayloadBytes = 10_000L, allLiveCacheKeys = { live })
 
         // When enforcement runs
         store.queryCache.evictOverBudget()
 
-        // Then every shown list stayed, whatever its age, and only the unshown ones went
+        // Then the first 500 shown lists stayed, however old, and the rest went in their place:
+        // those nobody shows first, then the shown ones past the 500 a pass passes over
         val remaining =
             queryCacheDao.rowsOf("ratings").mapTo(mutableSetOf()) { row -> row.cacheKey }
-        assertEquals(live, remaining)
-        assertEquals(50, queryCacheDao.evictedRows)
-        // And the pass stopped once nothing more could go, within its bounded reads
+        assertEquals(live.take(QueryCache.MAX_KEPT_LIVE_CACHE_KEYS).toSet(), remaining)
+        assertEquals(100, queryCacheDao.evictedRows)
         assertTrue(counting.payloadLengthReads <= QueryCache.MAX_EVICTION_PASSES)
+    }
+
+    @Test
+    fun a_write_during_a_pass_gets_its_pass() = runTest {
+        // Given a cache within its bound, whose count is not yet read
+        seedRows(10, length = 1_000)
+        val store =
+            buildStore(maxPayloadBytes = 50_000L, nowMillis = incrementingClock(from = 100L))
+        // And 19 responses that land while the first pass reads the table: it saw 11,000
+        // characters, the cache is at 106,000
+        var reads = 0
+        counting.afterPayloadLengthsRead = {
+            if (++reads == 1) {
+                repeat(19) { index ->
+                    store.queryCache.cacheResponse("ratings", "late-$index", arrayOfLength(5_000))
+                }
+            }
+        }
+
+        // When a response starts the first pass, and the background runs
+        store.queryCache.cacheResponse("ratings", "first", arrayOfLength(1_000))
+        runCurrent()
+
+        // Then the late writes got a pass of their own, which read the table again and drained it
+        assertEquals(2, counting.payloadLengthReads)
+        assertTrue(queryCacheDao.totalPayloadBytes() <= 50_000L)
+        assertNotNull(queryCacheDao.getRow("ratings", "late-18"), "the newest list survives")
     }
 
     @Test

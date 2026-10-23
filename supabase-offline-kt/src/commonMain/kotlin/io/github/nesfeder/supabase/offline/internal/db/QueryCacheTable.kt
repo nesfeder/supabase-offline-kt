@@ -50,15 +50,19 @@ internal fun staleStampOf(updatedAt: Long): Long =
     if (updatedAt < 0) updatedAt else -maxOf(updatedAt, 1L)
 
 /**
- * One cached payload's size, without the payload: what an eviction pass reads for every row; see
- * [QueryCacheDao.payloadLengthsOldestFirst].
+ * One cached payload's place in eviction order and its size, without the payload or its key: what
+ * an eviction pass reads for every row; see [QueryCacheDao.payloadLengthsOldestFirst].
  *
+ * @property rowId the row's SQLite `rowid`, which names it to [QueryCacheDao.deletePayloads].
+ * @property fetchedAt when the payload was fetched ([fetchedAtOf]), stale or not.
  * @property length the payload's length in characters.
+ * @property kept whether a live reader shows the payload, so a pass leaves it.
  */
 internal data class PayloadLength(
-    @ColumnInfo(name = "table_name") val table: String,
-    @ColumnInfo(name = "signature") val cacheKey: String,
+    @ColumnInfo(name = "row_id") val rowId: Long,
+    @ColumnInfo(name = "fetched_at") val fetchedAt: Long,
     @ColumnInfo(name = "payload_length") val length: Long,
+    @ColumnInfo(name = "kept") val kept: Boolean,
 )
 
 @Dao
@@ -199,30 +203,50 @@ internal interface QueryCacheDao {
     suspend fun totalPayloadBytes(): Long
 
     /**
-     * Every cached SELECT payload's table, signature and character length, in eviction order: the
-     * one fetched longest ago first ([fetchedAtOf]), stale or not. One read of every payload, from
-     * which [QueryCache.evictOverBudget] takes both the cache's size and the rows to delete. The
-     * engine's reserved rows (see [RESERVED_TABLE_NAME]) are left out: they hold the rejected list,
-     * the cache's owner and the query shapes, which no refetch restores.
+     * The length in characters of the payload cached for [table]/[cacheKey], or `null` for none.
      */
     @Query(
-        "SELECT table_name, signature, LENGTH(payload) AS payload_length FROM object_cache " +
-            "WHERE table_name != '$RESERVED_TABLE_NAME' ORDER BY abs(updated_at) ASC"
+        "SELECT LENGTH(payload) FROM object_cache WHERE table_name = :table AND signature = :cacheKey"
     )
-    suspend fun payloadLengthsOldestFirst(): List<PayloadLength>
+    suspend fun payloadLengthOf(table: String, cacheKey: String): Long?
 
     /**
-     * Deletes the rows of [table] cached under [cacheKeys], as an eviction pass deletes the rows it
-     * chose from [payloadLengthsOldestFirst]. By table and signature, never by `rowid`: a row's
-     * `rowid` is given out again once the table is emptied, so one read before a clear could name a
-     * row written after it.
+     * Every cached SELECT payload's `rowid`, fetch time and character length, in eviction order:
+     * the one fetched longest ago first ([fetchedAtOf]), stale or not, each marked when its
+     * signature is one of [keptCacheKeys]. One read of every payload, from which
+     * [QueryCache.evictOverBudget] takes the cache's size and the rows to delete. The engine's
+     * reserved rows (see [RESERVED_TABLE_NAME]) are left out: they hold the rejected list, the
+     * cache's owner and the query shapes, which no refetch restores.
      *
-     * @param cacheKeys at most [QueryCache.MAX_DELETE_KEYS] signatures, within SQLite's bound on a
-     *   statement's variables.
-     * @return how many rows were deleted; fewer than asked when some were gone already.
+     * @param keptCacheKeys signatures a live reader shows, at most
+     *   [QueryCache.MAX_KEPT_LIVE_CACHE_KEYS] within SQLite's bound on a statement's variables. A
+     *   signature begins with its table, so it names one row.
      */
-    @Query("DELETE FROM object_cache WHERE table_name = :table AND signature IN (:cacheKeys)")
-    suspend fun deletePayloads(table: String, cacheKeys: List<String>): Int
+    @Query(
+        "SELECT rowid AS row_id, abs(updated_at) AS fetched_at, LENGTH(payload) AS payload_length, " +
+            "signature IN (:keptCacheKeys) AS kept FROM object_cache " +
+            "WHERE table_name != '$RESERVED_TABLE_NAME' ORDER BY abs(updated_at) ASC"
+    )
+    suspend fun payloadLengthsOldestFirst(keptCacheKeys: List<String>): List<PayloadLength>
+
+    /**
+     * Deletes the cached payloads among [rowIds] fetched at [fetchedAtOrBefore] or earlier, as an
+     * eviction pass deletes the rows it chose from [payloadLengthsOldestFirst]. The fetch time
+     * guards the window between the read and the delete: a list fetched again since has a later
+     * stamp and stays, now the newest, and so does a row written under a `rowid` SQLite gave out
+     * again after the table was emptied; a patched or stale-marked list keeps its stamp and goes.
+     * The engine's reserved rows (see [RESERVED_TABLE_NAME]) are never deleted, whatever `rowid`
+     * they were given.
+     *
+     * @param rowIds at most [QueryCache.MAX_DELETE_KEYS] of them, within SQLite's bound on a
+     *   statement's variables.
+     * @return how many rows were deleted; fewer than named when some were gone or fetched again.
+     */
+    @Query(
+        "DELETE FROM object_cache WHERE rowid IN (:rowIds) AND abs(updated_at) <= :fetchedAtOrBefore " +
+            "AND table_name != '$RESERVED_TABLE_NAME'"
+    )
+    suspend fun deletePayloads(rowIds: List<Long>, fetchedAtOrBefore: Long): Int
 
     /**
      * Runs [block] in one write transaction: every DAO call it makes, on any of the database's

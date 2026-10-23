@@ -41,7 +41,7 @@ From the samples: [SampleSupabaseClient.kt](https://github.com/nesfeder/supabase
 
 The most the cached query results may hold, counted as the summed length of the cached responses,
 not the size of the database file. Past it, the results fetched longest ago are evicted, never one
-a live reader shows. Any other value below 4 KiB counts as 4 KiB. See
+of up to 500 lists a live reader shows. Any other value below 4 KiB counts as 4 KiB. See
 [Cache size and eviction](../behaviors/eviction.md).
 
 From the samples: [SampleSupabaseClient.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/platform/SampleSupabaseClient.kt) · [ClientSettings.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/App/ClientSettings.swift)
