@@ -36,6 +36,12 @@ All notable changes to this project are recorded in this file. The format follow
   the wrong one: such a filter was sent as `owner=in.<id>` or `id=eq.[1]`, the server refused the
   join, and the channel stalled and retried forever. Pass a `List` for `in` and a single value for
   every other operator.
+- `single()` is cached as its list, one row long, under the key of the list read with the same
+  query, through the guards a list response passes. Offline, or when the network fails,
+  `NetworkFirst`, `CacheFirst` and `CacheOnly` answer it from that list when it holds exactly one
+  row, with the queued writes laid over it; no row or several fail as before. It was never cached,
+  so a detail screen had nothing offline. `maybeSingle()` on supabase-kt 3.8 is cached the same
+  way, and offline answers only its one row, never `null`.
 
 ### Deprecated
 
