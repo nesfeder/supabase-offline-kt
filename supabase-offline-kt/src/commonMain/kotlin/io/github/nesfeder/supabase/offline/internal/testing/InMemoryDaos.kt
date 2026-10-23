@@ -8,9 +8,11 @@ import io.github.nesfeder.supabase.offline.internal.db.CachedQueryRow
 import io.github.nesfeder.supabase.offline.internal.db.MutationDao
 import io.github.nesfeder.supabase.offline.internal.db.MutationRow
 import io.github.nesfeder.supabase.offline.internal.db.PayloadLength
+import io.github.nesfeder.supabase.offline.internal.db.PendingGuardedMutation
 import io.github.nesfeder.supabase.offline.internal.db.QUERY_SHAPE_CACHE_KEY_PREFIX
 import io.github.nesfeder.supabase.offline.internal.db.QueryCacheDao
 import io.github.nesfeder.supabase.offline.internal.db.RESERVED_TABLE_NAME
+import io.github.nesfeder.supabase.offline.internal.db.SyncedMutationRef
 import io.github.nesfeder.supabase.offline.internal.db.fetchedAtOf
 import kotlin.coroutines.AbstractCoroutineContextElement
 import kotlin.coroutines.CoroutineContext
@@ -378,6 +380,27 @@ internal open class InMemoryMutationDao : MutationDao {
     override suspend fun pendingAll(): List<MutationRow> =
         mutations.value.filter { it.syncedAtMs == null }.sortedBy { it.id }
 
+    override suspend fun countPending(): Int = mutations.value.count { it.syncedAtMs == null }
+
+    override suspend fun countPendingForTable(table: String): Int =
+        mutations.value.count { it.table == table && it.syncedAtMs == null }
+
+    override suspend fun pendingGuardedAfter(
+        table: String,
+        afterId: Long,
+        owner: String?,
+    ): List<PendingGuardedMutation> =
+        mutations.value
+            .filter {
+                it.table == table &&
+                    it.syncedAtMs == null &&
+                    it.id > afterId &&
+                    it.baseVersion != null &&
+                    it.owner == owner
+            }
+            .sortedBy { it.id }
+            .map { PendingGuardedMutation(it.id, it.filterJson, it.baseJson, it.owner) }
+
     override fun pendingAllFlow(): Flow<List<MutationRow>> = mutations.map { all ->
         all.filter { it.syncedAtMs == null }.sortedBy { it.id }
     }
@@ -439,10 +462,11 @@ internal open class InMemoryMutationDao : MutationDao {
 
     override suspend fun byId(id: Long): MutationRow? = mutations.value.firstOrNull { it.id == id }
 
-    override suspend fun syncedForTable(table: String): List<MutationRow> =
+    override suspend fun syncedForTable(table: String): List<SyncedMutationRef> =
         mutations.value
             .filter { it.table == table && it.syncedAtMs != null }
             .sortedWith(compareBy({ it.syncSequence ?: Long.MIN_VALUE }, { it.id }))
+            .map { SyncedMutationRef(it.id, it.syncSequence) }
 
     override suspend fun tablesWithSyncedMutations(): List<String> =
         mutations.value.filter { it.syncedAtMs != null }.map { it.table }.distinct()

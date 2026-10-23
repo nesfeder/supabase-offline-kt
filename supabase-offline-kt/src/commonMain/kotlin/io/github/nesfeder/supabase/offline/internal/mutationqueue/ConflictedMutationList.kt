@@ -87,19 +87,45 @@ internal data class StoredConflictList(
 )
 
 /**
+ * The conflicted list as held in memory: the persisted [list] and, beside each entry, how many
+ * characters it takes in the row, measured once when it was added or loaded, as
+ * [MeasuredRejectionList] keeps the rejected list's.
+ *
+ * @property list The list as persisted.
+ * @property entrySizes Each entry's encoded length, one per entry of [list], in its order.
+ */
+internal data class MeasuredConflictList(val list: StoredConflictList, val entrySizes: List<Int>) {
+
+    init {
+        require(entrySizes.size == list.entries.size) { "One size per conflicted entry" }
+    }
+
+    /** [StoredConflictList.entries]. */
+    val entries: List<StoredConflict>
+        get() = list.entries
+
+    /** [StoredConflictList.droppedCount]. */
+    val droppedCount: Long
+        get() = list.droppedCount
+}
+
+/**
  * The mutation queue's conflicted list, kept in a reserved `object_cache` row within the rejected
  * list's bounds. Callers hold the queue lock and write the row this builds in their own
  * transaction.
+ *
+ * @param entrySerializer How an entry is encoded to measure it; a test counts the encodings.
  */
 internal class ConflictedMutationList(
     private val queryCacheDao: QueryCacheDao,
     private val json: Json,
     private val nowMillis: () -> Long,
     private val logger: EngineLogger,
+    private val entrySerializer: KSerializer<StoredConflict> = StoredConflict.serializer(),
 ) {
 
-    /** The list as last read or written; `null` until it is first read. */
-    private val conflictedCache = MutableStateFlow<StoredConflictList?>(null)
+    /** The list as last read or written, measured; `null` until it is first read. */
+    private val conflictedCache = MutableStateFlow<MeasuredConflictList?>(null)
 
     /** Every conflicted mutation, oldest first; an unreadable row is kept aside and reads empty. */
     suspend fun conflicts(): List<StoredConflict> = conflictedList().entries
@@ -130,20 +156,28 @@ internal class ConflictedMutationList(
 
     /**
      * The list's row with [add] added as the newest entry and the entry with [removeId] removed,
-     * bounded as the rejected list is. Write it in the caller's transaction, then
-     * [conflictWritten].
+     * bounded as the rejected list is. Only [add] is encoded to measure it; every other entry's
+     * size is kept beside it. Write it in the caller's transaction, then [conflictWritten].
      *
-     * @return The row and the new list.
+     * @return The row and the new list, measured.
      */
     suspend fun conflictedRowWith(
         add: StoredConflict? = null,
         removeId: Long? = null,
-    ): Pair<CachedQueryRow, StoredConflictList> {
+    ): Pair<CachedQueryRow, MeasuredConflictList> {
         val current = conflictedList()
-        var entries =
-            current.entries.filterNot { entry -> entry.id == removeId || entry.id == add?.id }
-        if (add != null) entries = entries + bounded(add)
-        val sizes = entries.map(::charactersOf)
+        val entries = ArrayList<StoredConflict>(current.entries.size + 1)
+        val sizes = ArrayList<Int>(current.entries.size + 1)
+        current.entries.forEachIndexed { index, entry ->
+            if (entry.id == removeId || entry.id == add?.id) return@forEachIndexed
+            entries += entry
+            sizes += current.entrySizes[index]
+        }
+        if (add != null) {
+            val entry = bounded(add)
+            entries += entry
+            sizes += charactersOf(entry)
+        }
         var total = sizes.sum()
         var first = 0
         var droppedCount = current.droppedCount
@@ -156,22 +190,29 @@ internal class ConflictedMutationList(
             first++
             droppedCount++
         }
-        val list = StoredConflictList(entries = entries.drop(first), droppedCount = droppedCount)
-        return rowOf(list) to list
+        val list =
+            MeasuredConflictList(
+                StoredConflictList(entries = entries.drop(first), droppedCount = droppedCount),
+                sizes.drop(first),
+            )
+        return rowOf(list.list) to list
     }
 
     /** Records that the row holding [list] was committed. */
-    fun conflictWritten(list: StoredConflictList) {
+    fun conflictWritten(list: MeasuredConflictList) {
         conflictedCache.value = list
     }
 
     /** Records that a clear deleted the row, so the list reads empty without writing one back. */
     fun resetCaches() {
-        conflictedCache.value = StoredConflictList()
+        conflictedCache.value = MeasuredConflictList(StoredConflictList(), emptyList())
     }
 
-    /** The list, read from its row the first time; an unreadable row is kept aside. */
-    private suspend fun conflictedList(): StoredConflictList {
+    /**
+     * The list, read from its row the first time and measured then, entry by entry; an unreadable
+     * row is kept aside.
+     */
+    private suspend fun conflictedList(): MeasuredConflictList {
         conflictedCache.value?.let {
             return it
         }
@@ -182,8 +223,9 @@ internal class ConflictedMutationList(
             else
                 decodeOrNull(StoredConflictList.serializer(), payload)
                     ?: moveAsideUnreadable(payload)
-        conflictedCache.compareAndSet(null, loaded)
-        return conflictedCache.value ?: loaded
+        val measured = MeasuredConflictList(loaded, loaded.entries.map(::charactersOf))
+        conflictedCache.compareAndSet(null, measured)
+        return conflictedCache.value ?: measured
     }
 
     /** Keeps an unreadable payload under `<key>.unreadable.<ms>`, logs it, and starts afresh. */
@@ -233,7 +275,7 @@ internal class ConflictedMutationList(
 
     /** How many characters [entry] takes in the persisted list. */
     private fun charactersOf(entry: StoredConflict): Int =
-        json.encodeToString(StoredConflict.serializer(), entry).length
+        json.encodeToString(entrySerializer, entry).length
 
     /** [payload] decoded with [serializer], or `null` when it does not decode. */
     private fun <T> decodeOrNull(serializer: KSerializer<T>, payload: String): T? =
