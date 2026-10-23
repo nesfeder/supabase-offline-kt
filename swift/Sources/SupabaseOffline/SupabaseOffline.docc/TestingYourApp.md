@@ -72,18 +72,53 @@ The in-memory client retries no failed read, so a failure the server scripts arr
 `ManualClock`, passed as `clock`, is the time the client sees: move it to test a read's `maxAge` or
 when a write was queued.
 
+## Test a relaunch
+
+Each in-memory client starts empty. To see what your app does after it is killed and relaunched,
+build both clients over one `InMemoryStore`. The second finds what the first left when it closed:
+the queued writes, the rejected and conflicted lists, the cached rows and files. One client holds
+the store at a time, so close the first before building the second; a client built while another
+holds it throws ``OfflineError/Code/configuration`` from every call.
+
+<!-- swift-listing: TestingYourAppListings.swift:restart-test -->
+```swift
+@Test func aTodoQueuedBeforeTheAppIsKilledIsSentAfterItRelaunches() async throws {
+    // Given a client that queues a to-do with the network off, then is closed as the app is killed
+    let store = InMemoryStore()
+    let server = FakeServer { _ in .json("[]", status: 201) }
+    let killed = SupabaseOfflineClient.inMemory(config: .init(autoSync: false), server: server, store: store)
+    try await killed.disableNetwork()
+    try await killed.from("todos").insert(Todo(id: UUID(), title: "Buy milk", done: false)).execute()
+    try await killed.close()
+
+    // When the app relaunches over the same store and sends the queue
+    let relaunched = SupabaseOfflineClient.inMemory(config: .init(autoSync: false), server: server, store: store)
+    let report = try await relaunched.syncPendingMutations()
+
+    // Then the write queued before the relaunch is the one sent
+    #expect(report.syncedCount == 1)
+    try await relaunched.close()
+}
+```
+
 ## Report Realtime changes
 
 A test of an app that names tables in ``SupabaseOfflineClient/Config/realtimeTables`` gives the
 in-memory client a `FakeRealtime` in place of a Realtime channel. The client joins the fake's
 channel as it would Realtime's (the network not known down, the subscription on), and
-`subscribedTables` says which tables it follows now; wait for ``SupabaseOfflineClient/realtimeStatus``
-to read ``RealtimeStatus/subscribed`` before reporting a change, since nothing is replayed. Each
-report reaches the cached queries as ``SupabaseOfflineClient/applyServerRecord(table:record:primaryKeys:schema:)-(_,[String:OfflineJSON],_,_)``
+`subscribedTables` says which tables it follows now. Wait for ``SupabaseOfflineClient/realtimeStatus``
+to read ``RealtimeStatus/subscribed``, or for the fake's `joinCount` to move, which it does once the
+client has also asked for the named tables to be read again, before reporting a change, since
+nothing is replayed. Each report reaches the cached queries as ``SupabaseOfflineClient/applyServerRecord(table:record:primaryKeys:schema:)-(_,[String:OfflineJSON],_,_)``
 applies a record; a report to a table nothing follows is dropped and counted in
-`droppedReportCount`. `failChannel(message:)` ends the channel as a server that refuses it would, and
-`dropChannel()` as a lost socket: the status reads ``RealtimeStatus/stalled(cause:)``, and the
-client joins again after a short wait.
+`droppedReportCount`, and so is an insert or an update whose record does not meet the table's
+``RealtimeFilter``, while a delete reaches the client whatever the filter. `failChannel(message:)`
+ends the channel as a server that refuses it would, and `dropChannel()` as a lost socket: the status
+reads ``RealtimeStatus/stalled(cause:)``, and the client joins again after a short wait.
+
+The `FakeServer` plays the server, and the fake only the channel: the client reads the named tables
+from the server on every join, and again after a change it cannot apply exactly or that met a read
+in flight, so the server must answer with the rows as they are after each change the test reports.
 
 <!-- swift-listing: TestingYourAppListings.swift:realtime-test -->
 ```swift
@@ -168,7 +203,8 @@ struct PhotoView: View {
 When your app hides the client behind a protocol of its own, its fakes return the package's values.
 Most of them have no public initializer, so the testing library builds them: `pendingMutation(…)`,
 `rejectedMutation(…)`, `serverError(…)`, `syncReport(…)`, `syncStatus(…)`, `querySnapshot(…)`,
-`offlineResponse(…)`, `cachedFile(…)`, and the errors the client throws (`cacheMissError(…)`,
+`offlineResponse(…)`, `cachedResponse(…)` for rows the cache answered with, `cachedFile(…)`, and
+the errors the client throws (`cacheMissError(…)`,
 `syncFailedError(…)`, `offlineError(code:message:…)` and the rest).
 
 <!-- swift-listing: TestingYourAppListings.swift:factories -->

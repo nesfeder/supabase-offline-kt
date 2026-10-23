@@ -162,6 +162,26 @@ struct TestValuesTests {
         #expect(defaulted.refresh == .idle)
     }
 
+    @Test func aCachedResponseReadsAsTheCachesAtTheTimeGiven() {
+        // When
+        let body = Data(#"[{"id":1}]"#.utf8)
+        let given = cachedResponse(value: [1], data: body, count: 9, fetchedAt: Self.at, hasPendingMutations: true)
+        let defaulted = cachedResponse(value: "done", fetchedAt: Self.at)
+
+        // Then
+        #expect(given.value == [1])
+        #expect(given.data == body)
+        #expect(given.count == 9)
+        #expect(given.isFromCache)
+        #expect(given.fetchedAt == Self.at)
+        #expect(given.hasPendingMutations)
+        #expect(defaulted.isFromCache)
+        #expect(defaulted.fetchedAt == Self.at)
+        #expect(defaulted.data.isEmpty)
+        #expect(defaulted.count == nil)
+        #expect(!defaulted.hasPendingMutations)
+    }
+
     @Test func anOfflineResponseTakesEveryFieldAndAnAppliedOutcomeWrapsIt() {
         // When
         let body = Data(#"[{"id":1}]"#.utf8)

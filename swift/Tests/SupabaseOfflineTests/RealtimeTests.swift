@@ -42,6 +42,48 @@ struct RealtimeTests {
         #expect(client.realtimeStatus.value == .off)
     }
 
+    @Test func theJoinCountMovesOnceTheClientHasHandledEachJoin() async throws {
+        // Given a client following `todos` through the fake
+        let realtime = FakeRealtime()
+        let client = SupabaseOfflineClient.inMemory(config: .init(realtimeTables: [RealtimeTable("todos")]), realtime: realtime)
+
+        // When the client has handled the join, then the socket is lost
+        #expect(await eventually { realtime.joinCount == 1 })
+        let statusAtJoin = client.realtimeStatus.value
+        realtime.dropChannel()
+
+        // Then the client had reported the channel subscribed by the first count, and joins again
+        #expect(statusAtJoin == .subscribed)
+        #expect(await eventually(within: .seconds(10)) { realtime.joinCount == 2 })
+        try await client.close()
+    }
+
+    @Test func aFilteredTableHearsTheSavedRowsItsFilterAdmitsAndEveryDelete() async throws {
+        // Given a client following one owner's rows, with the table's row cached
+        let realtime = FakeRealtime()
+        let filter = RealtimeFilter(column: "owner", operator: .eq, value: "a")
+        let server = RecordingFakeServer(rows: Self.rows)
+        let client = SupabaseOfflineClient.inMemory(
+            config: .init(realtimeTables: [RealtimeTable("todos", filter: filter)]),
+            server: server.server,
+            realtime: realtime
+        )
+        _ = try await client.from("todos").select().execute([TodoRow].self)
+        #expect(await eventually { realtime.joinCount == 1 })
+
+        // When another owner's row is inserted, one of the owner's, and the cached row, which names
+        // no owner, deleted
+        try realtime.reportInsert(table: "todos", record: ["id": .int(2), "title": .string("Tea"), "done": .bool(false), "owner": .string("b")])
+        try realtime.reportInsert(table: "todos", record: ["id": .int(3), "title": .string("Bread"), "done": .bool(false), "owner": .string("a")])
+        try realtime.reportDelete(table: "todos", oldRecord: ["id": .int(1)])
+
+        // Then the other owner's row was dropped and counted, and the rest reached the cache
+        #expect(realtime.droppedReportCount == 1)
+        let kept = try await cachedRows(of: client, until: { $0.map(\.id) == [3] })
+        #expect(kept.map(\.id) == [3])
+        try await client.close()
+    }
+
     @Test func theSwitchLeavesTheChannelAndJoinsItAgain() async throws {
         // Given a client following two tables, one in another schema
         let realtime = FakeRealtime()

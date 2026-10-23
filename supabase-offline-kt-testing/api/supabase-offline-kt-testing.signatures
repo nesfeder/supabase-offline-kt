@@ -2,6 +2,8 @@
 // Written by scripts/check-public-signatures.py --update; checked in CI.
 io.github.nesfeder.supabase.offline.testing: fun (Offline.Config).inMemory(clock: Clock = …)
 io.github.nesfeder.supabase.offline.testing: fun (Offline.Config).inMemory(clock: Clock = …, realtime: FakeRealtime)
+io.github.nesfeder.supabase.offline.testing: fun (Offline.Config).inMemory(clock: Clock = …, realtime: FakeRealtime, store: InMemoryStore)
+io.github.nesfeder.supabase.offline.testing: fun (Offline.Config).inMemory(clock: Clock = …, store: InMemoryStore)
 io.github.nesfeder.supabase.offline.testing: fun FakeRealtime.dropChannel()
 io.github.nesfeder.supabase.offline.testing: fun FakeRealtime.failChannel(cause: Throwable)
 io.github.nesfeder.supabase.offline.testing: fun FakeRealtime.reportDelete(table: String, oldRecord: JsonObject, schema: String? = …)
@@ -10,6 +12,7 @@ io.github.nesfeder.supabase.offline.testing: fun FakeRealtime.reportUpdate(table
 io.github.nesfeder.supabase.offline.testing: fun appliedOutcome(result: PostgrestResult)
 io.github.nesfeder.supabase.offline.testing: fun cacheMissException(message: String = …)
 io.github.nesfeder.supabase.offline.testing: fun cachedFile(path: String, fetchedAt: Instant, sizeBytes: Long)
+io.github.nesfeder.supabase.offline.testing: fun cachedResult(data: String, supabase: SupabaseClient, fetchedAt: Instant, hasPendingMutations: Boolean = …)
 io.github.nesfeder.supabase.offline.testing: fun conflictedMutation(id: Long, table: String, operation: MutationOperation, createdAt: Instant, rowKeys: List<JsonObject> = …, body: JsonElement? = …, base: JsonObject = …, server: JsonObject? = …, serverVersion: String? = …, changedOnServer: Set<String> = …, conflictingColumns: Set<String> = …, message: String, conflictedAt: Instant)
 io.github.nesfeder.supabase.offline.testing: fun mutationConflict(mutationId: Long, table: String, operation: MutationOperation, rowKey: JsonObject, base: JsonObject = …, local: JsonObject? = …, server: JsonObject? = …, changedOnServer: Set<String> = …, conflictingColumns: Set<String> = …)
 io.github.nesfeder.supabase.offline.testing: fun mutationNotQueueableException(cause: Throwable, message: String = …)

@@ -2,10 +2,20 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.testing
 
+import io.github.jan.supabase.createSupabaseClient
+import io.github.jan.supabase.postgrest.Postgrest
+import io.github.jan.supabase.postgrest.postgrest
+import io.github.jan.supabase.postgrest.result.PostgrestResult
 import io.github.nesfeder.supabase.offline.MutationOperation
 import io.github.nesfeder.supabase.offline.NetworkStatus
 import io.github.nesfeder.supabase.offline.RealtimeStatus
+import io.github.nesfeder.supabase.offline.fetchedAt
+import io.github.nesfeder.supabase.offline.hasPendingMutations
+import io.github.nesfeder.supabase.offline.isFromCache
 import io.github.nesfeder.supabase.offline.isNetworkOrConnectivityFailure
+import io.ktor.client.engine.mock.MockEngine
+import io.ktor.client.engine.mock.respondOk
+import io.ktor.http.Headers
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -347,6 +357,33 @@ class TestValuesTest {
     }
 
     @Test
+    fun a_cached_result_reads_as_the_cache_s_at_the_time_given() {
+        // Given — a client with an engine, which supabase-kt's Postgrest needs
+        val supabase =
+            createSupabaseClient("https://unit-test.supabase.co", "unit-test-anon-key") {
+                httpEngine = MockEngine { respondOk() }
+                install(Postgrest)
+            }
+        val fetchedAt = Instant.parse("2026-01-01T08:30:00.123Z")
+
+        // When
+        val result = cachedResult(ROWS, supabase, fetchedAt, hasPendingMutations = true)
+        val clean = cachedResult(data = ROWS, supabase = supabase, fetchedAt = fetchedAt)
+        val fromServer = PostgrestResult(ROWS, Headers.Empty, supabase.postgrest)
+
+        // Then — the provenance reads back as given, and an unstamped result as supabase-kt's
+        assertEquals(ROWS, result.data)
+        assertTrue(result.isFromCache)
+        assertEquals(fetchedAt, result.fetchedAt)
+        assertTrue(result.hasPendingMutations)
+        assertTrue(clean.isFromCache)
+        assertEquals(fetchedAt, clean.fetchedAt)
+        assertFalse(clean.hasPendingMutations)
+        assertFalse(fromServer.isFromCache)
+        assertNull(fromServer.fetchedAt)
+    }
+
+    @Test
     fun the_stalled_realtime_status_carries_its_cause() {
         // Given / When
         val cause = IOException("socket lost")
@@ -355,5 +392,9 @@ class TestValuesTest {
         // Then
         assertSame(cause, stalled.cause)
         assertTrue(stalled is RealtimeStatus.Stalled)
+    }
+
+    private companion object {
+        const val ROWS = """[{"id":1,"title":"Buy milk"}]"""
     }
 }

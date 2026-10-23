@@ -15,8 +15,27 @@ All notable changes to this project are recorded in this file. The format follow
 
 ### Added
 
+- The testing artifact's `InMemoryStore` keeps an in-memory client's local data for the next
+  client built over it: a client built with `inMemory(clock, store)` or
+  `inMemory(clock, realtime, store)` after an earlier one closed finds its queued writes, which it
+  replays, its rejected and conflicted lists, and its cached queries and files, so a test can
+  simulate an app killed and relaunched. A client built over a store another client holds fails
+  with `IllegalStateException`. The Swift testing product has the same `InMemoryStore` and
+  `inMemory(…, store:)` overloads.
+- `cachedResult(data, supabase, fetchedAt, hasPendingMutations)` in the testing artifact builds a
+  `PostgrestResult` that `isFromCache`, `fetchedAt` and `hasPendingMutations` read as given, for a
+  fake of an app's own repository. The Swift testing product has
+  `cachedResponse(value:data:count:fetchedAt:hasPendingMutations:)`.
+- `FakeRealtime.joinCount`, in Kotlin and Swift, counts the joins the client has handled: once it
+  moves, the client has reported the channel subscribed and asked for the named tables to be read
+  again, so a test that waits for it reports a change after the join instead of racing it.
+
 ### Changed
 
+- `FakeRealtime` applies the table's `RealtimeFilter` as the server does: an insert or an update
+  whose record does not meet it is dropped and counted in `droppedReportCount`, and a delete
+  reaches the client whatever the filter. Before, every report to a followed table reached the
+  client, so a test could see a change a device never receives.
 - The rejected list keeps a guarded write's base in each guarded entry, under two new keys
   (`baseVersion`, `baseJson`), so a retry replays guarded. A list an earlier build wrote reads back
   without them, and a retry of such an entry replays unguarded, as it did there.
