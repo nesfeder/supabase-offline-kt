@@ -275,8 +275,9 @@ internal class CachePatcher(
                     )
             }
             val created = livePayloadsFor(table, uncachedLive, shapes, writes, known, batch, keyed)
-            toFetchAgain += created.toFetchAgain
             val changed = writePatches(guardTick, patches, created.payloads) ?: return@withLock
+            // Once the patch landed: a clear that voided it has its live readers fetch anyway
+            toFetchAgain += created.toFetchAgain
             for ((patch, landed) in patches.zip(changed)) {
                 // A row not changed was evicted since the snapshot: a patch never brings a deleted
                 // list back, and its reader has nothing to fetch again for

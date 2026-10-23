@@ -79,6 +79,7 @@ internal class FakeQueryCacheDao : InMemoryQueryCacheDao() {
                 updatedAt = updatedAt,
             )
         rows.update { current -> current + ((table to cacheKey) to row) }
+        assignRowId(table to cacheKey)
     }
 
     /** Look up a row without going through the suspend contract. */
@@ -141,8 +142,8 @@ internal class FakeQueryCacheDao : InMemoryQueryCacheDao() {
         return changed
     }
 
-    override suspend fun deletePayloads(table: String, cacheKeys: List<String>): Int {
-        val deleted = super.deletePayloads(table, cacheKeys)
+    override suspend fun deletePayloads(rowIds: List<Long>, fetchedAtOrBefore: Long): Int {
+        val deleted = super.deletePayloads(rowIds, fetchedAtOrBefore)
         evictedRows += deleted
         return deleted
     }
@@ -180,16 +181,18 @@ internal class PayloadScanCountingDao(private val delegate: QueryCacheDao) :
         return delegate.totalPayloadBytes()
     }
 
-    override suspend fun payloadLengthsOldestFirst(): List<PayloadLength> {
+    override suspend fun payloadLengthsOldestFirst(
+        keptCacheKeys: List<String>
+    ): List<PayloadLength> {
         payloadLengthReads++
-        val lengths = delegate.payloadLengthsOldestFirst()
+        val lengths = delegate.payloadLengthsOldestFirst(keptCacheKeys)
         afterPayloadLengthsRead?.invoke()
         return lengths
     }
 
-    override suspend fun deletePayloads(table: String, cacheKeys: List<String>): Int {
+    override suspend fun deletePayloads(rowIds: List<Long>, fetchedAtOrBefore: Long): Int {
         evictionDeletes++
-        return delegate.deletePayloads(table, cacheKeys)
+        return delegate.deletePayloads(rowIds, fetchedAtOrBefore)
     }
 
     override suspend fun runInTransaction(block: suspend () -> Unit) {
@@ -381,5 +384,25 @@ internal class FakeDeleteAllFailingMutationDao(real: MutationDao) : MutationDao 
 internal class FakeDeleteAllFailingQueryCacheDao(real: QueryCacheDao) : QueryCacheDao by real {
     override suspend fun deleteAll() {
         error("Scripted failure of the object-cache delete")
+    }
+}
+
+/**
+ * A real [QueryCacheDao], Room's in the on-disk tests, whose second payload write ([updatePayload])
+ * fails, as a full disk would part-way through a patch. A test checks with it that a patch failing
+ * part-way changes nothing on disk.
+ */
+internal class FakeSecondPayloadWriteFailingQueryCacheDao(private val real: QueryCacheDao) :
+    QueryCacheDao by real {
+    private var payloadWrites = 0
+
+    override suspend fun updatePayload(
+        table: String,
+        cacheKey: String,
+        payload: String,
+        updatedAt: Long,
+    ): Int {
+        if (++payloadWrites == 2) error("Scripted failure of the second payload write")
+        return real.updatePayload(table, cacheKey, payload, updatedAt)
     }
 }

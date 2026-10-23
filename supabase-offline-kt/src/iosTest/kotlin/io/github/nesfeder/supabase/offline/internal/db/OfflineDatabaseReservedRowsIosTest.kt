@@ -77,6 +77,11 @@ class OfflineDatabaseReservedRowsIosTest {
     }
 
     @Test
+    fun a_failed_patch_transaction_changes_nothing() = runTest {
+        scenarios.aFailedPatchTransactionChangesNothing(databasePath)
+    }
+
+    @Test
     fun a_clear_whose_mutation_delete_fails_changes_nothing() = runTest {
         scenarios.aClearWhoseMutationDeleteFailsChangesNothing(databasePath)
     }

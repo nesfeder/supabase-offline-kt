@@ -12,6 +12,10 @@ import io.github.nesfeder.supabase.offline.internal.db.QUERY_SHAPE_CACHE_KEY_PRE
 import io.github.nesfeder.supabase.offline.internal.db.QueryCacheDao
 import io.github.nesfeder.supabase.offline.internal.db.RESERVED_TABLE_NAME
 import io.github.nesfeder.supabase.offline.internal.db.fetchedAtOf
+import kotlin.coroutines.AbstractCoroutineContextElement
+import kotlin.coroutines.CoroutineContext
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -19,6 +23,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 
 /** Base directory the in-memory client reports; nothing is ever written under it. */
 internal const val IN_MEMORY_BASE_DIRECTORY: String = "/in-memory/offline"
@@ -34,6 +39,13 @@ internal const val IN_MEMORY_BASE_DIRECTORY: String = "/in-memory/offline"
 internal open class InMemoryQueryCacheDao : QueryCacheDao {
     /** Cached payloads keyed by `(table, cacheKey)`. Replace it only under [writeLock]. */
     protected val rows: MutableStateFlow<Map<Pair<String, String>, CachedQueryRow>> =
+        MutableStateFlow(emptyMap())
+
+    /**
+     * Each row's `rowid`, as SQLite gives them: one past the largest in the table, so an emptied
+     * table hands them out again. Replace it only under [writeLock].
+     */
+    protected val rowIds: MutableStateFlow<Map<Pair<String, String>, Long>> =
         MutableStateFlow(emptyMap())
 
     /** One observable slot per observed `(table, cacheKey)`. */
@@ -100,10 +112,24 @@ internal open class InMemoryQueryCacheDao : QueryCacheDao {
     }
 
     override suspend fun upsert(row: CachedQueryRow) {
+        val key = row.table to row.cacheKey
         writeLock.withLock {
-            rows.update { current -> current + ((row.table to row.cacheKey) to row) }
+            journal(listOf(key))
+            rows.update { current -> current + (key to row) }
+            // REPLACE deletes the row it replaces and inserts anew, under a new rowid
+            assignRowId(key)
         }
-        observers.value.forEach { (key, slot) -> if (key.first == row.table) publish(key, slot) }
+        observers.value.forEach { (observed, slot) ->
+            if (observed.first == row.table) publish(observed, slot)
+        }
+    }
+
+    /** Gives [key] the `rowid` an insert gets. Caller holds [writeLock]. */
+    protected fun assignRowId(key: Pair<String, String>) {
+        rowIds.update { ids ->
+            val others = ids - key
+            others + (key to (others.values.maxOrNull() ?: 0L) + 1L)
+        }
     }
 
     override suspend fun updatePayload(
@@ -115,6 +141,7 @@ internal open class InMemoryQueryCacheDao : QueryCacheDao {
         val key = table to cacheKey
         var changed = false
         writeLock.withLock {
+            journal(listOf(key))
             rows.update { current ->
                 val existing = current[key] ?: return@update current
                 changed = true
@@ -149,34 +176,97 @@ internal open class InMemoryQueryCacheDao : QueryCacheDao {
             .filter { it.table != RESERVED_TABLE_NAME }
             .sumOf { it.payload.length.toLong() }
 
-    override suspend fun payloadLengthsOldestFirst(): List<PayloadLength> =
-        rows.value.values
-            .filter { it.table != RESERVED_TABLE_NAME }
-            .sortedBy { fetchedAtOf(it.updatedAt) }
-            .map { PayloadLength(it.table, it.cacheKey, it.payload.length.toLong()) }
+    override suspend fun payloadLengthOf(table: String, cacheKey: String): Long? =
+        rows.value[table to cacheKey]?.payload?.length?.toLong()
 
-    override suspend fun deletePayloads(table: String, cacheKeys: List<String>): Int {
-        val chosen = cacheKeys.mapTo(mutableSetOf()) { cacheKey -> table to cacheKey }
-        return removeChosen { current -> current.keys.filterTo(mutableSetOf()) { it in chosen } }
+    override suspend fun payloadLengthsOldestFirst(
+        keptCacheKeys: List<String>
+    ): List<PayloadLength> {
+        val kept = keptCacheKeys.toSet()
+        val ids = rowIds.value
+        return rows.value.entries
+            .filter { (_, row) -> row.table != RESERVED_TABLE_NAME }
+            .sortedBy { (_, row) -> fetchedAtOf(row.updatedAt) }
+            .map { (key, row) ->
+                PayloadLength(
+                    rowId = ids[key] ?: error("A row without a rowid: $key"),
+                    fetchedAt = fetchedAtOf(row.updatedAt),
+                    length = row.payload.length.toLong(),
+                    kept = row.cacheKey in kept,
+                )
+            }
+    }
+
+    override suspend fun deletePayloads(rowIds: List<Long>, fetchedAtOrBefore: Long): Int {
+        val named = rowIds.toSet()
+        return removeChosen { current ->
+            val ids = this.rowIds.value
+            current
+                .filter { (key, row) ->
+                    row.table != RESERVED_TABLE_NAME &&
+                        ids[key] in named &&
+                        fetchedAtOf(row.updatedAt) <= fetchedAtOrBefore
+                }
+                .keys
+        }
     }
 
     /**
-     * Runs [block], and puts the rows back as they were when it fails, as a rolled-back transaction
-     * leaves them; the observers of the rows it had changed hear of it.
+     * Runs [block] with a journal of the rows its coroutine changes, and puts them back as they
+     * were when it fails, as a rolled-back transaction leaves them, whether it threw or was
+     * canceled; the observers of the rows put back hear of it. Rows other coroutines change
+     * meanwhile are left alone. ([InMemoryMutationDao]'s transaction keeps no journal: a test of a
+     * clear that fails part-way fails its first statement.)
      */
     override suspend fun runInTransaction(block: suspend () -> Unit) {
-        val before = rows.value
+        val journal = Journal()
         try {
-            block()
+            withContext(journal) { block() }
         } catch (failure: Throwable) {
-            val undone = writeLock.withLock {
-                val written = rows.value
-                rows.value = before
-                (written.keys + before.keys).filter { key -> written[key] != before[key] }
-            }
-            undone.forEach { key -> observers.value[key]?.let { slot -> publish(key, slot) } }
+            withContext(NonCancellable) { rollBack(journal) }
             throw failure
         }
+    }
+
+    /** What the rows a transaction's coroutine changes held before it; see [runInTransaction]. */
+    private class Journal : AbstractCoroutineContextElement(Journal) {
+        companion object Key : CoroutineContext.Key<Journal>
+
+        val rowsBefore = mutableMapOf<Pair<String, String>, CachedQueryRow?>()
+        val rowIdsBefore = mutableMapOf<Pair<String, String>, Long?>()
+    }
+
+    /**
+     * Records in the running transaction's journal, when there is one, what [keys] hold now, once
+     * per key. Caller holds [writeLock].
+     */
+    private suspend fun journal(keys: Iterable<Pair<String, String>>) {
+        val journal = currentCoroutineContext()[Journal] ?: return
+        val current = rows.value
+        val ids = rowIds.value
+        keys.forEach { key ->
+            if (key in journal.rowsBefore) return@forEach
+            journal.rowsBefore[key] = current[key]
+            journal.rowIdsBefore[key] = ids[key]
+        }
+    }
+
+    /** Puts the rows [journal] recorded back as they were, and tells their observers. */
+    private suspend fun rollBack(journal: Journal) {
+        val undone = writeLock.withLock {
+            rows.update { current ->
+                journal.rowsBefore.entries.fold(current) { rows, (key, before) ->
+                    if (before == null) rows - key else rows + (key to before)
+                }
+            }
+            rowIds.update { current ->
+                journal.rowIdsBefore.entries.fold(current) { ids, (key, before) ->
+                    if (before == null) ids - key else ids + (key to before)
+                }
+            }
+            journal.rowsBefore.keys.toList()
+        }
+        undone.forEach { key -> observers.value[key]?.let { slot -> publish(key, slot) } }
     }
 
     /** Removes the rows [matches] accepts, as one write, and tells their observers. */
@@ -195,7 +285,9 @@ internal open class InMemoryQueryCacheDao : QueryCacheDao {
     ): Int {
         val removed = writeLock.withLock {
             val chosen = choose(rows.value)
+            journal(chosen)
             rows.update { current -> current - chosen }
+            rowIds.update { current -> current - chosen }
             chosen
         }
         removed.forEach { key -> observers.value[key]?.let { slot -> publish(key, slot) } }

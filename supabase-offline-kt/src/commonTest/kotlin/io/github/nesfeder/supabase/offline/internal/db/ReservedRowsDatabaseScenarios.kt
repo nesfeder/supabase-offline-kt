@@ -2,8 +2,10 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.db
 
+import io.github.nesfeder.supabase.offline.MutationOperation
 import io.github.nesfeder.supabase.offline.testdoubles.FakeDeleteAllFailingMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeDeleteAllFailingQueryCacheDao
+import io.github.nesfeder.supabase.offline.testdoubles.FakeSecondPayloadWriteFailingQueryCacheDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingRoomCallback
 import io.github.nesfeder.supabase.offline.testdoubles.TestStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
@@ -82,26 +84,26 @@ internal class ReservedRowsDatabaseScenarios(
             // When — the size is summed, the lengths listed as a pass reads them, and every listed
             // row deleted as a pass deletes what it chose
             val size = queryCacheDao.totalPayloadBytes()
-            val lengths = queryCacheDao.payloadLengthsOldestFirst()
+            val lengths = queryCacheDao.payloadLengthsOldestFirst(keptCacheKeys = emptyList())
             var evicted = 0
             queryCacheDao.runInTransaction {
-                lengths
-                    .groupBy { row -> row.table }
-                    .forEach { (table, rows) ->
-                        evicted += queryCacheDao.deletePayloads(table, rows.map { it.cacheKey })
-                    }
+                evicted +=
+                    queryCacheDao.deletePayloads(
+                        lengths.map { row -> row.rowId },
+                        fetchedAtOrBefore = lengths.last().fetchedAt,
+                    )
             }
 
-            // Then — only the cache rows counted, listed oldest fetch first, and only they went
+            // Then — only the cache rows counted, listed oldest fetch first and none kept, and
+            // only they went
             val cached =
                 ShippedDatabaseFixture.CACHED_QUERY_ROWS.sortedBy { fetchedAtOf(it.updatedAt) }
             assertEquals(cached.sumOf { row -> row.payload.length.toLong() }, size)
             assertEquals(
-                cached.map { row ->
-                    PayloadLength(row.table, row.cacheKey, row.payload.length.toLong())
-                },
-                lengths,
+                cached.map { row -> fetchedAtOf(row.updatedAt) to row.payload.length.toLong() },
+                lengths.map { row -> row.fetchedAt to row.length },
             )
+            assertTrue(lengths.none { row -> row.kept })
             assertEquals(cached.size, evicted)
             assertEquals(1L, RawDatabaseQueries.reservedRowCount(path))
         } finally {
@@ -186,35 +188,93 @@ internal class ReservedRowsDatabaseScenarios(
     }
 
     /**
-     * Room's eviction delete reaches the signatures it is given and no other, so the rows a pass
-     * keeps for live readers, by not naming them, stay however old they are.
+     * Room's eviction read marks the signatures it is told to keep, and its delete reaches the rows
+     * it is given and no other, sparing one fetched again since the read.
      */
     suspend fun roomEvictionKeepsTheListedCacheKeys(path: String) {
-        // Given — the shipped database's cache rows
+        // Given — the shipped database's cache rows, the oldest shown by a live reader
         ShippedDatabaseFixture.writeTo(path)
         val database = open(path, RecordingRoomCallback())
         try {
             val queryCacheDao = database.queryCacheDao()
-            val kept = ShippedDatabaseFixture.CACHED_QUERY_ROWS.first()
+            val (kept, other) =
+                ShippedDatabaseFixture.CACHED_QUERY_ROWS.sortedBy { fetchedAtOf(it.updatedAt) }
 
-            // When — every row but one a live reader shows is deleted, as a pass that passed over
-            // it deletes the rest
-            val chosen =
-                ShippedDatabaseFixture.CACHED_QUERY_ROWS.filter { row ->
-                    row.cacheKey != kept.cacheKey
+            // When — the lengths are read as a pass reads them
+            val lengths = queryCacheDao.payloadLengthsOldestFirst(listOf(kept.cacheKey))
+
+            // Then — the shown row is marked kept, the other not
+            assertEquals(listOf(true, false), lengths.map { row -> row.kept })
+
+            // When — the other row is fetched again after the read, and the pass deletes it as it
+            // read it
+            queryCacheDao.upsert(other.copy(updatedAt = other.updatedAt + 1_000L))
+            val chosen = lengths.last()
+            val spared = queryCacheDao.deletePayloads(listOf(chosen.rowId), chosen.fetchedAt)
+
+            // Then — the refreshed row stays, the newest now
+            assertEquals(0, spared)
+            assertEquals(2, queryCacheDao.cacheKeysForTable(kept.table).size)
+
+            // When — a pass reads again and deletes what is not kept
+            val again = queryCacheDao.payloadLengthsOldestFirst(listOf(kept.cacheKey))
+            val chosenAgain = again.filter { row -> !row.kept }
+            val evicted =
+                queryCacheDao.deletePayloads(
+                    chosenAgain.map { row -> row.rowId },
+                    chosenAgain.last().fetchedAt,
+                )
+
+            // Then — only the kept row is left, however old
+            assertEquals(1, evicted)
+            assertEquals(listOf(kept.cacheKey), queryCacheDao.cacheKeysForTable(kept.table))
+        } finally {
+            database.close()
+        }
+    }
+
+    /**
+     * A patch writes the payloads it changes in one transaction: when the second write fails, the
+     * first is not on disk either.
+     */
+    suspend fun aFailedPatchTransactionChangesNothing(path: String) {
+        // Given — two cached lists of a table, over a DAO whose second payload write fails
+        val database = open(path, RecordingRoomCallback())
+        try {
+            val real = database.queryCacheDao()
+            val lists =
+                listOf("todos?list=eq.A", "todos?list=eq.B").mapIndexed { index, cacheKey ->
+                    CachedQueryRow(
+                        table = "todos",
+                        cacheKey = cacheKey,
+                        payload = """[{"id":$index,"title":"kept"}]""",
+                        updatedAt = 1_727_000_000_000 + index,
+                    )
                 }
-            var evicted = 0
-            queryCacheDao.runInTransaction {
-                chosen
-                    .groupBy { row -> row.table }
-                    .forEach { (table, rows) ->
-                        evicted += queryCacheDao.deletePayloads(table, rows.map { it.cacheKey })
-                    }
+            lists.forEach { row -> real.upsert(row) }
+            val store =
+                newTestStore(
+                    queryCacheDao = FakeSecondPayloadWriteFailingQueryCacheDao(real),
+                    mutationDao = database.mutationDao(),
+                )
+
+            // When — a new row that both lists admit is patched in
+            val failure = runCatching {
+                store.cachePatcher.patchCachedQueries(
+                    table = "todos",
+                    operation = MutationOperation.UPSERT,
+                    bodyJson = """[{"id":7,"title":"new"}]""",
+                    filterJson = null,
+                    onConflict = "id",
+                )
             }
 
-            // Then
-            assertEquals(ShippedDatabaseFixture.CACHED_QUERY_ROWS.size - 1, evicted)
-            assertEquals(listOf(kept.cacheKey), queryCacheDao.cacheKeysForTable(kept.table))
+            // Then — the patch failed, and neither list changed on disk
+            assertTrue(failure.isFailure)
+            assertEquals(
+                lists.map { row -> row.payload },
+                real.allForTable("todos").sortedBy { row -> row.updatedAt }.map { it.payload },
+            )
         } finally {
             database.close()
         }
