@@ -65,7 +65,8 @@ flowchart LR
 With supabase-kt's Auth plugin, the query cache and the file cache belong to one user at a time,
 dropped when the session settles as someone else; the queue keeps each user's writes apart and
 sends them only with that user's token. Without Auth there is one identity for the life of the
-install ([Signing out and switching users](sign-out.md)).
+install, unless `identityFromAccessToken` tells users apart by their access token
+([Signing out and switching users](sign-out.md)).
 
 ## Glossary
 

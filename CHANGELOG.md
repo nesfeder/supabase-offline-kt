@@ -15,6 +15,13 @@ All notable changes to this project are recorded in this file. The format follow
 
 ### Added
 
+- `identityFromAccessToken` in `install(Offline)`, and the same setting in the Swift package's
+  `Config`: a client without the Auth plugin tells its users apart by the `sub` claim of the token
+  its own provider returns, read and never verified. Each user's queued writes are then sent only
+  with that user's token, the caches belong to one user at a time and are dropped when the token
+  names another, and the Realtime channel is joined again for the new user, as with Auth, so a Swift
+  app no longer needs its own sign-out routine. It is off by default, which changes nothing.
+
 ### Changed
 
 - The rejected list keeps a guarded write's base in each guarded entry, under two new keys

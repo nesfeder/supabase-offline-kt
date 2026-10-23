@@ -614,6 +614,32 @@ public interface Offline : SupabasePlugin<Offline.Config> {
         public var autoSync: Boolean = true
 
         /**
+         * Whether a client without the Auth plugin tells its users apart by the access token its
+         * own provider (supabase-kt's `accessToken`) returns; `false` by default, and ignored with
+         * Auth installed, which tells them apart already.
+         *
+         * With `false`, such a client has one identity, nobody signed in: one mutation queue and
+         * one cache serve every user, and the app clears local data itself when its user changes.
+         * With `true`, the user is the `sub` claim of the provider's token, read and never
+         * verified: each user's queued writes are sent only with that user's token, the caches
+         * belong to one user at a time and are dropped when the token names another, and the
+         * Realtime channel is joined again for the new user, as with Auth. No token, or the project
+         * key, is nobody signed in. A token that names no user is no identity: a write made with it
+         * is sent at once and never queued, nothing queued is sent, and the cache is neither read
+         * nor written for it. The provider is asked for its token before a write is queued, before
+         * the cache is read or written, before each queued write is sent, and once when the client
+         * opens, so a new user is seen at the client's next call; keep it quick, as supabase-kt
+         * asks. While it fails, the user it last named keeps the local data, and nothing queued is
+         * sent until it answers. It should return `null` only when nobody is signed in: a token it
+         * cannot refresh is still its user's.
+         *
+         * The claim decides only which local data a user is shown and whose queued writes are sent,
+         * never what the server allows. Writes queued before it was turned on are nobody's, and are
+         * sent only while nobody is signed in: sync them first.
+         */
+        public var identityFromAccessToken: Boolean = false
+
+        /**
          * Each table's primary-key columns, by table name: the name alone for a table in the
          * client's default schema, `schema.table` for one in another schema. A table not named here
          * has the key `id`.

@@ -47,6 +47,7 @@ import io.github.nesfeder.supabase.offline.internal.db.storedName
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogLevel
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.AUTH_SESSION_SETTLE_TIMEOUT
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.AccessTokenIdentity
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.AutomaticReplay
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.CONFLICT_POLICY_TIMEOUT
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.ConflictPolicy
@@ -65,6 +66,7 @@ import io.github.nesfeder.supabase.offline.internal.mutationqueue.StoredConflict
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.SyncReport as EngineSyncReport
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.SyncStop
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.VersionColumns
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.awaitSettledSession
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.conflictDecisionOf
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.currentReplayIdentity
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.jsonObjectOrNull
@@ -316,6 +318,23 @@ internal class OfflineClient(
      */
     private val queueIdentityReader = QueueIdentityReader(supabaseClient)
 
+    /**
+     * The identity told from the app's access token, for a client without the Auth plugin that
+     * opened with [Offline.Config.identityFromAccessToken]; `null` otherwise. When set, every
+     * reader of the identity below goes through it.
+     */
+    private val tokenIdentity: AccessTokenIdentity? =
+        if (!config.identityFromAccessToken || authPluginOrNull() != null) null
+        else
+            AccessTokenIdentity(
+                accessToken = supabaseClient.accessToken,
+                projectKey = supabaseClient.supabaseKey,
+                engineLogger = engineLogger,
+            )
+
+    /** Whether the caches and the queue belong to one identity at a time: with Auth, or tokens. */
+    private val identityIsPerUser: Boolean = authPluginOrNull() != null || tokenIdentity != null
+
     /** The identity the overlay and counts are for, read once per session status. */
     private val overlayIdentity = MutableStateFlow<Pair<SessionStatus?, String?>?>(null)
 
@@ -340,8 +359,8 @@ internal class OfflineClient(
             primaryKeys = primaryKeys,
             identityProvider = ::overlayIdentityValue,
             identityChanges = sessionChanges(),
-            isCacheOwnedPerIdentity = authPluginOrNull() != null,
-            ownerlessMutationsAreAnonymous = authPluginOrNull() == null,
+            isCacheOwnedPerIdentity = identityIsPerUser,
+            ownerlessMutationsAreAnonymous = !identityIsPerUser,
             engineLogger = engineLogger,
             liveCacheKeysOf = liveQueries::liveCacheKeysOf,
             allLiveCacheKeys = liveQueries::allLiveCacheKeys,
@@ -432,6 +451,10 @@ internal class OfflineClient(
             conflictPolicy = conflictPolicy,
             conflictPolicyTimeout = conflictPolicyTimeout,
             conflictPolicyDispatcher = conflictPolicyDispatcher,
+            awaitSessionSettled = ::awaitSettledReplaySession,
+            currentIdentity = ::replayIdentityNow,
+            isSessionSettledNow = ::isReplaySessionSettledNow,
+            identityOfToken = tokenIdentity?.let { source -> source::identityOf },
         )
 
     /**
@@ -456,7 +479,12 @@ internal class OfflineClient(
      * edges. Forwarded to every builder to short-circuit a stalled refresh's backoff.
      */
     private val wakeUps: Flow<Unit> =
-        refreshWakeUps(supabaseClient, networkAccess.reconnections, responseTrust)
+        refreshWakeUps(
+            supabaseClient,
+            networkAccess.reconnections,
+            responseTrust,
+            tokenIdentityStates = tokenIdentity?.state,
+        )
 
     /**
      * Follows the watched tables' changes on the server and applies them, in the client's scope so
@@ -471,7 +499,8 @@ internal class OfflineClient(
                 feed = serverChangeFeed,
                 defaultSchema = ::defaultSchema,
                 sessionIdentity =
-                    authPluginOrNull()?.sessionStatus?.map(::followIdentityFor)
+                    tokenIdentity?.state?.map { state -> state.settled?.storedValue }
+                        ?: authPluginOrNull()?.sessionStatus?.map(::followIdentityFor)
                         ?: flowOf(QueueIdentity.Anonymous.storedValue),
                 currentIdentity = ::currentFollowIdentity,
                 networkStatuses = networkAccess.statusChanges,
@@ -497,6 +526,9 @@ internal class OfflineClient(
         replayWhenTheSessionSettles()
         keepCacheWithTheSession()
         serverChangeFollower?.start()
+        // The token's identity from the start: it settles the cache's owner, and starts a pass for
+        // what that user has queued
+        tokenIdentity?.let { source -> clientScope.launch { source.resolve() } }
     }
 
     private fun authPluginOrNull(): Auth? = supabaseClient.pluginManager.getPluginOrNull(Auth)
@@ -525,6 +557,9 @@ internal class OfflineClient(
 
     /** The identity the channel is joined for now; one for good without the Auth plugin. */
     private fun currentFollowIdentity(): String? {
+        tokenIdentity?.let { source ->
+            return source.state.value.settled?.storedValue
+        }
         val auth = authPluginOrNull() ?: return QueueIdentity.Anonymous.storedValue
         return followIdentityFor(auth.sessionStatus.value)
     }
@@ -599,8 +634,12 @@ internal class OfflineClient(
         }
     }
 
-    /** Emits whenever the session status changes; once, without the Auth plugin. */
-    private fun sessionChanges(): Flow<Any?> = authPluginOrNull()?.sessionStatus ?: flowOf(Unit)
+    /**
+     * Emits whenever the session status changes, or the identity the access token names; once
+     * without either.
+     */
+    private fun sessionChanges(): Flow<Any?> =
+        tokenIdentity?.state ?: authPluginOrNull()?.sessionStatus ?: flowOf(Unit)
 
     /**
      * The stored identity value for the current session status, computed once per status: while the
@@ -610,6 +649,10 @@ internal class OfflineClient(
      * network instead of waiting.
      */
     private suspend fun overlayIdentityValue(): String? {
+        // Asked of the provider each time: its next token may name another user
+        tokenIdentity?.let { source ->
+            return source.resolve().owner?.storedValue
+        }
         val status = authPluginOrNull()?.sessionStatus?.value
         overlayIdentity.value?.let { (cachedStatus, identity) ->
             if (cachedStatus == status) return identity
@@ -635,15 +678,48 @@ internal class OfflineClient(
      * arrive as a new session of the same identity. See [AutomaticReplay].
      */
     private fun replayWhenTheSessionSettles() {
-        val auth = authPluginOrNull() ?: return
+        val settledIdentities =
+            tokenIdentity?.state?.map { state -> state.settled }
+                ?: authPluginOrNull()?.sessionStatus?.map(::replayIdentityFor)
+                ?: return
         clientScope.launch {
-            auth.sessionStatus.collect { status ->
-                val identity = replayIdentityFor(status) ?: return@collect
+            settledIdentities.collect { settled ->
+                val identity = settled ?: return@collect
                 // Whether or not a pass is asked for now: an emptied queue keeps no old period
                 automaticReplay.allowAnOfflineAttempt()
                 if (autoSync) requestPassUnlessQueueEmpty(identity, onEdge = true)
             }
         }
+    }
+
+    /**
+     * The identity a replay sent now would go out as, read fresh; `null` while the session
+     * restores, its refresh failed, or the token names no user. See [currentReplayIdentity].
+     */
+    private suspend fun replayIdentityNow(): QueueIdentity? {
+        val source = tokenIdentity ?: return supabaseClient.currentReplayIdentity()
+        return source.resolve().settled
+    }
+
+    /** Waits, bounded, for a settled session; with a token, asks its provider once. */
+    private suspend fun awaitSettledReplaySession(): Boolean {
+        val source = tokenIdentity ?: return supabaseClient.awaitSettledSession()
+        return source.resolve().settled != null
+    }
+
+    /** Whether a replay sent now goes out under a settled identity, without waiting or asking. */
+    private fun isReplaySessionSettledNow(): Boolean {
+        val source = tokenIdentity ?: return supabaseClient.currentReplayIdentity() != null
+        return source.state.value.settled != null
+    }
+
+    /**
+     * The identity a write made now is queued for; a write, a discard, a dismissal and a retry are
+     * all for it. With a token, asked of the provider each time.
+     */
+    private suspend fun writeOwner(): QueueIdentity? {
+        val source = tokenIdentity ?: return queueIdentityReader.current()
+        return source.resolve().owner
     }
 
     /**
@@ -656,7 +732,7 @@ internal class OfflineClient(
         // Whether or not a pass is asked for now: an emptied queue keeps no old period
         automaticReplay.allowAnOfflineAttempt()
         if (!autoSync) return
-        val identity = supabaseClient.currentReplayIdentity() ?: return
+        val identity = replayIdentityNow() ?: return
         requestPassUnlessQueueEmpty(identity, onEdge = true)
     }
 
@@ -666,7 +742,7 @@ internal class OfflineClient(
      * `autoSync` off.
      */
     private fun replayWhatAnEarlierRunLeft() {
-        if (!autoSync || authPluginOrNull() != null) return
+        if (!autoSync || identityIsPerUser) return
         // Undispatched, it holds the queue lock from open, so it reads before any write of this run
         // is queued. A write it saw would have its pass race the write's own send
         clientScope.launch(start = CoroutineStart.UNDISPATCHED) {
@@ -693,10 +769,15 @@ internal class OfflineClient(
      * call through the gate. A session that restores or whose refresh failed is not settled.
      */
     private fun keepCacheWithTheSession() {
-        val auth = authPluginOrNull() ?: return
+        val settledNow: () -> QueueIdentity? =
+            tokenIdentity?.let { source -> { source.state.value.settled } }
+                ?: authPluginOrNull()?.let { auth ->
+                    { replayIdentityFor(auth.sessionStatus.value) }
+                }
+                ?: return
         clientScope.launch {
-            merge(auth.sessionStatus.map {}, cacheOwnerChecks).conflate().collect {
-                val identity = replayIdentityFor(auth.sessionStatus.value) ?: return@collect
+            merge(sessionChanges().map {}, cacheOwnerChecks).conflate().collect {
+                val identity = settledNow() ?: return@collect
                 try {
                     operationGate.call { settleCacheOwner(identity) }
                 } catch (cancellation: CancellationException) {
@@ -785,7 +866,7 @@ internal class OfflineClient(
                 trustPolicy = responseTrust,
                 liveQueries = liveQueries,
                 wakeUps = wakeUps,
-                queueIdentity = queueIdentityReader::current,
+                queueIdentity = ::writeOwner,
                 requestSync = automaticReplay::requestPass,
                 headSender = mutationQueueReplayer,
                 operationGate = operationGate,
@@ -820,7 +901,8 @@ internal class OfflineClient(
 
     /** The session a read sent now goes out under; the identity is the mutation queue's own. */
     private fun requestSession(): RequestSession =
-        requestSessionFor(authPluginOrNull()?.sessionStatus?.value)
+        tokenIdentity?.requestSession()
+            ?: requestSessionFor(authPluginOrNull()?.sessionStatus?.value)
 
     override val storage: OfflineStorage = OfflineStorage(::bucket)
 
@@ -867,7 +949,7 @@ internal class OfflineClient(
      * sent by a pass asked for here, with `autoSync` off too: it is a write-path pass.
      */
     override suspend fun discardPendingMutation(id: Long): Unit = operationGate.call {
-        val identity = queueIdentityReader.current() ?: return@call
+        val identity = writeOwner() ?: return@call
         if (!mutationQueueReplayer.discardPendingMutationOnceUnsent(id, identity)) return@call
         requestPassUnlessQueueEmpty(identity, onEdge = false)
     }
@@ -880,12 +962,12 @@ internal class OfflineClient(
         )
 
     override suspend fun dismissRejectedMutation(id: Long): Unit = operationGate.call {
-        val identity = queueIdentityReader.current() ?: return@call
+        val identity = writeOwner() ?: return@call
         mutationQueue.dismissRejectedMutationOf(id, identity.storedValue)
     }
 
     override suspend fun retryRejectedMutation(id: Long): Unit = operationGate.call {
-        val identity = queueIdentityReader.current() ?: return@call
+        val identity = writeOwner() ?: return@call
         val entry = mutationQueue.shownRejection(id, identity.storedValue) ?: return@call
         require(entry.bodyOmittedChars == null) {
             "This rejected mutation cannot be retried: its body was too large to keep " +
@@ -907,7 +989,7 @@ internal class OfflineClient(
             require(resolution != ConflictResolution.Hold) {
                 "A conflicted mutation cannot be resolved with Hold: it is held already"
             }
-            val identity = queueIdentityReader.current() ?: return@call
+            val identity = writeOwner() ?: return@call
             val entry = mutationQueue.shownConflict(id, identity.storedValue) ?: return@call
             requireResolvable(entry, resolution)
             val startedAtTick = freshness.tickNow()
@@ -1017,7 +1099,7 @@ internal class OfflineClient(
     }
 
     override suspend fun dismissConflictedMutation(id: Long): Unit = operationGate.call {
-        val identity = queueIdentityReader.current() ?: return@call
+        val identity = writeOwner() ?: return@call
         mutationQueue.dismissConflictOf(id, identity.storedValue)
     }
 
@@ -1190,7 +1272,7 @@ internal class OfflineClient(
 
     /** Whether the settled session has nothing queued; `false` when that cannot be told. */
     private suspend fun sessionQueueIsEmpty(): Boolean {
-        val identity = supabaseClient.currentReplayIdentity() ?: return false
+        val identity = replayIdentityNow() ?: return false
         return try {
             !mutationQueue.hasPendingMutationsOf(identity.storedValue)
         } catch (cancellation: CancellationException) {
@@ -1347,8 +1429,7 @@ internal class OfflineClient(
     override suspend fun clearLocalData(): Unit = operationGate.call {
         val owner =
             QueueIdentity.Anonymous.storedValue.takeIf {
-                authPluginOrNull() != null &&
-                    supabaseClient.currentReplayIdentity() == QueueIdentity.Anonymous
+                identityIsPerUser && replayIdentityNow() == QueueIdentity.Anonymous
             }
         try {
             mutationQueueReplayer.clearLocalData {

@@ -456,6 +456,16 @@ __attribute__((swift_name("BridgeClientOptions")))
 /** The most the Storage file cache may hold, in bytes; [CACHE_SIZE_UNLIMITED] for no bound. */
 @property int64_t fileCacheSizeBytes __attribute__((swift_name("fileCacheSizeBytes")));
 
+/**
+ * Whether the client tells its users apart by the `sub` claim of the token
+ * [accessTokenProvider] returns, read and never verified; `false` by default, and then one
+ * queue and one cache serve every user. With `true`, each user's queued writes are sent only
+ * with that user's token, the caches belong to one user at a time and are dropped when the
+ * token names another, and the Realtime channel is joined again for the new user. A `null`
+ * token is nobody signed in, and a token that names no user is no identity.
+ */
+@property BOOL identityFromAccessToken __attribute__((swift_name("identityFromAccessToken")));
+
 /** The least severe level that reaches [logSink]; [BridgeLogLevel.WARNING] by default. */
 @property SOCBridgeLogLevel *logLevel __attribute__((swift_name("logLevel")));
 

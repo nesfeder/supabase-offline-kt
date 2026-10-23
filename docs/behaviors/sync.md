@@ -31,7 +31,7 @@ Passes are coalesced: at most one runs and one waits, however many triggers arri
 | --- | --- |
 | The session settles into a user with writes queued | Yes |
 | The network comes back: the monitor or your `networkAvailability` turns online, or `enableNetwork()` is called | Yes |
-| A client without Auth opens with writes an earlier run left queued (its session is settled from the start, so no other trigger fires for them) | Yes |
+| A client without Auth, and without `identityFromAccessToken`, opens with writes an earlier run left queued (its session is settled from the start, so no other trigger fires for them). With the setting, the token naming a user is the session settling | Yes |
 | A write is queued behind an earlier one; a write sent, refused or discarded leaves writes behind it; a rejected write is retried | No |
 
 The last row runs whatever `autoSync` says: a write made online that returned `Queued` would
@@ -255,5 +255,6 @@ worker on Android, a `BGTaskScheduler` task on iOS), never from a second process
 - A reconnection sends at once, however long a wait failed passes built; a server's `Retry-After`
   still holds.
 - A client without Auth sends what an earlier run left queued when it opens, and only that: a write
-  made as it opens is sent at once, by itself.
+  made as it opens is sent at once, by itself. With `identityFromAccessToken`, it sends what the
+  token's user left queued.
 - The status counts what an earlier run left queued from the moment the client opens.
