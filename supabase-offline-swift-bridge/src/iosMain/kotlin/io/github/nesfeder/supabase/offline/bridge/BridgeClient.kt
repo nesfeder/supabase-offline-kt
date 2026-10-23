@@ -113,7 +113,7 @@ internal constructor(
             val read = readDescription(query)
             tableOf(read.schema, read.table)
                 .selectAsFlow(read.columns, read.flowReadStrategy()) { read.applyTo(this) }
-                .map { it.toBridge(closing.load()) }
+                .map { it.toBridge() }
         }
 
     /**
@@ -230,7 +230,7 @@ internal constructor(
         completion: (List<BridgeRejectedMutation>?, BridgeError?) -> Unit
     ): BridgeCancellable =
         runner.runOnce("rejectedMutations", completion) {
-            offline.rejectedMutations().first().map { it.toBridge() }
+            offline.rejectedMutationList().map { it.toBridge() }
         }
 
     /** [rejectedMutations] as the list changes; [onCompletion] fires once, when it ends. */
@@ -268,7 +268,7 @@ internal constructor(
         completion: (List<BridgeConflictedMutation>?, BridgeError?) -> Unit
     ): BridgeCancellable =
         runner.runOnce("conflictedMutations", completion) {
-            offline.conflictedMutations().first().map { it.toBridge() }
+            offline.conflictedMutationList().map { it.toBridge() }
         }
 
     /** [conflictedMutations] as the list changes; [onCompletion] fires once, when it ends. */
@@ -499,7 +499,7 @@ internal constructor(
         }
         runner.cancelAll()
         closed.complete(Unit)
-        return firstFailure?.let { bridgeErrorOf(it, clientClosing = false) }
+        return firstFailure?.let { bridgeErrorOf(it) }
     }
 
     /** The table builder for [table], in [schema] or the client's default schema. */
@@ -546,7 +546,7 @@ internal fun openBridgeClient(
             assemble(networkReports.filterNotNull().takeIf { options.reportsNetworkAvailability })
         BridgeOpenResult(BridgeClient(supabase, networkReports, options.logSink), null)
     } catch (failure: Throwable) {
-        BridgeOpenResult(null, bridgeErrorOf(failure, clientClosing = false))
+        BridgeOpenResult(null, bridgeErrorOf(failure))
     }
 }
 

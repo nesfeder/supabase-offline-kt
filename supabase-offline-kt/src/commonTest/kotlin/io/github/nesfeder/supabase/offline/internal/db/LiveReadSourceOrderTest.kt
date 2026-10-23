@@ -12,6 +12,7 @@ import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeRelationalPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
+import kotlin.concurrent.Volatile
 import kotlin.concurrent.atomics.AtomicBoolean
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.test.Test
@@ -32,6 +33,9 @@ class LiveReadSourceOrderTest {
     private val queryCacheDao = FakeQueryCacheDao()
     private val mutationDao = FakeMutationDao()
 
+    /** Whether a live reader hears of each payload write [HOLD] late. */
+    @Volatile private var payloadWritesHeardLate = false
+
     private fun clientOf(server: FakeRelationalPostgrestServer): OfflineClient =
         newTestOfflineClient(
             supabase = server.supabaseClient(),
@@ -39,6 +43,7 @@ class LiveReadSourceOrderTest {
             mutationDao = mutationDao,
             nowMillis = { Clock.System.now().toEpochMilliseconds() },
             config = Offline.createConfig { autoSync = false },
+            beforePayloadWriteHeard = { if (payloadWritesHeardLate) delay(HOLD) },
         )
 
     @Test
@@ -99,7 +104,7 @@ class LiveReadSourceOrderTest {
                     client,
                     rowKey = "r",
                     beforeListOpens = {
-                        queryCacheDao.beforeObservedRowDelivered = { _, _ -> delay(HOLD) }
+                        payloadWritesHeardLate = true
                     },
                     quiet = HOLD * 3,
                 )
@@ -128,7 +133,7 @@ class LiveReadSourceOrderTest {
                     warm = false,
                     beforeListOpens = {
                         server.answerDelayMillis = 0L
-                        queryCacheDao.beforeObservedRowDelivered = { _, _ -> delay(HOLD) }
+                        payloadWritesHeardLate = true
                     },
                     quiet = HOLD * 3,
                 )
@@ -154,7 +159,7 @@ class LiveReadSourceOrderTest {
                     warm = true,
                     beforeListOpens = {
                         server.answerDelayMillis = 0L
-                        queryCacheDao.beforeObservedRowDelivered = { _, _ -> delay(HOLD) }
+                        payloadWritesHeardLate = true
                     },
                     quiet = HOLD * 3,
                 )

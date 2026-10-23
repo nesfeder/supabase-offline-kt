@@ -56,6 +56,7 @@ public enum class BridgeNetworkStatus {
  * @property conflictsKeptServerCount the guarded writes dropped unsent because the server's row
  *   stands.
  * @property conflicted the guarded writes parked during this call, now on the conflicted list.
+ * @property stopReason why the call returned when it did.
  */
 public class BridgeSyncReport
 internal constructor(
@@ -67,4 +68,48 @@ internal constructor(
     public val conflictsResolvedCount: Int,
     public val conflictsKeptServerCount: Int,
     public val conflicted: List<BridgeConflictedMutation>,
+    public val stopReason: BridgeSyncStopReason,
 )
+
+/**
+ * Why one call of [BridgeClient.syncPendingMutations] returned when it did.
+ *
+ * @property kind the reason.
+ * @property error for [BridgeSyncStopKind.SERVER_FAILURE] and [BridgeSyncStopKind.LOCAL_FAILURE],
+ *   the failure, a [BridgeErrorKind.SYNC_FAILED]; `null` for every other kind.
+ */
+public class BridgeSyncStopReason
+internal constructor(public val kind: BridgeSyncStopKind, public val error: BridgeError?)
+
+/** The reasons a sync call returns when it does, as the library names them. */
+public enum class BridgeSyncStopKind {
+    /** The call went through every write it found queued. */
+    COMPLETED,
+
+    /** A write could not reach the server, or got no answer in time. */
+    NETWORK_UNAVAILABLE,
+
+    /** The server answered a write with a failure that may pass. */
+    SERVER_FAILURE,
+
+    /** A failure on the device stopped the call. */
+    LOCAL_FAILURE,
+
+    /** The session did not settle within the call's wait. */
+    SESSION_NOT_READY,
+
+    /** The session changed user while the call ran. */
+    SESSION_CHANGED,
+
+    /** The app turned network access off. */
+    NETWORK_DISABLED,
+
+    /** A call for one table stopped at a write behind an earlier one to another table. */
+    HELD_BEHIND_OTHER_TABLES,
+
+    /** Local data was cleared while the call ran. */
+    LOCAL_DATA_CLEARED,
+
+    /** A reason the bridge has no kind for; never sent while every reason has one. */
+    UNKNOWN,
+}

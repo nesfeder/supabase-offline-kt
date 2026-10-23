@@ -35,6 +35,7 @@ struct ClientTests {
         #expect(core.dataDirectory == "/tmp/offline-config/")
         #expect(core.schema == "app")
         #expect(core.accessTokenProvider is AccessTokenRelay)
+        #expect(core.identityFromAccessToken == false)
         #expect(core.cacheSizeBytes == 1_000)
         #expect(core.fileCacheSizeBytes == BridgeClientOptions.companion.CACHE_SIZE_UNLIMITED)
         #expect(core.autoSync == false)
@@ -50,12 +51,26 @@ struct ClientTests {
         // Then
         #expect(core.schema == "public")
         #expect(core.accessTokenProvider == nil)
+        #expect(core.identityFromAccessToken == false)
         #expect(core.cacheSizeBytes == BridgeClientOptions.companion.DEFAULT_CACHE_SIZE_BYTES)
         #expect(core.fileCacheSizeBytes == BridgeClientOptions.companion.DEFAULT_FILE_CACHE_SIZE_BYTES)
         #expect(core.autoSync == true)
         #expect(core.primaryKeys.isEmpty)
         #expect(core.logLevel == .warning)
         #expect(core.dataDirectory.hasSuffix("/Library/Application Support/SupabaseOffline/"))
+    }
+
+    @Test func identityFromTheAccessTokenReachesTheCore() throws {
+        // Given
+        let config = SupabaseOfflineClient.Config(accessToken: { "token" }, identityFromAccessToken: true)
+
+        // When
+        let core = try SupabaseOfflineClient.coreOptions(supabaseURL: Self.projectURL, supabaseKey: "key", config: config)
+
+        // Then
+        #expect(config.identityFromAccessToken)
+        #expect(core.identityFromAccessToken == true)
+        #expect(core.accessTokenProvider is AccessTokenRelay)
     }
 
     @Test func everyLogLevelHasTheCoresCounterpart() {

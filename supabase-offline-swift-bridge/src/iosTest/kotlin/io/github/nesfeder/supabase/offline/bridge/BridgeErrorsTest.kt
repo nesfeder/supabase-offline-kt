@@ -1,15 +1,19 @@
 // Copyright (c) 2026 nesfeder
 // SPDX-License-Identifier: MIT
-@file:OptIn(ExperimentalForeignApi::class)
+@file:OptIn(ExperimentalForeignApi::class, ExperimentalAtomicApi::class)
 
 package io.github.nesfeder.supabase.offline.bridge
 
 import io.github.jan.supabase.exceptions.HttpRequestException
 import io.github.jan.supabase.postgrest.query.filter.FilterOperator
 import io.github.nesfeder.supabase.offline.bridge.internal.ILLEGAL_HEADER_MESSAGE
+import io.github.nesfeder.supabase.offline.bridge.internal.OperationRunner
 import io.github.nesfeder.supabase.offline.bridge.internal.transportReason
+import io.github.nesfeder.supabase.offline.offline
 import io.ktor.client.request.HttpRequestBuilder
 import io.ktor.client.request.url
+import kotlin.concurrent.atomics.AtomicBoolean
+import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -17,6 +21,7 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlinx.cinterop.ExperimentalForeignApi
+import kotlinx.coroutines.CancellationException
 import kotlinx.io.IOException
 import platform.Foundation.NSData
 import platform.Foundation.NSFileManager
@@ -348,6 +353,55 @@ class BridgeErrorsTest {
         assertEquals(BridgeErrorKind.MUTATION_NOT_QUEUEABLE, notQueueable?.kind)
         assertTrue(server.requests.isEmpty())
         client.closeAndWait()
+    }
+
+    @Test
+    fun the_librarys_closed_error_is_client_closed_by_its_type_alone() = bridgeTest {
+        // Given — a client whose library plugin was closed under it: the bridge client itself is
+        // not closing, so only the failure's type says the client is closed
+        val client = openTestClient(server)
+        client.supabase.offline.close()
+
+        // When
+        val (_, error) = client.selectAndWait(readOf())
+
+        // Then
+        assertEquals(BridgeErrorKind.CLIENT_CLOSED, error?.kind)
+        assertEquals("OfflineClientClosedException", error?.debugType)
+        assertTrue(server.requests.isEmpty())
+        client.closeAndWait()
+    }
+
+    @Test
+    fun a_failure_of_its_own_while_the_client_closes_keeps_its_kind() = bridgeTest {
+        // Given — a runner whose client begins closing while each call runs
+        val closing = AtomicBoolean(false)
+        val runner = OperationRunner(logSink = null) { closing.load() }
+        val clearedMessage = "Local data was cleared while this file was downloading"
+
+        // When — one call then fails as a download does when local data is cleared under it, and
+        // another with a cancellation that is not its own
+        val cleared = CompletionProbe<Unit>()
+        runner.runOnce<Unit>("cleared", cleared.completion) {
+            closing.store(true)
+            throw IllegalStateException(clearedMessage)
+        }
+        val clearedError = cleared.awaitError()
+        closing.store(false)
+        val stray = CompletionProbe<Unit>()
+        runner.runOnce<Unit>("stray", stray.completion) {
+            closing.store(true)
+            throw CancellationException("A job the call started was canceled")
+        }
+        val strayError = stray.awaitError()
+        runner.cancelAll()
+
+        // Then — neither is taken for the closed client
+        assertEquals(BridgeErrorKind.UNEXPECTED, clearedError.kind)
+        assertEquals(clearedMessage, clearedError.message)
+        assertEquals("IllegalStateException", clearedError.debugType)
+        assertEquals(BridgeErrorKind.UNEXPECTED, strayError.kind)
+        assertEquals("CancellationException", strayError.debugType)
     }
 
     @Test

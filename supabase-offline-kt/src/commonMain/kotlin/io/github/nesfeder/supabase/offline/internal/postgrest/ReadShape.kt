@@ -30,8 +30,16 @@ internal sealed interface ReadShape {
     data object RowList : ReadShape
 
     /**
-     * Any other: one object, a count, a `HEAD`, CSV, GeoJSON, a query plan, or rows with nulls
-     * stripped. Such a read bypasses the cache.
+     * One row as a JSON object: `single()`, and from supabase-kt 3.8 `maybeSingle()`, which asks
+     * for the same media type. It asks for the rows the list read of the same query does, and only
+     * `Accept` tells the two apart, so the cache holds its answer as that list, one row long, under
+     * the list's key.
+     */
+    data object SingleObject : ReadShape
+
+    /**
+     * Any other: a count, a `HEAD`, CSV, GeoJSON, a query plan, rows with nulls stripped, or one
+     * object asked for another way. Such a read bypasses the cache.
      *
      * @property kind what it asks for, as a phrase for messages and logs.
      */
@@ -59,7 +67,9 @@ internal interface ReadShapeProbe {
 /**
  * The shape of a PostgREST read sent with [method] and these header values: supabase-kt writes
  * `single()`, `csv()` and the rest only into `Accept`, `head` into the method, and a count into
- * `Prefer`.
+ * `Prefer`. The client adds its own JSON media type after the one the read asks for, so a single
+ * object is the read whose first `Accept` value is the object type, as `single()` writes it; an
+ * object type with `stripNulls()`, or one the app's own header puts after another, is not one.
  */
 internal fun readShapeOf(
     method: HttpMethod,
@@ -73,8 +83,12 @@ internal fun readShapeOf(
             .any { preference -> preference.trim().startsWith("count=") } ->
             ReadShape.Uncacheable("a read with a row count")
         accept.isNotEmpty() && accept.all { value -> value == JSON_ROWS } -> ReadShape.RowList
+        accept.firstOrNull() == OBJECT &&
+            accept.all { value -> value == OBJECT || value == JSON_ROWS } -> ReadShape.SingleObject
         accept.any { value -> value.startsWith(OBJECT) } ->
-            ReadShape.Uncacheable("a single object (single(), maybeSingle())")
+            ReadShape.Uncacheable(
+                "a single object asked for another way (stripNulls(), an Accept header)"
+            )
         accept.any { value -> value.startsWith(PLAN) } ->
             ReadShape.Uncacheable("a query plan (explain())")
         accept.any { value -> "nulls=stripped" in value } ->

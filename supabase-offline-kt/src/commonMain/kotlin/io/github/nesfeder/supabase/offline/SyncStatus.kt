@@ -22,10 +22,14 @@ import kotlin.time.Instant
  * @property lastSyncedAt when the current user's queue was last emptied by sending, by a sync pass
  *   or by a write sent at once, by the device's clock; `null` until it happens. Kept in memory
  *   only: a new client starts without it.
- * @property lastSyncError why the last sync pass stopped with writes still queued: the server's
- *   [SyncFailedException.httpStatus] and [SyncFailedException.code], or a failure the network
- *   caused. `null` once a later pass runs to the end, sending empties the queue, or local data is
- *   cleared. It carries no row, filter value or token.
+ * @property lastSyncError the failure that last stopped a sync pass with writes still queued
+ *   ([SyncStopReason.NetworkUnavailable], [SyncStopReason.ServerFailure] or
+ *   [SyncStopReason.LocalFailure]): the server's [SyncFailedException.httpStatus] and
+ *   [SyncFailedException.code], or a failure the network or the device caused. `null` once a later
+ *   pass runs to the end or stops because the session changed user, sending empties the queue, or
+ *   local data is cleared. A pass that stops because the session is not ready, network access is
+ *   off or an earlier write waits in another table leaves it as it was: no newer answer came for
+ *   the writes it held back. It carries no row, filter value or token.
  * @property conflictedMutationCount the current user's entries on the conflicted list
  *   ([Offline.conflictedMutations]).
  */

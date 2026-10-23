@@ -66,6 +66,7 @@ internal fun assembleSupabaseClient(
             cacheSizeBytes = options.cacheSizeBytes
             fileCacheSizeBytes = options.fileCacheSizeBytes
             autoSync = options.autoSync
+            identityFromAccessToken = options.identityFromAccessToken
             this.networkAvailability = networkAvailability
             primaryKeys.putAll(options.primaryKeys)
             realtime { name(options.realtimeTables) }

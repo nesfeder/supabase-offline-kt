@@ -17,9 +17,10 @@ package io.github.nesfeder.supabase.offline
  * @property rejected the writes the server refused for good during this call, now on the rejected
  *   list ([Offline.rejectedMutations]) unless local data was cleared since.
  * @property remainingCount the writes still queued when the call returned. More than zero when the
- *   network could not be reached or the server failed in a way that may pass (then
- *   [SyncStatus.lastSyncError] says why, and the writes are sent by a later pass), or when writes
- *   wait behind other tables ([SyncReport.heldBehindOtherTablesCount]).
+ *   call was stopped short, and [SyncReport.stopReason] says why: the network could not be reached,
+ *   the server or the device failed in a way that may pass, the session was not ready or changed,
+ *   network access was off, or writes wait behind other tables
+ *   ([SyncReport.heldBehindOtherTablesCount]). The writes are sent by a later pass.
  * @property alreadyOnServerCount of [SyncReport.syncedCount], the writes the server already held:
  *   inserts whose rows it had (an earlier send whose answer never arrived had in fact reached it,
  *   so this send was taken as that one rather than inserting the rows twice), guarded updates whose
@@ -35,6 +36,9 @@ package io.github.nesfeder.supabase.offline
  *   server's row was let stand ([ConflictResolution.KeepServer]); counted in no other count.
  * @property conflicted the guarded writes parked during this call, now on the conflicted list
  *   ([Offline.conflictedMutations]) unless local data was cleared since.
+ * @property stopReason why the call returned when it did: [SyncStopReason.Completed] when it went
+ *   through every write it found queued, or what stopped it short. A call that waited for the
+ *   library's own sending gives the reason its last pass ended for.
  */
 @ConsistentCopyVisibility
 public data class SyncReport
@@ -47,4 +51,5 @@ internal constructor(
     public val conflictsResolvedCount: Int,
     public val conflictsKeptServerCount: Int,
     public val conflicted: List<ConflictedMutation>,
+    public val stopReason: SyncStopReason,
 )

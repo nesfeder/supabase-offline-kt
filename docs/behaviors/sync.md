@@ -31,7 +31,7 @@ Passes are coalesced: at most one runs and one waits, however many triggers arri
 | --- | --- |
 | The session settles into a user with writes queued | Yes |
 | The network comes back: the monitor or your `networkAvailability` turns online, or `enableNetwork()` is called | Yes |
-| A client without Auth opens with writes an earlier run left queued (its session is settled from the start, so no other trigger fires for them) | Yes |
+| A client without Auth, and without `identityFromAccessToken`, opens with writes an earlier run left queued (its session is settled from the start, so no other trigger fires for them). With the setting, the token naming a user is the session settling | Yes |
 | A write is queued behind an earlier one; a write sent, refused or discarded leaves writes behind it; a rejected write is retried | No |
 
 The last row runs whatever `autoSync` says: a write made online that returned `Queued` would
@@ -141,6 +141,7 @@ sends that token whoever is signed in, so the owner check of
 | `conflictsResolvedCount` | Of `syncedCount`, the conflicts settled with `KeepLocal` or `Apply`, by the resolver or the default, and sent |
 | `conflictsKeptServerCount` | The writes dropped for the server's row, with `KeepServer`: by default, an update whose row is gone |
 | `conflicted` | The `ConflictedMutation`s parked during this call, now on `conflictedMutations()` |
+| `stopReason` | Why the call returned when it did: `Completed`, or what stopped it short ([below](#why-a-sync-returned)) |
 
 The counts are this call's own: a pass the library ran by itself just before is counted nowhere
 here, and a refusal it made is on `rejectedMutations()`. Calling sync more than once at a time is
@@ -148,10 +149,32 @@ safe: a call that meets a pass already sending the same writes waits for it to l
 what is left, so it returns only once nothing more can be sent now. A pass in progress when local
 data is cleared is canceled first, and its report counts what it sent before.
 
-A sync throws only `IllegalStateException`, when the client is closed or PostgREST is not
-installed. A failure that stops the pass is not thrown: `syncStatus.value.lastSyncError` holds it
-as a `SyncFailedException`, with the HTTP status and the PostgREST or Postgres code and nothing of
-the original message ([Failures and the rejected list](failures.md) has the rejected list).
+A sync throws only `IllegalStateException`: `OfflineClientClosedException` when the client is
+closed, or a plain one when PostgREST is not installed. A failure that stops the pass is not
+thrown: the report's `stopReason` names it, and `syncStatus.value.lastSyncError` holds it as a
+`SyncFailedException`, with the HTTP status and the PostgREST or Postgres code and nothing of the
+original message ([Failures and the rejected list](failures.md) has the rejected list).
+
+## Why a sync returned
+
+`SyncReport.stopReason` is a `SyncStopReason`. A call that waited for the library's own sending
+gives the reason its last pass ended for. In Swift it is a `kind`, with the failure as `error`.
+
+| Reason | Why the call returned | What remains |
+| --- | --- | --- |
+| `Completed` | It went through every write it found queued: each was sent, refused, parked or dropped | Only the writes queued while it ran |
+| `NetworkUnavailable` | A write could not reach the server, or got no answer in time | That write and those after it |
+| `ServerFailure(error)` | The server answered a write with a failure that may pass: a `5xx`, `408`, `429` or `401`, a schema cache miss, or a `403` or `409` while an earlier write is still queued. `error` has the status and code | That write and those after it |
+| `LocalFailure(error)` | A failure on the device: the local database failing, a request header the HTTP client refuses, or the pass canceled by something other than the caller or a clear | The writes it did not send |
+| `SessionNotReady` | The session did not settle within the wait, or could not be told while it restored or refreshed | Every write; a pass sends them once the session settles |
+| `SessionChanged` | The session changed user while it ran | The new user's writes go in a later pass |
+| `NetworkDisabled` | Network access is off ([below](#the-network-switch)) | Every write it did not send |
+| `HeldBehindOtherTables` | A call for one table reached a write with an earlier one queued in another table | `heldBehindOtherTablesCount` of them |
+| `LocalDataCleared` | Local data was cleared while it ran | Nothing: the clear removed the writes |
+
+The set is open: a later release may add a reason, so a `when` over it keeps an `else` branch, and
+a Swift `switch` over its `kind` keeps a `default`. The three failures are recorded as
+`lastSyncError`; no other reason is a failure.
 
 ## The status
 
@@ -177,7 +200,7 @@ From the samples: [LibraryMappings.kt](https://github.com/nesfeder/supabase-offl
 | `pendingMutationCount`, `rejectedMutationCount`, `conflictedMutationCount` | The current user's queued writes, rejected entries and conflicted entries. They follow each change to the queue shortly after it, read together, so a write moving between them is counted in exactly one |
 | `isSyncing` | Whether a pass is sending, started by you or by the library |
 | `lastSyncedAt` | When a pass, or a write sent at once, last left the user's queue empty. Kept in memory only |
-| `lastSyncError` | Why the last pass stopped with writes queued; cleared when a later pass runs to the end, when sending empties the queue, and when local data is cleared |
+| `lastSyncError` | The failure that last stopped a pass with writes queued (a `NetworkUnavailable`, `ServerFailure` or `LocalFailure` stop); cleared when a later pass runs to the end or stops because the session changed user, when sending empties the queue, and when local data is cleared. A pass stopped because the session is not ready, access is off or a write waits behind another table leaves it as it was |
 
 It follows the queue from the moment the client opens, so its counts include what an earlier run
 left queued. It is the same flow whether or not the client is open, never throws, and after
@@ -221,8 +244,8 @@ worker on Android, a `BGTaskScheduler` task on iOS), never from a second process
 
 ## At a glance
 
-- `syncPendingMutations` reports what it sent, what the server refused (with its `ServerError`) and
-  what is still queued.
+- `syncPendingMutations` reports what it sent, what the server refused (with its `ServerError`),
+  what is still queued, and why it returned (`stopReason`).
 - Offline it returns at once, with the writes still queued, and `syncStatus.lastSyncError` says the
   network.
 - `lastSyncError` carries the status and code, never the server's text, a filter value or a token.
@@ -255,5 +278,6 @@ worker on Android, a `BGTaskScheduler` task on iOS), never from a second process
 - A reconnection sends at once, however long a wait failed passes built; a server's `Retry-After`
   still holds.
 - A client without Auth sends what an earlier run left queued when it opens, and only that: a write
-  made as it opens is sent at once, by itself.
+  made as it opens is sent at once, by itself. With `identityFromAccessToken`, it sends what the
+  token's user left queued.
 - The status counts what an earlier run left queued from the moment the client opens.

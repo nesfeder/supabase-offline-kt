@@ -7,6 +7,7 @@ package io.github.nesfeder.supabase.offline.internal.mutationqueue
 import io.github.jan.supabase.postgrest.Postgrest
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.jan.supabase.postgrest.result.PostgrestResult
+import io.github.nesfeder.supabase.offline.SyncStopReason
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogLevel
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
 import io.github.nesfeder.supabase.offline.testdoubles.FakeRemoteTable
@@ -47,12 +48,15 @@ class ReplayPassCancellationTest {
         // When
         val report = replayer.sync()
 
-        // Then — a failure on the device, with the cancellation as its cause, and the write stays
+        // Then — a failure on the device, with the cancellation as its cause, and the write stays;
+        // the app is told it is the device's
         val stop = assertIs<SyncStop.TransientFailure>(report.stop)
         val cause = assertIs<IllegalStateException>(stop.cause)
         assertEquals(TRANSPORT_CANCELLATION, cause.cause?.message)
         assertEquals(1 to 0, report.remainingCount to report.syncedCount)
         assertEquals(1, store.pendingMutationCount())
+        val reason = assertIs<SyncStopReason.LocalFailure>(stopReasonOf(report.stop))
+        assertEquals(null, reason.error.httpStatus)
     }
 
     @Test

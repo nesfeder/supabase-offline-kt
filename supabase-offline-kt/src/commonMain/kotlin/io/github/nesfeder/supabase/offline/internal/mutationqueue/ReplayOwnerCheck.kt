@@ -28,9 +28,15 @@ import kotlinx.coroutines.currentCoroutineContext
  *
  * @property sender the pass sending the mutation, which runs the request whatever cancels it; a
  *   request it has not sent yet is stopped instead. `null` for a send that cancellation stops.
+ * @property identityOfToken whose a request's bearer token is, for a client that tells users apart
+ *   by their access token; `null` reads it as the Auth plugin's tokens are read, or, without that
+ *   plugin, checks no token at all.
  */
-internal class ReplayOwner(val owner: QueueIdentity, val sender: Job? = null) :
-    AbstractCoroutineContextElement(Key) {
+internal class ReplayOwner(
+    val owner: QueueIdentity,
+    val sender: Job? = null,
+    val identityOfToken: ((token: String?) -> QueueIdentity?)? = null,
+) : AbstractCoroutineContextElement(Key) {
 
     /** The key a replay owner is found under in a coroutine context. */
     companion object Key : CoroutineContext.Key<ReplayOwner>
@@ -72,12 +78,12 @@ private val ReplayOwnerCheckInstallation =
  * Installs, once per client, the phase that binds a queued mutation's send to its owner and its
  * pass. It runs just before the request is sent, after supabase-kt set the `Authorization` header,
  * and stops a request made under a [ReplayOwner] whose [ReplayOwner.sender] was canceled, or, when
- * the Auth plugin is installed, a PostgREST request whose token names another identity. Without
- * Auth the session never changes identity.
+ * the Auth plugin is installed or the owner reads identities from the access token, a PostgREST
+ * request whose token names another identity. Otherwise the session never changes identity.
  */
 @OptIn(SupabaseInternal::class)
 internal fun SupabaseClient.installReplayOwnerCheck() {
-    val checksIdentity = pluginManager.getPluginOrNull(Auth) != null
+    val checksAuthIdentity = pluginManager.getPluginOrNull(Auth) != null
     val client = httpClient.httpClient
     val installation =
         client.attributes.computeIfAbsent(ReplayOwnerCheckInstallation) { AtomicBoolean(false) }
@@ -89,8 +95,13 @@ internal fun SupabaseClient.installReplayOwnerCheck() {
             replay.recordSenderStopped()
             throw ReplayOwnerCheckStop("the replay pass was stopped before it was sent")
         }
-        if (!checksIdentity || !isPostgrestRequest(context)) return@intercept
-        if (identityCarriedBy(context.headers[HttpHeaders.Authorization]) != replay.owner) {
+        val identityOfToken =
+            replay.identityOfToken ?: ::authIdentityOf.takeIf { checksAuthIdentity }
+        if (identityOfToken == null || !isPostgrestRequest(context)) return@intercept
+        if (
+            identityOfToken(bearerTokenOf(context.headers[HttpHeaders.Authorization])) !=
+                replay.owner
+        ) {
             replay.recordStop()
             throw ReplayOwnerCheckStop("the session no longer belongs to the mutation's owner")
         }
@@ -101,15 +112,21 @@ internal fun SupabaseClient.installReplayOwnerCheck() {
  * The identity a request's `Authorization` header speaks for: the user its JWT names as `sub`, or
  * the anonymous identity for no token, the anon key or a key that is not a user's JWT.
  */
-internal fun identityCarriedBy(authorization: String?): QueueIdentity {
-    val token =
-        authorization
-            ?.takeIf { header -> header.startsWith(BEARER_PREFIX, ignoreCase = true) }
-            ?.substring(BEARER_PREFIX.length)
-            ?.trim()
+internal fun identityCarriedBy(authorization: String?): QueueIdentity =
+    authIdentityOf(bearerTokenOf(authorization))
+
+/** [identityCarriedBy] for a bearer token already read from its header. */
+private fun authIdentityOf(token: String?): QueueIdentity {
     val subject = token?.let(::jwtSubjectOrNull) ?: return QueueIdentity.Anonymous
     return QueueIdentity.User(subject)
 }
+
+/** The token of a bearer `Authorization` header, or `null` for any other header, or none. */
+private fun bearerTokenOf(authorization: String?): String? =
+    authorization
+        ?.takeIf { header -> header.startsWith(BEARER_PREFIX, ignoreCase = true) }
+        ?.substring(BEARER_PREFIX.length)
+        ?.trim()
 
 /** The scheme prefix of a bearer `Authorization` header. */
 private const val BEARER_PREFIX = "Bearer "
