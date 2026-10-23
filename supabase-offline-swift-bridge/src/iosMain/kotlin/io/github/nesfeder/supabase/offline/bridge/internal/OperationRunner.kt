@@ -28,7 +28,7 @@ import kotlinx.coroutines.launch
  * each completion fires exactly once, a canceled handle cancels the work, and no failure, a
  * caller's completion that throws included, ever leaves Kotlin.
  *
- * @param clientClosing whether the client is closing, which turns a cancellation into
+ * @param clientClosing whether the client is closing, which turns a call's own cancellation into
  *   [BridgeErrorKind.CLIENT_CLOSED] and refuses new calls.
  */
 internal class OperationRunner(
@@ -225,16 +225,16 @@ internal class OperationRunner(
 
     /**
      * [failure] as an error. A cancellation of the call itself ([ownCancellation]) is
-     * [BridgeErrorKind.CANCELLED], or the closed error once the client is closing.
+     * [BridgeErrorKind.CANCELLED], or the closed error once the client is closing, whose close
+     * cancels every call still running. Any other failure is classified by its type alone, the
+     * library's closed error included ([bridgeErrorOf]).
      */
-    private fun errorOf(failure: Throwable, ownCancellation: Boolean): BridgeError {
-        val closing = clientClosing()
-        return when {
+    private fun errorOf(failure: Throwable, ownCancellation: Boolean): BridgeError =
+        when {
             failure is CancellationException && ownCancellation ->
-                if (closing) clientClosedError("CancellationException") else canceledError()
-            else -> bridgeErrorOf(failure, closing)
+                if (clientClosing()) clientClosedError("CancellationException") else canceledError()
+            else -> bridgeErrorOf(failure)
         }
-    }
 
     /** Runs [answer] on [answerScope]; should that fail, here, rather than lose it. */
     private fun postAnswer(answer: () -> Unit) {

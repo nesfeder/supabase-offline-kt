@@ -55,7 +55,7 @@ Kotlin names are the library's (`io.github.nesfeder.supabase.offline`) unless ma
 | `Code.networkDisabled` | `NetworkDisabledException` | Same |
 | `Code.mutationNotQueueable` | `MutationNotQueueableException` | Same |
 | `Code.syncFailed` | `SyncFailedException` | Same |
-| `Code.clientClosed` | the closed client's `IllegalStateException` | Kotlin uses a standard type; Swift needs a code |
+| `Code.clientClosed` | `OfflineClientClosedException` | Same; the code of an `OfflineError` drops the type's `Offline` |
 | `Code.accessToken` | supabase-kt's access-token provider failure | Same |
 | `Code.invalidRequest` | `IllegalArgumentException` | Swift only: the package's request description can be refused, which Kotlin's typed builders cannot be |
 | `Code.decoding`, `Code.encoding` | kotlinx.serialization's `SerializationException` | `Codable`'s errors; no shared type |
@@ -290,4 +290,5 @@ a parameter and defaults for the rest, as the Kotlin testing artifact's are.
 | `cacheMissError(message:)`, `mutationNotQueueableError(message:)`, `networkDisabledError(message:)` | `cacheMissException(message)`, `mutationNotQueueableException(cause, message)`, `networkDisabledException(message)` | `Error` for `Exception`: each builds an `OfflineError` with that code. Swift's has no `cause`; it is a network failure, as Kotlin's is through its cause |
 | `syncFailedError(message:httpStatus:code:isConnectivityFailure:)` | `syncFailedException(message, httpStatus, code, isConnectivityFailure)` | `Error` for `Exception`; the status and code go in `serverError` |
 | `offlineError(code:message:serverError:isNetworkOrConnectivityFailure:)` | — (supabase-kt's own exceptions have public constructors) | Swift only: any other code, such as `server` or `connectivity` |
+| — | `offlineClientClosedException()` | Not needed: `offlineError(code: .clientClosed, message:)` builds the same error |
 | `cachedFile(path:fetchedAt:sizeBytes:)` | `cachedFile(path, fetchedAt, sizeBytes)` | Same; `Date` for `Instant`, `Int` for `Long` |

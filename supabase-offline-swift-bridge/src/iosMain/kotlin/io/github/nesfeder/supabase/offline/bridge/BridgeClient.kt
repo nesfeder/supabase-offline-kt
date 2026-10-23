@@ -113,7 +113,7 @@ internal constructor(
             val read = readDescription(query)
             tableOf(read.schema, read.table)
                 .selectAsFlow(read.columns, read.flowReadStrategy()) { read.applyTo(this) }
-                .map { it.toBridge(closing.load()) }
+                .map { it.toBridge() }
         }
 
     /**
@@ -499,7 +499,7 @@ internal constructor(
         }
         runner.cancelAll()
         closed.complete(Unit)
-        return firstFailure?.let { bridgeErrorOf(it, clientClosing = false) }
+        return firstFailure?.let { bridgeErrorOf(it) }
     }
 
     /** The table builder for [table], in [schema] or the client's default schema. */
@@ -546,7 +546,7 @@ internal fun openBridgeClient(
             assemble(networkReports.filterNotNull().takeIf { options.reportsNetworkAvailability })
         BridgeOpenResult(BridgeClient(supabase, networkReports, options.logSink), null)
     } catch (failure: Throwable) {
-        BridgeOpenResult(null, bridgeErrorOf(failure, clientClosing = false))
+        BridgeOpenResult(null, bridgeErrorOf(failure))
     }
 }
 

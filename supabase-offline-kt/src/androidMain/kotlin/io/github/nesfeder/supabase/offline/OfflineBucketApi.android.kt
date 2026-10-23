@@ -43,7 +43,7 @@ public suspend fun OfflineBucketApi.localFileIfCached(path: String): File? =
  * [OfflineBucketApi.cachedFile] as a [Uri]. Never touches the network.
  *
  * @param path the object path within this bucket.
- * @throws IllegalStateException when the client is closed.
+ * @throws OfflineClientClosedException when the client is closed.
  */
 @Throws(Throwable::class)
 public suspend fun OfflineBucketApi.localUriIfCached(path: String): Uri? =

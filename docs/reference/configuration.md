@@ -315,7 +315,7 @@ out.
 
 | | What happens |
 | --- | --- |
-| At once | Every new call fails with `IllegalStateException`, on the plugin and on any builder or bucket obtained from it. Every flow being collected completes; one collected afterward fails. `syncStatus` keeps its last value. The library's own work stops: refreshes, passes, syncs and Storage calls, whose callers get the closed error, never a cancellation |
+| At once | Every new call fails with `OfflineClientClosedException`, on the plugin and on any builder or bucket obtained from it. Every flow being collected completes; one collected afterward fails. `syncStatus` keeps its last value. The library's own work stops: refreshes, passes, syncs and Storage calls, whose callers get the closed error, never a cancellation |
 | Left to finish | A PostgREST write, a clear, a one-shot `select` that goes to the network, an `rpc`, a read of the cache, and a resumable upload. A write whose answer arrives is applied and never sent again |
 | May still be sent | Through `supabase.close()`, a call made while supabase-kt closes its HTTP client is either still sent or ends as it would offline: answered from the cache, `Queued`, or the closed error |
 | The bound | `close()` returns once the database is released, or after 10 seconds at most, and never throws. Past that, the database is released when the last call finishes, and a new client on it fails until then |

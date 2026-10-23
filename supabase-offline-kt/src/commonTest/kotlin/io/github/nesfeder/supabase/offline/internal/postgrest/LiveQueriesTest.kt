@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.postgrest
 
+import io.github.nesfeder.supabase.offline.OfflineClientClosedException
 import io.github.nesfeder.supabase.offline.QuerySnapshot
 import io.github.nesfeder.supabase.offline.RefreshState
 import kotlin.concurrent.atomics.AtomicInt
@@ -14,10 +15,12 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
@@ -189,6 +192,37 @@ class LiveQueriesTest {
             assertIs<CancellationException>(failure, "the collection ended with $failure")
             assertEquals(UPSTREAM_GAVE_UP, failure.message)
         }
+
+    @Test
+    fun a_collection_running_when_the_clients_scope_ends_fails_with_the_closed_error() = runTest {
+        // Given — a shared read that has delivered its first value and waits for more
+        val liveQueries = LiveQueries(scope)
+        val shared =
+            liveQueries.sharedReadFlow(TABLE, "todos?select=*") {
+                flow {
+                    emit(RESULT)
+                    awaitCancellation()
+                }
+            }
+        val delivered = CompletableDeferred<Unit>()
+
+        // When — the client's scope ends, as the client's close ends it
+        val failure =
+            withContext(Dispatchers.Default) {
+                withTimeout(5.seconds) {
+                    val collecting = async {
+                        runCatching { shared.collect { delivered.complete(Unit) } }
+                            .exceptionOrNull()
+                    }
+                    delivered.await()
+                    scopeJob.cancel()
+                    collecting.await()
+                }
+            }
+
+        // Then — the collection fails with the closed error rather than waiting for good
+        assertIs<OfflineClientClosedException>(failure, "the collection ended with $failure")
+    }
 
     @Test
     fun a_later_subscriber_to_a_failed_query_gets_a_fresh_attempt() = runTest {

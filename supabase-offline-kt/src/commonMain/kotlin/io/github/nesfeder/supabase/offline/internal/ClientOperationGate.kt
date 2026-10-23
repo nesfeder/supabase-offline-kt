@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal
 
-import io.github.nesfeder.supabase.offline.internal.postgrest.CLIENT_CLOSED_MESSAGE
+import io.github.nesfeder.supabase.offline.OfflineClientClosedException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -54,9 +54,9 @@ internal class ClientOperationGate(private val isTransportClosed: () -> Boolean 
     val inFlight: Int
         get() = state.value.inFlight
 
-    /** Throws the client's closed error once [close] has run. */
+    /** Throws the client's closed error, [OfflineClientClosedException], once [close] has run. */
     fun ensureOpen() {
-        check(!isClosed) { CLIENT_CLOSED_MESSAGE }
+        if (isClosed) throw OfflineClientClosedException(null)
     }
 
     /**
@@ -65,7 +65,7 @@ internal class ClientOperationGate(private val isTransportClosed: () -> Boolean 
      */
     suspend fun <T> call(block: suspend () -> T): T {
         state.update { current ->
-            check(!current.isClosed) { CLIENT_CLOSED_MESSAGE }
+            if (current.isClosed) throw OfflineClientClosedException(null)
             current.copy(inFlight = current.inFlight + 1)
         }
         try {
@@ -142,10 +142,9 @@ internal class ClientOperationGate(private val isTransportClosed: () -> Boolean 
                     }
                 }
             }
-        } catch (refused: IllegalStateException) {
+        } catch (refused: OfflineClientClosedException) {
             // Refused because closed before it began: the channel carries the error, the producer
             // ends quietly
-            if (refused is CancellationException) throw refused
             close(refused)
         }
     }

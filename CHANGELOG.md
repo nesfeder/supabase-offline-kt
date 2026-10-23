@@ -20,6 +20,11 @@ All notable changes to this project are recorded in this file. The format follow
   `pendingMutationCount()` reads the queue's count; the Swift package has the same two calls.
 - On Android, `localFileIfCached(path)` gives the cached copy of an object as a `File`, or `null`
   when none is cached, beside `localUriIfCached(path)`, which gives it as a `Uri`.
+- `OfflineClientClosedException`, the error every call on a closed client throws, and a call the
+  closing stopped. It is an `IllegalStateException` with the message the closed error always had,
+  "This offline client is closed", so an existing `catch (e: IllegalStateException)` or a check of
+  the message keeps working; match the type instead. The testing artifact's
+  `offlineClientClosedException()` builds one.
 
 ### Changed
 
@@ -59,6 +64,10 @@ All notable changes to this project are recorded in this file. The format follow
 
 ### Fixed
 
+- In the Swift package, a call that failed for a reason of its own while the client closed threw
+  `clientClosed`: any `IllegalStateException` or cancellation met during the close read as the
+  closed client, such as the failure of a download whose local data was cleared. It now keeps its
+  own code, and only the closed client's error is `clientClosed`.
 - A reactive read's refresh asks again, on its retry schedule, for as long as its answers are
   refused as older than a change to the table, and reads `Refreshing` meanwhile; a
   `NetworkFirstThenCache` read whose first fetch is refused that way stays `Refreshing` too. Before,

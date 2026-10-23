@@ -72,16 +72,16 @@ class MutationQueueAcrossCloseTest {
         client.close()
 
         // Then — every verb refuses, whatever its strategy, and nothing reaches the server
-        val queued = assertFailsWith<IllegalStateException> { builder.insert(ROW) }
+        val queued = assertFailsWith<OfflineClientClosedException> { builder.insert(ROW) }
         assertEquals(CLIENT_CLOSED_MESSAGE, queued.message)
-        assertFailsWith<IllegalStateException> {
+        assertFailsWith<OfflineClientClosedException> {
             builder.insert(ROW, mutationStrategy = MutationStrategy.OnlineOnly)
         }
-        assertFailsWith<IllegalStateException> {
+        assertFailsWith<OfflineClientClosedException> {
             builder.update(buildJsonObject { put("title", "x") }) { filter { eq("id", 1) } }
         }
-        assertFailsWith<IllegalStateException> { builder.delete { filter { eq("id", 1) } } }
-        assertFailsWith<IllegalStateException> { builder.select() }
+        assertFailsWith<OfflineClientClosedException> { builder.delete { filter { eq("id", 1) } } }
+        assertFailsWith<OfflineClientClosedException> { builder.select() }
         assertEquals(0, server.requests.size)
     }
 

@@ -456,6 +456,8 @@ final class io.github.nesfeder.supabase.offline/MutationNotQueueableException : 
 
 final class io.github.nesfeder.supabase.offline/NetworkDisabledException : io.github.nesfeder.supabase.offline/OfflineException // io.github.nesfeder.supabase.offline/NetworkDisabledException|null[0]
 
+final class io.github.nesfeder.supabase.offline/OfflineClientClosedException : kotlin/IllegalStateException // io.github.nesfeder.supabase.offline/OfflineClientClosedException|null[0]
+
 final class io.github.nesfeder.supabase.offline/OfflinePostgrestQueryBuilder { // io.github.nesfeder.supabase.offline/OfflinePostgrestQueryBuilder|null[0]
     final val postgrest // io.github.nesfeder.supabase.offline/OfflinePostgrestQueryBuilder.postgrest|{}postgrest[0]
         final fun <get-postgrest>(): io.github.jan.supabase.postgrest/Postgrest // io.github.nesfeder.supabase.offline/OfflinePostgrestQueryBuilder.postgrest.<get-postgrest>|<get-postgrest>(){}[0]
