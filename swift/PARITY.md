@@ -120,6 +120,7 @@ supabase-swift never matches, because Storage's refusals arrive as `OfflineError
 | `SupabaseOfflineClient.storage` | `Offline.storage` | Kotlin's name; supabase-swift's is the same |
 | `OfflineStorage` | `OfflineStorage` | Kotlin's name |
 | `OfflineStorage.from(_:)` | `OfflineStorage.from(bucketId)` | Kotlin's name, supabase-swift's unlabeled argument; the operator `get(bucketId)` (`storage["avatars"]`) has no counterpart, as `from(_:)` for tables has none |
+| `OfflineStorage.clearFileCache()` | `OfflineStorage.clearFileCache()` | Kotlin's name |
 | `OfflineBucketApi` | `OfflineBucketApi` | Kotlin's name; a struct for an interface, since only the library implements it |
 | `OfflineBucketApi.bucketId` | `BucketApi.bucketId` | Kotlin's name. supabase-kt's `supabaseClient`, `resumable` and `setHeader` are not offered: Swift has no supabase-kt client, and resumable uploads are not offered |
 | `upload(_:data:options:)` | `upload(path, data, options)` | supabase-swift's labels (the path unlabeled); `Data` for `ByteArray`. Empty data is refused with `invalidRequest` and nothing is sent, as Kotlin's `upload(path, ByteArray)` refuses it: a zero-byte object (a folder placeholder) cannot be uploaded, where supabase-swift sends it |
@@ -138,6 +139,9 @@ supabase-swift never matches, because Storage's refusals arrive as `OfflineError
 | `publicURL(path:)` | `publicUrl(path)` | Kotlin's name (supabase-swift 2 says `getPublicURL`). `async` because the URL comes from the opened client, which opens in the background; for the same reason it throws `clientClosed` after `close()`, where Kotlin's still answers. `%`, `?` and `#` in the name are encoded, as supabase-swift encodes them, where Kotlin's (on supabase-kt 3.6) puts the name in as written; the same holds for `authenticatedURL`, `createSignedURL`, `createSignedUploadURL` and `uploadToSignedURL` |
 | `authenticatedURL(path:)` | `authenticatedUrl(path)` | Kotlin's name; `async` and `clientClosed` after `close()`, as `publicURL` |
 | `cachedFile(path:)` | `cachedFile(path)` | Kotlin's name |
+| `cachedFile(path:transform:)` | `cachedFile(path) { … }` (`cachedFile(path, transform)`) | Kotlin's names; an `ImageTransformation` value for the transform lambda, as `createSignedURL`'s `transform:` is. An overload, not a defaulted parameter |
+| `evictCachedFile(path:)` | `evictCachedFile(path)` | Kotlin's name |
+| `evictCachedFile(path:transform:)` | `evictCachedFile(path) { … }` (`evictCachedFile(path, transform)`) | Kotlin's names; the transform as for `cachedFile(path:transform:)` |
 | `ensureCachedFile(path:isPublic:)` | `ensureCachedFile(path, isPublic)` | Kotlin's name. A name holding `%`, `?` or `#` is refused (`invalidRequest`) before the client is asked, in the package's own words, where Kotlin's throws `IllegalArgumentException` |
 | `CachedFile` (`path`, `fetchedAt`, `sizeBytes`) | `CachedFile` (`path`, `fetchedAt`, `sizeBytes`) | Kotlin's names; `Date` for `Instant`, `Int` for `Long` |
 | `CachedFile.url` | Android `ensureLocalFile` / `ensureLocalUri`, iOS `ensureLocalPath` | Swift's addition: a file URL beside `path`, for APIs that take a URL |

@@ -63,20 +63,25 @@ From the samples: [TaskPhotoFiles.kt](https://github.com/nesfeder/supabase-offli
 `cachedFile(path)` returns the cached copy, or `null`, and never touches the network;
 `ensureCachedFile(path)` first streams the object to disk when there is no copy. Only an
 untransformed download or `ensureCachedFile` caches the copy these return: a `CachedFile`, the
-cache's own file at an absolute `path`, with `fetchedAt` and `sizeBytes`. A moved object's copy
-keeps the `fetchedAt` of the download that made it. Read it or hand it to an image loader, but do
-not move or write it: the cache may delete it when the object is uploaded, updated, deleted, moved
-or copied over through the offline bucket, when the server reports it gone, when the cache passes
-its bound and the file has not been used for 30 seconds, when the cache passes to another user,
-and when local data is cleared. A file whose size on disk is not the one recorded for it, which a
-power loss right after a download can leave, is deleted too, and the object is downloaded again
-when next asked for. Open it soon, or copy it if it must outlive those. **Nothing revalidates a
-cached file**: compare `fetchedAt` with your own rule, and download again when it is too old.
+cache's own file at an absolute `path`, with `fetchedAt` and `sizeBytes`. `cachedFile(path) { … }`
+returns the copy of one image transform instead, the one a download with the same
+`transform { … }` keeps, so a cached thumbnail can be handed to an image loader as a file; a
+transform that sets nothing is the untransformed copy, as it is for a download. A moved object's
+copy keeps the `fetchedAt` of the download that made it. Read it or hand it to an image loader, but
+do not move or write it: the cache may delete it when the object is uploaded, updated, deleted,
+moved or copied over through the offline bucket, when the server reports it gone, when the cache
+passes its bound and the file has not been used for 30 seconds, when the cache passes to another
+user, when it is evicted or the file cache cleared ([below](#evicting-and-clearing)), and when
+local data is cleared. A file whose size on disk is not the one recorded for it, which a power loss
+right after a download can leave, is deleted too, and the object is downloaded again when next
+asked for. Open it soon, or copy it if it must outlive those. **Nothing revalidates a cached
+file**: compare `fetchedAt` with your own rule, and download again when it is too old.
 
 On Android, three helpers give the cached copy in the platform's terms: `ensureLocalUri` and
 `ensureLocalFile` are `ensureCachedFile` as a `Uri` or a `File`, throwing what it throws, and
-`localUriIfCached` is `cachedFile` as a `Uri`; on iOS, `ensureLocalPath(path)` and
-`localPathIfCached(path)` give the absolute path the same way. The sample draws thumbnails from
+`localUriIfCached` is `cachedFile` as a `Uri`, with a transform or without; on iOS,
+`ensureLocalPath(path)` and `localPathIfCached(path)` give the absolute path the same way, and
+`localPathIfCached(path) { … }` a transform's. The sample draws thumbnails from
 `localUriIfCached` and the viewer from `ensureLocalUri`, and Share copies the file from
 `ensureLocalFile` out of the cache, since another app reads it later and a `file:` URI cannot leave
 the app:
@@ -96,6 +101,30 @@ From the samples: [TaskPhotoFiles.kt](https://github.com/nesfeder/supabase-offli
     ```swift
     --8<-- "Data/TaskRepository+Photos.swift:share-photo"
     ```
+
+## Evicting and clearing
+
+```kotlin
+--8<-- "StorageExamples.kt:evict-and-clear"
+```
+
+Three calls delete cached files on the device and send nothing; the objects stay in their buckets,
+and the next download of each fetches it again. A bucket's `evictCachedFile(path)` deletes one
+object's copies, the untransformed one and every image transform, and no other object's;
+`evictCachedFile(path) { … }` deletes one transform's copy alone. `offline.storage.clearFileCache()`
+deletes every downloaded file in every bucket, with its record, and leaves the mutation queue, the
+cached query results and the rejected and conflicted lists: it frees the device's storage without
+dropping writes waiting to sync, so a "Free up space" button can call it. At sign-out, call
+`clearLocalData()` instead ([Signing out and switching users](sign-out.md)): it deletes these
+files too, with the user's queued writes, and rewrites the database without what it deleted, which
+`clearFileCache()` does not.
+
+A download still on the wire when its copies are evicted is handed to its caller but not cached,
+as when the object is written; an `ensureCachedFile` running meanwhile downloads it once more and
+caches that. A download in flight when the file cache is cleared is handed to its caller, or fails,
+but is not cached, as across `clearLocalData()`: an `ensureCachedFile` running meanwhile throws
+`IllegalStateException`. The Swift package has the same calls: `evictCachedFile(path:)`,
+`evictCachedFile(path:transform:)` and `storage.clearFileCache()`.
 
 ## Writes
 

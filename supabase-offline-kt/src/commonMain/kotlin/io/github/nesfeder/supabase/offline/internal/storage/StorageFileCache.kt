@@ -133,16 +133,16 @@ internal enum class CommitOutcome {
     COMMITTED,
 
     /**
-     * Local data was cleared while the file downloaded, or the cache is another identity's; the
-     * file belongs to another session, so it was not kept. The temporary file is left for the
-     * caller to read and then [discard].
+     * Local data or the file cache was cleared while the file downloaded, or the cache is another
+     * identity's; the file belongs to a cache that is gone, so it was not kept. The temporary file
+     * is left for the caller to read and then [discard].
      */
     CLEARED,
 
     /**
      * The object was written, deleted, moved or copied over through this client while the file
-     * downloaded, so the file may hold the old bytes; it was not kept. The temporary file is left
-     * for the caller to read and then [discard].
+     * downloaded, so the file may hold the old bytes, or its copies were evicted; it was not kept.
+     * The temporary file is left for the caller to read and then [discard].
      */
     SUPERSEDED,
 
@@ -885,6 +885,8 @@ internal class StorageFileCache(
             invalidationSequence += 1
             if (runningDownloads.isNotEmpty()) entryInvalidatedAt[entry.key] = invalidationSequence
         }
+        // Its commit is refused now; a caller arriving after the drop starts afresh
+        downloadsInFlight.forget(entry.key)
         rowOf(entry.bucketId, entry.rowPath)?.let { row ->
             removeRowLocked(row)
             if (row.recordsOutdatedPath(entry))

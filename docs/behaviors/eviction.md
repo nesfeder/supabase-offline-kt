@@ -49,4 +49,6 @@ a download passes it, the least recently used files are deleted until the cache 
 the bound. A file being read, and a file used in the last 30 seconds, are kept; a file's last use
 is recorded on disk, to the minute, so it survives a restart. `CACHE_SIZE_UNLIMITED` turns this eviction off, and
 any other value below zero counts as zero. Temporary download files a crash left behind are
-deleted once they are more than a day old. See [Storage caching](storage.md).
+deleted once they are more than a day old. An app can delete files itself too: one object's copies
+with a bucket's `evictCachedFile(path)`, and every file with `offline.storage.clearFileCache()`,
+which keeps the mutation queue. See [Storage caching](storage.md#evicting-and-clearing).
