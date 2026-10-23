@@ -172,6 +172,88 @@ class ListMembershipTest {
     }
 
     @Test
+    fun a_queued_row_whose_value_is_empty_shows_in_a_list_whose_in_filter_holds_an_empty_member() =
+        runTest {
+            // Given — the rows whose list is unnamed or A, sent as `list_id=in.(,A)`, cached
+            val unnamedOrA = inListQuery(listOf("", "A"))
+            server.seed(
+                TABLE,
+                row("e1", list = "", position = 1),
+                row("a1", list = "A", position = 2),
+                row("b1", list = "B", position = 3),
+            )
+            items.select(readStrategy = ReadStrategy.NetworkOnly, request = unnamedOrA)
+            goOffline()
+
+            // When — rows with an unnamed list, list B and no list are queued
+            val outcome =
+                items.insert(
+                    JsonArray(
+                        listOf(
+                            row("new-e", list = "", position = 4),
+                            row("new-b", list = "B", position = 5),
+                            rowWithoutList("new-null", position = 6),
+                        )
+                    )
+                )
+
+            // Then — the unnamed one shows, since PostgREST keeps the empty member; the others
+            // do not
+            assertIs<MutationOutcome.Queued>(outcome)
+            assertEquals(listOf("e1", "a1", "new-e"), cachedIdsOf(unnamedOrA))
+            assertEquals(listOf("e1", "a1", "new-e"), liveIdsOf(unnamedOrA))
+        }
+
+    @Test
+    fun a_queued_update_through_an_in_filter_with_an_empty_member_replays_it_whole() = runTest {
+        // Given — rows whose list is unnamed, A and B; offline, the unnamed and A rows renamed
+        server.seed(
+            TABLE,
+            row("e1", list = "", position = 1),
+            row("a1", list = "A", position = 2),
+            row("b1", list = "B", position = 3),
+        )
+        val online = server.recorder.answer
+        goOffline()
+        val outcome =
+            items.update(buildJsonObject { put("title", "renamed") }) {
+                filter { isIn("list_id", listOf("", "A")) }
+            }
+        assertIs<MutationOutcome.Queued>(outcome)
+
+        // When — back online, the queue replays
+        server.recorder.answer = online
+        val synced = client.syncPendingMutations().syncedCount
+
+        // Then — it is sent with both members, as it was written, and renames the unnamed row too
+        assertEquals(1, synced)
+        assertEquals("in.(,A)", server.requests.last { it.method == "PATCH" }.query["list_id"])
+        assertEquals(
+            mapOf("e1" to "renamed", "a1" to "renamed", "b1" to "b1 title"),
+            server.rows(TABLE).associate { row ->
+                row.idOf() to (row.getValue("title") as JsonPrimitive).content
+            },
+        )
+    }
+
+    @Test
+    fun an_in_filter_of_one_empty_member_matches_nothing_as_postgrest_reads_it() = runTest {
+        // Given — `isIn("list_id", listOf(""))`, which supabase-kt sends as `list_id=in.()` and
+        // PostgREST as `= ANY('{}')`, cached with nothing in it
+        val unnamed = inListQuery(listOf(""))
+        server.seed(TABLE, row("e1", list = "", position = 1), row("a1", list = "A", position = 2))
+        items.select(readStrategy = ReadStrategy.NetworkOnly, request = unnamed)
+        goOffline()
+
+        // When — a row with an unnamed list is queued
+        items.insert(JsonArray(listOf(row("new-e", list = "", position = 3))))
+
+        // Then — it does not show, as the server would not return it
+        assertEquals(emptyList(), cachedIdsOf(unnamed))
+        assertEquals(emptyList(), liveIdsOf(unnamed))
+    }
+
+    @Test
     fun an_online_insert_does_not_create_a_list_it_does_not_belong_to() = runTest {
         // Given — list B cached, list A observed but never fetched
         seedTwoLists()
@@ -366,6 +448,28 @@ class ListMembershipTest {
         assertEquals(true, shown.all { ids -> "a1" in ids })
     }
 
+    /** The rows whose list is one of [members], by position, through one `in` filter. */
+    private fun inListQuery(members: List<String>): SelectRequestBuilder.() -> Unit = {
+        filter { isIn("list_id", members) }
+        order("position", Order.ASCENDING)
+    }
+
+    /** The ids a one-shot cache read of [request] shows. */
+    private suspend fun cachedIdsOf(request: SelectRequestBuilder.() -> Unit): List<String> =
+        idsOf(items.select(readStrategy = ReadStrategy.CacheOnly(), request = request).data)
+
+    /** The ids a reactive cache read of [request] shows first. */
+    private suspend fun liveIdsOf(request: SelectRequestBuilder.() -> Unit): List<String> =
+        idsOf(
+            checkNotNull(
+                    items
+                        .selectAsFlow(readStrategy = FlowReadStrategy.CacheOnly, request = request)
+                        .first()
+                        .result
+                )
+                .data
+        )
+
     private fun listQuery(list: String): SelectRequestBuilder.() -> Unit = {
         filter { eq("list_id", list) }
         order("position", Order.ASCENDING)
@@ -375,6 +479,14 @@ class ListMembershipTest {
     private fun doneList(done: Boolean): SelectRequestBuilder.() -> Unit = {
         filter { eq("done", done) }
         order("position", Order.ASCENDING)
+    }
+
+    private fun rowWithoutList(id: String, position: Int): JsonObject = buildJsonObject {
+        put("id", id)
+        put("list_id", null as String?)
+        put("position", position)
+        put("done", false)
+        put("title", "$id title")
     }
 
     private fun row(id: String, list: String, position: Int, done: Boolean = false): JsonObject =
