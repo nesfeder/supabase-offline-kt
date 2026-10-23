@@ -143,4 +143,49 @@ class RealtimeConfigTest {
             RealtimeFilter("count", FilterOperator.IN, listOf(1, 2)),
         )
     }
+
+    @Test
+    fun a_filter_whose_value_has_a_shape_the_server_refuses_is_refused_when_made() {
+        // Given / When — `in` with one value, which would be sent as `owner=in.<id>`
+        val scalarIn =
+            assertFailsWith<IllegalArgumentException> {
+                RealtimeFilter("owner", FilterOperator.IN, "7d6f0c52")
+            }
+
+        // Then — the message says what `in` takes, and never the value
+        assertTrue(
+            "in filter takes a list of values" in scalarIn.message.orEmpty(),
+            scalarIn.message,
+        )
+        assertFalse("7d6f0c52" in scalarIn.message.orEmpty(), scalarIn.message)
+
+        // When — a list for a comparison, which would be sent as `id=eq.[1]`
+        val listEq =
+            assertFailsWith<IllegalArgumentException> {
+                RealtimeFilter("id", FilterOperator.EQ, listOf(1))
+            }
+
+        // Then — as is an array, which supabase-kt would send as its text too
+        assertTrue("eq filter takes one value" in listEq.message.orEmpty(), listEq.message)
+        assertFailsWith<IllegalArgumentException> {
+            RealtimeFilter("id", FilterOperator.EQ, arrayOf(1))
+        }
+        assertFailsWith<IllegalArgumentException> {
+            RealtimeFilter("id", FilterOperator.EQ, intArrayOf(1))
+        }
+
+        // When / Then — `in` with no value, and with a set, which supabase-kt sends as its text
+        val emptyIn =
+            assertFailsWith<IllegalArgumentException> {
+                RealtimeFilter("id", FilterOperator.IN, emptyList<Int>())
+            }
+        assertTrue("at least one" in emptyIn.message.orEmpty(), emptyIn.message)
+        assertFailsWith<IllegalArgumentException> {
+            RealtimeFilter("id", FilterOperator.IN, setOf(1))
+        }
+
+        // Then — the shapes the server evaluates are still made
+        assertEquals(listOf(1, 2), RealtimeFilter("id", FilterOperator.IN, listOf(1, 2)).value)
+        assertEquals("open", RealtimeFilter("status", FilterOperator.NEQ, "open").value)
+    }
 }

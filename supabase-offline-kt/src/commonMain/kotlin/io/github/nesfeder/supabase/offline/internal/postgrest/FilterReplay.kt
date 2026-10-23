@@ -114,6 +114,19 @@ internal fun replaysFully(descriptor: FilterDescriptor): Boolean {
 }
 
 /**
+ * The value replaying [descriptor] would send in a form the server reads differently, or `null`: an
+ * `in` element holding `"` or `\` and none of `,.:()`, which supabase-kt escapes but does not quote
+ * ([misreadEscapedValueOf]). Such a write is refused when it is queued; one queued by an earlier
+ * release, which did not refuse it, is found here before it is sent, since its send would match
+ * nothing and it would leave the queue as if applied.
+ */
+internal fun misreadReplayValueOf(descriptor: FilterDescriptor): MisreadValue? {
+    val scratch = SelectRequestBuilder(SCRATCH_SCHEMA, SCRATCH_CONVERSION)
+    replayOnto(scratch, descriptor)
+    return misreadEscapedValueOf(scratch)
+}
+
+/**
  * Apply a single condition to the [PostgrestFilterBuilder] using the same DSL that callers would
  * use online.
  *

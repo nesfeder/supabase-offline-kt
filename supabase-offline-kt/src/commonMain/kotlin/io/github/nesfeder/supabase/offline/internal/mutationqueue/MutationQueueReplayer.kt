@@ -25,6 +25,7 @@ import io.github.nesfeder.supabase.offline.internal.logging.EngineLogLevel
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
 import io.github.nesfeder.supabase.offline.internal.network.NetworkAccess
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
+import io.github.nesfeder.supabase.offline.internal.postgrest.MisreadValue
 import io.github.nesfeder.supabase.offline.internal.postgrest.RemoteTable
 import io.github.nesfeder.supabase.offline.internal.postgrest.RowMatch
 import io.github.nesfeder.supabase.offline.internal.postgrest.SendOutcome
@@ -32,6 +33,7 @@ import io.github.nesfeder.supabase.offline.internal.postgrest.SupabaseRemoteTabl
 import io.github.nesfeder.supabase.offline.internal.postgrest.decodeFilterOrNull
 import io.github.nesfeder.supabase.offline.internal.postgrest.encodeFilter
 import io.github.nesfeder.supabase.offline.internal.postgrest.isPlainColumn
+import io.github.nesfeder.supabase.offline.internal.postgrest.misreadReplayValueOf
 import io.github.nesfeder.supabase.offline.internal.postgrest.replayOnto
 import io.github.nesfeder.supabase.offline.internal.postgrest.replaysFully
 import io.github.nesfeder.supabase.offline.internal.postgrest.rowMatch
@@ -1446,6 +1448,9 @@ internal class MutationQueueReplayer(
                 val replayableFilter =
                     replayableFilterOrNull(filter)
                         ?: return refuseUnreplayableFilter(mutation, filter)
+                misreadReplayValueOf(replayableFilter)?.let { misread ->
+                    return refuseMisreadFilterValue(mutation, misread)
+                }
                 if (body is JsonObject) {
                     guardedOrNull(mutation, replayableFilter, body)?.let { guarded ->
                         return guarded
@@ -1461,6 +1466,9 @@ internal class MutationQueueReplayer(
                 val replayableFilter =
                     replayableFilterOrNull(filter)
                         ?: return refuseUnreplayableFilter(mutation, filter)
+                misreadReplayValueOf(replayableFilter)?.let { misread ->
+                    return refuseMisreadFilterValue(mutation, misread)
+                }
                 guardedOrNull(mutation, replayableFilter, body = null)?.let { guarded ->
                     return guarded
                 }
@@ -1535,6 +1543,23 @@ internal class MutationQueueReplayer(
                 "The queued filter no longer replays in full",
             )
         }
+
+    /**
+     * Refuses a write whose stored filter holds [misread], a value the server would read with its
+     * escapes: queued by a release that did not refuse it, its send would match nothing. The
+     * rejected entry names the column and the operator, never the value.
+     */
+    private fun refuseMisreadFilterValue(
+        mutation: MutationRow,
+        misread: MisreadValue,
+    ): Prepared.Refused =
+        refuse(
+            mutation,
+            "has a filter value the server would read with its escapes",
+            "The queued filter's `${misread.operator}` value on `${misread.column}` holds a " +
+                "quote or a backslash and none of `,.:()`, which supabase-kt escapes but does " +
+                "not quote, so the server would read the escapes as the value",
+        )
 
     private fun parseJsonArrayOrNull(json: Json, raw: String): JsonArray? =
         try {

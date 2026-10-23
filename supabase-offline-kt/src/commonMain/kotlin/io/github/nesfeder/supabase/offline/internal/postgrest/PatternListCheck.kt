@@ -99,7 +99,7 @@ private fun startsCondition(value: String, start: Int): Boolean {
 }
 
 /** The index just past the double-quoted text opening at [start], skipping escaped characters. */
-private fun endOfQuoted(value: String, start: Int): Int {
+internal fun endOfQuoted(value: String, start: Int): Int {
     var index = start + 1
     while (index < value.length && value[index] != '"') index += if (value[index] == '\\') 2 else 1
     return index + 1

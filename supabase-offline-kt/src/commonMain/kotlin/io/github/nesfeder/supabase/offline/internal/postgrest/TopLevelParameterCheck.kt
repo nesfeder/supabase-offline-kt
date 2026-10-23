@@ -23,8 +23,8 @@ internal fun requireOneValuePerTopLevelParameter(builder: PostgrestRequestBuilde
 }
 
 /**
- * [request], then [requireOneValuePerTopLevelParameter] and [requireReadablePatternLists] on the
- * builder it configured.
+ * [request], then [requireOneValuePerTopLevelParameter], [requireReadablePatternLists] and
+ * [requireReadableEscapedValues] on the builder it configured.
  */
 internal fun <B : PostgrestRequestBuilder> refusingMisreadFilters(
     request: B.() -> Unit
@@ -32,4 +32,5 @@ internal fun <B : PostgrestRequestBuilder> refusingMisreadFilters(
     request()
     requireOneValuePerTopLevelParameter(this)
     requireReadablePatternLists(this)
+    requireReadableEscapedValues(this)
 }

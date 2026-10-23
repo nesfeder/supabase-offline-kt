@@ -53,7 +53,7 @@ you handle and keep a branch for the rest; everything else is supabase-kt's or t
 | `MutationNotQueueableException` | A write the queue cannot hold (a dry run, a filter it cannot record, another schema, an unknown user) could not be sent for want of a connection. Nothing was queued |
 | The connectivity failure itself | An `OnlineOnly` write could not be sent |
 | `NetworkDisabledException` | An `OnlineOnly` write was made while network access is off |
-| `IllegalArgumentException` | An UPDATE or DELETE named two top-level filters on one column, or a pattern list the server would misread; nothing was sent or queued |
+| `IllegalArgumentException` | An UPDATE or DELETE named two top-level filters on one column, a pattern list the server would misread, or an `in` element or group value holding `"` or `\` the server would read with its escapes; nothing was sent or queued |
 
 A `QueueIfOffline` write that may not have run is not thrown: it returns `Queued`
 ([What a write returns](mutations.md#what-a-write-returns)). When you show a refusal, show

@@ -217,10 +217,11 @@ The tables whose changes on the server the plugin applies to the cache as they h
 supabase-kt's Realtime plugin, which must be installed; `realtimeTables` lists what the blocks
 named. `table(name, schema, filter)` names one table, in the client's default schema unless
 `schema` says otherwise, with an optional `RealtimeFilter(column, operator, value)` the server
-evaluates before sending a change (`eq`, `neq`, `gt`, `gte`, `lt`, `lte` or `in`); row-level
-security narrows a table to the user's rows without one. A table's rows are matched by the key
-[`primaryKeys`](#primarykeys) gives, `schema.table` for a table of another schema. With no table
-named, no channel is opened. A table named without `install(Realtime)` fails
+evaluates before sending a change (`eq`, `neq`, `gt`, `gte`, `lt`, `lte` or `in`; `in` takes a
+non-empty list, the others one value, and another shape throws `IllegalArgumentException` when the
+filter is made); row-level security narrows a table to the user's rows without one. A table's rows
+are matched by the key [`primaryKeys`](#primarykeys) gives, `schema.table` for a table of another
+schema. With no table named, no channel is opened. A table named without `install(Realtime)` fails
 `createSupabaseClient` with `IllegalStateException`.
 
 ```kotlin

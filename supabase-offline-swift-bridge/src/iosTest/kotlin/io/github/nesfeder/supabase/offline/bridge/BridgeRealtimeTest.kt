@@ -4,6 +4,7 @@ package io.github.nesfeder.supabase.offline.bridge
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -131,6 +132,39 @@ class BridgeRealtimeTest {
             assertEquals(BridgeErrorKind.INVALID_REQUEST, refused.kind)
             assertTrue(realtime.subscribedTables.isEmpty())
         }
+
+    @Test
+    fun a_filter_with_both_value_forms_or_the_wrong_one_for_its_operator_is_refused() = bridgeTest {
+        // Given — shapes the server would refuse the join for: `in` with one value (sent as
+        // `owner=in.<id>`), a comparison with values (`id=eq.[1]`), both forms at once, and `in`
+        // with no value; each with the words its refusal must carry
+        val wrongShapes =
+            listOf(
+                BridgeRealtimeFilter("owner", "in", "7d6f0c52", null) to "takes values",
+                BridgeRealtimeFilter("id", "eq", null, listOf("1")) to "one value",
+                BridgeRealtimeFilter("id", "in", "1", listOf("1")) to "not both",
+                BridgeRealtimeFilter("id", "in", null, emptyList()) to "at least one",
+            )
+        wrongShapes.forEach { (filter, words) ->
+            // When
+            val opened =
+                BridgeTesting.openInMemory(
+                    testOptions {
+                        realtimeTables = listOf(BridgeRealtimeTable("todos", null, filter))
+                    },
+                    server,
+                    null,
+                    BridgeFakeRealtime(),
+                )
+
+            // Then — the open is refused before anything is joined, naming the shape, not the value
+            assertNull(opened.client, "opened a client for the shape refused with: $words")
+            val error = assertNotNull(opened.error, words)
+            assertEquals(BridgeErrorKind.INVALID_REQUEST, error.kind, error.message)
+            assertTrue(words in error.message, error.message)
+            assertFalse("7d6f0c52" in error.message, error.message)
+        }
+    }
 
     @Test
     fun without_named_tables_the_status_is_off_and_nothing_is_joined() = bridgeTest {
