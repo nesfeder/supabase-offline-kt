@@ -68,15 +68,16 @@ class InMemoryStoreTest {
             // --8<-- [end:relaunch]
 
             // Then — nothing was sent before the close, and the relaunched client replays the
-            // write by itself, emptying the queue
+            // write by itself, emptying the queue. The status's counts follow the queue shortly
+            // after it, so the time of the pass can show before the count drops: wait for both
             assertIs<MutationOutcome.Queued>(queued)
-            val synced =
-                withContext(Dispatchers.Default) {
-                    withTimeout(10.seconds) {
-                        second.offline.syncStatus.first { status -> status.lastSyncedAt != null }
+            withContext(Dispatchers.Default) {
+                withTimeout(10.seconds) {
+                    second.offline.syncStatus.first { status ->
+                        status.lastSyncedAt != null && status.pendingMutationCount == 0
                     }
                 }
-            assertEquals(0, synced.pendingMutationCount)
+            }
             val sent = server.writes.single()
             assertEquals(HttpMethod.Post, sent.method)
             assertEquals("/rest/v1/$TABLE", sent.url.encodedPath)
