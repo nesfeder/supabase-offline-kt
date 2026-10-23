@@ -71,6 +71,7 @@ struct ConflictTests {
         #expect(parked.serverVersion == Self.moved)
         #expect(parked.conflictingColumns == ["title"])
         #expect(try await client.conflictedMutations().first() == [parked])
+        #expect(try await client.conflictedMutationList() == [parked])
         #expect(await eventually { lists.last == [parked] && client.syncStatus.value.conflictedMutationCount == 1 })
         #expect(server.requests(withMethod: "PATCH").count == 1)
         lists.stop()
@@ -99,6 +100,7 @@ struct ConflictTests {
         // Then the kept write waits again, preconditioned on the version the entry recorded
         #expect(refusal?.code == .invalidRequest)
         #expect(try await client.conflictedMutations().first().isEmpty)
+        #expect(try await client.conflictedMutationList().isEmpty)
         let pending = try await client.pendingMutations().first()
         #expect(pending.map(\.baseVersion) == [Self.moved])
         #expect(pending.first?.body == ["title": "Mine"])

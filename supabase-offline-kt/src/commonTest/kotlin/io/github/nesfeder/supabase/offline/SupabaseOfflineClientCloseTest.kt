@@ -959,9 +959,11 @@ class SupabaseOfflineClientCloseTest {
         assertFailsWith<IllegalStateException> { client.pendingMutations().first() }
         assertFailsWith<IllegalStateException> { client.discardPendingMutation(1L) }
         assertFailsWith<IllegalStateException> { client.rejectedMutations().first() }
+        assertFailsWith<IllegalStateException> { client.rejectedMutationList() }
         assertFailsWith<IllegalStateException> { client.dismissRejectedMutation(1L) }
         assertFailsWith<IllegalStateException> { client.retryRejectedMutation(1L) }
         assertFailsWith<IllegalStateException> { client.conflictedMutations().first() }
+        assertFailsWith<IllegalStateException> { client.conflictedMutationList() }
         assertFailsWith<IllegalStateException> {
             client.resolveConflictedMutation(1L, ConflictResolution.KeepLocal)
         }

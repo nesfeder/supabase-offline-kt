@@ -77,6 +77,7 @@ struct MutationQueueTests {
         #expect(rejected.serverError?.details == "Key (id)=(3) already exists.")
         #expect(rejected.isRetryable)
         #expect(try await client.rejectedMutations().first() == [rejected])
+        #expect(try await client.rejectedMutationList() == [rejected])
         #expect(await eventually { rejectedLists.last == [rejected] && client.syncStatus.value.rejectedMutationCount == 1 })
         #expect(try await client.pendingMutationCount() == 0)
 
@@ -86,6 +87,7 @@ struct MutationQueueTests {
 
         // Then it leaves the list and is sent again, by itself
         #expect(try await client.rejectedMutations().first().isEmpty)
+        #expect(try await client.rejectedMutationList().isEmpty)
         #expect(await eventually { server.requests(withMethod: "POST").count == 3 })
         #expect(await eventually { client.syncStatus.value.pendingMutationCount == 0 })
 

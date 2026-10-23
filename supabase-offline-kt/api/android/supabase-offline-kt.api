@@ -212,6 +212,7 @@ public abstract interface class io/github/nesfeder/supabase/offline/Offline : io
 	public static synthetic fun applyServerRecord$default (Lio/github/nesfeder/supabase/offline/Offline;Ljava/lang/String;Lkotlinx/serialization/json/JsonObject;Ljava/util/List;Ljava/lang/String;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
 	public abstract fun clearLocalData (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun close (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public abstract fun conflictedMutationList (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun conflictedMutations ()Lkotlinx/coroutines/flow/Flow;
 	public abstract fun disableNetwork (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun disableRealtime (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
@@ -233,6 +234,7 @@ public abstract interface class io/github/nesfeder/supabase/offline/Offline : io
 	public static synthetic fun pendingMutationCountFlow$default (Lio/github/nesfeder/supabase/offline/Offline;Ljava/lang/String;ILjava/lang/Object;)Lkotlinx/coroutines/flow/Flow;
 	public abstract fun pendingMutations (Ljava/lang/String;)Lkotlinx/coroutines/flow/Flow;
 	public static synthetic fun pendingMutations$default (Lio/github/nesfeder/supabase/offline/Offline;Ljava/lang/String;ILjava/lang/Object;)Lkotlinx/coroutines/flow/Flow;
+	public abstract fun rejectedMutationList (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun rejectedMutations ()Lkotlinx/coroutines/flow/Flow;
 	public abstract fun resolveConflictedMutation (JLio/github/nesfeder/supabase/offline/ConflictResolution;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun retryRejectedMutation (JLkotlin/coroutines/Continuation;)Ljava/lang/Object;
@@ -291,6 +293,7 @@ public final class io/github/nesfeder/supabase/offline/OfflineBucketApi_androidK
 	public static synthetic fun ensureLocalFile$default (Lio/github/nesfeder/supabase/offline/OfflineBucketApi;Ljava/lang/String;ZLkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
 	public static final fun ensureLocalUri (Lio/github/nesfeder/supabase/offline/OfflineBucketApi;Ljava/lang/String;ZLkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public static synthetic fun ensureLocalUri$default (Lio/github/nesfeder/supabase/offline/OfflineBucketApi;Ljava/lang/String;ZLkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+	public static final fun localFileIfCached (Lio/github/nesfeder/supabase/offline/OfflineBucketApi;Ljava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public static final fun localUriIfCached (Lio/github/nesfeder/supabase/offline/OfflineBucketApi;Ljava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 }
 
