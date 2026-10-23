@@ -812,7 +812,10 @@ the queue and the payload together under the table's snapshot lock (the queue fi
 refresh writes its payload before it retires the replayed writes that payload holds). The head
 send's patch and its row's removal hold the same lock, so a write never shows both patched in and
 still queued, a replayed one never drops out, and a refresh is `Idle` only in an emission showing
-what it fetched.
+what it fetched. A live read hears of payload writes through the cache's count of committed writes
+to each table, not through the database's change notices, which name only the one table every
+payload shares: a write to another table's payloads, or to the engine's own rows, makes it read
+nothing.
 A one-shot read from the cache takes the same snapshot. An idle refresh whose confirmed rows are
 gone (a clear, a drop) is shown `Refreshing` until the read has fetched again.
 

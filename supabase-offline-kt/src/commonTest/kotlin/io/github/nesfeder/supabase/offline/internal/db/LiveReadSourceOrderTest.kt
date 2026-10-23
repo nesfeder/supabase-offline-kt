@@ -99,7 +99,7 @@ class LiveReadSourceOrderTest {
                     client,
                     rowKey = "r",
                     beforeListOpens = {
-                        queryCacheDao.beforeObservedRowDelivered = { _, _ -> delay(HOLD) }
+                        client.queryCacheWrites.beforeWriteHeard = { _ -> delay(HOLD) }
                     },
                     quiet = HOLD * 3,
                 )
@@ -128,7 +128,7 @@ class LiveReadSourceOrderTest {
                     warm = false,
                     beforeListOpens = {
                         server.answerDelayMillis = 0L
-                        queryCacheDao.beforeObservedRowDelivered = { _, _ -> delay(HOLD) }
+                        client.queryCacheWrites.beforeWriteHeard = { _ -> delay(HOLD) }
                     },
                     quiet = HOLD * 3,
                 )
@@ -154,7 +154,7 @@ class LiveReadSourceOrderTest {
                     warm = true,
                     beforeListOpens = {
                         server.answerDelayMillis = 0L
-                        queryCacheDao.beforeObservedRowDelivered = { _, _ -> delay(HOLD) }
+                        client.queryCacheWrites.beforeWriteHeard = { _ -> delay(HOLD) }
                     },
                     quiet = HOLD * 3,
                 )

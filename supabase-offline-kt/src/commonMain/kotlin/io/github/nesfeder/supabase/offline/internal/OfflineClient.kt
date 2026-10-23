@@ -41,6 +41,7 @@ import io.github.nesfeder.supabase.offline.internal.cache.monotonicTickSource
 import io.github.nesfeder.supabase.offline.internal.db.CachedFileDao
 import io.github.nesfeder.supabase.offline.internal.db.DatabaseScrub
 import io.github.nesfeder.supabase.offline.internal.db.MutationDao
+import io.github.nesfeder.supabase.offline.internal.db.PayloadWriteCountingDao
 import io.github.nesfeder.supabase.offline.internal.db.QueryCacheDao
 import io.github.nesfeder.supabase.offline.internal.db.isReservedTable
 import io.github.nesfeder.supabase.offline.internal.db.storedName
@@ -354,9 +355,15 @@ internal class OfflineClient(
         )
 
     /*
-     * The parts the client calls. The three internal ones are not private for one test each, which
-     * no public call can drive deterministically.
+     * The parts the client calls. The internal ones are not private for one test each, which no
+     * public call can drive deterministically.
      */
+
+    /**
+     * The cached queries' table, every write to it counted. `LiveReadSourceOrderTest` holds back a
+     * live reader's news of a payload write through it.
+     */
+    internal val queryCacheWrites: PayloadWriteCountingDao = components.queryCacheDao
 
     /**
      * The watermarks and the clear lock. `ClearLocalDataDuringWritesTest` reads the tick a response
