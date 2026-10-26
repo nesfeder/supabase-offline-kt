@@ -17,7 +17,7 @@ androidx-exifinterface = "1.4.2"
 androidx-lifecycle = "2.11.0"
 androidx-navigation3 = "1.2.0"
 # The version navigation3-ui resolves today; the sample reads its back-gesture state directly.
-androidx-navigationevent = "1.1.1"
+androidx-navigationevent = "1.2.0"
 # The library's Android artifact: records the application context at startup.
 androidx-startup = "1.2.0"
 androidx-test-core = "1.7.0"
