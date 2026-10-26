@@ -100,7 +100,7 @@ robolectric = "4.17"
 # by hand: Dependabot proposes nothing for it. A Robolectric update that wants another build fails
 # its host tests with "Unable to locate dependency" and the file name to put here.
 robolectric-androidAll = "15-robolectric-13954326-i7"
-room = "2.8.4"
+room = "2.8.5"
 sqlite = "2.6.2"
 # The system-SQLite iOS test variant only. androidx.sqlite 2.6.x cannot open a connection on the
 # iOS libsqlite3 (fixed in 2.7.0-alpha02); every published artifact stays on "sqlite".
