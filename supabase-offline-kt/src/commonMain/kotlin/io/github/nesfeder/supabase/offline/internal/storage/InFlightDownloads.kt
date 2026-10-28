@@ -4,6 +4,7 @@
 
 package io.github.nesfeder.supabase.offline.internal.storage
 
+import io.github.nesfeder.supabase.offline.DownloadProgress
 import kotlin.concurrent.atomics.AtomicReference
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.concurrent.atomics.update
@@ -56,10 +57,18 @@ internal sealed interface SharedOutcome {
  * Downloads are keyed by their cache entry's key, which for the untransformed object is the
  * object's own row key, so the cache forgets a written object's download by that key.
  *
+ * A download reports its progress to its [DownloadProgressRelay], and each caller that asked for
+ * progress watches it, joined late or not; while none watches, nothing is published.
+ *
  * @param onRegistered runs once a caller has registered a download of its own and before it starts
  *   it, with the entry key; a test acts there, in the window another caller may land in.
+ * @param onProgressPublished runs each time a download publishes its progress to the callers
+ *   watching it; a test counts there.
  */
-internal class InFlightDownloads(private val onRegistered: (key: String) -> Unit = {}) {
+internal class InFlightDownloads(
+    private val onRegistered: (key: String) -> Unit = {},
+    private val onProgressPublished: () -> Unit = {},
+) {
 
     /**
      * One caller waiting for a download.
@@ -77,8 +86,13 @@ internal class InFlightDownloads(private val onRegistered: (key: String) -> Unit
      *
      * @property outcome the download, whose result is every waiter's.
      * @property waiters the callers waiting for it.
+     * @property progress the download's progress, which the waiters that asked for it watch.
      */
-    private class Download(val outcome: Deferred<Result<CommitOutcome>>, val waiters: List<Waiter>)
+    private class Download(
+        val outcome: Deferred<Result<CommitOutcome>>,
+        val waiters: List<Waiter>,
+        val progress: DownloadProgressRelay,
+    )
 
     /**
      * The register. Replaced whole, so a look at it needs no lock.
@@ -106,18 +120,22 @@ internal class InFlightDownloads(private val onRegistered: (key: String) -> Unit
      * [download] as that download in [scope] and waits for it. A cancellation of the download — the
      * scope's, as no one waiter's reaches it — is thrown; any other failure is handed back.
      *
-     * @param download the download. It calls the `ensureWanted` it is handed just before it
-     *   commits, which throws a [CancellationException] when every caller waiting for it has been
-     *   canceled — some of them perhaps not yet run again to leave it — and from then on lets no
-     *   caller join it.
+     * @param onProgress handed the download's progress while this caller waits, in this caller's
+     *   coroutine ([DownloadProgressRelay.watching]); `null` to watch none.
+     * @param download the download, run on its progress relay, to which it reports each chunk. It
+     *   calls the `ensureWanted` it is handed just before it commits, which throws a
+     *   [CancellationException] when every caller waiting for it has been canceled — some of them
+     *   perhaps not yet run again to leave it — and from then on lets no caller join it.
      * @return how the download ended for this caller.
      */
     suspend fun joinOrStart(
         key: String,
         scope: CoroutineScope,
-        download: suspend (ensureWanted: () -> Unit) -> CommitOutcome,
+        onProgress: ((DownloadProgress) -> Unit)? = null,
+        download: suspend DownloadProgressRelay.(ensureWanted: () -> Unit) -> CommitOutcome,
     ): SharedOutcome {
         val waiter = Waiter(currentCoroutineContext()[Job])
+        val progress = DownloadProgressRelay(onProgressPublished)
         // Not started before it is registered, so no download runs unregistered; registered and
         // not yet started, it is joined all the same. Its failure is handed back as a value, so
         // it never fails the scope, whatever its job
@@ -125,7 +143,7 @@ internal class InFlightDownloads(private val onRegistered: (key: String) -> Unit
             scope.async(start = CoroutineStart.LAZY) {
                 val self = coroutineContext.job
                 try {
-                    Result.success(download { ensureWanted(self) })
+                    Result.success(progress.download { ensureWanted(self) })
                 } catch (cancellation: CancellationException) {
                     throw cancellation
                 } catch (failure: Throwable) {
@@ -133,14 +151,16 @@ internal class InFlightDownloads(private val onRegistered: (key: String) -> Unit
                 }
             }
         val entered =
-            enter(key, own, waiter) ?: error("A download to start was neither started nor joined")
-        if (entered === own) {
+            enter(key, own, progress, waiter)
+                ?: error("A download to start was neither started nor joined")
+        val joined = entered.outcome !== own
+        if (joined) {
+            own.cancel()
+        } else {
             onRegistered(key)
             own.start()
-        } else {
-            own.cancel()
         }
-        return awaitLeaving(entered, waiter, joined = entered !== own)
+        return awaitLeaving(entered, waiter, joined, onProgress)
     }
 
     /**
@@ -150,8 +170,8 @@ internal class InFlightDownloads(private val onRegistered: (key: String) -> Unit
      */
     suspend fun join(key: String): SharedOutcome? {
         val waiter = Waiter(currentCoroutineContext()[Job])
-        val entered = enter(key, own = null, waiter) ?: return null
-        return awaitLeaving(entered, waiter, joined = true)
+        val entered = enter(key, own = null, progress = null, waiter) ?: return null
+        return awaitLeaving(entered, waiter, joined = true, onProgress = null)
     }
 
     /**
@@ -175,47 +195,54 @@ internal class InFlightDownloads(private val onRegistered: (key: String) -> Unit
     }
 
     /**
-     * Counts [waiter] among the waiters of the download in flight for [key], or of [own] when none
-     * is.
+     * Counts [waiter] among the waiters of the download in flight for [key], or of [own], reporting
+     * to [progress], when none is.
      *
      * @return the download the caller waits for, or `null` when there is none and no [own].
      */
     private fun enter(
         key: String,
         own: Deferred<Result<CommitOutcome>>?,
+        progress: DownloadProgressRelay?,
         waiter: Waiter,
-    ): Deferred<Result<CommitOutcome>>? {
+    ): Download? {
         var entered: Download? = null
         state.update { current ->
             val inFlight = current.joinable[key]?.takeIf { it.outcome.isRunning }
             val next =
                 when {
-                    inFlight != null -> Download(inFlight.outcome, inFlight.waiters + waiter)
-                    own != null -> Download(own, listOf(waiter))
+                    inFlight != null ->
+                        Download(inFlight.outcome, inFlight.waiters + waiter, inFlight.progress)
+                    own != null && progress != null -> Download(own, listOf(waiter), progress)
                     else -> null
                 }
             entered = next
             if (next == null) current
             else State(current.joinable + (key to next), current.forgotten)
         }
-        return entered?.outcome
+        return entered
     }
 
-    /** Waits for [download], and takes [waiter] off its waiters however the wait ends. */
+    /**
+     * Waits for [download], handing [onProgress] its progress meanwhile, and takes [waiter] off its
+     * waiters however the wait ends.
+     */
     private suspend fun awaitLeaving(
-        download: Deferred<Result<CommitOutcome>>,
+        download: Download,
         waiter: Waiter,
         joined: Boolean,
+        onProgress: ((DownloadProgress) -> Unit)?,
     ): SharedOutcome =
         try {
-            download
-                .await()
-                .fold(
-                    onSuccess = { outcome -> SharedOutcome.Ended(outcome, joined) },
-                    onFailure = { failure -> SharedOutcome.Failed(failure, joined) },
-                )
+            val result =
+                if (onProgress == null) download.outcome.await()
+                else download.progress.watching(onProgress) { download.outcome.await() }
+            result.fold(
+                onSuccess = { outcome -> SharedOutcome.Ended(outcome, joined) },
+                onFailure = { failure -> SharedOutcome.Failed(failure, joined) },
+            )
         } finally {
-            withContext(NonCancellable) { leave(download, waiter) }
+            withContext(NonCancellable) { leave(download.outcome, waiter) }
         }
 
     /**
@@ -254,19 +281,27 @@ internal class InFlightDownloads(private val onRegistered: (key: String) -> Unit
             if (key != null) {
                 val others = current.joinable.getValue(key).waiters - waiter
                 last = others.isEmpty()
+                val held = current.joinable.getValue(key)
                 return@update if (last) State(current.joinable - key, current.forgotten)
                 else
-                    State(current.joinable + (key to Download(download, others)), current.forgotten)
+                    State(
+                        current.joinable + (key to Download(download, others, held.progress)),
+                        current.forgotten,
+                    )
             }
             val index = current.forgotten.indexOfFirst { held -> held.outcome === download }
             if (index < 0) {
                 last = false
                 return@update current
             }
-            val others = current.forgotten[index].waiters - waiter
+            val held = current.forgotten[index]
+            val others = held.waiters - waiter
             last = others.isEmpty()
             val rest = current.forgotten.filterIndexed { position, _ -> position != index }
-            State(current.joinable, if (last) rest else rest + Download(download, others))
+            State(
+                current.joinable,
+                if (last) rest else rest + Download(download, others, held.progress),
+            )
         }
         if (last && !download.isCompleted) download.cancelAndJoin()
     }

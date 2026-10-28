@@ -9,6 +9,7 @@ import io.github.nesfeder.supabase.offline.CacheMissException
 import io.github.nesfeder.supabase.offline.CachedFile
 import io.github.nesfeder.supabase.offline.ConflictResolver
 import io.github.nesfeder.supabase.offline.ConflictedMutation
+import io.github.nesfeder.supabase.offline.DownloadProgress
 import io.github.nesfeder.supabase.offline.MutationConflict
 import io.github.nesfeder.supabase.offline.MutationNotQueueableException
 import io.github.nesfeder.supabase.offline.MutationOperation
@@ -71,6 +72,17 @@ public fun queuedOutcome(pendingMutation: PendingMutation): MutationOutcome.Queu
 @OptIn(OfflineInternal::class)
 public fun cachedFile(path: String, fetchedAt: Instant, sizeBytes: Long): CachedFile =
     ValueConstructors.cachedFile(path = path, fetchedAt = fetchedAt, sizeBytes = sizeBytes)
+
+/**
+ * The progress of a download into the file cache, as `ensureCachedFile` with a progress callback
+ * reports it.
+ *
+ * @param bytesReceived the bytes received so far.
+ * @param totalBytes the object's size, or `null` when the server gave none.
+ */
+@OptIn(OfflineInternal::class)
+public fun downloadProgress(bytesReceived: Long, totalBytes: Long?): DownloadProgress =
+    ValueConstructors.downloadProgress(bytesReceived = bytesReceived, totalBytes = totalBytes)
 
 /**
  * The failure of a read that may use only the cache and found nothing there.

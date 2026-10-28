@@ -38,6 +38,7 @@ client reports, for fakes of your own.
 - ``offlineResponse(value:data:count:isFromCache:fetchedAt:hasPendingMutations:)``
 - ``cachedResponse(value:data:count:fetchedAt:hasPendingMutations:)``
 - ``cachedFile(path:fetchedAt:sizeBytes:)``
+- ``downloadProgress(bytesReceived:totalBytes:)``
 
 ### Errors
 

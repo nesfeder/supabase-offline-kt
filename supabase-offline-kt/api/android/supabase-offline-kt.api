@@ -86,6 +86,16 @@ public final class io/github/nesfeder/supabase/offline/ConflictedMutation {
 	public fun toString ()Ljava/lang/String;
 }
 
+public final class io/github/nesfeder/supabase/offline/DownloadProgress {
+	public final fun component1 ()J
+	public final fun component2 ()Ljava/lang/Long;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getBytesReceived ()J
+	public final fun getTotalBytes ()Ljava/lang/Long;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
 public final class io/github/nesfeder/supabase/offline/FailureClassificationKt {
 	public static final fun httpStatusOrNull (Ljava/lang/Throwable;)Ljava/lang/Integer;
 	public static final fun isNetworkOrConnectivityFailure (Ljava/lang/Throwable;)Z
@@ -287,7 +297,9 @@ public abstract interface class io/github/nesfeder/supabase/offline/OfflineBucke
 	public abstract fun cachedFile (Ljava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun cachedFile (Ljava/lang/String;Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun ensureCachedFile (Ljava/lang/String;ZLkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public abstract fun ensureCachedFile (Ljava/lang/String;ZLkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public static synthetic fun ensureCachedFile$default (Lio/github/nesfeder/supabase/offline/OfflineBucketApi;Ljava/lang/String;ZLkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+	public static synthetic fun ensureCachedFile$default (Lio/github/nesfeder/supabase/offline/OfflineBucketApi;Ljava/lang/String;ZLkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
 	public abstract fun evictCachedFile (Ljava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun evictCachedFile (Ljava/lang/String;Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun isCachedFilePinned (Ljava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;

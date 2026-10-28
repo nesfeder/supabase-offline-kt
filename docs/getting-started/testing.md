@@ -239,7 +239,7 @@ From the samples: [LibraryMappingsTest.kt](https://github.com/nesfeder/supabase-
 | `querySnapshot`, `stalledRefresh` | A live read's emission, and a stalled refresh |
 | `cachedResult` | A one-shot read's result as the cache answered it: `isFromCache`, `fetchedAt` and `hasPendingMutations` read as given |
 | `syncReport`, `syncStatus` | What a sync returns, and the status; overloads take the conflict counts, `conflicted` and `conflictedMutationCount` |
-| `cachedFile` | A Storage file in the cache |
+| `cachedFile`, `downloadProgress` | A Storage file in the cache, and a download's progress |
 | `cacheMissException`, `mutationNotQueueableException`, `networkDisabledException`, `offlineClientClosedException`, `syncFailedException` | The exceptions; `syncFailedException(isConnectivityFailure = true)` is one `isNetworkOrConnectivityFailure()` accepts |
 
 Every field is a parameter, and the ones a test rarely sets have defaults. The factories that take

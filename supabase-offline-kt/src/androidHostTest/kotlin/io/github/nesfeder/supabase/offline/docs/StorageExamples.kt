@@ -46,3 +46,20 @@ internal suspend fun keepOffline(documents: OfflineBucketApi, path: String, keep
     }
     // --8<-- [end:pin]
 }
+
+/** A photo that is not on the device yet, with a progress bar while it downloads. */
+internal suspend fun photoWithProgress(
+    photos: OfflineBucketApi,
+    path: String,
+    showFraction: (Float?) -> Unit,
+): String {
+    // --8<-- [start:progress]
+    // Runs on this coroutine's dispatcher; totalBytes is null when the server gave no size
+    val photo =
+        photos.ensureCachedFile(path) { progress ->
+            val total = progress.totalBytes
+            showFraction(total?.let { progress.bytesReceived.toFloat() / it })
+        }
+    // --8<-- [end:progress]
+    return photo.path
+}

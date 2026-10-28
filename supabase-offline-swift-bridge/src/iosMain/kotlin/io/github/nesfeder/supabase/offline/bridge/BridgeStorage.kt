@@ -340,6 +340,29 @@ internal constructor(
             bucketOf(bucket).ensureCachedFile(path, isPublic).toBridge()
         }
 
+    /**
+     * [ensureCachedFile], handing [onProgress] the bytes received and the object's size, `null`
+     * when the server gave none, while the download runs.
+     */
+    public fun ensureCachedFileWithProgress(
+        bucket: String,
+        path: String,
+        isPublic: Boolean,
+        onProgress: (Long, Long?) -> Unit,
+        completion: (BridgeCachedFile?, BridgeError?) -> Unit,
+    ): BridgeCancellable =
+        runner.runOnce("ensureCachedFileWithProgress", completion) {
+            bucketOf(bucket)
+                .ensureCachedFile(path, isPublic) { progress ->
+                    try {
+                        onProgress(progress.bytesReceived, progress.totalBytes)
+                    } catch (failure: Throwable) {
+                        runner.report(failure, "A progress handler of ensureCachedFile")
+                    }
+                }
+                .toBridge()
+        }
+
     /** The offline bucket [bucket]. */
     private fun bucketOf(bucket: String): OfflineBucketApi = offline().storage.from(bucket)
 }

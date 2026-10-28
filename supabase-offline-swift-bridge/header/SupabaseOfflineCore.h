@@ -1344,6 +1344,12 @@ __attribute__((swift_name("BridgeStorage")))
 - (SOCBridgeCancellable *)ensureCachedFileBucket:(NSString *)bucket path:(NSString *)path isPublic:(BOOL)isPublic completion:(void (^)(SOCBridgeCachedFile * _Nullable, SOCBridgeError * _Nullable))completion __attribute__((swift_name("ensureCachedFile(bucket:path:isPublic:completion:)")));
 
 /**
+ * [ensureCachedFile], handing [onProgress] the bytes received and the object's size, `null`
+ * when the server gave none, while the download runs.
+ */
+- (SOCBridgeCancellable *)ensureCachedFileWithProgressBucket:(NSString *)bucket path:(NSString *)path isPublic:(BOOL)isPublic onProgress:(void (^)(SOCLong *, SOCLong * _Nullable))onProgress completion:(void (^)(SOCBridgeCachedFile * _Nullable, SOCBridgeError * _Nullable))completion __attribute__((swift_name("ensureCachedFileWithProgress(bucket:path:isPublic:onProgress:completion:)")));
+
+/**
  * Deletes cached copies of [path] from the device; sends nothing.
  *
  * @param imageTransform an image transform as for [createSignedUrl], whose cached copy alone

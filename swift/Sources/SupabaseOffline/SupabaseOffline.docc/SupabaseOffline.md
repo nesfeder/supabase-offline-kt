@@ -74,6 +74,7 @@ your test scripts: see <doc:TestingYourApp>.
 - ``OfflineStorage``
 - ``OfflineBucketApi``
 - ``CachedFile``
+- ``DownloadProgress``
 
 ### The queue and sync
 

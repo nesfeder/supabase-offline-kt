@@ -434,6 +434,49 @@ public struct OfflineBucketApi: Sendable {
         }
     }
 
+    /// ``ensureCachedFile(path:isPublic:)``, handing `onProgress` the progress of the download it
+    /// runs or joins: the bytes received so far, and the object's size when the server's answer
+    /// gave it.
+    ///
+    /// Every call waiting for one object's shared download is handed its progress, and one that
+    /// joins it late starts from where it stands. A cached copy is returned without a call to
+    /// `onProgress`, and a download started again, after the object was uploaded meanwhile, counts
+    /// from zero. `onProgress` runs on a background thread, one call at a time, and never after
+    /// this returns; hop to the main actor to update the interface. A progress that arrives while
+    /// it runs replaces any it has not been handed yet, and the last one is handed before this
+    /// returns.
+    ///
+    /// - Parameters:
+    ///   - path: The object's path in the bucket.
+    ///   - isPublic: Whether a download goes through the public URL rather than with the user's
+    ///     session.
+    ///   - onProgress: Handed each progress of the download.
+    /// - Throws: ``OfflineError``, as ``ensureCachedFile(path:isPublic:)`` throws.
+    public func ensureCachedFile(
+        path: String,
+        isPublic: Bool = false,
+        onProgress: @escaping @Sendable (DownloadProgress) -> Void
+    ) async throws -> CachedFile {
+        try refuseANameTheCacheCannotHold(path)
+        return try await client.connection.call { core, complete in
+            core.storage.ensureCachedFileWithProgress(
+                bucket: bucketId,
+                path: path,
+                isPublic: isPublic,
+                onProgress: { received, total in
+                    onProgress(
+                        DownloadProgress(
+                            bytesReceived: Int(received.int64Value),
+                            totalBytes: total.map { Int($0.int64Value) }
+                        )
+                    )
+                }
+            ) { file, failure in
+                complete(coreResult(file, failure) { try CachedFile(coreFile: requiredValue($0)) })
+            }
+        }
+    }
+
     /// Throws `invalidRequest` for a name holding `%`, `?` or `#`, in the package's own words,
     /// before the client is asked; the core refuses the other names it cannot hold itself.
     private func refuseANameTheCacheCannotHold(_ path: String) throws {

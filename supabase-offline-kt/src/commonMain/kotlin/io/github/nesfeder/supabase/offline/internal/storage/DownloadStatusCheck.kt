@@ -19,11 +19,13 @@ import io.ktor.http.HttpMethod
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.URLBuilder
 import io.ktor.http.Url
+import io.ktor.http.contentLength
 import io.ktor.http.isSecure
 import io.ktor.http.isSuccess
 import io.ktor.http.takeFrom
 import io.ktor.util.AttributeKey
 import kotlin.concurrent.atomics.AtomicBoolean
+import kotlin.concurrent.atomics.AtomicLong
 import kotlin.concurrent.atomics.AtomicReference
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.coroutines.AbstractCoroutineContextElement
@@ -46,6 +48,7 @@ internal class CheckedDownload(val refusesErrors: Boolean = true) :
     private val partial = AtomicBoolean(false)
     private val notModified = AtomicBoolean(false)
     private val tag = AtomicReference<String?>(null)
+    private val length = AtomicLong(UNKNOWN_LENGTH)
     private val condition = AtomicReference<String?>(null)
     private val conditionWithdrawn = AtomicBoolean(false)
 
@@ -99,6 +102,14 @@ internal class CheckedDownload(val refusesErrors: Boolean = true) :
     val eTag: String?
         get() = tag.load()
 
+    /**
+     * The size of the whole object a success holds, from its `Content-Length`; `null` until such an
+     * answer arrives, and when it gave none or encoded its body, which then arrives at another
+     * length.
+     */
+    val expectedLength: Long?
+        get() = length.load().takeIf { it != UNKNOWN_LENGTH }
+
     /** Records that the download fetched part of the object. */
     fun markPartial() {
         partial.store(true)
@@ -113,7 +124,15 @@ internal class CheckedDownload(val refusesErrors: Boolean = true) :
     fun recordETag(eTag: String?) {
         tag.store(eTag)
     }
+
+    /** Records the size of the whole object a success holds, or `null` when it is not known. */
+    fun recordLength(expectedLength: Long?) {
+        length.store(expectedLength ?: UNKNOWN_LENGTH)
+    }
 }
+
+/** Stands for a length an answer did not give. */
+private const val UNKNOWN_LENGTH: Long = -1L
 
 /** The key [CheckedDownload] is found under in a coroutine context. */
 private object CheckedDownloadKey : CoroutineContext.Key<CheckedDownload>
@@ -203,10 +222,10 @@ private val DownloadStatusCheckInstallation =
  * the bytes download follows it. An app's retry or bearer-refresh plugin sees the failure thrown. A
  * success that covers only part of the object, by the request as the bucket's headers left it or by
  * its status, is marked on the download, which then never caches it. The `ETag` of a success that
- * holds the whole object is recorded on the download, and so is an HTTP 304 to the download's own
- * condition, before it is refused as any other answer that is not a success. That condition goes
- * out only on a request for the whole object that carries no other: the check takes it off any
- * other request before it is sent.
+ * holds the whole object is recorded on the download, with its `Content-Length` when its body is
+ * not encoded, and so is an HTTP 304 to the download's own condition, before it is refused as any
+ * other answer that is not a success. That condition goes out only on a request for the whole
+ * object that carries no other: the check takes it off any other request before it is sent.
  */
 @OptIn(SupabaseInternal::class)
 internal fun SupabaseClient.installDownloadStatusCheck() {
@@ -223,8 +242,16 @@ internal fun SupabaseClient.installDownloadStatusCheck() {
         val status = call.response.status
         val fetchesPart = call.request.fetchesPart(status)
         if (status.isSuccess()) {
-            if (fetchesPart) checked.markPartial()
-            else checked.recordETag(call.response.headers[HttpHeaders.ETag])
+            if (fetchesPart) {
+                checked.markPartial()
+            } else {
+                checked.recordETag(call.response.headers[HttpHeaders.ETag])
+                checked.recordLength(
+                    call.response.contentLength()?.takeIf {
+                        call.response.headers[HttpHeaders.ContentEncoding] == null
+                    }
+                )
+            }
             return@intercept call
         }
         if (status == HttpStatusCode.NotModified && !fetchesPart && checked.sentItsCondition)

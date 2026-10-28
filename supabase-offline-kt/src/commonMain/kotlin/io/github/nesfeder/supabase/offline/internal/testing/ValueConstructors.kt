@@ -9,6 +9,7 @@ import io.github.jan.supabase.postgrest.result.PostgrestResult
 import io.github.nesfeder.supabase.offline.CacheMissException
 import io.github.nesfeder.supabase.offline.CachedFile
 import io.github.nesfeder.supabase.offline.ConflictedMutation
+import io.github.nesfeder.supabase.offline.DownloadProgress
 import io.github.nesfeder.supabase.offline.MutationConflict
 import io.github.nesfeder.supabase.offline.MutationNotQueueableException
 import io.github.nesfeder.supabase.offline.MutationOperation
@@ -57,6 +58,10 @@ public object ValueConstructors {
     /** A [CachedFile] with the given fields. */
     public fun cachedFile(path: String, fetchedAt: Instant, sizeBytes: Long): CachedFile =
         CachedFile(path = path, fetchedAt = fetchedAt, sizeBytes = sizeBytes)
+
+    /** A [DownloadProgress] with the given fields. */
+    public fun downloadProgress(bytesReceived: Long, totalBytes: Long?): DownloadProgress =
+        DownloadProgress(bytesReceived = bytesReceived, totalBytes = totalBytes)
 
     /** A [CacheMissException] with [message]. */
     public fun cacheMissException(message: String): CacheMissException = CacheMissException(message)
