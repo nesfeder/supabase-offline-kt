@@ -652,6 +652,13 @@ the events the follower applies through the client's own `applyServerRecord` and
 `applyServerDelete` paths, marking the table's cache stale on each join; a test's scripted feed
 stands in for it.
 
+Inside the client, four parts carry what is not a call's own: `SessionIdentity` tells whom the
+session speaks for, to the cache, the queue and the replayer; `SessionCoordinator` acts on the
+session and the cache's owner (the passes a settled session or a returning network asks for, the
+cache dropped for a new user, and the clear), and its KDoc states the lock order those take;
+`SyncStatusTracker` keeps `syncStatus`; and `RealtimeApplier` runs the follower and applies server
+rows, the app's own included.
+
 The client and its parts:
 
 ```mermaid
@@ -665,7 +672,8 @@ flowchart TB
     OC --> FC
     OC --> G["ClientOperationGate"]
     OC --> N["NetworkAccess"]
-    OC --> SF["ServerChangeFollower and SupabaseRealtimeFeed"]
+    OC --> RA["RealtimeApplier"]
+    RA --> SF["ServerChangeFollower and SupabaseRealtimeFeed"]
     SF --> N
     T --> QR["QueryReader and LiveQueries"]
     T --> R
@@ -688,10 +696,12 @@ The cache and the queue, with the client parts that call them:
 
 ```mermaid
 flowchart TB
-    OC["OfflineClient"] --> LD["LocalData"]
-    OC --> CP["CachePatcher"]
+    SC["SessionCoordinator"] --> LD["LocalData"]
+    OC["OfflineClient"] --> CP["CachePatcher"]
     OC --> MQ["MutationQueue"]
-    OC --> CO["CacheOwnership"]
+    SC --> CO["CacheOwnership"]
+    RA["RealtimeApplier"] --> CP
+    ST["SyncStatusTracker"] --> MQ
     T["OfflineTable"] --> MQ
     T --> CP
     QR["QueryReader"] --> QO["QueryOverlay"]

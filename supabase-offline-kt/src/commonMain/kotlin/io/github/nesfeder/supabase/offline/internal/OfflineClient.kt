@@ -4,9 +4,6 @@ package io.github.nesfeder.supabase.offline.internal
 
 import io.github.jan.supabase.SupabaseClient
 import io.github.jan.supabase.annotations.SupabaseInternal
-import io.github.jan.supabase.auth.Auth
-import io.github.jan.supabase.auth.auth
-import io.github.jan.supabase.auth.status.SessionStatus
 import io.github.jan.supabase.postgrest.Postgrest
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.jan.supabase.postgrest.query.request.RpcRequestBuilder
@@ -37,8 +34,6 @@ import io.github.nesfeder.supabase.offline.internal.cache.LocalData
 import io.github.nesfeder.supabase.offline.internal.cache.QueryCache
 import io.github.nesfeder.supabase.offline.internal.cache.QueryCacheLimits
 import io.github.nesfeder.supabase.offline.internal.cache.QueryOverlay
-import io.github.nesfeder.supabase.offline.internal.cache.ServerRowChange
-import io.github.nesfeder.supabase.offline.internal.cache.ShownQueueCounts
 import io.github.nesfeder.supabase.offline.internal.cache.buildCacheComponents
 import io.github.nesfeder.supabase.offline.internal.cache.keyOf
 import io.github.nesfeder.supabase.offline.internal.cache.monotonicTickSource
@@ -50,8 +45,6 @@ import io.github.nesfeder.supabase.offline.internal.db.isReservedTable
 import io.github.nesfeder.supabase.offline.internal.db.storedName
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogLevel
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
-import io.github.nesfeder.supabase.offline.internal.mutationqueue.AUTH_SESSION_SETTLE_TIMEOUT
-import io.github.nesfeder.supabase.offline.internal.mutationqueue.AccessTokenIdentity
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.AutomaticReplay
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.CONFLICT_POLICY_TIMEOUT
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.ConflictPolicy
@@ -64,21 +57,16 @@ import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueueR
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.NoVersionColumns
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.PrimaryKeys
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentity
-import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentityReader
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.RejectedMutation as EngineRejectedMutation
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.StoredConflict
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.StoredRejection
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.SyncReport as EngineSyncReport
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.SyncStop
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.VersionColumns
-import io.github.nesfeder.supabase.offline.internal.mutationqueue.awaitSettledSession
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.conflictDecisionOf
-import io.github.nesfeder.supabase.offline.internal.mutationqueue.currentReplayIdentity
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.jsonObjectOrNull
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.pinnedRowKeyOf
-import io.github.nesfeder.supabase.offline.internal.mutationqueue.replayIdentityFor
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.stopReasonOf
-import io.github.nesfeder.supabase.offline.internal.mutationqueue.syncFailureOf
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.toConflictedMutation
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.toPendingMutation
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.toRejectedMutation
@@ -87,7 +75,6 @@ import io.github.nesfeder.supabase.offline.internal.network.NetworkAccess
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 import io.github.nesfeder.supabase.offline.internal.postgrest.LiveQueries
 import io.github.nesfeder.supabase.offline.internal.postgrest.OfflineTable
-import io.github.nesfeder.supabase.offline.internal.postgrest.RequestSession
 import io.github.nesfeder.supabase.offline.internal.postgrest.ResponseTrustPolicy
 import io.github.nesfeder.supabase.offline.internal.postgrest.decodeFilterOrNull
 import io.github.nesfeder.supabase.offline.internal.postgrest.encodeFilter
@@ -97,10 +84,7 @@ import io.github.nesfeder.supabase.offline.internal.postgrest.installReadShapeCh
 import io.github.nesfeder.supabase.offline.internal.postgrest.installTransportFailureCapture
 import io.github.nesfeder.supabase.offline.internal.postgrest.readShapePostgrestOf
 import io.github.nesfeder.supabase.offline.internal.postgrest.refreshWakeUps
-import io.github.nesfeder.supabase.offline.internal.postgrest.requestSessionFor
-import io.github.nesfeder.supabase.offline.internal.realtime.ServerChangeEvent
 import io.github.nesfeder.supabase.offline.internal.realtime.ServerChangeFeed
-import io.github.nesfeder.supabase.offline.internal.realtime.ServerChangeFollower
 import io.github.nesfeder.supabase.offline.internal.realtime.WatchedTable
 import io.github.nesfeder.supabase.offline.internal.storage.CachingBucketApi
 import io.github.nesfeder.supabase.offline.internal.storage.PinnedFileRecords
@@ -122,35 +106,22 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
 import kotlinx.coroutines.NonCancellable
-import kotlinx.coroutines.channels.BufferOverflow
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.conflate
 import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonArray
-import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonPrimitive
 import okio.FileSystem
 import okio.Path
@@ -160,6 +131,11 @@ import okio.SYSTEM
  * The client behind [Offline]: one database's cache, mutation queue and Storage file cache, serving
  * one [SupabaseClient]. It builds the cache and queue components over the database's tables, the
  * table engines, the replayer and the file cache, and owns their lifecycle through its gate.
+ *
+ * Four parts it builds carry what is not one call's own: [SessionIdentity] tells whom the session
+ * speaks for; [SessionCoordinator] acts on the session and the cache's owner, and clears, and
+ * states the lock order a clear and a drop for a new owner take; [SyncStatusTracker] keeps
+ * [syncStatus]; [RealtimeApplier] follows the watched tables and applies server rows.
  */
 @OptIn(SupabaseInternal::class, OfflineInternal::class, ExperimentalAtomicApi::class)
 internal class OfflineClient(
@@ -280,26 +256,6 @@ internal class OfflineClient(
      */
     private val autoSync: Boolean = config.autoSync
 
-    /** What [syncStatus] reports; its network is set at once, its counts as the queue changes. */
-    private val syncStatusState =
-        MutableStateFlow(
-            SyncStatus(
-                network = networkAccess.status,
-                pendingMutationCount = 0,
-                rejectedMutationCount = 0,
-                isSyncing = false,
-                lastSyncedAt = null,
-                lastSyncError = null,
-                conflictedMutationCount = 0,
-            )
-        )
-
-    /** Held by every change to [syncStatusState], so [close] can publish the last one. */
-    private val statusLock = Mutex()
-
-    /** Set, under [statusLock], by [close]: the status changes no more. */
-    private var statusFinal = false
-
     /** Taken by the one committed dry run this client reports. */
     private val committedDryRunReported = AtomicBoolean(false)
 
@@ -328,40 +284,8 @@ internal class OfflineClient(
      */
     private val liveQueries = LiveQueries(clientScope, engineLogger)
 
-    /**
-     * The identity a write, a discard, a dismissal, a retry or a read's overlay is for, read once
-     * per status.
-     */
-    private val queueIdentityReader = QueueIdentityReader(supabaseClient)
-
-    /**
-     * The identity told from the app's access token, for a client without the Auth plugin that
-     * opened with [Offline.Config.identityFromAccessToken]; `null` otherwise. When set, every
-     * reader of the identity below goes through it.
-     */
-    private val tokenIdentity: AccessTokenIdentity? =
-        if (!config.identityFromAccessToken || authPluginOrNull() != null) null
-        else
-            AccessTokenIdentity(
-                accessToken = supabaseClient.accessToken,
-                projectKey = supabaseClient.supabaseKey,
-                engineLogger = engineLogger,
-            )
-
-    /** Whether the caches and the queue belong to one identity at a time: with Auth, or tokens. */
-    private val identityIsPerUser: Boolean = authPluginOrNull() != null || tokenIdentity != null
-
-    /** The identity the overlay and counts are for, read once per session status. */
-    private val overlayIdentity = MutableStateFlow<Pair<SessionStatus?, String?>?>(null)
-
-    /**
-     * A read or write found the cache another identity's: [keepCacheWithTheSession] looks again.
-     */
-    private val cacheOwnerChecks =
-        MutableSharedFlow<Unit>(
-            extraBufferCapacity = 1,
-            onBufferOverflow = BufferOverflow.DROP_OLDEST,
-        )
+    /** Whom the session speaks for, as each part below asks; see [SessionIdentity]. */
+    private val sessionIdentity = SessionIdentity(supabaseClient, config, engineLogger)
 
     /** The files holding queued uploads' bytes, beside the file cache's. */
     private val queuedUploadFiles =
@@ -383,17 +307,17 @@ internal class OfflineClient(
             nowMillis = rowClock,
             monotonicTick = monotonicTick,
             primaryKeys = primaryKeys,
-            identityProvider = ::overlayIdentityValue,
-            identityChanges = sessionChanges(),
-            isCacheOwnedPerIdentity = identityIsPerUser,
-            ownerlessMutationsAreAnonymous = !identityIsPerUser,
+            identityProvider = sessionIdentity::overlayIdentityValue,
+            identityChanges = sessionIdentity.sessionChanges(),
+            isCacheOwnedPerIdentity = sessionIdentity.identityIsPerUser,
+            ownerlessMutationsAreAnonymous = !sessionIdentity.identityIsPerUser,
             engineLogger = engineLogger,
             liveCacheKeysOf = liveQueries::liveCacheKeysOf,
             allLiveCacheKeys = liveQueries::allLiveCacheKeys,
             onQueriesMarkedStale = { table, cacheKeys ->
                 liveQueries.requestRefresh(table, cacheKeys)
             },
-            onCacheNotServed = { cacheOwnerChecks.tryEmit(Unit) },
+            onCacheNotServed = { sessionIdentity.cacheOwnerChecks.tryEmit(Unit) },
             versionColumns = versionColumns,
             backgroundScope = clientScope,
             beforePayloadWriteHeard = beforePayloadWriteHeard,
@@ -438,6 +362,17 @@ internal class OfflineClient(
 
     /** Clears local data, or drops the caches for a new owner, in the one lock order. */
     private val localData: LocalData = components.localData
+
+    /** What [syncStatus] reports, kept current; see [SyncStatusTracker]. */
+    private val statusTracker =
+        SyncStatusTracker(
+            scope = clientScope,
+            networkAccess = networkAccess,
+            mutationQueue = mutationQueue,
+            engineLogger = engineLogger,
+            clock = clock,
+            replayIdentityNow = sessionIdentity::replayIdentityNow,
+        )
 
     /**
      * Keeps what a clear or a cache drop deleted out of the database's files: outside the locks and
@@ -488,15 +423,15 @@ internal class OfflineClient(
             engineLogger = engineLogger,
             networkAccess = networkAccess,
             primaryKeys = primaryKeys,
-            passEnded = { _, report -> recordPassEnded(report) },
+            passEnded = { _, report -> statusTracker.recordPassEnded(report) },
             cachePatcher = cachePatcher,
             conflictPolicy = conflictPolicy,
             conflictPolicyTimeout = conflictPolicyTimeout,
             conflictPolicyDispatcher = conflictPolicyDispatcher,
-            awaitSessionSettled = ::awaitSettledReplaySession,
-            currentIdentity = ::replayIdentityNow,
-            isSessionSettledNow = ::isReplaySessionSettledNow,
-            identityOfToken = tokenIdentity?.let { source -> source::identityOf },
+            awaitSessionSettled = sessionIdentity::awaitSettledReplaySession,
+            currentIdentity = sessionIdentity::replayIdentityNow,
+            isSessionSettledNow = sessionIdentity::isReplaySessionSettledNow,
+            identityOfToken = sessionIdentity.tokenIdentity?.let { source -> source::identityOf },
             uploadSends = queuedUploads,
         )
 
@@ -514,9 +449,6 @@ internal class OfflineClient(
             mutationQueueReplayer.sync()
         }
 
-    /** Encodes the primary-key [FilterDescriptor] built for realtime records. */
-    private val json = EngineJson
-
     /**
      * SDK-internal recovery accelerator merging auth-session-restored and connectivity-regained
      * edges. Forwarded to every builder to short-circuit a stalled refresh's backoff.
@@ -526,38 +458,30 @@ internal class OfflineClient(
             supabaseClient,
             networkAccess.reconnections,
             responseTrust,
-            tokenIdentityStates = tokenIdentity?.state,
+            tokenIdentityStates = sessionIdentity.tokenIdentity?.state,
         )
 
-    /**
-     * Follows the watched tables' changes on the server and applies them, in the client's scope so
-     * [close] leaves the channel; `null` when nothing is watched.
-     */
-    private val serverChangeFollower: ServerChangeFollower? =
-        if (watchedTables.isEmpty() || serverChangeFeed == null) null
-        else
-            ServerChangeFollower(
-                scope = clientScope,
-                tables = watchedTables,
-                feed = serverChangeFeed,
-                defaultSchema = ::defaultSchema,
-                sessionIdentity =
-                    tokenIdentity?.state?.map { state -> state.settled?.storedValue }
-                        ?: authPluginOrNull()?.sessionStatus?.map(::followIdentityFor)
-                        ?: flowOf(QueueIdentity.Anonymous.storedValue),
-                currentIdentity = ::currentFollowIdentity,
-                networkStatuses = networkAccess.statusChanges,
-                wakeUps = wakeUps,
-                apply = ::applyServerChanges,
-                markStale = ::markCachedQueriesStale,
-                engineLogger = engineLogger,
-            )
+    /** Follows the watched tables and applies server rows to the cache; see [RealtimeApplier]. */
+    private val realtime =
+        RealtimeApplier(
+            supabaseClient = supabaseClient,
+            scope = clientScope,
+            watchedTables = watchedTables,
+            serverChangeFeed = serverChangeFeed,
+            sessionIdentity = sessionIdentity,
+            networkStatuses = networkAccess.statusChanges,
+            wakeUps = wakeUps,
+            operationGate = operationGate,
+            primaryKeys = primaryKeys,
+            cachePatcher = cachePatcher,
+            freshness = freshness,
+            engineLogger = engineLogger,
+        )
 
-    override val realtimeStatus: StateFlow<RealtimeStatus> =
-        serverChangeFollower?.state ?: MutableStateFlow(RealtimeStatus.Off)
+    override val realtimeStatus: StateFlow<RealtimeStatus> = realtime.status
 
     override val realtimeTableStatus: StateFlow<Map<RealtimeTable, RealtimeStatus>> =
-        serverChangeFollower?.tableState ?: MutableStateFlow(emptyMap())
+        realtime.tableStatus
 
     /** Queues and sends the uploads a bucket makes under `MutationStrategy.QueueIfOffline`. */
     private val queuedUploadWriter =
@@ -566,9 +490,27 @@ internal class OfflineClient(
             mutationQueue = mutationQueue,
             freshness = freshness,
             headSender = mutationQueueReplayer,
-            queueIdentity = ::writeOwner,
+            queueIdentity = sessionIdentity::writeOwner,
             requestSync = automaticReplay::requestPass,
-            queueEmptied = ::recordQueueEmptiedBySending,
+            queueEmptied = statusTracker::recordQueueEmptiedBySending,
+            engineLogger = engineLogger,
+        )
+
+    /** Acts on the session and the cache's owner, and clears; see [SessionCoordinator]. */
+    private val sessionCoordinator =
+        SessionCoordinator(
+            scope = clientScope,
+            session = sessionIdentity,
+            autoSync = autoSync,
+            operationGate = operationGate,
+            mutationQueue = mutationQueue,
+            mutationQueueReplayer = mutationQueueReplayer,
+            automaticReplay = automaticReplay,
+            cacheOwnership = cacheOwnership,
+            fileCache = fileCache,
+            localData = localData,
+            databaseScrub = databaseScrub,
+            liveQueries = liveQueries,
             engineLogger = engineLogger,
         )
 
@@ -584,104 +526,24 @@ internal class OfflineClient(
         supabaseClient.installTransportFailureCapture()
         supabaseClient.installDownloadStatusCheck()
         supabaseClient.installCommittedDryRunReport(::reportCommittedDryRunOnce)
-        networkAccess.watchIn(clientScope, onReconnected = ::replayAsTheNetworkReturns)
-        replayWhenTheSessionSettles()
-        keepCacheWithTheSession()
-        serverChangeFollower?.start()
+        networkAccess.watchIn(
+            clientScope,
+            onReconnected = sessionCoordinator::replayAsTheNetworkReturns,
+        )
+        sessionCoordinator.replayWhenTheSessionSettles()
+        sessionCoordinator.keepCacheWithTheSession()
+        realtime.start()
         // The token's identity from the start: it settles the cache's owner, and starts a pass for
         // what that user has queued
-        tokenIdentity?.let { source -> clientScope.launch { source.resolve() } }
+        sessionIdentity.tokenIdentity?.let { source -> clientScope.launch { source.resolve() } }
     }
 
-    private fun authPluginOrNull(): Auth? = supabaseClient.pluginManager.getPluginOrNull(Auth)
-
     override suspend fun disableRealtime(): Unit = operationGate.call {
-        serverChangeFollower?.setEnabled(false)
+        realtime.setEnabled(false)
     }
 
     override suspend fun enableRealtime(): Unit = operationGate.call {
-        serverChangeFollower?.setEnabled(true)
-    }
-
-    /** The PostgREST plugin's default schema, `public` without the plugin. */
-    private fun defaultSchema(): String =
-        supabaseClient.pluginManager.getPluginOrNull(Postgrest)?.config?.defaultSchema ?: "public"
-
-    /**
-     * The identity the channel is joined for under [status], the one the cache belongs to: `null`
-     * while there is no user to subscribe for, so a change of user restarts the follow and a new
-     * session of the same user does not. A session that names no user is followed as one identity
-     * of its own; the cache is not served to it.
-     */
-    private fun followIdentityFor(status: SessionStatus): String? =
-        if (status !is SessionStatus.Authenticated) null
-        else replayIdentityFor(status)?.storedValue ?: UNNAMED_USER_FOLLOW_IDENTITY
-
-    /** The identity the channel is joined for now; one for good without the Auth plugin. */
-    private fun currentFollowIdentity(): String? {
-        tokenIdentity?.let { source ->
-            return source.state.value.settled?.storedValue
-        }
-        val auth = authPluginOrNull() ?: return QueueIdentity.Anonymous.storedValue
-        return followIdentityFor(auth.sessionStatus.value)
-    }
-
-    /**
-     * Applies the changes the feed reported to one table, in the order they arrived, as one patch,
-     * through the path an app's [applyServerRecord] or [applyServerDelete] takes; a change whose
-     * record cannot be located is logged and left out, as there. Nothing once the client is
-     * closing, and nothing once the session is no longer [followedFor]'s, which the patch asks
-     * under the table's lock: what an earlier user's channel still delivers never reaches the next
-     * user's cache.
-     *
-     * @param followedFor the identity the channel was joined for.
-     * @param changes at least one, all of one table and schema.
-     */
-    private suspend fun applyServerChanges(
-        followedFor: String,
-        changes: List<ServerChangeEvent.Change>,
-    ) {
-        if (operationGate.isClosed) return
-        val first = changes.first()
-        operationGate.call {
-            val cachedTable = cachedTableOf(first.table, first.schema)
-            val keyColumns = primaryKeys.of(cachedTable)
-            val located = changes.mapNotNull { change ->
-                when (change) {
-                    is ServerChangeEvent.Saved ->
-                        locateServerRow(
-                            "applyServerRecord",
-                            change.table,
-                            change.record,
-                            keyColumns,
-                            deleted = false,
-                        )
-                    is ServerChangeEvent.Deleted ->
-                        locateServerRow(
-                            "applyServerDelete",
-                            change.table,
-                            change.oldRecord,
-                            keyColumns,
-                            deleted = true,
-                        )
-                }
-            }
-            if (located.isNotEmpty())
-                cachePatcher.patchServerChanges(cachedTable, keyColumns, located) {
-                    currentFollowIdentity() == followedFor
-                }
-        }
-    }
-
-    /**
-     * Marks every cached query of [table] in [schema] stale and has its live readers fetch again:
-     * what a join asks for, since Realtime replays nothing. Nothing once the client is closing.
-     */
-    private suspend fun markCachedQueriesStale(table: String, schema: String) {
-        if (operationGate.isClosed) return
-        operationGate.call {
-            cachePatcher.markEveryQueryStale(cachedTableOf(table, schema), freshness.tickNow())
-        }
+        realtime.setEnabled(true)
     }
 
     /**
@@ -696,206 +558,8 @@ internal class OfflineClient(
         }
     }
 
-    /**
-     * Emits whenever the session status changes, or the identity the access token names; once
-     * without either.
-     */
-    private fun sessionChanges(): Flow<Any?> =
-        tokenIdentity?.state ?: authPluginOrNull()?.sessionStatus ?: flowOf(Unit)
-
-    /**
-     * The stored identity value for the current session status, computed once per status: while the
-     * session restores or refreshes, telling it reads the stored session, through the reader the
-     * writes share, for at most [AUTH_SESSION_SETTLE_TIMEOUT]. A store that takes longer leaves the
-     * identity untold for that status: the caches are not served to it, so a read goes to the
-     * network instead of waiting.
-     */
-    private suspend fun overlayIdentityValue(): String? {
-        // Asked of the provider each time: its next token may name another user
-        tokenIdentity?.let { source ->
-            return source.resolve().owner?.storedValue
-        }
-        val status = authPluginOrNull()?.sessionStatus?.value
-        overlayIdentity.value?.let { (cachedStatus, identity) ->
-            if (cachedStatus == status) return identity
-        }
-        val identity =
-            withTimeoutOrNull(AUTH_SESSION_SETTLE_TIMEOUT) {
-                    StoredIdentity(queueIdentityReader.current()?.storedValue)
-                }
-                ?.value
-        overlayIdentity.value = status to identity
-        return identity
-    }
-
-    /**
-     * An identity read from the stored session, `null` when it names none, as a timeout's result.
-     */
-    private class StoredIdentity(val value: String?)
-
-    /**
-     * As the session settles into an identity, starts a new offline period, and, with `autoSync`
-     * on, a pass when that identity has mutations queued, cutting a backoff short; in the client's
-     * scope so [close] stops it. Every new status counts, as a sign-out and sign-in it never saw
-     * arrive as a new session of the same identity. See [AutomaticReplay].
-     */
-    private fun replayWhenTheSessionSettles() {
-        val settledIdentities =
-            tokenIdentity?.state?.map { state -> state.settled }
-                ?: authPluginOrNull()?.sessionStatus?.map(::replayIdentityFor)
-                ?: return
-        clientScope.launch {
-            settledIdentities.collect { settled ->
-                val identity = settled ?: return@collect
-                // Whether or not a pass is asked for now: an emptied queue keeps no old period
-                automaticReplay.allowAnOfflineAttempt()
-                if (autoSync) requestPassUnlessQueueEmpty(identity, onEdge = true)
-            }
-        }
-    }
-
-    /**
-     * The identity a replay sent now would go out as, read fresh; `null` while the session
-     * restores, its refresh failed, or the token names no user. See [currentReplayIdentity].
-     */
-    private suspend fun replayIdentityNow(): QueueIdentity? {
-        val source = tokenIdentity ?: return supabaseClient.currentReplayIdentity()
-        return source.resolve().settled
-    }
-
-    /** Waits, bounded, for a settled session; with a token, asks its provider once. */
-    private suspend fun awaitSettledReplaySession(): Boolean {
-        val source = tokenIdentity ?: return supabaseClient.awaitSettledSession()
-        return source.resolve().settled != null
-    }
-
-    /** Whether a replay sent now goes out under a settled identity, without waiting or asking. */
-    private fun isReplaySessionSettledNow(): Boolean {
-        val source = tokenIdentity ?: return supabaseClient.currentReplayIdentity() != null
-        return source.state.value.settled != null
-    }
-
-    /**
-     * The identity a write made now is queued for; a write, a discard, a dismissal and a retry are
-     * all for it. With a token, asked of the provider each time.
-     */
-    private suspend fun writeOwner(): QueueIdentity? {
-        val source = tokenIdentity ?: return queueIdentityReader.current()
-        return source.resolve().owner
-    }
-
-    /**
-     * As the network becomes reachable again (the monitor, the app's signal, or [enableNetwork]),
-     * starts a new offline period, and, with `autoSync` on, a pass when the settled identity has
-     * mutations queued, cutting a backoff short. An identity still settling is left to the session
-     * trigger. See [AutomaticReplay].
-     */
-    private suspend fun replayAsTheNetworkReturns() {
-        // Whether or not a pass is asked for now: an emptied queue keeps no old period
-        automaticReplay.allowAnOfflineAttempt()
-        if (!autoSync) return
-        val identity = replayIdentityNow() ?: return
-        requestPassUnlessQueueEmpty(identity, onEdge = true)
-    }
-
-    /**
-     * Starts one pass when a client without Auth opens with mutations an earlier run left queued.
-     * Its session is settled from the start, so no other trigger fires for them. Not with
-     * `autoSync` off.
-     */
-    private fun replayWhatAnEarlierRunLeft() {
-        if (!autoSync || identityIsPerUser) return
-        // Undispatched, it holds the queue lock from open, so it reads before any write of this run
-        // is queued. A write it saw would have its pass race the write's own send
-        clientScope.launch(start = CoroutineStart.UNDISPATCHED) {
-            mutationQueue.holdingQueueLock {
-                requestPassUnlessQueueEmpty(QueueIdentity.Anonymous, onEdge = false)
-            }
-        }
-    }
-
-    /**
-     * Asks for a pass when [identity] has mutations queued, or when that cannot be read. The pass
-     * reads the queue itself, so a failed read never loses the trigger that asked.
-     *
-     * @param onEdge whether a reconnection or a settled session asks, which cuts a backoff short.
-     */
-    private suspend fun requestPassUnlessQueueEmpty(identity: QueueIdentity, onEdge: Boolean) {
-        if (!mutationQueue.mayHavePendingMutationsOf(identity.storedValue)) return
-        if (onEdge) automaticReplay.requestPassOnEdge() else automaticReplay.requestPass()
-    }
-
-    /**
-     * Keeps the cache the settled identity's, in the client's scope so [close] stops it: when the
-     * session settles, or a read finds the cache another identity's, [settleCacheOwner] runs as a
-     * call through the gate. A session that restores or whose refresh failed is not settled.
-     */
-    private fun keepCacheWithTheSession() {
-        val settledNow: () -> QueueIdentity? =
-            tokenIdentity?.let { source -> { source.state.value.settled } }
-                ?: authPluginOrNull()?.let { auth ->
-                    { replayIdentityFor(auth.sessionStatus.value) }
-                }
-                ?: return
-        clientScope.launch {
-            merge(sessionChanges().map {}, cacheOwnerChecks).conflate().collect {
-                val identity = settledNow() ?: return@collect
-                try {
-                    operationGate.call { settleCacheOwner(identity) }
-                } catch (cancellation: CancellationException) {
-                    throw cancellation
-                } catch (failure: Exception) {
-                    if (operationGate.isClosed) return@collect
-                    engineLogger.error {
-                        "Dropping the cache for the new session did not finish " +
-                            "(${failure::class.simpleName}); nothing another identity cached is " +
-                            "served, and files left behind go at the next clear or drop"
-                    }
-                }
-            }
-        }
-    }
-
-    /**
-     * Makes the cache [identity]'s. A cache no identity owns is adopted by a user, and by nobody
-     * signed in while it holds nothing; anything else another identity cached is dropped — the
-     * cached queries and the Storage file cache, never the mutation queue — under
-     * [clearLocalData]'s locks in its order, and live queries fetch again once the drop has
-     * committed, even when a later step fails. A crash or failure after the rows are dropped and
-     * before the files are deleted leaves those files on disk with no row: no call reaches them,
-     * and the next clear or drop deletes them.
-     */
-    private suspend fun settleCacheOwner(identity: QueueIdentity) {
-        if (
-            cacheOwnership.cacheOwnerClaimingFor(identity.storedValue, claimsForUser = true) ==
-                identity.storedValue
-        )
-            return
-        // The send lock alone: no pass is stopped, as none of the queue goes
-        var dropped = false
-        try {
-            mutationQueueReplayer.holdingSends {
-                fileCache.clear {
-                    localData.dropCacheFor(identity.storedValue)
-                    dropped = true
-                    databaseScrub.rewriteAfterDelete()
-                }
-            }
-        } finally {
-            // To a live read a committed drop, finished or cut short after it, is a change of
-            // owner: it fetches again. A drop that failed first changed nothing, and a fetch would
-            // only bring the reads back here. Asked first, as finishing the rewrite rethrows a
-            // cancellation
-            if (dropped) {
-                liveQueries.liveTables().forEach { table -> liveQueries.requestRefresh(table) }
-            }
-            // Canceled too: what the rewrite left goes to the background
-            databaseScrub.finishSoon()
-        }
-        engineLogger.info {
-            "The session settled into another identity; the cache was emptied for it"
-        }
-    }
+    /** The identity a write made now is queued for; see [SessionIdentity.writeOwner]. */
+    private suspend fun writeOwner(): QueueIdentity? = sessionIdentity.writeOwner()
 
     override fun from(table: String): OfflinePostgrestQueryBuilder {
         ensureOpen()
@@ -924,7 +588,7 @@ internal class OfflineClient(
                 freshness = freshness,
                 primaryKeys = primaryKeys,
                 engineLogger = engineLogger,
-                requestSession = ::requestSession,
+                requestSession = sessionIdentity::requestSession,
                 trustPolicy = responseTrust,
                 liveQueries = liveQueries,
                 wakeUps = wakeUps,
@@ -934,7 +598,7 @@ internal class OfflineClient(
                 operationGate = operationGate,
                 readShapePostgrest = readShape,
                 clock = clock,
-                queueEmptied = ::recordQueueEmptiedBySending,
+                queueEmptied = statusTracker::recordQueueEmptiedBySending,
                 networkAccess = networkAccess,
             )
         return OfflinePostgrestQueryBuilder(engine)
@@ -960,11 +624,6 @@ internal class OfflineClient(
             supabaseClient.postgrest.rpc(function, parameters, request)
         }
     }
-
-    /** The session a read sent now goes out under; the identity is the mutation queue's own. */
-    private fun requestSession(): RequestSession =
-        tokenIdentity?.requestSession()
-            ?: requestSessionFor(authPluginOrNull()?.sessionStatus?.value)
 
     override val storage: OfflineStorage =
         OfflineStorage(
@@ -1020,7 +679,7 @@ internal class OfflineClient(
             renderImagePath = renderImagePath,
             ioDispatcher = ioDispatcher,
             networkAccess = networkAccess,
-            requestSession = ::requestSession,
+            requestSession = sessionIdentity::requestSession,
             queuedUploads = queuedUploadWriter,
         )
     }
@@ -1056,7 +715,7 @@ internal class OfflineClient(
         val upload = mutationQueue.pendingMutation(id)?.takeIf { row -> row.isQueuedUpload }
         if (!mutationQueueReplayer.discardPendingMutationOnceUnsent(id, identity)) return@call
         upload?.let { row -> queuedUploads.release(row) }
-        requestPassUnlessQueueEmpty(identity, onEdge = false)
+        sessionCoordinator.requestPassUnlessQueueEmpty(identity, onEdge = false)
     }
 
     override fun rejectedMutations(): Flow<List<RejectedMutation>> =
@@ -1281,165 +940,17 @@ internal class OfflineClient(
     /* ─────────────────────────── Sync status and the network ─────────────────────────── */
 
     /** The same flow whether or not the client is open; after [close] it keeps its last value. */
-    override val syncStatus: StateFlow<SyncStatus> = syncStatusState.asStateFlow()
+    override val syncStatus: StateFlow<SyncStatus> = statusTracker.status
 
     override suspend fun disableNetwork(): Unit = operationGate.call {
         networkAccess.disable()
-        publishStatus { status -> status.copy(network = networkAccess.status) }
+        statusTracker.publishNetwork()
     }
 
     override suspend fun enableNetwork(): Unit = operationGate.call {
         val reconnected = networkAccess.enable()
-        publishStatus { status -> status.copy(network = networkAccess.status) }
-        if (reconnected) replayAsTheNetworkReturns()
-    }
-
-    /** Applies [change] to the status, unless [close] has published its last value. */
-    private suspend fun publishStatus(change: (SyncStatus) -> SyncStatus) {
-        statusLock.withLock { if (!statusFinal) syncStatusState.update(change) }
-    }
-
-    /**
-     * Publishes the status's last value, with no pass running, after which it changes no more: the
-     * work that kept it current is canceled with the client's scope, and a pass running at [close]
-     * would otherwise leave it syncing for good.
-     */
-    private suspend fun publishFinalStatus() {
-        statusLock.withLock {
-            statusFinal = true
-            syncStatusState.update { status -> status.copy(isSyncing = false) }
-        }
-    }
-
-    /**
-     * Starts, at open, the work that keeps [syncStatus] current, in the client's scope so [close]
-     * stops it. It follows the network, the passes, and both counts as the queue and the rejected
-     * list change; after a failed read, again after a wait doubling up to about a minute.
-     */
-    private fun trackStatus() {
-        clientScope.launch {
-            publishStatus { status -> status.copy(network = networkAccess.status) }
-            networkAccess.statusChanges.collect {
-                publishStatus { status -> status.copy(network = networkAccess.status) }
-            }
-        }
-        clientScope.launch {
-            mutationQueueReplayer.passRunning.collect { running ->
-                publishStatus { status -> status.copy(isSyncing = running) }
-            }
-        }
-        clientScope.launch {
-            var doublings = 0
-            while (true) {
-                try {
-                    // The flows only say when to count; every count is read in one snapshot under
-                    // the queue's lock, so a write moving between the queue and a list is counted
-                    // once, and an older snapshot never lands after a newer one
-                    merge(
-                            mutationQueue.queueChanges(),
-                            mutationQueue.shownRejectionsFlow().map {},
-                            mutationQueue.shownConflictsFlow().map {},
-                        )
-                        .conflate()
-                        .collect {
-                            val counts = queueCountsOrNull() ?: return@collect
-                            publishStatus { status ->
-                                status.copy(
-                                    pendingMutationCount = counts.pending,
-                                    rejectedMutationCount = counts.rejected,
-                                    conflictedMutationCount = counts.conflicted,
-                                )
-                            }
-                        }
-                    return@launch
-                } catch (failure: Exception) {
-                    // Closing ends it. Any other failure is followed again, one that cut a count
-                    // short included: `retryWhen` rethrows a flow's failure that canceled the
-                    // count in progress, which ended the status's counts for good
-                    ensureActive()
-                    engineLogger.warning {
-                        "The sync status lost track of the queue (${failure::class.simpleName}); " +
-                            "following it again"
-                    }
-                    delay(STATUS_RETRY_WAIT * (1 shl doublings))
-                    doublings = minOf(doublings + 1, STATUS_RETRY_DOUBLINGS)
-                }
-            }
-        }
-    }
-
-    /**
-     * The current user's pending and rejected counts, or `null` when counting fails; the status
-     * keeps its last counts then, and says so.
-     */
-    private suspend fun queueCountsOrNull(): ShownQueueCounts? =
-        try {
-            mutationQueue.shownQueueCounts()
-        } catch (cancellation: CancellationException) {
-            throw cancellation
-        } catch (failure: Exception) {
-            engineLogger.warning {
-                "Could not count the queued and rejected mutations for the sync status " +
-                    "(${failure::class.simpleName})"
-            }
-            null
-        }
-
-    /**
-     * Records what a pass that ended with [report] tells the status: a failure that stopped it as
-     * [SyncStatus.lastSyncError], built without the failure's message; a pass that ran to the end
-     * clears it, and records [SyncStatus.lastSyncedAt] when it left the session's queue empty. A
-     * change of user or a clear clears it too, as the writes it held back are another user's or
-     * gone. A pass that got no newer answer for the writes, since the session was not ready, access
-     * was off, an earlier write waits in another table or another sender has the next one, leaves
-     * it as it was.
-     */
-    private suspend fun recordPassEnded(report: EngineSyncReport) {
-        when (val stop = report.stop) {
-            null ->
-                if (report.remainingCount == 0 && sessionQueueIsEmpty()) {
-                    recordQueueEmptiedBySending()
-                } else {
-                    publishStatus { status -> status.copy(lastSyncError = null) }
-                }
-            is SyncStop.TransientFailure ->
-                publishStatus { status -> status.copy(lastSyncError = syncFailureOf(stop.cause)) }
-            is SyncStop.HeldBehindEarlierMutations ->
-                publishStatus { status ->
-                    status.copy(lastSyncError = syncFailureOf(stop.cause))
-                }
-            SyncStop.SessionChanged,
-            SyncStop.LocalDataCleared ->
-                publishStatus { status -> status.copy(lastSyncError = null) }
-            SyncStop.SessionNotReady,
-            SyncStop.IdentityUnknown,
-            SyncStop.NetworkDisabled,
-            is SyncStop.HeldBehindOtherTables,
-            SyncStop.HeadInFlight -> Unit
-        }
-    }
-
-    /** Whether the settled session has nothing queued; `false` when that cannot be told. */
-    private suspend fun sessionQueueIsEmpty(): Boolean {
-        val identity = replayIdentityNow() ?: return false
-        return try {
-            !mutationQueue.hasPendingMutationsOf(identity.storedValue)
-        } catch (cancellation: CancellationException) {
-            throw cancellation
-        } catch (failure: Exception) {
-            engineLogger.warning {
-                "Could not tell whether the queue is empty for the sync status " +
-                    "(${failure::class.simpleName})"
-            }
-            false
-        }
-    }
-
-    /** Records that sending left the session's queue empty: now, and no error since. */
-    private suspend fun recordQueueEmptiedBySending() {
-        publishStatus { status ->
-            status.copy(lastSyncedAt = clock.now(), lastSyncError = null)
-        }
+        statusTracker.publishNetwork()
+        if (reconnected) sessionCoordinator.replayAsTheNetworkReturns()
     }
 
     /** This engine rejection as the app sees it. */
@@ -1489,14 +1000,7 @@ internal class OfflineClient(
         record: JsonObject,
         primaryKeys: List<String>?,
         schema: String?,
-    ): Unit = operationGate.call {
-        val cachedTable = cachedTableOf(table, schema)
-        val keyColumns = primaryKeys ?: this.primaryKeys.of(cachedTable)
-        val change =
-            locateServerRow("applyServerRecord", table, record, keyColumns, deleted = false)
-                ?: return@call
-        cachePatcher.patchServerChanges(cachedTable, keyColumns, listOf(change))
-    }
+    ): Unit = operationGate.call { realtime.applyServerRecord(table, record, primaryKeys, schema) }
 
     override suspend fun applyServerDelete(
         table: String,
@@ -1504,101 +1008,17 @@ internal class OfflineClient(
         primaryKeys: List<String>?,
         schema: String?,
     ): Unit = operationGate.call {
-        val cachedTable = cachedTableOf(table, schema)
-        val keyColumns = primaryKeys ?: this.primaryKeys.of(cachedTable)
-        val change =
-            locateServerRow("applyServerDelete", table, oldRecord, keyColumns, deleted = true)
-                ?: return@call
-        cachePatcher.patchServerChanges(cachedTable, keyColumns, listOf(change))
+        realtime.applyServerDelete(table, oldRecord, primaryKeys, schema)
     }
 
     /**
-     * [record] as [CachePatcher.patchServerChanges] takes it, located by [keyColumns]; `null`,
-     * logged under [call] without the record, when a key column is absent or non-primitive, so the
-     * caller drops an unlocatable record instead of patching the wrong rows.
-     */
-    private fun locateServerRow(
-        call: String,
-        table: String,
-        record: JsonObject,
-        keyColumns: List<String>,
-        deleted: Boolean,
-    ): ServerRowChange? {
-        val filterJson = primaryKeyFilterJson(record, keyColumns)
-        if (filterJson == null) {
-            engineLogger.warning {
-                "$call($table): dropping record — primary key(s) $keyColumns absent or non-primitive"
-            }
-            return null
-        }
-        return ServerRowChange(record, filterJson, deleted)
-    }
-
-    /**
-     * The name [table] of [schema] is cached under: its own in the default schema, `schema.table`
-     * in another, as a read of it caches it.
-     */
-    private fun cachedTableOf(table: String, schema: String?): String {
-        val defaultSchema =
-            supabaseClient.pluginManager.getPluginOrNull(Postgrest)?.config?.defaultSchema
-        return if (schema.isNullOrBlank() || schema == defaultSchema) table else "$schema.$table"
-    }
-
-    /**
-     * Builds the encoded [FilterDescriptor] that locates [record]'s row by its [primaryKeys], as an
-     * AND of `eq` conditions — mirroring the on-conflict filter synthesis the overlay uses for
-     * online upserts. Returns `null` when [primaryKeys] is empty, or any key is absent from
-     * [record] or maps to a non-primitive (null / array / object) value, so the caller can drop an
-     * unlocatable record instead of patching the wrong rows.
-     */
-    private fun primaryKeyFilterJson(record: JsonObject, primaryKeys: List<String>): String? {
-        if (primaryKeys.isEmpty()) return null
-        val conditions = primaryKeys.map { column ->
-            val value = record[column]
-            if (value !is JsonPrimitive || value is JsonNull) return null
-            FilterDescriptor.Condition(
-                column = column,
-                operatorId = "eq",
-                value = value.content,
-            )
-        }
-        val descriptor =
-            FilterDescriptor(
-                mode = FilterDescriptor.Mode.AND,
-                conditions = conditions,
-            )
-        return encodeFilter(descriptor, json)
-    }
-
-    /**
-     * Clears once, locks outermost first: the replayer's send lock, after it cancels passes in
-     * flight; the file cache's lock; the queue's and the clear lock, and innermost the cache-owner
-     * record's, around [LocalData.clearLocalData]'s one transaction. Signed out, that transaction
-     * records the emptied cache as nobody's; a user's first use claims it, so no user id is written
-     * back by the clear. The rewrite runs after that transaction, the cache files go last, and what
-     * an open read held off is finished outside the locks; see [DatabaseScrub].
+     * Clears local data for a sign-out, in the lock order [SessionCoordinator] states; the writes
+     * an earlier failure held back go with it, so the status's last error does too.
      */
     override suspend fun clearLocalData(): Unit = operationGate.call {
-        val owner =
-            QueueIdentity.Anonymous.storedValue.takeIf {
-                identityIsPerUser && replayIdentityNow() == QueueIdentity.Anonymous
-            }
-        try {
-            mutationQueueReplayer.clearLocalData {
-                fileCache.clear {
-                    localData.clearLocalData(owner)
-                    databaseScrub.rewriteAfterDelete()
-                }
-            }
-        } finally {
-            // To a live read the clear, done or cut short, is what a change of owner is: it
-            // fetches again. Asked first, as finishing the rewrite rethrows a cancellation
-            liveQueries.liveTables().forEach { table -> liveQueries.requestRefresh(table) }
-            // Canceled too: what the rewrite left goes to the background
-            databaseScrub.finishSoon()
-        }
+        sessionCoordinator.clearLocalData()
         // The writes an earlier failure held back are gone with it
-        publishStatus { status -> status.copy(lastSyncError = null) }
+        statusTracker.recordLocalDataCleared()
     }
 
     /**
@@ -1608,8 +1028,8 @@ internal class OfflineClient(
      */
     override suspend fun close() {
         if (operationGate.close()) clientScope.coroutineContext.job.cancel()
-        publishFinalStatus()
-        serverChangeFollower?.stop()
+        statusTracker.publishFinal()
+        realtime.stop()
         readShapePostgrest.value = null
         // On a real clock whatever calls it: under a test scheduler the caller's clock skips ahead
         val releasedInTime =
@@ -1689,15 +1109,6 @@ internal class OfflineClient(
          * database.
          */
         val CLOSE_WAIT: Duration = 10.seconds
-
-        /** The first wait before the status follows the queue again after a failed read. */
-        val STATUS_RETRY_WAIT: Duration = 1.seconds
-
-        /** How many times that wait doubles: at most 64 times [STATUS_RETRY_WAIT]. */
-        const val STATUS_RETRY_DOUBLINGS: Int = 6
-
-        /** The identity the channel is joined for under a session that names no user. */
-        private const val UNNAMED_USER_FOLLOW_IDENTITY: String = "user:"
     }
 
     private fun ensurePostgrestInstalled() {
@@ -1741,8 +1152,8 @@ internal class OfflineClient(
 
     // Last, once every part the work below reads is built
     init {
-        trackStatus()
-        replayWhatAnEarlierRunLeft()
+        statusTracker.start(mutationQueueReplayer.passRunning)
+        sessionCoordinator.replayWhatAnEarlierRunLeft()
         sweepQueuedUploadFiles()
     }
 }
