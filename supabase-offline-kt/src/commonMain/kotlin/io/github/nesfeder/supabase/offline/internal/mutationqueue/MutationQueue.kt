@@ -55,6 +55,24 @@ import kotlinx.serialization.json.JsonObject
  * enqueue to the retirement of replayed mutations. Owns the queue lock; takes a table's write lock
  * only to retire, and never while holding its own.
  *
+ * **The lock order.** Outermost first: the replayer's send lock ([SendState.sendLock]), then a
+ * table's write lock ([TableWriteLocks]), then the queue lock, then the clear lock. A sender holds
+ * the send lock while it chooses a write and while it records the outcome, and calls into this
+ * queue under it; retirement takes a table's write lock, then the queue lock. Nothing takes the
+ * send lock or a table's write lock while it holds the queue lock, no lock is held across a
+ * request, and none is awaited inside a transaction. docs/project/architecture.md gives the order
+ * of every lock in the engine.
+ *
+ * **The in-memory mirrors.** Four values held here stand for what the database holds, and nothing
+ * reads the rows again to check them: [unconfirmedSendIds], the mutations whose send is
+ * unconfirmed; [latestSyncSequence], the highest sync sequence handed out; and the cached copies of
+ * the rejected and the conflicted list ([rejectedList] and [conflictedList], each a
+ * [BoundedReservedList]). Each is read from the database the first time it is needed. Every writer
+ * keeps them in step by one rule: under the queue lock, it loads the mirror before its transaction,
+ * so its change reaches it, and changes the mirror only once the transaction has committed, so a
+ * failed write leaves it as it was. A clear resets the first and the two lists under the queue lock
+ * ([forgetRecordsOfClearedQueue]); the sync sequence never goes back.
+ *
  * @param queryCacheDao where the rejected list is kept and payloads' coverage is read.
  * @param primaryKeys each table's key columns, which tell a keyed INSERT.
  * @param identityProvider the current identity's stored value, or `null` when it cannot be told.
@@ -115,7 +133,8 @@ internal class MutationQueue(
     /**
      * The ids of the mutations whose send started and whose outcome is unknown
      * ([MutationRow.sendUnconfirmed]). Read once, then kept in step with every change this queue
-     * makes to them; `null` until first read. See [unconfirmedSends].
+     * makes to them; `null` until first read. See [unconfirmedSends], and the class's KDoc for the
+     * rule every in-memory mirror keeps.
      */
     private val unconfirmedSendIds = AtomicReference<Set<Long>?>(null)
 
@@ -129,7 +148,8 @@ internal class MutationQueue(
     /**
      * The highest [MutationRow.syncSequence] handed out, read from the database once; guarded by
      * [mutationQueueMutex]. It never goes back, so a payload's [CachedQueryRow.syncedThrough] never
-     * covers a mutation that syncs after the payload was written.
+     * covers a mutation that syncs after the payload was written. An in-memory mirror: see the
+     * class's KDoc.
      */
     private var latestSyncSequence: Long? = null
 

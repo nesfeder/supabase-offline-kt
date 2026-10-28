@@ -21,15 +21,19 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.io.IOException
 
 /**
- * The HTTP status carried by this throwable or a cause, as a [PostgrestRestException] or a
- * [ResponseException], or `null` when neither is in the chain.
+ * The HTTP status the server answered with, read from this throwable or a cause: a supabase-kt
+ * [RestException] (PostgREST's and Storage's errors among them), a Ktor [ResponseException], or a
+ * [SyncFailedException]; `null` when none is in the chain. The public `httpStatusOrNull` is this
+ * one, so [isNetworkOrConnectivityFailure] never calls a failure the network's when the app is told
+ * its status.
  */
 internal fun Throwable.httpStatusOrNull(): Int? {
     var current: Throwable? = this
     while (current != null) {
         when (current) {
-            is PostgrestRestException -> return current.statusCode
+            is RestException -> return current.statusCode
             is ResponseException -> return current.response.status.value
+            is SyncFailedException -> return current.httpStatus
         }
         current = current.cause
     }
@@ -54,6 +58,19 @@ internal fun Throwable.postgrestCodeOrNull(): String? {
  * once stays queued on one.
  */
 internal val MAY_PASS_LATER_STATUSES: Set<Int> = setOf(408, 429, 502, 503, 504, 520, 522, 524)
+
+/**
+ * PostgREST's `503` codes for a request it answered without reaching the database (PGRST000) or
+ * before its schema cache loaded (PGRST002). Not PGRST001: the database connection broke during the
+ * request, which may have committed.
+ */
+internal val POSTGREST_DID_NOT_RUN_CODES: Set<String> = setOf("PGRST000", "PGRST002")
+
+/**
+ * PostgREST's codes for a table (PGRST205) or column (PGRST204) its schema cache does not know: the
+ * statement never ran, and the cache may not have caught up with a migration.
+ */
+internal val SCHEMA_CACHE_MISS_CODES: Set<String> = setOf("PGRST204", "PGRST205")
 
 /**
  * PostgREST's codes for an access token it refused before running anything: one it could not decode

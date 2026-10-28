@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal
 
+import io.github.nesfeder.supabase.offline.SyncFailedException
+import io.github.nesfeder.supabase.offline.testdoubles.forbiddenRestException
 import io.ktor.client.network.sockets.ConnectTimeoutException
 import io.ktor.client.network.sockets.SocketTimeoutException
 import io.ktor.client.plugins.HttpRequestTimeoutException
@@ -12,6 +14,7 @@ import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.test.runTest
 import kotlinx.io.IOException
 
 /**
@@ -63,6 +66,23 @@ class FailureClassificationTest {
 
         // When / Then - still null, as neither has a real HTTP status
         assertEquals(null, wrapped.httpStatusOrNull())
+    }
+
+    @Test
+    fun httpStatusOrNull_readsStoragesErrorsAndASyncsFailure() = runTest {
+        // Given — Storage's refusal, and the failure a sync reports
+        val storageRefusal = forbiddenRestException()
+        val syncFailure =
+            SyncFailedException(
+                message = "The server answered 503",
+                httpStatus = 503,
+                code = null,
+                isConnectivityFailure = false,
+            )
+
+        // When / Then — the statuses the public httpStatusOrNull reads too
+        assertEquals(403, storageRefusal.httpStatusOrNull())
+        assertEquals(503, syncFailure.httpStatusOrNull())
     }
 
     // ---------- isNetworkOrConnectivityFailure ----------

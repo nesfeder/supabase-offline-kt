@@ -22,6 +22,7 @@ import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlinx.coroutines.test.runTest
+import kotlinx.io.IOException
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
@@ -112,6 +113,28 @@ class FailureClassificationTest {
         assertEquals(409, ktorFailure.httpStatusOrNull())
         assertEquals(409, wrappedKtorFailure.httpStatusOrNull())
         assertNull(IllegalStateException("no response").httpStatusOrNull())
+    }
+
+    @Test
+    fun a_failure_with_a_status_further_down_its_chain_is_not_a_connectivity_failure() = runTest {
+        // Given — I/O failures raised around a Storage refusal and around a sync's failure
+        val aroundStorage = IOException("upload interrupted", forbiddenRestException())
+        val aroundSync =
+            IOException(
+                "sync interrupted",
+                SyncFailedException(
+                    message = "The server answered 503",
+                    httpStatus = 503,
+                    code = null,
+                    isConnectivityFailure = false,
+                ),
+            )
+
+        // Then — each carries the server's status, so neither is the network's failure
+        assertEquals(403, aroundStorage.httpStatusOrNull())
+        assertFalse(aroundStorage.isNetworkOrConnectivityFailure())
+        assertEquals(503, aroundSync.httpStatusOrNull())
+        assertFalse(aroundSync.isNetworkOrConnectivityFailure())
     }
 
     private fun buildJsonArrayOfOne(): JsonArray = buildJsonArray {

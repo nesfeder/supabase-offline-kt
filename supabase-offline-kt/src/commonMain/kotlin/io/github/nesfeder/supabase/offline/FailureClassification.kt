@@ -2,9 +2,8 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline
 
-import io.github.jan.supabase.exceptions.RestException
+import io.github.nesfeder.supabase.offline.internal.httpStatusOrNull as engineHttpStatusOrNull
 import io.github.nesfeder.supabase.offline.internal.isNetworkOrConnectivityFailure as engineIsNetworkOrConnectivityFailure
-import io.ktor.client.plugins.ResponseException
 
 /**
  * Whether this failure is the network's rather than the server's: a timeout, or an I/O failure such
@@ -27,15 +26,4 @@ public fun Throwable.isNetworkOrConnectivityFailure(): Boolean =
  * @return the status, or `null` when no failure in the chain carries one, as for a connectivity
  *   failure.
  */
-public fun Throwable.httpStatusOrNull(): Int? {
-    var current: Throwable? = this
-    while (current != null) {
-        when (current) {
-            is RestException -> return current.statusCode
-            is ResponseException -> return current.response.status.value
-            is SyncFailedException -> return current.httpStatus
-        }
-        current = current.cause
-    }
-    return null
-}
+public fun Throwable.httpStatusOrNull(): Int? = engineHttpStatusOrNull()

@@ -328,6 +328,11 @@ All notable changes to this project are recorded in this file. The format follow
   string shows in a cached list read through that filter, and a queued update or delete sends the
   list whole instead of without the empty value. A list of only the empty value still matches no
   row, as the server reads it.
+- `isNetworkOrConnectivityFailure()` is `false` for a failure with an HTTP status further down its
+  chain, as `httpStatusOrNull()` reads it, such as an I/O failure raised around a Storage error or a
+  `SyncFailedException`. Before, it looked only for PostgREST's errors and Ktor's response failures
+  there, so such a failure read as the network's while `httpStatusOrNull()` gave its status, and a
+  read could fall back to the cache on it.
 
 ## [0.2.0] - 2026-10-20
 
