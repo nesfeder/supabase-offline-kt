@@ -716,6 +716,7 @@ internal class QueryReader(
                 isFromCache = true,
                 fetchedAtMillis = fetchedAtOf(cached.updatedAt),
                 hasPendingMutations = cached.overlay.hasPendingMutations,
+                pendingRowKeys = cached.overlay.pendingRowKeys,
             ),
         )
     }
@@ -780,6 +781,7 @@ internal class QueryReader(
                     fetchedAt = result.fetchedAtInstant(),
                     hasPendingMutations = false,
                     refresh = RefreshState.Idle,
+                    pendingRowKeys = emptySet(),
                 )
             )
         } else {
@@ -970,6 +972,7 @@ internal class QueryReader(
             fetchedAt = fetchedAt?.let(Instant::fromEpochMilliseconds),
             hasPendingMutations = served?.hasPendingMutations == true,
             refresh = if (awaitsConfirmed) RefreshState.Refreshing else refresh,
+            pendingRowKeys = served?.pendingRowKeys.orEmpty(),
         )
     }
 
@@ -1280,6 +1283,7 @@ internal class QueryReader(
                         ?: fetched.staleStamp?.let(::fetchedAtOf)
                         ?: fetched.receivedAtMillis,
                 hasPendingMutations = overlaid.hasPendingMutations,
+                pendingRowKeys = overlaid.pendingRowKeys,
             )
         // The server's own headers stay with its own rows: a count, for one
         val headers =
@@ -1352,6 +1356,7 @@ internal class QueryReader(
                 isFromCache = true,
                 fetchedAtMillis = fetchedAtOf(cached.updatedAt),
                 hasPendingMutations = cached.overlay.hasPendingMutations,
+                pendingRowKeys = cached.overlay.pendingRowKeys,
             ),
         )
     }

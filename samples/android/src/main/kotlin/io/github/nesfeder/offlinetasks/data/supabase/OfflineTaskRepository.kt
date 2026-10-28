@@ -983,17 +983,16 @@ class OfflineTaskRepository(
     ): Flow<TaskListSnapshot> {
         val recent = recentWindow(clock.now()) // read once: the request must not read the clock
         return whileSignedIn(before = nothingYet()) {
-            combine(
-                offline.from(Tables.TASKS).selectAsFlow(readStrategy = strategy) {
-                    tasksMatching(query, recent)
-                },
-                pendingRowIds(Tables.TASKS),
-            ) { snapshot, pending ->
-                snapshot.toRowsSnapshot { result ->
-                    // A queued task is listed after the server's rows; show it where it sorts.
-                    shown(result.decodeList<TaskRow>().map { it.toTask(pending) }.newestFirst())
+            offline
+                .from(Tables.TASKS)
+                .selectAsFlow(readStrategy = strategy) { tasksMatching(query, recent) }
+                .map { snapshot ->
+                    val pending = snapshot.pendingRowIds() // marked from this emission's own rows
+                    snapshot.toRowsSnapshot { result ->
+                        // A queued task is listed after the server's rows; show it where it sorts.
+                        shown(result.decodeList<TaskRow>().map { it.toTask(pending) }.newestFirst())
+                    }
                 }
-            }
         }
     }
 
@@ -1007,18 +1006,20 @@ class OfflineTaskRepository(
         shown: (List<TaskPhoto>) -> List<TaskPhoto>,
     ): Flow<PhotoListSnapshot> =
         whileSignedIn(before = nothingYet()) {
-            combine(
-                offline.from(Tables.TASK_PHOTOS).selectAsFlow(readStrategy = strategy) {
+            offline
+                .from(Tables.TASK_PHOTOS)
+                .selectAsFlow(readStrategy = strategy) {
                     newestFirst()
                     if (page != null) range(0L, page - 1L) // each page size is a query of its own
-                },
-                pendingRowIds(Tables.TASK_PHOTOS),
-            ) { snapshot, pending ->
-                snapshot.toRowsSnapshot { result ->
-                    val photos = result.decodeList<TaskPhotoRow>().map { it.toTaskPhoto(pending) }
-                    shown(photos.sortedByDescending { it.createdAt })
                 }
-            }
+                .map { snapshot ->
+                    val pending = snapshot.pendingRowIds()
+                    snapshot.toRowsSnapshot { result ->
+                        val photos =
+                            result.decodeList<TaskPhotoRow>().map { it.toTaskPhoto(pending) }
+                        shown(photos.sortedByDescending { it.createdAt })
+                    }
+                }
         }
 
     // --8<-- [end:photos-page]
@@ -1033,13 +1034,6 @@ class OfflineTaskRepository(
             .flatMapLatest { userId -> if (userId == null) flowOf(before) else read() }
             .catch { failure -> throw failure.toAppFailure(LibraryCall.Read) }
             .flowOn(Dispatchers.Default)
-
-    // --8<-- [start:pending-marks]
-    /** The ids of [table]'s rows a queued write touches, from each write's row keys. */
-    private fun pendingRowIds(table: String): Flow<Set<String>> =
-        offline.pendingMutations(table).map { mutations -> mutations.rowIds() }
-
-    // --8<-- [end:pending-marks]
 
     /** Runs [write] and puts its failure in the app's terms. */
     private suspend fun write(

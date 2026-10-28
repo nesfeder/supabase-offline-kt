@@ -15,6 +15,13 @@ All notable changes to this project are recorded in this file. The format follow
 
 ### Added
 
+- `QuerySnapshot.pendingRowKeys` names the rows a queued write added, changed or removed: the
+  primary key of each, worked out in the pass that lays the writes over the rows, so a per-row
+  pending mark never shows before its row or stays after the write is sent. A row a write removed
+  keeps its key, and a row without its whole key adds none. A one-shot read's result has the same
+  `pendingRowKeys`, and the Swift package's `QuerySnapshot` and `OfflineResponse` have it as a set
+  of key dictionaries. The testing artifacts' `querySnapshot` and `cachedResult` (in Swift,
+  `querySnapshot`, `cachedResponse` and `offlineResponse`) have overloads that take the keys.
 - `Offline.rejectedMutationList()` and `Offline.conflictedMutationList()` read the rejected and
   conflicted lists once, the list `rejectedMutations()` and `conflictedMutations()` emit first, as
   `pendingMutationCount()` reads the queue's count; the Swift package has the same two calls.
