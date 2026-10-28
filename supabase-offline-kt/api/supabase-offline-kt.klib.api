@@ -142,6 +142,7 @@ abstract interface io.github.nesfeder.supabase.offline/OfflineBucketApi : io.git
     abstract suspend fun ensureCachedFile(kotlin/String, kotlin/Boolean = ...): io.github.nesfeder.supabase.offline/CachedFile // io.github.nesfeder.supabase.offline/OfflineBucketApi.ensureCachedFile|ensureCachedFile(kotlin.String;kotlin.Boolean){}[0]
     abstract suspend fun evictCachedFile(kotlin/String) // io.github.nesfeder.supabase.offline/OfflineBucketApi.evictCachedFile|evictCachedFile(kotlin.String){}[0]
     abstract suspend fun evictCachedFile(kotlin/String, kotlin/Function1<io.github.jan.supabase.storage/ImageTransformation, kotlin/Unit>) // io.github.nesfeder.supabase.offline/OfflineBucketApi.evictCachedFile|evictCachedFile(kotlin.String;kotlin.Function1<io.github.jan.supabase.storage.ImageTransformation,kotlin.Unit>){}[0]
+    abstract suspend fun upload(kotlin/String, kotlin/ByteArray, io.github.nesfeder.supabase.offline/MutationStrategy, kotlin/Function1<io.github.jan.supabase.storage/UploadOptionBuilder, kotlin/Unit> = ...): io.github.nesfeder.supabase.offline/UploadOutcome // io.github.nesfeder.supabase.offline/OfflineBucketApi.upload|upload(kotlin.String;kotlin.ByteArray;io.github.nesfeder.supabase.offline.MutationStrategy;kotlin.Function1<io.github.jan.supabase.storage.UploadOptionBuilder,kotlin.Unit>){}[0]
 }
 
 sealed interface io.github.nesfeder.supabase.offline/ConflictResolution { // io.github.nesfeder.supabase.offline/ConflictResolution|null[0]
@@ -360,6 +361,33 @@ sealed interface io.github.nesfeder.supabase.offline/ResponseTrust { // io.githu
     }
 }
 
+sealed interface io.github.nesfeder.supabase.offline/UploadOutcome { // io.github.nesfeder.supabase.offline/UploadOutcome|null[0]
+    open val isQueued // io.github.nesfeder.supabase.offline/UploadOutcome.isQueued|{}isQueued[0]
+        open fun <get-isQueued>(): kotlin/Boolean // io.github.nesfeder.supabase.offline/UploadOutcome.isQueued.<get-isQueued>|<get-isQueued>(){}[0]
+
+    open fun responseOrNull(): io.github.jan.supabase.storage/FileUploadResponse? // io.github.nesfeder.supabase.offline/UploadOutcome.responseOrNull|responseOrNull(){}[0]
+
+    final class Applied : io.github.nesfeder.supabase.offline/UploadOutcome { // io.github.nesfeder.supabase.offline/UploadOutcome.Applied|null[0]
+        final val response // io.github.nesfeder.supabase.offline/UploadOutcome.Applied.response|{}response[0]
+            final fun <get-response>(): io.github.jan.supabase.storage/FileUploadResponse // io.github.nesfeder.supabase.offline/UploadOutcome.Applied.response.<get-response>|<get-response>(){}[0]
+
+        final fun component1(): io.github.jan.supabase.storage/FileUploadResponse // io.github.nesfeder.supabase.offline/UploadOutcome.Applied.component1|component1(){}[0]
+        final fun equals(kotlin/Any?): kotlin/Boolean // io.github.nesfeder.supabase.offline/UploadOutcome.Applied.equals|equals(kotlin.Any?){}[0]
+        final fun hashCode(): kotlin/Int // io.github.nesfeder.supabase.offline/UploadOutcome.Applied.hashCode|hashCode(){}[0]
+        final fun toString(): kotlin/String // io.github.nesfeder.supabase.offline/UploadOutcome.Applied.toString|toString(){}[0]
+    }
+
+    final class Queued : io.github.nesfeder.supabase.offline/UploadOutcome { // io.github.nesfeder.supabase.offline/UploadOutcome.Queued|null[0]
+        final val pendingUpload // io.github.nesfeder.supabase.offline/UploadOutcome.Queued.pendingUpload|{}pendingUpload[0]
+            final fun <get-pendingUpload>(): io.github.nesfeder.supabase.offline/PendingUpload // io.github.nesfeder.supabase.offline/UploadOutcome.Queued.pendingUpload.<get-pendingUpload>|<get-pendingUpload>(){}[0]
+
+        final fun component1(): io.github.nesfeder.supabase.offline/PendingUpload // io.github.nesfeder.supabase.offline/UploadOutcome.Queued.component1|component1(){}[0]
+        final fun equals(kotlin/Any?): kotlin/Boolean // io.github.nesfeder.supabase.offline/UploadOutcome.Queued.equals|equals(kotlin.Any?){}[0]
+        final fun hashCode(): kotlin/Int // io.github.nesfeder.supabase.offline/UploadOutcome.Queued.hashCode|hashCode(){}[0]
+        final fun toString(): kotlin/String // io.github.nesfeder.supabase.offline/UploadOutcome.Queued.toString|toString(){}[0]
+    }
+}
+
 abstract class io.github.nesfeder.supabase.offline/OfflineException : kotlin/Exception // io.github.nesfeder.supabase.offline/OfflineException|null[0]
 
 abstract class io.github.nesfeder.supabase.offline/SyncStopReason { // io.github.nesfeder.supabase.offline/SyncStopReason|null[0]
@@ -555,7 +583,10 @@ final class io.github.nesfeder.supabase.offline/OfflinePostgrestQueryBuilder { /
 final class io.github.nesfeder.supabase.offline/OfflineStorage { // io.github.nesfeder.supabase.offline/OfflineStorage|null[0]
     final fun from(kotlin/String): io.github.nesfeder.supabase.offline/OfflineBucketApi // io.github.nesfeder.supabase.offline/OfflineStorage.from|from(kotlin.String){}[0]
     final fun get(kotlin/String): io.github.nesfeder.supabase.offline/OfflineBucketApi // io.github.nesfeder.supabase.offline/OfflineStorage.get|get(kotlin.String){}[0]
+    final fun pendingUploads(): kotlinx.coroutines.flow/Flow<kotlin.collections/List<io.github.nesfeder.supabase.offline/PendingUpload>> // io.github.nesfeder.supabase.offline/OfflineStorage.pendingUploads|pendingUploads(){}[0]
+    final fun rejectedUploads(): kotlinx.coroutines.flow/Flow<kotlin.collections/List<io.github.nesfeder.supabase.offline/RejectedUpload>> // io.github.nesfeder.supabase.offline/OfflineStorage.rejectedUploads|rejectedUploads(){}[0]
     final suspend fun clearFileCache() // io.github.nesfeder.supabase.offline/OfflineStorage.clearFileCache|clearFileCache(){}[0]
+    final suspend fun rejectedUploadList(): kotlin.collections/List<io.github.nesfeder.supabase.offline/RejectedUpload> // io.github.nesfeder.supabase.offline/OfflineStorage.rejectedUploadList|rejectedUploadList(){}[0]
 }
 
 final class io.github.nesfeder.supabase.offline/PendingMutation { // io.github.nesfeder.supabase.offline/PendingMutation|null[0]
@@ -584,6 +615,34 @@ final class io.github.nesfeder.supabase.offline/PendingMutation { // io.github.n
     final fun equals(kotlin/Any?): kotlin/Boolean // io.github.nesfeder.supabase.offline/PendingMutation.equals|equals(kotlin.Any?){}[0]
     final fun hashCode(): kotlin/Int // io.github.nesfeder.supabase.offline/PendingMutation.hashCode|hashCode(){}[0]
     final fun toString(): kotlin/String // io.github.nesfeder.supabase.offline/PendingMutation.toString|toString(){}[0]
+}
+
+final class io.github.nesfeder.supabase.offline/PendingUpload { // io.github.nesfeder.supabase.offline/PendingUpload|null[0]
+    final val bucketId // io.github.nesfeder.supabase.offline/PendingUpload.bucketId|{}bucketId[0]
+        final fun <get-bucketId>(): kotlin/String // io.github.nesfeder.supabase.offline/PendingUpload.bucketId.<get-bucketId>|<get-bucketId>(){}[0]
+    final val contentType // io.github.nesfeder.supabase.offline/PendingUpload.contentType|{}contentType[0]
+        final fun <get-contentType>(): kotlin/String? // io.github.nesfeder.supabase.offline/PendingUpload.contentType.<get-contentType>|<get-contentType>(){}[0]
+    final val createdAt // io.github.nesfeder.supabase.offline/PendingUpload.createdAt|{}createdAt[0]
+        final fun <get-createdAt>(): kotlin.time/Instant // io.github.nesfeder.supabase.offline/PendingUpload.createdAt.<get-createdAt>|<get-createdAt>(){}[0]
+    final val id // io.github.nesfeder.supabase.offline/PendingUpload.id|{}id[0]
+        final fun <get-id>(): kotlin/Long // io.github.nesfeder.supabase.offline/PendingUpload.id.<get-id>|<get-id>(){}[0]
+    final val path // io.github.nesfeder.supabase.offline/PendingUpload.path|{}path[0]
+        final fun <get-path>(): kotlin/String // io.github.nesfeder.supabase.offline/PendingUpload.path.<get-path>|<get-path>(){}[0]
+    final val sizeBytes // io.github.nesfeder.supabase.offline/PendingUpload.sizeBytes|{}sizeBytes[0]
+        final fun <get-sizeBytes>(): kotlin/Long // io.github.nesfeder.supabase.offline/PendingUpload.sizeBytes.<get-sizeBytes>|<get-sizeBytes>(){}[0]
+    final val upsert // io.github.nesfeder.supabase.offline/PendingUpload.upsert|{}upsert[0]
+        final fun <get-upsert>(): kotlin/Boolean // io.github.nesfeder.supabase.offline/PendingUpload.upsert.<get-upsert>|<get-upsert>(){}[0]
+
+    final fun component1(): kotlin/Long // io.github.nesfeder.supabase.offline/PendingUpload.component1|component1(){}[0]
+    final fun component2(): kotlin/String // io.github.nesfeder.supabase.offline/PendingUpload.component2|component2(){}[0]
+    final fun component3(): kotlin/String // io.github.nesfeder.supabase.offline/PendingUpload.component3|component3(){}[0]
+    final fun component4(): kotlin.time/Instant // io.github.nesfeder.supabase.offline/PendingUpload.component4|component4(){}[0]
+    final fun component5(): kotlin/Long // io.github.nesfeder.supabase.offline/PendingUpload.component5|component5(){}[0]
+    final fun component6(): kotlin/String? // io.github.nesfeder.supabase.offline/PendingUpload.component6|component6(){}[0]
+    final fun component7(): kotlin/Boolean // io.github.nesfeder.supabase.offline/PendingUpload.component7|component7(){}[0]
+    final fun equals(kotlin/Any?): kotlin/Boolean // io.github.nesfeder.supabase.offline/PendingUpload.equals|equals(kotlin.Any?){}[0]
+    final fun hashCode(): kotlin/Int // io.github.nesfeder.supabase.offline/PendingUpload.hashCode|hashCode(){}[0]
+    final fun toString(): kotlin/String // io.github.nesfeder.supabase.offline/PendingUpload.toString|toString(){}[0]
 }
 
 final class io.github.nesfeder.supabase.offline/QuerySnapshot { // io.github.nesfeder.supabase.offline/QuerySnapshot|null[0]
@@ -677,6 +736,46 @@ final class io.github.nesfeder.supabase.offline/RejectedMutation { // io.github.
     final fun toString(): kotlin/String // io.github.nesfeder.supabase.offline/RejectedMutation.toString|toString(){}[0]
 }
 
+final class io.github.nesfeder.supabase.offline/RejectedUpload { // io.github.nesfeder.supabase.offline/RejectedUpload|null[0]
+    final val bucketId // io.github.nesfeder.supabase.offline/RejectedUpload.bucketId|{}bucketId[0]
+        final fun <get-bucketId>(): kotlin/String // io.github.nesfeder.supabase.offline/RejectedUpload.bucketId.<get-bucketId>|<get-bucketId>(){}[0]
+    final val contentType // io.github.nesfeder.supabase.offline/RejectedUpload.contentType|{}contentType[0]
+        final fun <get-contentType>(): kotlin/String? // io.github.nesfeder.supabase.offline/RejectedUpload.contentType.<get-contentType>|<get-contentType>(){}[0]
+    final val createdAt // io.github.nesfeder.supabase.offline/RejectedUpload.createdAt|{}createdAt[0]
+        final fun <get-createdAt>(): kotlin.time/Instant // io.github.nesfeder.supabase.offline/RejectedUpload.createdAt.<get-createdAt>|<get-createdAt>(){}[0]
+    final val id // io.github.nesfeder.supabase.offline/RejectedUpload.id|{}id[0]
+        final fun <get-id>(): kotlin/Long // io.github.nesfeder.supabase.offline/RejectedUpload.id.<get-id>|<get-id>(){}[0]
+    final val isRetryable // io.github.nesfeder.supabase.offline/RejectedUpload.isRetryable|{}isRetryable[0]
+        final fun <get-isRetryable>(): kotlin/Boolean // io.github.nesfeder.supabase.offline/RejectedUpload.isRetryable.<get-isRetryable>|<get-isRetryable>(){}[0]
+    final val message // io.github.nesfeder.supabase.offline/RejectedUpload.message|{}message[0]
+        final fun <get-message>(): kotlin/String // io.github.nesfeder.supabase.offline/RejectedUpload.message.<get-message>|<get-message>(){}[0]
+    final val path // io.github.nesfeder.supabase.offline/RejectedUpload.path|{}path[0]
+        final fun <get-path>(): kotlin/String // io.github.nesfeder.supabase.offline/RejectedUpload.path.<get-path>|<get-path>(){}[0]
+    final val rejectedAt // io.github.nesfeder.supabase.offline/RejectedUpload.rejectedAt|{}rejectedAt[0]
+        final fun <get-rejectedAt>(): kotlin.time/Instant // io.github.nesfeder.supabase.offline/RejectedUpload.rejectedAt.<get-rejectedAt>|<get-rejectedAt>(){}[0]
+    final val serverError // io.github.nesfeder.supabase.offline/RejectedUpload.serverError|{}serverError[0]
+        final fun <get-serverError>(): io.github.nesfeder.supabase.offline/ServerError? // io.github.nesfeder.supabase.offline/RejectedUpload.serverError.<get-serverError>|<get-serverError>(){}[0]
+    final val sizeBytes // io.github.nesfeder.supabase.offline/RejectedUpload.sizeBytes|{}sizeBytes[0]
+        final fun <get-sizeBytes>(): kotlin/Long // io.github.nesfeder.supabase.offline/RejectedUpload.sizeBytes.<get-sizeBytes>|<get-sizeBytes>(){}[0]
+    final val upsert // io.github.nesfeder.supabase.offline/RejectedUpload.upsert|{}upsert[0]
+        final fun <get-upsert>(): kotlin/Boolean // io.github.nesfeder.supabase.offline/RejectedUpload.upsert.<get-upsert>|<get-upsert>(){}[0]
+
+    final fun component1(): kotlin/Long // io.github.nesfeder.supabase.offline/RejectedUpload.component1|component1(){}[0]
+    final fun component10(): kotlin.time/Instant // io.github.nesfeder.supabase.offline/RejectedUpload.component10|component10(){}[0]
+    final fun component11(): kotlin/Boolean // io.github.nesfeder.supabase.offline/RejectedUpload.component11|component11(){}[0]
+    final fun component2(): kotlin/String // io.github.nesfeder.supabase.offline/RejectedUpload.component2|component2(){}[0]
+    final fun component3(): kotlin/String // io.github.nesfeder.supabase.offline/RejectedUpload.component3|component3(){}[0]
+    final fun component4(): kotlin.time/Instant // io.github.nesfeder.supabase.offline/RejectedUpload.component4|component4(){}[0]
+    final fun component5(): kotlin/Long // io.github.nesfeder.supabase.offline/RejectedUpload.component5|component5(){}[0]
+    final fun component6(): kotlin/String? // io.github.nesfeder.supabase.offline/RejectedUpload.component6|component6(){}[0]
+    final fun component7(): kotlin/Boolean // io.github.nesfeder.supabase.offline/RejectedUpload.component7|component7(){}[0]
+    final fun component8(): io.github.nesfeder.supabase.offline/ServerError? // io.github.nesfeder.supabase.offline/RejectedUpload.component8|component8(){}[0]
+    final fun component9(): kotlin/String // io.github.nesfeder.supabase.offline/RejectedUpload.component9|component9(){}[0]
+    final fun equals(kotlin/Any?): kotlin/Boolean // io.github.nesfeder.supabase.offline/RejectedUpload.equals|equals(kotlin.Any?){}[0]
+    final fun hashCode(): kotlin/Int // io.github.nesfeder.supabase.offline/RejectedUpload.hashCode|hashCode(){}[0]
+    final fun toString(): kotlin/String // io.github.nesfeder.supabase.offline/RejectedUpload.toString|toString(){}[0]
+}
+
 final class io.github.nesfeder.supabase.offline/ServerError { // io.github.nesfeder.supabase.offline/ServerError|null[0]
     final val code // io.github.nesfeder.supabase.offline/ServerError.code|{}code[0]
         final fun <get-code>(): kotlin/String? // io.github.nesfeder.supabase.offline/ServerError.code.<get-code>|<get-code>(){}[0]
@@ -719,6 +818,8 @@ final class io.github.nesfeder.supabase.offline/SyncReport { // io.github.nesfed
         final fun <get-heldBehindOtherTablesCount>(): kotlin/Int // io.github.nesfeder.supabase.offline/SyncReport.heldBehindOtherTablesCount.<get-heldBehindOtherTablesCount>|<get-heldBehindOtherTablesCount>(){}[0]
     final val rejected // io.github.nesfeder.supabase.offline/SyncReport.rejected|{}rejected[0]
         final fun <get-rejected>(): kotlin.collections/List<io.github.nesfeder.supabase.offline/RejectedMutation> // io.github.nesfeder.supabase.offline/SyncReport.rejected.<get-rejected>|<get-rejected>(){}[0]
+    final val rejectedUploads // io.github.nesfeder.supabase.offline/SyncReport.rejectedUploads|{}rejectedUploads[0]
+        final fun <get-rejectedUploads>(): kotlin.collections/List<io.github.nesfeder.supabase.offline/RejectedUpload> // io.github.nesfeder.supabase.offline/SyncReport.rejectedUploads.<get-rejectedUploads>|<get-rejectedUploads>(){}[0]
     final val remainingCount // io.github.nesfeder.supabase.offline/SyncReport.remainingCount|{}remainingCount[0]
         final fun <get-remainingCount>(): kotlin/Int // io.github.nesfeder.supabase.offline/SyncReport.remainingCount.<get-remainingCount>|<get-remainingCount>(){}[0]
     final val stopReason // io.github.nesfeder.supabase.offline/SyncReport.stopReason|{}stopReason[0]
@@ -727,6 +828,7 @@ final class io.github.nesfeder.supabase.offline/SyncReport { // io.github.nesfed
         final fun <get-syncedCount>(): kotlin/Int // io.github.nesfeder.supabase.offline/SyncReport.syncedCount.<get-syncedCount>|<get-syncedCount>(){}[0]
 
     final fun component1(): kotlin/Int // io.github.nesfeder.supabase.offline/SyncReport.component1|component1(){}[0]
+    final fun component10(): kotlin.collections/List<io.github.nesfeder.supabase.offline/RejectedUpload> // io.github.nesfeder.supabase.offline/SyncReport.component10|component10(){}[0]
     final fun component2(): kotlin.collections/List<io.github.nesfeder.supabase.offline/RejectedMutation> // io.github.nesfeder.supabase.offline/SyncReport.component2|component2(){}[0]
     final fun component3(): kotlin/Int // io.github.nesfeder.supabase.offline/SyncReport.component3|component3(){}[0]
     final fun component4(): kotlin/Int // io.github.nesfeder.supabase.offline/SyncReport.component4|component4(){}[0]
