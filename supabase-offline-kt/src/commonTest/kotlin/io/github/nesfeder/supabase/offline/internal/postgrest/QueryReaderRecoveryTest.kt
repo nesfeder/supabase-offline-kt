@@ -12,7 +12,14 @@ import io.github.nesfeder.supabase.offline.MutationOperation
 import io.github.nesfeder.supabase.offline.QuerySnapshot
 import io.github.nesfeder.supabase.offline.ReadStrategy
 import io.github.nesfeder.supabase.offline.RefreshState
+import io.github.nesfeder.supabase.offline.fetchedAt
+import io.github.nesfeder.supabase.offline.hasPendingMutations
+import io.github.nesfeder.supabase.offline.internal.cache.ServerRowChange
+import io.github.nesfeder.supabase.offline.internal.db.fetchedAtOf
+import io.github.nesfeder.supabase.offline.internal.db.isStaleStamp
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentity
+import io.github.nesfeder.supabase.offline.isFromCache
+import io.github.nesfeder.supabase.offline.pendingRowKeys
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeRemoteTable
@@ -44,6 +51,7 @@ import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.currentTime
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.add
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
@@ -1413,6 +1421,296 @@ class QueryReaderRecoveryTest {
             collector.cancelAndJoin()
         }
 
+    @Test
+    fun a_refresh_whose_answer_left_before_a_server_delete_lands_without_the_row() =
+        runTest(UnconfinedTestDispatcher()) {
+            // Given: the cache primed with the server's two rows, and another user who deletes
+            // project-2 while the next refresh is out, after the server read its answer
+            val postgrest = testPostgrest()
+            val bothProjects = """[{"id":"project-1"},{"id":"project-2"}]"""
+            var serverRows = bothProjects
+            var networkCalls = 0
+            val queryCacheDao = FakeQueryCacheDao()
+            val store = buildStore(queryCacheDao)
+            val remoteTable =
+                FakeRemoteTable(
+                    table = "projects",
+                    postgrest = postgrest,
+                    onSelect = {
+                        networkCalls++
+                        val answer = serverRows
+                        if (networkCalls == 2) {
+                            serverRows = freshPayload
+                            store.cachePatcher.patchServerChanges(
+                                table = "projects",
+                                keyColumns = listOf("id"),
+                                changes = listOf(serverDeleteOf("project-2")),
+                            )
+                        }
+                        postgrestResultOf(answer, postgrest)
+                    },
+                )
+            val resolver = buildResolver(remoteTable, backgroundScope, store = store)
+            val primingCollector = launch {
+                resolver
+                    .selectAsFlow(Columns.ALL, FlowReadStrategy.CacheFirstThenNetwork) {}
+                    .collect {}
+            }
+            advanceUntilIdle()
+            primingCollector.cancelAndJoin()
+            // Let the single-flight share tear down so the next subscription refreshes for real.
+            advanceUntilIdle()
+
+            // When: a new subscription's refresh goes out, and the delete arrives meanwhile
+            val reads = mutableListOf<QuerySnapshot>()
+            val collector = launch {
+                resolver
+                    .selectAsFlow(Columns.ALL, FlowReadStrategy.CacheFirstThenNetwork) {}
+                    .collect { read -> reads += read }
+            }
+            runCurrent()
+
+            // Then: the answer lands at once, with the delete laid over it, and the read settles
+            assertEquals(2, networkCalls, "the answer was written, not refused and asked again")
+            val settled = reads.last()
+            assertIs<RefreshState.Idle>(settled.refresh)
+            assertEquals(freshPayload, settled.result?.data)
+            assertFalse(settled.isFromCache)
+            assertEquals(freshPayload, queryCacheDao.allForTable("projects").single().payload)
+
+            collector.cancelAndJoin()
+        }
+
+    @Test
+    fun a_one_shot_answer_that_left_before_a_server_delete_is_served_without_the_row() =
+        runTest(UnconfinedTestDispatcher()) {
+            // Given: a server whose answer holds project-2, which another user deletes after the
+            // server read it and before it arrives
+            val postgrest = testPostgrest()
+            var serverRows = """[{"id":"project-1"},{"id":"project-2"}]"""
+            var networkCalls = 0
+            val queryCacheDao = FakeQueryCacheDao()
+            val store = buildStore(queryCacheDao)
+            val remoteTable =
+                FakeRemoteTable(
+                    table = "projects",
+                    postgrest = postgrest,
+                    onSelect = {
+                        networkCalls++
+                        val answer = serverRows
+                        if (networkCalls == 1) {
+                            serverRows = freshPayload
+                            store.cachePatcher.patchServerChanges(
+                                table = "projects",
+                                keyColumns = listOf("id"),
+                                changes = listOf(serverDeleteOf("project-2")),
+                            )
+                        }
+                        postgrestResultOf(answer, postgrest)
+                    },
+                )
+            val resolver = buildResolver(remoteTable, backgroundScope, store = store)
+
+            // When: a one-shot network-first read asks
+            val result = resolver.select(Columns.ALL, ReadStrategy.NetworkFirst()) {}
+
+            // Then: it is answered with what the cache wrote, the delete laid over the server's
+            // rows, in one request
+            assertEquals(freshPayload, result.data)
+            assertFalse(result.isFromCache)
+            assertEquals(1, networkCalls)
+            assertEquals(freshPayload, queryCacheDao.allForTable("projects").single().payload)
+        }
+
+    @Test
+    fun a_live_list_under_a_server_insert_every_round_trip_settles_after_one_more_ask() =
+        runTest(UnconfinedTestDispatcher()) {
+            // Given: the cache primed with project-1, and other users who add a project while
+            // each later request is out, after the server read its answer
+            val postgrest = testPostgrest()
+            var projects = 1
+            var networkCalls = 0
+            val queryCacheDao = FakeQueryCacheDao()
+            val store = buildStore(queryCacheDao)
+            val remoteTable =
+                FakeRemoteTable(
+                    table = "projects",
+                    postgrest = postgrest,
+                    onSelect = {
+                        networkCalls++
+                        val answer = projectsThrough(projects)
+                        if (networkCalls > 1) {
+                            projects++
+                            store.cachePatcher.patchServerChanges(
+                                table = "projects",
+                                keyColumns = listOf("id"),
+                                changes = listOf(serverSaveOf("project-$projects")),
+                            )
+                        }
+                        postgrestResultOf(answer, postgrest)
+                    },
+                )
+            val resolver = buildResolver(remoteTable, backgroundScope, store = store)
+            val primingCollector = launch {
+                resolver
+                    .selectAsFlow(Columns.ALL, FlowReadStrategy.CacheFirstThenNetwork) {}
+                    .collect {}
+            }
+            advanceUntilIdle()
+            primingCollector.cancelAndJoin()
+            advanceUntilIdle()
+
+            // When: a new subscription refreshes while the inserts keep coming
+            val reads = mutableListOf<QuerySnapshot>()
+            val collector = launch {
+                resolver
+                    .selectAsFlow(Columns.ALL, FlowReadStrategy.CacheFirstThenNetwork) {}
+                    .collect { read -> reads += read }
+            }
+            runCurrent()
+
+            // Then: its first answer is refused (an insert it lacks is no answer of the server's),
+            // and the one more ask lands with the insert during it laid over, stale: the read
+            // settles on the newest rows, shown as the device's copy
+            assertEquals(3, networkCalls, "the refresh and its one more ask")
+            val settled = reads.last()
+            assertIs<RefreshState.Idle>(settled.refresh)
+            assertEquals(projectsThrough(3), settled.result?.data)
+            assertTrue(settled.isFromCache, "rows the server has not confirmed are the device's")
+            val row = queryCacheDao.allForTable("projects").single()
+            assertTrue(isStaleStamp(row.updatedAt), "the next read asks the server again")
+
+            // When: time passes with the inserts still coming
+            advanceTimeBy(10 * 60_000L)
+
+            // Then: the read asks no more on its own
+            assertEquals(3, networkCalls, "no refetch loop")
+            collector.cancelAndJoin()
+        }
+
+    @Test
+    fun a_one_shot_read_under_a_server_insert_every_round_trip_is_served_after_one_more_ask() =
+        runTest(UnconfinedTestDispatcher()) {
+            // Given: other users who add a project while each request is out, after the server
+            // read its answer
+            val postgrest = testPostgrest()
+            var projects = 1
+            var networkCalls = 0
+            val queryCacheDao = FakeQueryCacheDao()
+            val store = buildStore(queryCacheDao)
+            val remoteTable =
+                FakeRemoteTable(
+                    table = "projects",
+                    postgrest = postgrest,
+                    onSelect = {
+                        networkCalls++
+                        val answer = projectsThrough(projects)
+                        projects++
+                        store.cachePatcher.patchServerChanges(
+                            table = "projects",
+                            keyColumns = listOf("id"),
+                            changes = listOf(serverSaveOf("project-$projects")),
+                        )
+                        postgrestResultOf(answer, postgrest)
+                    },
+                )
+            val resolver = buildResolver(remoteTable, backgroundScope, store = store)
+
+            // When: a one-shot network-first read asks
+            val result = resolver.select(Columns.ALL, ReadStrategy.NetworkFirst()) {}
+
+            // Then: the first answer is refused, and the one more ask is served with the insert
+            // during it laid over, as the device's copy: the cache holds it stale, so the next read
+            // asks again
+            assertEquals(2, networkCalls)
+            assertEquals(projectsThrough(3), result.data)
+            val row = queryCacheDao.allForTable("projects").single()
+            assertEquals(projectsThrough(3), row.payload)
+            assertTrue(isStaleStamp(row.updatedAt))
+            assertTrue(result.isFromCache, "rows the server has not confirmed are the device's")
+            assertEquals(fetchedAtOf(row.updatedAt), result.fetchedAt?.toEpochMilliseconds())
+        }
+
+    @Test
+    fun a_stale_written_one_shot_answer_names_the_rows_a_queued_write_changed() =
+        runTest(UnconfinedTestDispatcher()) {
+            // Given: a queued insert of project-9, and other users who add a project while each
+            // request is out, after the server read its answer
+            val postgrest = testPostgrest()
+            var projects = 1
+            var networkCalls = 0
+            val store = buildStore()
+            store.mutationQueue.enqueueInsert(table = "projects", body = projectRows("project-9"))
+            val remoteTable =
+                FakeRemoteTable(
+                    table = "projects",
+                    postgrest = postgrest,
+                    onSelect = {
+                        networkCalls++
+                        val answer = projectsThrough(projects)
+                        projects++
+                        store.cachePatcher.patchServerChanges(
+                            table = "projects",
+                            keyColumns = listOf("id"),
+                            changes = listOf(serverSaveOf("project-$projects")),
+                        )
+                        postgrestResultOf(answer, postgrest)
+                    },
+                )
+            val resolver = buildResolver(remoteTable, backgroundScope, store = store)
+
+            // When: a one-shot network-first read asks, and its one more ask is written stale
+            val result = resolver.select(Columns.ALL, ReadStrategy.NetworkFirst()) {}
+
+            // Then: it is served as the device's copy, with the queued row laid over the rows the
+            // cache wrote and named as the queued write's
+            assertEquals(2, networkCalls)
+            assertTrue(result.isFromCache)
+            assertEquals(
+                """[{"id":"project-1"},{"id":"project-2"},{"id":"project-3"},{"id":"project-9"}]""",
+                result.data,
+            )
+            assertTrue(result.hasPendingMutations)
+            assertEquals(setOf(projectKey("project-9")), result.pendingRowKeys)
+        }
+
+    @Test
+    fun a_rebased_one_shot_answer_names_the_rows_a_queued_write_changed() =
+        runTest(UnconfinedTestDispatcher()) {
+            // Given: a queued insert of project-9, and a server whose answer holds project-2,
+            // which another user deletes after the server read it and before it arrives
+            val postgrest = testPostgrest()
+            var networkCalls = 0
+            val store = buildStore()
+            store.mutationQueue.enqueueInsert(table = "projects", body = projectRows("project-9"))
+            val remoteTable =
+                FakeRemoteTable(
+                    table = "projects",
+                    postgrest = postgrest,
+                    onSelect = {
+                        networkCalls++
+                        store.cachePatcher.patchServerChanges(
+                            table = "projects",
+                            keyColumns = listOf("id"),
+                            changes = listOf(serverDeleteOf("project-2")),
+                        )
+                        postgrestResultOf(projectsThrough(2), postgrest)
+                    },
+                )
+            val resolver = buildResolver(remoteTable, backgroundScope, store = store)
+
+            // When: a one-shot network-first read asks
+            val result = resolver.select(Columns.ALL, ReadStrategy.NetworkFirst()) {}
+
+            // Then: it is served the server's rows with the delete laid over them, fresh, and the
+            // queued row over those, named as the queued write's
+            assertEquals(1, networkCalls)
+            assertFalse(result.isFromCache)
+            assertEquals("""[{"id":"project-1"},{"id":"project-9"}]""", result.data)
+            assertTrue(result.hasPendingMutations)
+            assertEquals(setOf(projectKey("project-9")), result.pendingRowKeys)
+        }
+
     // ── helpers ─────────────────────────────────────────────────────────────
 
     private fun buildResolver(
@@ -1434,6 +1732,41 @@ class QueryReaderRecoveryTest {
             liveQueries = LiveQueries(scope),
             wakeUps = wakeUps,
         )
+
+    /** Another user's delete of the project [id], as Realtime reports it. */
+    private fun serverDeleteOf(id: String): ServerRowChange =
+        ServerRowChange(
+            record = buildJsonObject { put("id", id) },
+            keyFilterJson =
+                encodeFilter(
+                    FilterDescriptor(
+                        conditions =
+                            listOf(FilterDescriptor.Condition("id", operatorId = "eq", value = id))
+                    ),
+                    Json,
+                ),
+            deleted = true,
+        )
+
+    /** Another user's save of the project [id], as Realtime reports it. */
+    private fun serverSaveOf(id: String): ServerRowChange =
+        serverDeleteOf(id).let { delete ->
+            ServerRowChange(delete.record, delete.keyFilterJson, deleted = false)
+        }
+
+    /** A body of the projects [ids], as a write sends it. */
+    private fun projectRows(vararg ids: String) = buildJsonArray {
+        ids.forEach { id -> add(projectKey(id)) }
+    }
+
+    /** The key of the project [id]. */
+    private fun projectKey(id: String) = buildJsonObject { put("id", id) }
+
+    /** The rows `project-1` through `project-[count]`, as the server answers them. */
+    private fun projectsThrough(count: Int): String =
+        (1..count).joinToString(prefix = "[", postfix = "]", separator = ",") { n ->
+            """{"id":"project-$n"}"""
+        }
 
     /**
      * Minimal real [Postgrest] for [FakeRemoteTable] / [postgrestResultOf] — the resolver reads its

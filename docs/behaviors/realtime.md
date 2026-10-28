@@ -98,7 +98,9 @@ backoff above bounds how often a refused join does. A one-shot read is not fetch
 join; it takes its strategy's path when the app reads it next.
 
 Between joins, the changes a table receives are applied as they arrive, those waiting together as
-one patch of its cached queries; a burst the device cannot keep up with, more than 5,000 changes
+one patch of its cached queries, and an answer in flight when one arrives is written with it laid
+over ([Refresh lifecycle](refresh-lifecycle.md#an-old-answer-never-replaces-a-newer-write)); a
+burst the device cannot keep up with, more than 5,000 changes
 waiting for one table, is discarded as a whole and that table is read again as on a join, with one
 warning in the log that says how many and which table.
 

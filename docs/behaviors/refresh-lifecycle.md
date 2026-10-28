@@ -69,15 +69,37 @@ user.
 
 ## An old answer never replaces a newer write
 
-Every request reads a tick from a monotonic clock before it goes out, and every write that changes
-the cache moves its table's mark forward: a write made online, a replayed one, and a server record
-or Realtime event applied to the table. An answer whose request left before the table's last change
-is refused, since it cannot hold that change. A reactive read then asks again, once at once and
-after that on its retry schedule, reading `Refreshing` meanwhile, until an answer lands; on a table
-that changes at least once per round trip, that takes as long as the changes keep coming. A one-shot
-read asks once more and then serves the cache, or the server's rows uncached when nothing is cached.
-One that left before `clearLocalData()` is refused and not asked again, since it may carry the
-cleared session's token; one that left before the cache passed to a new owner is not written, and
-the refresh asks again. An answer that is not a list of rows (a sign-in page or a block page at
-`200`) is not written either, and counts as a failed attempt: the refresh asks again on its schedule,
-and reads `Stalled` by that cause after the fourth in a row.
+Every request reads a tick from a monotonic clock before it goes out, and every change the device
+makes to the cache moves its table's mark forward: a write made online, a replayed one, and a
+stale mark, which a write the cache cannot follow or a Realtime join sets. An answer whose request
+left before the table's mark is refused, since it cannot hold that change, and nothing lays a write
+made online over it. A reactive read then asks again, once at once and after that on its retry
+schedule, reading `Refreshing` meanwhile, until an answer lands. A one-shot read asks once more and
+then serves the cache, or the server's rows uncached when nothing is cached. One that left before
+`clearLocalData()` is refused and not asked again, since it may carry the cleared session's token;
+one that left before the cache passed to a new owner is not written, and the refresh asks again. An
+answer that is not a list of rows (a sign-in page or a block page at `200`) is not written either,
+and counts as a failed attempt: the refresh asks again on its schedule, and reads `Stalled` by that
+cause after the fourth in a row.
+
+A server record or Realtime event applied to the table moves no mark. The library keeps the
+table's last 256 such changes, fewer when their rows are long (65,536 characters of JSON in all),
+and when an answer lands, lays the ones applied after its request left over it, as they were laid
+over the cache: a row another user deleted is not brought back, and a row they changed shows the
+change. The answer is written and the read settles, so a table that changes at least once per round
+trip still has its refreshes land. A one-shot read returns the rows as written; when a change
+altered them, without the server's headers, such as `Content-Range`, which describe the rows it
+sent. An answer is refused as above when a change newer than its request is no longer among those
+kept.
+
+Some changes cannot be laid over an answer exactly: a row the answer does not hold (an insert, which
+the server places by its order, or a row the server no longer shows this user), a change to a column
+the query is ordered by, a row taken out of a `limit` or `range` window, which the server would fill
+with the next one, and a change the cache cannot place, such as one over rows read without their
+key. An answer with such a change is never written as the server's: the read asks once more, as for
+a local write. When the changes during that request cannot be laid over its answer exactly either,
+it is written with them anyway, marked stale, and the read takes it instead of asking again: a
+one-shot read returns it and a reactive read settles on it, both as the device's copy
+(`isFromCache`), and the next read asks the server again. When the cache cannot place a change,
+that answer is written as the server sent it, less the rows the changes took out: a row deleted
+while the request was out is still not brought back.
