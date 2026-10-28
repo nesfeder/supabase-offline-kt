@@ -51,7 +51,7 @@ data class TaskPhoto(
     val createdAt: Instant,
     /** True while this photo's row waits in the mutation queue. */
     val hasPendingMutations: Boolean = false,
-    /** Where its upload stands, while it waits in the app's pending-photo queue; else null. */
+    /** Where its upload stands while Storage does not have its file; else null. */
     val pendingUpload: PendingUpload? = null,
 )
 

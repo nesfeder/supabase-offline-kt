@@ -16,7 +16,8 @@ extension OfflineBucketApi {
         /// The object's key: the bucket and the path.
         public let key: String?
 
-        init(id: String?, path: String, key: String?) {
+        /// Built by the package, and by the testing product's factories.
+        package init(id: String?, path: String, key: String?) {
             self.id = id
             self.path = path
             self.key = key

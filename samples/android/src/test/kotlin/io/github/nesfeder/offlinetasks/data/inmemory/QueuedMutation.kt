@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.offlinetasks.data.inmemory
 
+import io.github.nesfeder.offlinetasks.data.PHOTOS_BUCKET
 import io.github.nesfeder.offlinetasks.data.Tables
 import io.github.nesfeder.offlinetasks.data.Task
 import io.github.nesfeder.offlinetasks.data.TaskMutationOperation
@@ -91,6 +92,26 @@ internal sealed interface QueuedMutation {
 
         override fun applyTo(rows: DeviceRows): DeviceRows =
             rows.copy(photos = rows.photos + (photo.id to photo))
+    }
+
+    /**
+     * The upload of a photo's file, queued with the writes around it as the library queues one:
+     * nothing on screen changes, since the photo's row is a write of its own, queued after it.
+     */
+    class UploadPhoto(
+        override val id: Long,
+        val photoId: String,
+        val objectPath: String,
+        val jpeg: ByteArray,
+    ) : QueuedMutation {
+        override val table: String = PHOTOS_BUCKET
+        override val operation: TaskMutationOperation = TaskMutationOperation.Insert
+        override val rowKey: String = photoId
+
+        override fun withId(newId: Long): QueuedMutation =
+            UploadPhoto(newId, photoId, objectPath, jpeg)
+
+        override fun applyTo(rows: DeviceRows): DeviceRows = rows
     }
 
     /** `delete from task_photos where id`. */

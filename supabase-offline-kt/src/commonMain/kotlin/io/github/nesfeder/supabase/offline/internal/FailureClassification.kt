@@ -187,3 +187,70 @@ private fun retryAfterValueOrNull(value: String, now: () -> Long): Duration? {
         }
     return (date.timestamp - now()).coerceAtLeast(0L).milliseconds
 }
+
+/**
+ * The HTTP status of the answer this throwable or a cause carries from Storage: a [RestException]'s
+ * (supabase-kt's Storage throws one for every error answer), or a [ResponseException]'s; `null`
+ * when neither is in the chain. Hosted Storage answers most refusals with a `400`, its own status
+ * in the body, which supabase-kt does not keep for every one.
+ */
+internal fun Throwable.storageStatusOrNull(): Int? {
+    var current: Throwable? = this
+    while (current != null) {
+        when (current) {
+            is RestException -> return current.statusCode
+            is ResponseException -> return current.response.status.value
+        }
+        current = current.cause
+    }
+    return null
+}
+
+/**
+ * Whether Storage refused the access token rather than the upload: a `401`, or Storage's own error
+ * for a token it could not verify or found expired (`InvalidJWT`, `jwt expired`), whatever status
+ * carries it. A later send carries a refreshed token, so such an upload stays queued.
+ */
+internal fun Throwable.isStorageTokenRefusal(): Boolean {
+    if (storageStatusOrNull() == HTTP_UNAUTHORIZED) return true
+    var current: Throwable? = this
+    while (current != null) {
+        if (current is RestException) {
+            val text = current.error + " " + current.description.orEmpty()
+            return current.error.equals(STORAGE_INVALID_TOKEN_ERROR, ignoreCase = true) ||
+                text.contains(STORAGE_EXPIRED_TOKEN_MESSAGE, ignoreCase = true)
+        }
+        current = current.cause
+    }
+    return false
+}
+
+/** Storage's error name for a token it could not verify, or whose expiry has passed. */
+private const val STORAGE_INVALID_TOKEN_ERROR = "InvalidJWT"
+
+/** What Storage's message says of an expired token. */
+private const val STORAGE_EXPIRED_TOKEN_MESSAGE = "jwt expired"
+
+/**
+ * Whether a queued upload Storage answered with this failure may pass when sent again: a status in
+ * [MAY_PASS_LATER_STATUSES], or a token Storage refused ([isStorageTokenRefusal]). An upload sent
+ * at once stays queued on one, as a row write does on its own list.
+ */
+internal fun Throwable.uploadMayPassWhenSentAgain(): Boolean {
+    val status = storageStatusOrNull() ?: return false
+    return status in MAY_PASS_LATER_STATUSES || isStorageTokenRefusal()
+}
+
+/**
+ * Whether this failure is Storage refusing a queued upload for good: a `4xx` that is neither a
+ * status that may pass later ([MAY_PASS_LATER_STATUSES]) nor a refused token
+ * ([isStorageTokenRefusal]). Any other answer, a `5xx` among them, may pass on a later send.
+ */
+internal fun Throwable.isStorageRefusal(): Boolean {
+    val status = storageStatusOrNull() ?: return false
+    if (status !in HTTP_CLIENT_ERRORS || status in MAY_PASS_LATER_STATUSES) return false
+    return !isStorageTokenRefusal()
+}
+
+/** The statuses of a refusal: the `4xx`. */
+private val HTTP_CLIENT_ERRORS: IntRange = 400..499

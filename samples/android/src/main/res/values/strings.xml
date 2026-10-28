@@ -154,12 +154,8 @@
     <string name="photo_delete_offline">Photos can be deleted only while you’re online.</string>
     <string name="photo_unreadable">That image couldn’t be read.</string>
     <string name="photo_pending_waiting">Waiting to upload</string>
-    <string name="photo_pending_uploading">Uploading</string>
     <string name="photo_pending_failed">Upload failed</string>
-    <plurals name="photo_upload_failed">
-        <item quantity="one">Upload failed after %1$d try. %2$s</item>
-        <item quantity="other">Upload failed after %1$d tries. %2$s</item>
-    </plurals>
+    <string name="photo_upload_failed">Storage refused the upload: %1$s</string>
     <string name="photo_pending_note">Not uploaded yet: Details, Share link, Replace, Move and Duplicate need the photo on the server.</string>
     <string name="photos_show_more">Show more</string>
     <string name="photo_share">Share</string>
