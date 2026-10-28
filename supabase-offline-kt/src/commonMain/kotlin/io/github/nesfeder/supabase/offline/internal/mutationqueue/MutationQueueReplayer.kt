@@ -282,7 +282,7 @@ internal class MutationQueueReplayer(
                             "(${cancellation::class.simpleName}); the queued writes stay queued"
                     }
                     progress.report(
-                        remainingCount = remainingFor(currentIdentity(), table),
+                        remainingCount = remainingHeld(currentIdentity(), table),
                         stop =
                             SyncStop.TransientFailure(
                                 IllegalStateException("The replay pass was canceled", cancellation)
@@ -414,8 +414,9 @@ internal class MutationQueueReplayer(
             } finally {
                 // The server has the write: it leaves the queue whatever happened here, or a pass
                 // would send it again.
-                // Under the send lock, as a pass records a sent write: a pass that starts meanwhile
-                // reads the queue only once [onLeftQueue] has run
+                // Under the send lock, as a pass records a sent write: a pass reads the queue and
+                // counts what remains under it too, so it never meets the write gone with
+                // [onLeftQueue] still to run
                 withContext(NonCancellable) {
                     sendLock.withLock { if (completeAcceptedMutation(mutationId)) onLeftQueue() }
                 }
@@ -573,6 +574,15 @@ internal class MutationQueueReplayer(
         if (identity == null) mutationQueue.allPendingMutationCount(table)
         else mutationQueue.pendingMutationCountOf(identity.storedValue, table)
 
+    /**
+     * [remainingFor], counted under [sendLock], as a pass's report counts it: never inside another
+     * sender's recording, between a sent upload's row leaving the queue and its file's deletion.
+     */
+    private suspend fun remainingHeld(identity: QueueIdentity?, table: String?): Int =
+        sendLock.withLock {
+            remainingFor(identity, table)
+        }
+
     /** The next step of a pass, chosen under [sendLock]. */
     private sealed interface Claim {
         data class Send(val mutation: MutationRow) : Claim
@@ -662,13 +672,16 @@ internal class MutationQueueReplayer(
             engineLogger.warning { "The session's identity cannot be told; not replaying" }
             return SyncReport(0, emptyList(), remainingFor(null, table), SyncStop.IdentityUnknown)
         }
-        sendLock.withLock {
+        val queue = sendLock.withLock {
             if (clearGeneration.value != generation)
                 return SyncReport(0, emptyList(), 0, SyncStop.LocalDataCleared)
             mutationQueue.retireUnneededSyncedMutations()
             mutationQueue.adoptOwnerlessMutations(identity.storedValue)
+            // Read under the lock: a sender records a sent upload in one hold of it, from the
+            // row's removal to its file's deletion, so this never finds the one without the
+            // other
+            mutationQueue.pendingMutationsOf(identity.storedValue, table)
         }
-        val queue = mutationQueue.pendingMutationsOf(identity.storedValue, table)
         if (queue.isEmpty()) return SyncReport(0, emptyList(), 0, null)
         engineLogger.info {
             if (table == null) "Syncing ${queue.size} pending mutations"
@@ -768,7 +781,7 @@ internal class MutationQueueReplayer(
             if (table == null) "Sync complete: ${progress.syncedCount} mutations synced"
             else "Sync complete: ${progress.syncedCount} mutations synced for $table"
         }
-        return progress.report(remainingCount = remainingFor(identity, table), stop = stop)
+        return progress.report(remainingCount = remainingHeld(identity, table), stop = stop)
     }
 
     /**
