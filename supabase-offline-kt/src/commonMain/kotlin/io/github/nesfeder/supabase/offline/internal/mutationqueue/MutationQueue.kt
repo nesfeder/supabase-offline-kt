@@ -5,6 +5,7 @@
 package io.github.nesfeder.supabase.offline.internal.mutationqueue
 
 import io.github.nesfeder.supabase.offline.MutationOperation
+import io.github.nesfeder.supabase.offline.internal.EngineLimits
 import io.github.nesfeder.supabase.offline.internal.cache.CacheFreshness
 import io.github.nesfeder.supabase.offline.internal.cache.ShownQueueCounts
 import io.github.nesfeder.supabase.offline.internal.cache.TableWriteLocks
@@ -1290,8 +1291,8 @@ internal class MutationQueue(
 
     /**
      * Retires [table]'s synced mutations that no cached query needs any more, and those beyond the
-     * newest [MAX_RETAINED_SYNCED_PER_TABLE]; see [retireSyncedMutationsOf]. Skipped when
-     * [requestStartedAtTick] predates the table's last local write.
+     * newest [EngineLimits.MAX_RETAINED_SYNCED_PER_TABLE]; see [retireSyncedMutationsOf]. Skipped
+     * when [requestStartedAtTick] predates the table's last local write.
      */
     suspend fun retireCoveredSyncedMutations(table: String, requestStartedAtTick: Long? = null) {
         if (isReservedTable(table)) return
@@ -1312,9 +1313,9 @@ internal class MutationQueue(
     /**
      * Retires [table]'s synced mutations that every cached payload of the table already holds
      * ([CachedQueryRow.syncedThrough]), when no live query is waiting for its first payload, and
-     * the oldest beyond the newest [MAX_RETAINED_SYNCED_PER_TABLE] whatever still shows them. No
-     * clock is read, so a clock set back or forward neither keeps one nor retires one, and no body
-     * is read: ids and sequences decide. Caller holds the table's write lock.
+     * the oldest beyond the newest [EngineLimits.MAX_RETAINED_SYNCED_PER_TABLE] whatever still
+     * shows them. No clock is read, so a clock set back or forward neither keeps one nor retires
+     * one, and no body is read: ids and sequences decide. Caller holds the table's write lock.
      */
     private suspend fun retireSyncedMutationsOf(table: String) {
         val synced = mutationDao.syncedForTable(table)
@@ -1331,7 +1332,8 @@ internal class MutationQueue(
                     heldByEvery == null || (sequence != null && sequence <= heldByEvery)
                 }
             }
-        val beyondBound = (synced - held.toSet()).dropLast(MAX_RETAINED_SYNCED_PER_TABLE)
+        val beyondBound =
+            (synced - held.toSet()).dropLast(EngineLimits.MAX_RETAINED_SYNCED_PER_TABLE)
         removeMutations(
             (held + beyondBound).map { mutation -> mutation.id },
             clearRejections = false,
@@ -1381,14 +1383,6 @@ internal class MutationQueue(
         loggedOverlaySkips.store(emptySet())
         lastTableMutations.store(emptyMap())
         noteEveryTableChanged()
-    }
-
-    private companion object {
-        /**
-         * The most synced mutations a table keeps for cached queries fetched before they replayed;
-         * the oldest go first. A bound on work and space, read from no clock.
-         */
-        const val MAX_RETAINED_SYNCED_PER_TABLE = 1_000
     }
 }
 

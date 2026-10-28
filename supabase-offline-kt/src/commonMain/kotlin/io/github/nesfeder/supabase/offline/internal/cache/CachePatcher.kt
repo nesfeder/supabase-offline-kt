@@ -62,6 +62,9 @@ internal class CachePatcher(
     /** A new id for a write a patch overlays, so a failure is logged once per write. */
     private fun nextPatchId(): Long = patchIds.decrementAndFetch()
 
+    /** The overlays a patch runs; a write one skips is reported as a read's overlay reports it. */
+    private val patchOverlays = PatchOverlays(json, primaryKeys, queryOverlay::logSkippedOverlay)
+
     /**
      * Patches a write the server accepted, or a row it sent, into every cached query of [table]
      * that admits its rows. A live query with no payload gets one; one the patch may leave wrong is
@@ -377,9 +380,9 @@ internal class CachePatcher(
         val batch = PatchWrites(json)
         // UPDATEs naming one key each, over keys `eq` decides by content: each reaches exactly
         // the rows with its key, found by it
-        val keyed = queryOverlay.keyedUpdatesOf(writes, keyColumns, parsed, batch)
+        val keyed = patchOverlays.keyedUpdatesOf(writes, keyColumns, parsed, batch)
         val mayMatter =
-            (if (keyed != null) queryOverlay.keyedUpdatesReach(keyed)
+            (if (keyed != null) patchOverlays.keyedUpdatesReach(keyed)
             else rowsThatMayMatter(table, writes, primaryKeys, json, unknownMatters = true))
                 ?: { _, _ ->
                     false
@@ -426,7 +429,7 @@ internal class CachePatcher(
                 } else {
                     PatchTarget(rows, shape, emptyList(), emptyList(), keyColumns.toSet())
                 }
-            val overlay = queryOverlay.patchOverlayFor(target.admission, batch, keyed)
+            val overlay = patchOverlays.overlayFor(target.admission, batch, keyed)
             val patched = overlay.overlayRows(rows, writes, knownRows = target.sameSelectRows)
             val wrong = patchMayLeaveWrong(writes, target, json, keyed, ::conflictColumnsOf)
             return PatchedRows(patched.visible, wrong, overlay)
@@ -500,7 +503,7 @@ internal class CachePatcher(
                 continue
             }
             val admission = target.admission
-            val overlay = queryOverlay.patchOverlayFor(admission, batch, keyed)
+            val overlay = patchOverlays.overlayFor(admission, batch, keyed)
             val created =
                 overlay
                     .overlayRows(emptyList(), writes, knownRows = target.sameSelectRows)
