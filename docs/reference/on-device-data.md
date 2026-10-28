@@ -78,8 +78,8 @@ It is unique on (`bucketId`, `path`).
 | `path` | TEXT | no | The object's path in the bucket |
 | `localPath` | TEXT | no | Where the file was written; its place is always derived from the bucket and path |
 | `sizeBytes` | INTEGER | yes | The file's size |
-| `eTag` | TEXT | yes | Not used: always `NULL` |
-| `lastFetchedEpochMs` | INTEGER | no | When the file was downloaded, in milliseconds since 1970: `CachedFile.fetchedAt` |
+| `eTag` | TEXT | yes | The `ETag` the server sent the file under, which the next download asks about; `NULL` when it sent none, or for a file an earlier version of the library cached |
+| `lastFetchedEpochMs` | INTEGER | no | When the file was downloaded, or the server last answered that it had not changed, in milliseconds since 1970: `CachedFile.fetchedAt` |
 
 ### `mutation_cache`
 

@@ -37,6 +37,8 @@ import io.github.nesfeder.supabase.offline.internal.postgrest.RequestSession
 import io.github.nesfeder.supabase.offline.internal.postgrest.settledIdentityOf
 import io.ktor.client.network.sockets.SocketTimeoutException
 import io.ktor.client.plugins.HttpRequestTimeoutException
+import io.ktor.http.HeadersBuilder
+import io.ktor.http.HttpHeaders
 import io.ktor.http.Url
 import io.ktor.utils.io.ByteChannel
 import io.ktor.utils.io.ByteReadChannel
@@ -306,7 +308,7 @@ internal class CachingBucketApi(
             // once that caller runs again to leave it, which may be after this point: the file
             // goes, rather than become a copy no caller waits for any more
             ensureWanted()
-            val outcome = cache.commit(written.temporary, start)
+            val outcome = cache.commit(written.temporary, start, written.eTag)
             if (outcome == CommitOutcome.COMMITTED) file.temporary = null
             return outcome
         } finally {
@@ -357,9 +359,10 @@ internal class CachingBucketApi(
 
     /**
      * A download returning its bytes. They are in memory anyway — that is what the caller asked for
-     * — so the cache copy is written from them after the download, and a failure to write it is
-     * logged, never thrown. An [ensureCachedFile] download of the same entry in flight is waited
-     * for instead, and its file read.
+     * — so the cache copy is written from them after the download, with the answer's ETag, and a
+     * failure to write it is logged, never thrown. An [ensureCachedFile] download of the same entry
+     * in flight is waited for instead, and its file read; a 304 to the copy the request asked about
+     * is answered from that copy.
      */
     private suspend fun downloadBytes(
         path: String,
@@ -376,23 +379,35 @@ internal class CachingBucketApi(
         }
         val request = ProbedRequest(path)
         val probe = request.probe
-        val start = cache.beginDownload()
+        var start = cache.beginDownload()
         try {
             val sentUnsettled = isSessionUnsettled()
-            val bytes =
-                try {
-                    fetchUnlessDownloadInFlight(request) { fetch(probe::wrap) }
-                        ?: request.serveFromDownloadInFlight { entry -> cache.readBytes(entry) }
-                        ?: fetch(probe::wrap)
-                } catch (failure: Exception) {
-                    currentCoroutineContext().ensureActive()
-                    return recover(path, probe, failure, sentUnsettled) { entry ->
-                        cache.readBytes(entry)
+            // After the start, so a copy dropped since is never confirmed
+            request.readETags()
+            var bytes: ByteArray? = null
+            // Three tries at most: a request is stopped for a download in flight once at most, and
+            // asks about a cached copy only until a 304 about one could not be served
+            while (bytes == null) {
+                val fetched =
+                    try {
+                        fetchUnlessDownloadInFlight(request) {
+                            request.send(refusesErrors = false) { fetch(probe::wrap) }
+                        }
+                    } catch (failure: Exception) {
+                        currentCoroutineContext().ensureActive()
+                        return recover(path, probe, failure, sentUnsettled) { entry ->
+                            cache.readBytes(entry)
+                        }
                     }
-                }
-            if (!request.servedFromDownloadInFlight) {
+                bytes =
+                    fetched
+                        ?: request.serveFromDownloadInFlight { entry -> cache.readBytes(entry) }
+                        ?: request.serveConfirmedCopy(start) { entry -> cache.readBytes(entry) }
+                if (bytes == null) start = request.beginsAnew(start)
+            }
+            if (!request.servedFromCache) {
                 probe.entryToStore(cache, bucketId, path)?.let { entry ->
-                    cache.write(entry, bytes, start)
+                    cache.write(entry, bytes, start, request.eTag)
                 }
             }
             return bytes
@@ -408,11 +423,17 @@ internal class CachingBucketApi(
      */
     private class DownloadInFlight : Exception("A download of this entry is in flight")
 
+    /** A cached copy a request asked the server about: [entry]'s, whose ETag is [eTag]. */
+    private class AskedCopy(val entry: FileCacheEntry, val eTag: String)
+
     /**
      * The probe of one bytes or channel download of [path]. Its request override, once the request
      * is recorded, refuses the request while network access is off and, the first time, stops it
      * when an [ensureCachedFile] download of the entry it would fetch is in flight: the call then
-     * waits for that download ([serveFromDownloadInFlight]) rather than fetch the object twice.
+     * waits for that download ([serveFromDownloadInFlight]) rather than fetch the object twice. A
+     * request for the whole of an entry whose cached copy has an ETag asks the server about that
+     * copy with `If-None-Match`, unless the caller's own options ask about another; a 304 to it is
+     * answered from the copy ([serveConfirmedCopy]).
      */
     private inner class ProbedRequest(private val path: String) {
 
@@ -422,20 +443,161 @@ internal class CachingBucketApi(
         /** Whether the next request may be stopped to wait for a download in flight: once only. */
         private val mayJoin = AtomicBoolean(true)
 
-        /** Whether the call was answered from the download it waited for. */
-        var servedFromDownloadInFlight: Boolean = false
+        /** Entry key → the ETag of its cached copy, which a request for that entry asks about. */
+        private val eTags = AtomicReference<Map<String, String>>(emptyMap())
+
+        /**
+         * Whether a request may ask about a cached copy: until a 304 about one could not be served.
+         */
+        private val mayAsk = AtomicBoolean(true)
+
+        /** The copy the request being sent asks about; `null` when it asks about none. */
+        private val asked = AtomicReference<AskedCopy?>(null)
+
+        /** The copy the server answered 304 about, until [serveConfirmedCopy] takes it. */
+        private val notModified = AtomicReference<AskedCopy?>(null)
+
+        /** The record of the request being sent, which learns what it asks about; see [send]. */
+        private val sending = AtomicReference<CheckedDownload?>(null)
+
+        /**
+         * Whether a 304 about a copy could not be served since the download last began, so the
+         * request fetching the object whole is to begin anew; see [beginsAnew].
+         */
+        private val refetching = AtomicBoolean(false)
+
+        /** The ETag the server sent the fetched object under; `null` when it sent none. */
+        var eTag: String? = null
+            private set
+
+        /**
+         * Whether the call was answered from the cache: from the download it waited for, or from
+         * the copy the server confirmed.
+         */
+        var servedFromCache: Boolean = false
             private set
 
         val probe =
-            DownloadRequestProbe(renderImagePath) {
+            DownloadRequestProbe(renderImagePath) { headers ->
                 networkAccess.ensureEnabled()
-                val entry =
-                    if (mayJoin.exchange(false)) entryToStore(cache, bucketId, path) else null
-                if (entry != null && cache.downloadsInFlight.isInFlight(entry.key)) {
+                val entry = entryToStore(cache, bucketId, path)
+                if (
+                    mayJoin.exchange(false) &&
+                        entry != null &&
+                        cache.downloadsInFlight.isInFlight(entry.key)
+                ) {
                     inFlight.store(entry)
                     throw DownloadInFlight()
                 }
+                askAboutCachedCopy(entry, headers)
             }
+
+        /**
+         * Asks the server about [entry]'s cached copy, with `If-None-Match` and its ETag, when it
+         * has one, the request fetches the whole of [entry], and the caller's options ask nothing
+         * of their own. The record of the request learns what it asks about, so the download status
+         * check takes the condition off again when a header the bucket adds later makes the request
+         * partial, or adds a condition of the caller's.
+         */
+        private fun askAboutCachedCopy(entry: FileCacheEntry?, headers: HeadersBuilder) {
+            asked.store(null)
+            sending.load()?.askAbout(null)
+            if (entry == null || !mayAsk.load()) return
+            if (
+                headers.contains(HttpHeaders.IfNoneMatch) ||
+                    headers.contains(HttpHeaders.IfModifiedSince)
+            )
+                return
+            val cachedETag = eTags.load()[entry.key] ?: return
+            headers[HttpHeaders.IfNoneMatch] = cachedETag
+            asked.store(AskedCopy(entry, cachedETag))
+            sending.load()?.askAbout(cachedETag)
+        }
+
+        /**
+         * Reads the ETags of the object's cached copies, which its requests ask the server about.
+         */
+        suspend fun readETags() {
+            eTags.store(cache.eTagsOf(bucketId, path))
+        }
+
+        /**
+         * Sends one request of the download with [fetch], which hands the record of its answer to
+         * the download status check, and keeps the answer's ETag.
+         *
+         * @param refusesErrors whether the status check refuses an answer that is not a success
+         *   itself, as a channel download needs.
+         * @return what [fetch] returned, or `null` when the server answered 304 about the copy the
+         *   request asked about, which [serveConfirmedCopy] then serves.
+         */
+        suspend fun <T : Any> send(
+            refusesErrors: Boolean,
+            fetch: suspend (answer: CheckedDownload) -> T,
+        ): T? {
+            val answer = CheckedDownload(refusesErrors)
+            sending.store(answer)
+            val fetched =
+                try {
+                    withContext(answer) { fetch(answer) }
+                } catch (failure: Exception) {
+                    val copy = asked.load()
+                    if (copy == null || !answer.answeredNotModified) throw failure
+                    currentCoroutineContext().ensureActive()
+                    notModified.store(copy)
+                    return null
+                }
+            eTag = answer.eTag
+            return fetched
+        }
+
+        /**
+         * Answers the call from the copy the server answered 304 about, read with [read], once the
+         * cache confirms it is still the copy the request asked about, which moves its fetch time
+         * to now ([StorageFileCache.confirmCopy]). One dropped, replaced or cut short since the
+         * download began at [start], or that cannot be read, gives nothing, and no later request
+         * asks about a copy: the call fetches the whole object then, from a new start
+         * ([beginsAnew]).
+         *
+         * @return what [read] gave, or `null` when there is nothing to serve.
+         */
+        suspend fun <T : Any> serveConfirmedCopy(
+            start: DownloadStart,
+            read: suspend (FileCacheEntry) -> T?,
+        ): T? {
+            val copy = notModified.exchange(null) ?: return null
+            val served =
+                cache.withPinned(copy.entry) {
+                    if (cache.confirmCopy(copy.entry, copy.eTag, start)) read(copy.entry) else null
+                }
+            if (served != null) {
+                servedFromCache = true
+                engineLogger.debug {
+                    "Storage download $bucketId/$path not modified; serving the cached copy"
+                }
+                return served
+            }
+            mayAsk.store(false)
+            refetching.store(true)
+            engineLogger.debug {
+                "Storage download $bucketId/$path not modified, but its cached copy changed; " +
+                    "fetching it whole"
+            }
+            return null
+        }
+
+        /**
+         * Ends the download that began at [start] and begins it again when a 304 could not be
+         * served since ([serveConfirmedCopy]): whatever made the copy unusable, a write or a clear,
+         * happened before the whole object is fetched, so the fetch's bytes may be cached. Kept on
+         * [start], the commit would refuse them for it.
+         *
+         * @return the start the next request goes out under.
+         */
+        suspend fun beginsAnew(start: DownloadStart): DownloadStart {
+            if (!refetching.exchange(false)) return start
+            cache.endDownload(start)
+            return cache.beginDownload()
+        }
 
         /** Whether the request was stopped to wait for a download in flight. */
         val stoppedForDownloadInFlight: Boolean
@@ -460,20 +622,21 @@ internal class CachingBucketApi(
                     is SharedOutcome.Failed -> false
                 }
             if (!committed) return null
-            return read(entry)?.also { servedFromDownloadInFlight = true }
+            return read(entry)?.also { servedFromCache = true }
         }
     }
 
     /**
      * Runs [fetch], a download through [request]'s probe.
      *
-     * @return the fetch's result, or `null` when the probe stopped the request for an
+     * @return the fetch's result, `null` when the server answered 304 about a cached copy
+     *   ([ProbedRequest.send]), or `null` when the probe stopped the request for an
      *   [ensureCachedFile] download of the same entry in flight, which the caller then waits for
      *   ([ProbedRequest.serveFromDownloadInFlight]).
      */
     private suspend fun <T : Any> fetchUnlessDownloadInFlight(
         request: ProbedRequest,
-        fetch: suspend () -> T,
+        fetch: suspend () -> T?,
     ): T? =
         try {
             fetch()
@@ -487,7 +650,8 @@ internal class CachingBucketApi(
      * in memory. [channel] gets nothing until the download is complete, then is closed, as
      * supabase-kt does. A response that is not a success throws as the bytes download does, and
      * none of it reaches [channel] or the cache. An [ensureCachedFile] download of the same entry
-     * in flight is waited for instead, and its file streamed out.
+     * in flight is waited for instead, and its file streamed out; a 304 to the copy the request
+     * asked about streams that copy out.
      */
     private suspend fun downloadToChannel(
         path: String,
@@ -515,15 +679,21 @@ internal class CachingBucketApi(
         val probe = request.probe
         val sentUnsettled = isSessionUnsettled()
         val file = OwnedTemporaryFile()
-        val start = cache.beginDownload()
+        var start = cache.beginDownload()
         try {
-            suspend fun stream(): StreamedDownload =
-                downloadToTemporaryFile(
-                    file,
-                    entryProvider = { probe.entryToStore(cache, bucketId, path) },
-                    passThrough = channel,
-                ) { target ->
-                    fetch(target, probe.wrap(options))
+            // After the start, so a copy dropped since is never confirmed
+            request.readETags()
+            suspend fun stream(): StreamedDownload? =
+                request.send(refusesErrors = true) { answer ->
+                    downloadToTemporaryFile(
+                        file,
+                        entryProvider = { probe.entryToStore(cache, bucketId, path) },
+                        passThrough = channel,
+                    ) { target ->
+                        checkingDownloadStatus(answer) {
+                            uncheckedFetch(target, probe.wrap(options))
+                        }
+                    }
                 }
             suspend fun recoverInto(failure: Exception) {
                 recover(path, probe, failure, sentUnsettled) { entry ->
@@ -531,28 +701,27 @@ internal class CachingBucketApi(
                 }
                 channel.flushAndClose()
             }
-            val streamed =
-                try {
-                    fetchUnlessDownloadInFlight(request) { stream() }
-                } catch (failure: Exception) {
-                    currentCoroutineContext().ensureActive()
-                    recoverInto(failure)
-                    return
-                }
-            // The copy a download in flight committed is served outside that try: a copy that
-            // fails part-way must not be followed by the whole object from the recovery
-            val download =
-                streamed
-                    ?: request.serveFromDownloadInFlight { entry ->
-                        if (cache.copyTo(entry, channel)) StreamedDownload.Served else null
-                    }
-                    ?: try {
-                        stream()
+            suspend fun serve(entry: FileCacheEntry): StreamedDownload? =
+                if (cache.copyTo(entry, channel)) StreamedDownload.Served else null
+            var download: StreamedDownload? = null
+            // Three tries at most, as for a bytes download
+            while (download == null) {
+                val streamed =
+                    try {
+                        fetchUnlessDownloadInFlight(request) { stream() }
                     } catch (failure: Exception) {
                         currentCoroutineContext().ensureActive()
                         recoverInto(failure)
                         return
                     }
+                // A cached copy is served outside that try: a copy that fails part-way must not be
+                // followed by the whole object from the recovery
+                download =
+                    streamed
+                        ?: request.serveFromDownloadInFlight(::serve)
+                        ?: request.serveConfirmedCopy(start, ::serve)
+                if (download == null) start = request.beginsAnew(start)
+            }
             when (download) {
                 is StreamedDownload.Written -> commitAndStream(file, download, start, channel)
                 is StreamedDownload.CacheRefused -> {
@@ -563,7 +732,8 @@ internal class CachingBucketApi(
                 }
                 // Part of the object, or none: delivered as it came, and never cached
                 StreamedDownload.StreamedThrough,
-                // The whole object, from the copy the download in flight committed
+                // The whole object, from the copy the download in flight committed or the server
+                // confirmed
                 StreamedDownload.Served -> Unit
                 StreamedDownload.Uncacheable -> error("A channel download had no channel to fill")
             }
@@ -590,7 +760,7 @@ internal class CachingBucketApi(
             cache.copyFile(temporary.path, channel)
             return
         }
-        when (cache.commit(temporary, start)) {
+        when (cache.commit(temporary, start, download.eTag)) {
             CommitOutcome.COMMITTED -> {
                 file.temporary = null
                 if (!cache.copyTo(temporary.entry, channel)) {
@@ -642,10 +812,14 @@ internal class CachingBucketApi(
     /** How a streamed download into a temporary file ended, when it did not throw. */
     private sealed interface StreamedDownload {
         /**
-         * Every byte is in [temporary]. With [fetchedPart], the request fetched only part of the
-         * object, or none of it: the file is the caller's, never the cached copy.
+         * Every byte is in [temporary], sent under [eTag]. With [fetchedPart], the request fetched
+         * only part of the object, or none of it: the file is the caller's, never the cached copy.
          */
-        class Written(val temporary: TemporaryDownload, val fetchedPart: Boolean) : StreamedDownload
+        class Written(
+            val temporary: TemporaryDownload,
+            val fetchedPart: Boolean,
+            val eTag: String?,
+        ) : StreamedDownload
 
         /** The disk refused the copy; the download was abandoned. */
         class CacheRefused(val cause: Throwable?) : StreamedDownload
@@ -654,8 +828,8 @@ internal class CachingBucketApi(
         data object StreamedThrough : StreamedDownload
 
         /**
-         * Every byte went to the caller's channel from the cached copy an [ensureCachedFile]
-         * download in flight committed; nothing was fetched.
+         * Every byte went to the caller's channel from a cached copy: the one an [ensureCachedFile]
+         * download in flight committed, or the one the server answered 304 about.
          */
         data object Served : StreamedDownload
 
@@ -734,7 +908,7 @@ internal class CachingBucketApi(
             file.discard()
             return@coroutineScope StreamedDownload.CacheRefused(failure)
         }
-        StreamedDownload.Written(target, fetchedPart = checked.fetchedPart)
+        StreamedDownload.Written(target, fetchedPart = checked.fetchedPart, eTag = checked.eTag)
     }
 
     /**

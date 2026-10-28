@@ -55,6 +55,12 @@ class ClientCloseRaceIosTest {
         }
 
     @Test
+    fun flows_made_after_close_fail_with_the_closed_error_when_collected() =
+        runTest(timeout = 10.minutes) {
+            ClientCloseRaces.flowsMadeAfterCloseFailWhenCollected(directory, openClient)
+        }
+
+    @Test
     fun reads_racing_close_all_end_with_the_closed_error_and_never_crash() =
         runTest(timeout = 10.minutes) {
             ClientCloseRaces.readersRacingClose(directory, openClient, iterations = RACE_ITERATIONS)

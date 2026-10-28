@@ -267,6 +267,10 @@ public struct OfflineBucketApi: Sendable {
     /// The object at `path`: from the network first, kept in the file cache on success, and from
     /// the cached copy when the network fails.
     ///
+    /// The copy is kept with the `ETag` Storage sent, and the next download asks whether it changed:
+    /// "not modified" answers it from the copy, without the body, and moves the copy's
+    /// ``CachedFile/fetchedAt`` to now.
+    ///
     /// A "not found" from Storage drops the cached copy; another refusal is answered from the
     /// cached copy when there is one, and otherwise thrown as ``OfflineError/Code/server`` with
     /// Storage's status. A transformed download is cached apart from the original. Canceling the
