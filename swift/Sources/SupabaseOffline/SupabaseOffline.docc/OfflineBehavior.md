@@ -35,7 +35,8 @@ screen's row from the list, with the list's own request. Only a list of rows is 
 `head` read, ``OfflinePostgrestRequestBuilder/single()`` and the other formats go to the server
 under every strategy but `cacheOnly`, and fail offline. An answer says where it came from:
 ``OfflineResponse/isFromCache``, ``OfflineResponse/fetchedAt`` and
-``OfflineResponse/hasPendingMutations``.
+``OfflineResponse/hasPendingMutations``, and ``OfflineResponse/pendingRowKeys`` names the rows a
+queued write changed, as ``QuerySnapshot/pendingRowKeys`` does for a live read.
 
 A live read, ``OfflinePostgrestQueryBuilder/selectAsSequence(_:as:readStrategy:)``, takes its first
 rows as its ``SequenceReadStrategy`` says and then follows every write, sync, refresh and server

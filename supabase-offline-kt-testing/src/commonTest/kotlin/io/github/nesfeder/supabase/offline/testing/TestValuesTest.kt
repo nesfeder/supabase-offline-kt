@@ -9,11 +9,13 @@ import io.github.jan.supabase.postgrest.result.PostgrestResult
 import io.github.nesfeder.supabase.offline.MutationOperation
 import io.github.nesfeder.supabase.offline.NetworkStatus
 import io.github.nesfeder.supabase.offline.RealtimeStatus
+import io.github.nesfeder.supabase.offline.RefreshState
 import io.github.nesfeder.supabase.offline.SyncStopReason
 import io.github.nesfeder.supabase.offline.fetchedAt
 import io.github.nesfeder.supabase.offline.hasPendingMutations
 import io.github.nesfeder.supabase.offline.isFromCache
 import io.github.nesfeder.supabase.offline.isNetworkOrConnectivityFailure
+import io.github.nesfeder.supabase.offline.pendingRowKeys
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respondOk
 import io.ktor.http.Headers
@@ -397,6 +399,37 @@ class TestValuesTest {
         assertFalse(clean.hasPendingMutations)
         assertFalse(fromServer.isFromCache)
         assertNull(fromServer.fetchedAt)
+    }
+
+    @Test
+    fun the_overloads_that_take_row_keys_name_those_rows_and_read_as_pending_when_there_are_any() {
+        // Given
+        val supabase =
+            createSupabaseClient("https://unit-test.supabase.co", "unit-test-anon-key") {
+                httpEngine = MockEngine { respondOk() }
+                install(Postgrest)
+            }
+        val fetchedAt = Instant.parse("2026-01-01T08:30:00.123Z")
+        val keys = setOf(buildJsonObject { put("id", "a1") })
+
+        // When
+        val snapshot = querySnapshot(null, isFromCache = true, fetchedAt, pendingRowKeys = keys)
+        val noKeys = querySnapshot(null, isFromCache = true, fetchedAt, pendingRowKeys = emptySet())
+        val result = cachedResult(ROWS, supabase, fetchedAt, pendingRowKeys = keys)
+        val clean = cachedResult(ROWS, supabase, fetchedAt, pendingRowKeys = emptySet())
+        val plain = querySnapshot(result = null, isFromCache = true, fetchedAt = fetchedAt)
+
+        // Then
+        assertEquals(keys, snapshot.pendingRowKeys)
+        assertTrue(snapshot.hasPendingMutations)
+        assertEquals(RefreshState.Idle, snapshot.refresh)
+        assertFalse(noKeys.hasPendingMutations)
+        assertEquals(keys, result.pendingRowKeys)
+        assertTrue(result.hasPendingMutations)
+        assertTrue(result.isFromCache)
+        assertFalse(clean.hasPendingMutations)
+        assertEquals(emptySet(), clean.pendingRowKeys)
+        assertEquals(emptySet(), plain.pendingRowKeys)
     }
 
     @Test

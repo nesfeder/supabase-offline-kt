@@ -221,9 +221,16 @@ internal fun CachedFile.toPhotoFile(): PhotoFile = PhotoFile(path, fetchedAt, si
 
 // --8<-- [end:cached-file]
 
-/** The `id` values in the row keys of these queued writes. */
-internal fun List<PendingMutation>.rowIds(): Set<String> =
-    flatMapTo(HashSet()) { mutation -> mutation.rowKeys.mapNotNull { it.idOrNull() } }
+// --8<-- [start:pending-marks]
+/**
+ * The `id` of each row a queued write added, changed or removed in this snapshot: the rows the
+ * screens mark with a cloud. The keys come in the emission that shows the rows, so a row's mark
+ * never lags its rows, as it could when read from the queue's own flow beside them.
+ */
+internal fun QuerySnapshot.pendingRowIds(): Set<String> =
+    pendingRowKeys.mapNotNullTo(HashSet()) { key -> key.idOrNull() }
+
+// --8<-- [end:pending-marks]
 
 private fun MutationOperation.toTaskMutationOperation(): TaskMutationOperation =
     when (this) {

@@ -35,8 +35,11 @@ client reports, for fakes of your own.
 - ``mutationConflict(mutationId:table:operation:rowKey:base:local:server:changedOnServer:conflictingColumns:)``
 - ``conflictedMutation(id:table:operation:createdAt:rowKeys:body:base:server:serverVersion:changedOnServer:conflictingColumns:message:conflictedAt:)``
 - ``querySnapshot(result:isFromCache:fetchedAt:hasPendingMutations:refresh:)``
+- ``querySnapshot(result:isFromCache:fetchedAt:pendingRowKeys:refresh:)``
 - ``offlineResponse(value:data:count:isFromCache:fetchedAt:hasPendingMutations:)``
+- ``offlineResponse(value:data:count:isFromCache:fetchedAt:pendingRowKeys:)``
 - ``cachedResponse(value:data:count:fetchedAt:hasPendingMutations:)``
+- ``cachedResponse(value:data:count:fetchedAt:pendingRowKeys:)``
 - ``cachedFile(path:fetchedAt:sizeBytes:)``
 - ``downloadProgress(bytesReceived:totalBytes:)``
 

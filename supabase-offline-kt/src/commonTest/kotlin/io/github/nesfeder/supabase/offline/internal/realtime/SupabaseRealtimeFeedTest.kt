@@ -303,9 +303,9 @@ class SupabaseRealtimeFeedTest {
                 // When — the server refuses the tasks binding
                 two.socket.answer(bindingRefused(two.tasksJoin.topic))
 
-                // Then — supabase-kt's rejoin leaves the channel from inside the read loop, which
-                // then waits for a reply only it could read; the socket is closed, which frees it
-                assertEquals(two.tasksJoin.topic, two.socket.awaitSent("phx_leave").topic)
+                // Then — supabase-kt's rejoin marks the channel leaving from inside the read loop,
+                // which then waits for a reply only it could read; the socket is closed, which
+                // frees it
                 two.socket.awaitDisconnected()
                 val tasksEnded = withTimeout(10.seconds) { two.tasksOutcome.receive() }
                 assertTrue(tasksEnded.exceptionOrNull() is ServerChangeFeedEndedException)
@@ -313,6 +313,16 @@ class SupabaseRealtimeFeedTest {
                 // And — the audit feed ends with the socket, for the follower to join it again
                 val auditEnded = withTimeout(10.seconds) { two.auditOutcome.receive() }
                 assertTrue(auditEnded.exceptionOrNull() is ServerChangeFeedEndedException)
+
+                // And — no leave went out for the audit channel, which ended with the socket.
+                // supabase-kt marks the tasks channel leaving before it writes its leave, and the
+                // socket may close in between, so that leave is there only when it won the race
+                val leaves = buildList {
+                    for (message in two.socket.sent) {
+                        if (message.event == "phx_leave") add(message.topic)
+                    }
+                }
+                assertTrue(leaves.all { topic -> topic == two.tasksJoin.topic }, "$leaves")
             }
             supabase.close()
         }
