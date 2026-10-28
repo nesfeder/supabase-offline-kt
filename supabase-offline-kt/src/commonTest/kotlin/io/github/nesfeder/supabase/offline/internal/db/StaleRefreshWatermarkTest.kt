@@ -419,42 +419,44 @@ class StaleRefreshWatermarkTest {
         assertEquals(emptyList(), mutationDao.inserted)
     }
 
-    // ── what moves the watermark ───────────────────────────────────────────
+    // ── server changes ─────────────────────────────────────────────────────
 
     @Test
-    fun a_batch_of_server_records_that_reaches_a_cached_query_moves_the_watermark() = runTest {
-        // Given — a cached list, and a refresh of it out at tick 10
-        val queryCacheDao = FakeQueryCacheDao()
-        queryCacheDao.seedPayload("projects", "sig-A", oneProject)
-        var tick = 10L
-        val store = buildStore(queryCacheDao, tick = { tick })
-        val requestStartedAtTick = store.freshness.tickNow()
+    fun a_batch_of_server_records_applied_while_a_request_is_out_is_laid_over_its_answer() =
+        runTest {
+            // Given — a cached list, and a refresh of it out at tick 10
+            val queryCacheDao = FakeQueryCacheDao()
+            queryCacheDao.seedPayload("projects", "sig-A", oneProject)
+            var tick = 10L
+            val store = buildStore(queryCacheDao, tick = { tick })
+            val requestStartedAtTick = store.freshness.tickNow()
 
-        // When — a burst that adds two rows is applied as one patch while the request is out
-        tick = 20L
-        store.cachePatcher.patchServerChanges(
-            table = "projects",
-            keyColumns = listOf("id"),
-            changes = listOf(serverRecord("project-2"), serverRecord("project-3")),
-        )
-
-        // And — the pre-burst response lands
-        tick = 30L
-        val outcome =
-            store.queryCache.cacheResponse(
+            // When — a burst that adds two rows is applied as one patch while the request is out
+            tick = 20L
+            store.cachePatcher.patchServerChanges(
                 table = "projects",
-                cacheKey = "sig-A",
-                payload = oneProject,
-                requestStartedAtTick = requestStartedAtTick,
+                keyColumns = listOf("id"),
+                changes = listOf(serverRecord("project-2"), serverRecord("project-3")),
             )
 
-        // Then — it is refused: the list holds the burst, which the response cannot
-        assertEquals(CacheWriteOutcome.REFUSED_STALE, outcome)
-        assertEquals(
-            """[{"id":"project-1"},{"id":"project-2"},{"id":"project-3"}]""",
-            queryCacheDao.getRow("projects", "sig-A")?.payload,
-        )
-    }
+            // And — the pre-burst response lands
+            tick = 30L
+            val outcome =
+                store.queryCache.cacheResponse(
+                    table = "projects",
+                    cacheKey = "sig-A",
+                    payload = oneProject,
+                    requestStartedAtTick = requestStartedAtTick,
+                )
+
+            // Then — it is written with the burst laid over it: the list keeps both rows, and
+            // the server changes do not hold the refresh back
+            assertEquals(CacheWriteOutcome.WRITTEN, outcome)
+            assertEquals(
+                """[{"id":"project-1"},{"id":"project-2"},{"id":"project-3"}]""",
+                queryCacheDao.getRow("projects", "sig-A")?.payload,
+            )
+        }
 
     // ── helpers ─────────────────────────────────────────────────────────────
 

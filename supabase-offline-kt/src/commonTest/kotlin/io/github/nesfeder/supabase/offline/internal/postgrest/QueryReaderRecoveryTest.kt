@@ -12,7 +12,9 @@ import io.github.nesfeder.supabase.offline.MutationOperation
 import io.github.nesfeder.supabase.offline.QuerySnapshot
 import io.github.nesfeder.supabase.offline.ReadStrategy
 import io.github.nesfeder.supabase.offline.RefreshState
+import io.github.nesfeder.supabase.offline.internal.cache.ServerRowChange
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentity
+import io.github.nesfeder.supabase.offline.isFromCache
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeRemoteTable
@@ -44,6 +46,7 @@ import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.currentTime
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.add
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
@@ -1413,6 +1416,107 @@ class QueryReaderRecoveryTest {
             collector.cancelAndJoin()
         }
 
+    @Test
+    fun a_refresh_whose_answer_left_before_a_server_delete_lands_without_the_row() =
+        runTest(UnconfinedTestDispatcher()) {
+            // Given: the cache primed with the server's two rows, and another user who deletes
+            // project-2 while the next refresh is out, after the server read its answer
+            val postgrest = testPostgrest()
+            val bothProjects = """[{"id":"project-1"},{"id":"project-2"}]"""
+            var serverRows = bothProjects
+            var networkCalls = 0
+            val queryCacheDao = FakeQueryCacheDao()
+            val store = buildStore(queryCacheDao)
+            val remoteTable =
+                FakeRemoteTable(
+                    table = "projects",
+                    postgrest = postgrest,
+                    onSelect = {
+                        networkCalls++
+                        val answer = serverRows
+                        if (networkCalls == 2) {
+                            serverRows = freshPayload
+                            store.cachePatcher.patchServerChanges(
+                                table = "projects",
+                                keyColumns = listOf("id"),
+                                changes = listOf(serverDeleteOf("project-2")),
+                            )
+                        }
+                        postgrestResultOf(answer, postgrest)
+                    },
+                )
+            val resolver = buildResolver(remoteTable, backgroundScope, store = store)
+            val primingCollector = launch {
+                resolver
+                    .selectAsFlow(Columns.ALL, FlowReadStrategy.CacheFirstThenNetwork) {}
+                    .collect {}
+            }
+            advanceUntilIdle()
+            primingCollector.cancelAndJoin()
+            // Let the single-flight share tear down so the next subscription refreshes for real.
+            advanceUntilIdle()
+
+            // When: a new subscription's refresh goes out, and the delete arrives meanwhile
+            val reads = mutableListOf<QuerySnapshot>()
+            val collector = launch {
+                resolver
+                    .selectAsFlow(Columns.ALL, FlowReadStrategy.CacheFirstThenNetwork) {}
+                    .collect { read -> reads += read }
+            }
+            runCurrent()
+
+            // Then: the answer lands at once, with the delete laid over it, and the read settles
+            assertEquals(2, networkCalls, "the answer was written, not refused and asked again")
+            val settled = reads.last()
+            assertIs<RefreshState.Idle>(settled.refresh)
+            assertEquals(freshPayload, settled.result?.data)
+            assertFalse(settled.isFromCache)
+            assertEquals(freshPayload, queryCacheDao.allForTable("projects").single().payload)
+
+            collector.cancelAndJoin()
+        }
+
+    @Test
+    fun a_one_shot_answer_that_left_before_a_server_delete_is_served_without_the_row() =
+        runTest(UnconfinedTestDispatcher()) {
+            // Given: a server whose answer holds project-2, which another user deletes after the
+            // server read it and before it arrives
+            val postgrest = testPostgrest()
+            var serverRows = """[{"id":"project-1"},{"id":"project-2"}]"""
+            var networkCalls = 0
+            val queryCacheDao = FakeQueryCacheDao()
+            val store = buildStore(queryCacheDao)
+            val remoteTable =
+                FakeRemoteTable(
+                    table = "projects",
+                    postgrest = postgrest,
+                    onSelect = {
+                        networkCalls++
+                        val answer = serverRows
+                        if (networkCalls == 1) {
+                            serverRows = freshPayload
+                            store.cachePatcher.patchServerChanges(
+                                table = "projects",
+                                keyColumns = listOf("id"),
+                                changes = listOf(serverDeleteOf("project-2")),
+                            )
+                        }
+                        postgrestResultOf(answer, postgrest)
+                    },
+                )
+            val resolver = buildResolver(remoteTable, backgroundScope, store = store)
+
+            // When: a one-shot network-first read asks
+            val result = resolver.select(Columns.ALL, ReadStrategy.NetworkFirst()) {}
+
+            // Then: it is answered with what the cache wrote, the delete laid over the server's
+            // rows, in one request
+            assertEquals(freshPayload, result.data)
+            assertFalse(result.isFromCache)
+            assertEquals(1, networkCalls)
+            assertEquals(freshPayload, queryCacheDao.allForTable("projects").single().payload)
+        }
+
     // ── helpers ─────────────────────────────────────────────────────────────
 
     private fun buildResolver(
@@ -1433,6 +1537,21 @@ class QueryReaderRecoveryTest {
             trustPolicy = ResponseTrustPolicy.AUTHENTICATED_SESSION_ONLY,
             liveQueries = LiveQueries(scope),
             wakeUps = wakeUps,
+        )
+
+    /** Another user's delete of the project [id], as Realtime reports it. */
+    private fun serverDeleteOf(id: String): ServerRowChange =
+        ServerRowChange(
+            record = buildJsonObject { put("id", id) },
+            keyFilterJson =
+                encodeFilter(
+                    FilterDescriptor(
+                        conditions =
+                            listOf(FilterDescriptor.Condition("id", operatorId = "eq", value = id))
+                    ),
+                    Json,
+                ),
+            deleted = true,
         )
 
     /**

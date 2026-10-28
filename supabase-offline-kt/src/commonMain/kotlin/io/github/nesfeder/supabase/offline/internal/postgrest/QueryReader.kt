@@ -98,6 +98,8 @@ internal class StaleResponseException(table: String) :
  * @property receivedAtMillis when it arrived, by the reader's clock.
  * @property isRowList whether the body is a list of rows the cache may hold; see
  *   [isRowListResponse].
+ * @property rebasedPayload the rows the cache wrote in its place, with the server changes its
+ *   request left before laid over them; `null` when it wrote [response] as it came, or nothing.
  */
 private data class FetchedResponse(
     val response: PostgrestResult,
@@ -106,6 +108,7 @@ private data class FetchedResponse(
     val outcome: CacheWriteOutcome,
     val receivedAtMillis: Long,
     val isRowList: Boolean,
+    val rebasedPayload: String? = null,
 ) {
     /** Whether the server's own body held no rows: an empty list, not a body of another shape. */
     val isEmpty: Boolean
@@ -1143,12 +1146,13 @@ internal class QueryReader(
     }
 
     /**
-     * Sends the SELECT and offers its response to the cache, which refuses one that could roll back
-     * a newer local write (then this asks once more, since that request starts after the write; a
-     * reactive read's loop keeps asking after that), one that left before local data was cleared,
-     * an untrusted one, one that is not a list of rows ([isRowListResponse]), and an empty one that
-     * is not authoritative. A written one retires the synced mutations every cached query now
-     * holds.
+     * Sends the SELECT and offers its response to the cache, which lays over it the server changes
+     * applied to the table while it was out, and refuses one that could roll back a newer local
+     * write, or that those changes cannot be laid over exactly (then this asks once more, since
+     * that request starts after them; a reactive read's loop keeps asking after that), one that
+     * left before local data was cleared, an untrusted one, one that is not a list of rows
+     * ([isRowListResponse]), and an empty one that is not authoritative. A written one retires the
+     * synced mutations every cached query now holds.
      */
     private suspend fun fetchAndCache(
         slot: CacheSlot,
@@ -1174,8 +1178,8 @@ internal class QueryReader(
                     PostgrestResult(EMPTY_JSON_ARRAY, sent.headers, delegate.postgrest)
                 else sent
             val isEmpty = isRowList && isEmptyJsonArrayPayload(response.data)
-            val outcome =
-                queryCache.cacheResponse(
+            val written =
+                queryCache.cacheResponseReporting(
                     table = table,
                     cacheKey = cacheKey,
                     payload = response.data,
@@ -1188,6 +1192,7 @@ internal class QueryReader(
                                 trustPolicy.mayCache(sessionBefore, sessionAfter, isEmpty = false)),
                     shape = slot.shape,
                 )
+            val outcome = written.outcome
             when (outcome) {
                 CacheWriteOutcome.REFUSED_AFTER_CLEAR ->
                     engineLogger.info {
@@ -1215,14 +1220,17 @@ internal class QueryReader(
                 outcome,
                 nowMillis(),
                 isRowList,
+                written.rebasedPayload,
             )
         }
     }
 
     /**
-     * What a one-shot read serves for [fetched]: the server's rows, or the cache when they were
-     * refused as older than a local write, or when they are not a list of rows and the cache holds
-     * rows [cacheServes] takes (`null` never does), with pending mutations overlaid.
+     * What a one-shot read serves for [fetched]: the server's rows (as the cache wrote them, with
+     * the server changes its request left before laid over them, without the server's headers), or
+     * the cache when they were refused as older than a local write, or when they are not a list of
+     * rows and the cache holds rows [cacheServes] takes (`null` never does), with pending mutations
+     * overlaid.
      */
     private suspend fun overlaidResponse(
         slot: CacheSlot,
@@ -1244,12 +1252,13 @@ internal class QueryReader(
             } else {
                 null
             }
+        // The rows the cache took: the server's, with the server changes it left before laid over
         val overlaid =
             cached?.overlay
                 ?: queryOverlay.overlayPendingOnResponseReporting(
                     table = table,
                     cacheKey = cacheKey,
-                    serverJson = fetched.response.data,
+                    serverJson = fetched.rebasedPayload ?: fetched.response.data,
                     shape = slot.shape,
                 )
         val provenance =
@@ -1261,7 +1270,9 @@ internal class QueryReader(
                 hasPendingMutations = overlaid.hasPendingMutations,
             )
         // The server's own headers stay with its own rows: a count, for one
-        val headers = if (cached == null) fetched.response.headers else Headers.Empty
+        val headers =
+            if (cached == null && fetched.rebasedPayload == null) fetched.response.headers
+            else Headers.Empty
         return provenancedResult(overlaid.payload, delegate.postgrest, provenance, headers)
     }
 

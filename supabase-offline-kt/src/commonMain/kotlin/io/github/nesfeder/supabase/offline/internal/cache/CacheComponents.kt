@@ -28,7 +28,8 @@ import kotlinx.coroutines.flow.Flow
  * @property mutationQueue the mutation queue.
  * @property queryCache the cached queries.
  * @property queryOverlay the reads served with the queued mutations laid over them.
- * @property cachePatcher patches an online write into the cached queries.
+ * @property cachePatcher patches an online write into the cached queries, and lays the server
+ *   changes a response's request left before over it.
  * @property localData clears local data, or drops the caches for a new owner, in the one lock
  *   order.
  */
@@ -164,6 +165,7 @@ internal fun buildCacheComponents(
             liveCacheKeysOf = liveCacheKeysOf,
             onQueriesMarkedStale = onQueriesMarkedStale,
         )
+    queryCache.rebaseResponsesThrough(cachePatcher)
     val localData =
         LocalData(
             queryCacheDao = countingQueryCacheDao,

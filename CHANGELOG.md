@@ -153,6 +153,11 @@ All notable changes to this project are recorded in this file. The format follow
   `NetworkFirstThenCache` read whose first fetch is refused that way stays `Refreshing` too. Before,
   the second refusal settled the read on the rows it had and reported `Idle`, so a busy table, or a
   reconnect with queued writes, could leave a list stale for good.
+- An answer whose request left before a Realtime event or a server record reached the table is
+  written with that change laid over it, so a refresh lands while other users keep changing a
+  shared table. Before, every such change refused the answers in flight, and a list read
+  `Refreshing` until the changes paused; a row deleted while a request was out is still not brought
+  back.
 - A burst of changes on a followed table, as one statement over a few hundred visible rows sends,
   overflowed the two buffers between the Realtime plugin and the cache, the plugin's own and the
   library's, past about 130 waiting changes, and the newest were dropped without a log or a stale

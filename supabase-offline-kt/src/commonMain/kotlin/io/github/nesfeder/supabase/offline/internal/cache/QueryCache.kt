@@ -3,6 +3,7 @@
 package io.github.nesfeder.supabase.offline.internal.cache
 
 import io.github.nesfeder.supabase.offline.internal.db.CachedQueryRow
+import io.github.nesfeder.supabase.offline.internal.db.MutationRow
 import io.github.nesfeder.supabase.offline.internal.db.PayloadLength
 import io.github.nesfeder.supabase.offline.internal.db.PayloadWriteCountingDao
 import io.github.nesfeder.supabase.offline.internal.db.QueryCacheDao
@@ -32,8 +33,9 @@ internal enum class CacheWriteOutcome {
     WRITTEN,
 
     /**
-     * Its request started before the table's last local write, so it would roll that write back.
-     * The caller fetches again: a request issued now starts after the write.
+     * Its request started before the table's last local write, so it would roll that write back, or
+     * before a server change the cache cannot lay over it exactly. The caller fetches again: a
+     * request issued now starts after the write.
      */
     REFUSED_STALE,
 
@@ -63,6 +65,38 @@ internal enum class CacheWriteOutcome {
      * the cache is the current identity's.
      */
     REFUSED_OTHER_OWNER,
+}
+
+/**
+ * What [QueryCache.cacheResponseReporting] did with a response.
+ *
+ * @property outcome whether it was written, or why not.
+ * @property rebasedPayload the rows written in its place when server changes patched in after its
+ *   request left changed them ([ResponseRebase]); `null` when it was written as it came, or not
+ *   written.
+ */
+internal class ResponseWrite(val outcome: CacheWriteOutcome, val rebasedPayload: String? = null)
+
+/**
+ * Lays the server changes a response's request left before over its rows, as patching them in would
+ * have had the response landed first; [CachePatcher] does, with the patch's own overlay.
+ */
+internal fun interface ResponseRebase {
+
+    /**
+     * [answer], the rows a response holds for [table]/[cacheKey], with [writes], whole-row upserts
+     * and deletes by key, laid over them in order: [answer] itself when they change none of its
+     * rows, or `null` when they may leave the query wrong. Caller holds [table]'s write lock.
+     *
+     * @param shape the query's shape; `null` reads the one recorded for [cacheKey].
+     */
+    suspend fun rebase(
+        table: String,
+        cacheKey: String,
+        shape: QueryShape?,
+        answer: ParsedPayload,
+        writes: List<MutationRow>,
+    ): ParsedPayload?
 }
 
 /**
@@ -151,21 +185,21 @@ internal class QueryCache(
     val payloadParses: Int
         get() = parses.load()
 
+    /**
+     * Where a response has the server changes its request left before laid over it: nowhere until
+     * [rebaseResponsesThrough] is called, and a response that needs it is refused as stale.
+     */
+    private val responseRebase = AtomicReference<ResponseRebase?>(null)
+
+    /** Lays server changes over every later response through [rebase]; called once, as built. */
+    fun rebaseResponsesThrough(rebase: ResponseRebase) {
+        responseRebase.store(rebase)
+    }
+
     /** [table]'s write lock; see [TableWriteLocks]. */
     suspend fun tableWriteLock(table: String): Mutex = tableWriteLocks.of(table)
 
-    /**
-     * Writes a network SELECT's [payload] for [table]/[cacheKey] unless a guard refuses it (see
-     * [CacheWriteOutcome]); with a start tick it holds the mutations synced so far. The guards and
-     * the write are one step under the table's lock, the queue lock and the clear lock, in order.
-     * Only a JSON array is written: a blank body stands for an empty list and is stored as `[]`,
-     * and a body of any other shape is refused as untrusted. A written payload may start an
-     * eviction pass, in [backgroundScope] after this returns.
-     *
-     * @param authoritativeEmpty whether an empty [payload] is the server's real answer (signed in).
-     * @param requestStartedAtTick the request's start tick, or `null` for none: never stale.
-     * @param shape the query's shape, recorded with the payload before the lock is released.
-     */
+    /** [cacheResponseReporting]'s outcome alone. */
     suspend fun cacheResponse(
         table: String,
         cacheKey: String,
@@ -174,7 +208,42 @@ internal class QueryCache(
         requestStartedAtTick: Long? = null,
         isTrusted: Boolean = true,
         shape: QueryShape? = null,
-    ): CacheWriteOutcome {
+    ): CacheWriteOutcome =
+        cacheResponseReporting(
+                table,
+                cacheKey,
+                payload,
+                authoritativeEmpty,
+                requestStartedAtTick,
+                isTrusted,
+                shape,
+            )
+            .outcome
+
+    /**
+     * Writes a network SELECT's [payload] for [table]/[cacheKey] unless a guard refuses it (see
+     * [CacheWriteOutcome]); with a start tick it holds the mutations synced so far. The server
+     * changes patched into the table after the request started ([CacheFreshness.serverWritesSince])
+     * are laid over it first, so a row one deleted or changed is not brought back; when that may
+     * leave the query wrong, it is refused as stale. The guards and the write are one step under
+     * the table's lock, the queue lock and the clear lock, in order. Only a JSON array is written:
+     * a blank body stands for an empty list and is stored as `[]`, and a body of any other shape is
+     * refused as untrusted. A written payload may start an eviction pass, in [backgroundScope]
+     * after this returns.
+     *
+     * @param authoritativeEmpty whether an empty [payload] is the server's real answer (signed in).
+     * @param requestStartedAtTick the request's start tick, or `null` for none: never stale.
+     * @param shape the query's shape, recorded with the payload before the lock is released.
+     */
+    suspend fun cacheResponseReporting(
+        table: String,
+        cacheKey: String,
+        payload: String,
+        authoritativeEmpty: Boolean = false,
+        requestStartedAtTick: Long? = null,
+        isTrusted: Boolean = true,
+        shape: QueryShape? = null,
+    ): ResponseWrite {
         requireUserTable(table)
         // A blank body stands for an empty list and is stored as one, so a read is served a list
         val rows = if (payload.isBlank()) EMPTY_JSON_ARRAY else payload
@@ -182,12 +251,17 @@ internal class QueryCache(
         // between here and the write is caught by its tick below.
         val ownedByCurrentIdentity = ownership.cacheTakesWritesOfCurrentIdentity()
         var replacedLength = 0L
+        var laidOver: LaidOver = LaidOver.None
         // The guards and the write are one critical section under the table's write lock, so a
         // response is judged against the watermark *after* any overlay in progress has recorded
         // its write, and never lands between an overlay's snapshot and its write-back (where the
         // overlay would roll it straight back out) — see [TableWriteLocks].
         val outcome =
             tableWriteLocks.of(table).withLock {
+                // Under the table's lock, which every server patch logs under, and before the
+                // queue and clear locks: laying the changes over reads the table's other payloads
+                laidOver = serverChangesLaidOver(table, cacheKey, rows, requestStartedAtTick, shape)
+                val written = (laidOver as? LaidOver.Exactly)?.payload?.text ?: rows
                 mutationQueue.holdingQueueLock {
                     freshness.holdingClearLock {
                         when {
@@ -214,6 +288,11 @@ internal class QueryCache(
                             !isTrusted || !isJsonArrayPayload(rows) ->
                                 CacheWriteOutcome.REFUSED_UNTRUSTED
 
+                            // A server change patched in after the request left that the cache
+                            // cannot lay over these rows exactly: the response may bring back what
+                            // it deleted, or show a row it changed wrong
+                            laidOver == LaidOver.Inexactly -> CacheWriteOutcome.REFUSED_STALE
+
                             // Nothing about this emptiness is known to describe the signed-in
                             // user's data, so it is never written — not over cached rows, and not
                             // into a cold or already-empty slot where it would become the answer
@@ -233,7 +312,7 @@ internal class QueryCache(
                                     CachedQueryRow(
                                         table = table,
                                         cacheKey = cacheKey,
-                                        payload = rows,
+                                        payload = written,
                                         updatedAt = nowMillis(),
                                         syncedThrough =
                                             if (requestStartedAtTick != null)
@@ -252,12 +331,56 @@ internal class QueryCache(
                 }
             }
 
+        val rebased = (laidOver as? LaidOver.Exactly)?.payload
         if (outcome == CacheWriteOutcome.WRITTEN) {
-            payloadBytesWritten(rows.length - replacedLength)
+            // What the next read or patch reads, kept as parsed here so it parses nothing
+            rebased?.let { payload -> keepParsed(table, cacheKey, payload) }
+            payloadBytesWritten((rebased?.text ?: rows).length - replacedLength)
             // Off the read path: a pass takes its own lock and reads every payload's length
             if (sizeMayBeOverBound()) enforceSizeInBackground()
         }
-        return outcome
+        return ResponseWrite(
+            outcome,
+            rebasedPayload =
+                rebased?.text?.takeIf { text ->
+                    outcome == CacheWriteOutcome.WRITTEN && text != rows
+                },
+        )
+    }
+
+    /**
+     * The server changes patched into [table] after [requestStartedAtTick], laid over [rows], an
+     * answer for [cacheKey]; see [LaidOver]. Caller holds the table's write lock.
+     */
+    private suspend fun serverChangesLaidOver(
+        table: String,
+        cacheKey: String,
+        rows: String,
+        requestStartedAtTick: Long?,
+        shape: QueryShape?,
+    ): LaidOver {
+        val writes = freshness.serverWritesSince(table, requestStartedAtTick)
+        if (writes.isEmpty()) return LaidOver.None
+        // Not a list of rows: one that is not even an array is refused as untrusted first
+        val answer = payloadRowsOf(json, rows)?.let { parsed -> ParsedPayload(rows, parsed) }
+        val rebase = responseRebase.load()
+        if (answer == null || rebase == null) return LaidOver.Inexactly
+        val rebased =
+            rebase.rebase(table, cacheKey, shape, answer, writes) ?: return LaidOver.Inexactly
+        return LaidOver.Exactly(rebased)
+    }
+
+    /** What [serverChangesLaidOver] made of the server changes a response's request left before. */
+    private sealed interface LaidOver {
+
+        /** None were patched in since: the response is judged and written as it came. */
+        data object None : LaidOver
+
+        /** Laid over exactly: [payload] is written in the response's place. */
+        class Exactly(val payload: ParsedPayload) : LaidOver
+
+        /** They may leave the query wrong, or cannot be laid over: the response is refused. */
+        data object Inexactly : LaidOver
     }
 
     /**
