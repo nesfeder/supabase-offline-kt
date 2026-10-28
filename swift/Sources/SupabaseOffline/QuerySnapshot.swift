@@ -27,12 +27,28 @@ public struct QuerySnapshot<Value: Sendable>: Sendable {
     /// How the refresh behind the read stands.
     public let refresh: RefreshState
 
-    package init(result: Value?, isFromCache: Bool, fetchedAt: Date?, hasPendingMutations: Bool, refresh: RefreshState) {
+    /// Which rows a queued write added, changed or removed: the primary key of each, as the table's
+    /// key columns with the values the row holds. A row such a write removed keeps its key here, as
+    /// it last showed it; a row without its whole key adds none, so the set can be empty while
+    /// ``hasPendingMutations`` is `true`, and is always empty while it is `false`. Both come from
+    /// the pass that laid the writes over the rows, so the set always describes this snapshot's
+    /// rows.
+    public let pendingRowKeys: Set<[String: OfflineJSON]>
+
+    package init(
+        result: Value?,
+        isFromCache: Bool,
+        fetchedAt: Date?,
+        hasPendingMutations: Bool,
+        refresh: RefreshState,
+        pendingRowKeys: Set<[String: OfflineJSON]> = []
+    ) {
         self.result = result
         self.isFromCache = isFromCache
         self.fetchedAt = fetchedAt
         self.hasPendingMutations = hasPendingMutations
         self.refresh = refresh
+        self.pendingRowKeys = pendingRowKeys
     }
 }
 
@@ -47,7 +63,8 @@ extension QuerySnapshot {
             isFromCache: snapshot.isFromCache,
             fetchedAt: snapshot.fetchedAtEpochMillis.map { Date(epochMilliseconds: $0.int64Value) },
             hasPendingMutations: snapshot.hasPendingMutations,
-            refresh: RefreshState(core: snapshot.refresh)
+            refresh: RefreshState(core: snapshot.refresh),
+            pendingRowKeys: try RowCoding.decode(Set<[String: OfflineJSON]>.self, from: snapshot.pendingRowKeysJson)
         )
     }
 }

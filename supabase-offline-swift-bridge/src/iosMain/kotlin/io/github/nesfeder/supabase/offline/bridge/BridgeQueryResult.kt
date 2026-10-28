@@ -13,6 +13,8 @@ package io.github.nesfeder.supabase.offline.bridge
  * @property fetchedAtEpochMillis when the rows were fetched from the server, by the device's clock,
  *   in milliseconds since 1970; `null` for an answer the library did not stamp.
  * @property hasPendingMutations whether a queued write changed one of the rows.
+ * @property pendingRowKeysJson the primary keys of the rows a queued write added, changed or
+ *   removed, as text: a JSON array of objects, `[]` for none.
  */
 public class BridgeQueryResult
 internal constructor(
@@ -21,6 +23,7 @@ internal constructor(
     public val isFromCache: Boolean,
     public val fetchedAtEpochMillis: Long?,
     public val hasPendingMutations: Boolean,
+    public val pendingRowKeysJson: String,
 )
 
 /**
@@ -33,6 +36,8 @@ internal constructor(
  * @property fetchedAtEpochMillis when the rows were fetched, in milliseconds since 1970, or `null`.
  * @property hasPendingMutations whether a queued write changed one of the rows shown.
  * @property refresh how the refresh behind the read stands.
+ * @property pendingRowKeysJson the primary keys of the rows a queued write added, changed or
+ *   removed, as text: a JSON array of objects, `[]` for none.
  */
 public class BridgeQuerySnapshot
 internal constructor(
@@ -41,6 +46,7 @@ internal constructor(
     public val fetchedAtEpochMillis: Long?,
     public val hasPendingMutations: Boolean,
     public val refresh: BridgeRefreshState,
+    public val pendingRowKeysJson: String,
 )
 
 /**

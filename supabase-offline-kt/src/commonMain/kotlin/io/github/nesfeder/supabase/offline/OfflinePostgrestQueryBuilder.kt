@@ -99,7 +99,8 @@ public class OfflinePostgrestQueryBuilder internal constructor(private val engin
      * @param request filters, order, range and the rest of the request, as in supabase-kt.
      * @return the server's response, or the cached rows (with the user's queued writes applied) as
      *   a result of the same shape. [PostgrestResult.isFromCache], [PostgrestResult.fetchedAt] and
-     *   [PostgrestResult.hasPendingMutations] say which, and how old.
+     *   [PostgrestResult.hasPendingMutations] say which, and how old;
+     *   [PostgrestResult.pendingRowKeys] names the rows a queued write changed.
      * @throws CacheMissException under [ReadStrategy.CacheOnly], when nothing cached may answer the
      *   read, or the read asks for a shape the cache never holds.
      * @throws NetworkDisabledException while network access is off ([Offline.disableNetwork]) and

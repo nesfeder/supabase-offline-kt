@@ -43,6 +43,7 @@ import io.github.nesfeder.supabase.offline.bridge.BridgeUploadResult
 import io.github.nesfeder.supabase.offline.fetchedAt
 import io.github.nesfeder.supabase.offline.hasPendingMutations
 import io.github.nesfeder.supabase.offline.isFromCache
+import io.github.nesfeder.supabase.offline.pendingRowKeys
 import kotlinx.serialization.json.JsonArray
 
 /*
@@ -58,6 +59,7 @@ internal fun PostgrestResult.toBridge(): BridgeQueryResult =
         isFromCache = isFromCache,
         fetchedAtEpochMillis = fetchedAt?.toEpochMilliseconds(),
         hasPendingMutations = hasPendingMutations,
+        pendingRowKeysJson = JsonArray(pendingRowKeys.toList()).toString(),
     )
 
 /** One emission of a live read. */
@@ -68,6 +70,7 @@ internal fun QuerySnapshot.toBridge(): BridgeQuerySnapshot =
         fetchedAtEpochMillis = fetchedAt?.toEpochMilliseconds(),
         hasPendingMutations = hasPendingMutations,
         refresh = refresh.toBridge(),
+        pendingRowKeysJson = JsonArray(pendingRowKeys.toList()).toString(),
     )
 
 /** A refresh state; a stall carries its cause as an error value. */

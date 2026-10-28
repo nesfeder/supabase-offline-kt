@@ -394,6 +394,7 @@ public final class io/github/nesfeder/supabase/offline/PendingUpload {
 public final class io/github/nesfeder/supabase/offline/PostgrestResultProvenanceKt {
 	public static final fun getFetchedAt (Lio/github/jan/supabase/postgrest/result/PostgrestResult;)Lkotlin/time/Instant;
 	public static final fun getHasPendingMutations (Lio/github/jan/supabase/postgrest/result/PostgrestResult;)Z
+	public static final fun getPendingRowKeys (Lio/github/jan/supabase/postgrest/result/PostgrestResult;)Ljava/util/Set;
 	public static final fun isFromCache (Lio/github/jan/supabase/postgrest/result/PostgrestResult;)Z
 }
 
@@ -403,9 +404,11 @@ public final class io/github/nesfeder/supabase/offline/QuerySnapshot {
 	public final fun component3 ()Lkotlin/time/Instant;
 	public final fun component4 ()Z
 	public final fun component5 ()Lio/github/nesfeder/supabase/offline/RefreshState;
+	public final fun component6 ()Ljava/util/Set;
 	public fun equals (Ljava/lang/Object;)Z
 	public final fun getFetchedAt ()Lkotlin/time/Instant;
 	public final fun getHasPendingMutations ()Z
+	public final fun getPendingRowKeys ()Ljava/util/Set;
 	public final fun getRefresh ()Lio/github/nesfeder/supabase/offline/RefreshState;
 	public final fun getResult ()Lio/github/jan/supabase/postgrest/result/PostgrestResult;
 	public fun hashCode ()I

@@ -324,6 +324,7 @@ property OfflineResponse.data | let data: Data
 property OfflineResponse.fetchedAt | let fetchedAt: Date?
 property OfflineResponse.hasPendingMutations | let hasPendingMutations: Bool
 property OfflineResponse.isFromCache | let isFromCache: Bool
+property OfflineResponse.pendingRowKeys | let pendingRowKeys: Set<[String : OfflineJSON]>
 property OfflineResponse.value | let value: Value
 struct OfflineSelectRequestBuilder | struct OfflineSelectRequestBuilder
 method OfflineSelectRequestBuilder.applying(_:) | func applying(_ change: OfflineQueryChange) -> OfflineSelectRequestBuilder
@@ -378,6 +379,7 @@ struct QuerySnapshot | struct QuerySnapshot<Value> where Value : Sendable
 property QuerySnapshot.fetchedAt | let fetchedAt: Date?
 property QuerySnapshot.hasPendingMutations | let hasPendingMutations: Bool
 property QuerySnapshot.isFromCache | let isFromCache: Bool
+property QuerySnapshot.pendingRowKeys | let pendingRowKeys: Set<[String : OfflineJSON]>
 property QuerySnapshot.refresh | let refresh: RefreshState
 property QuerySnapshot.result | let result: Value?
 struct QuerySnapshotSequence | struct QuerySnapshotSequence<Value> where Value : Decodable, Value : Sendable

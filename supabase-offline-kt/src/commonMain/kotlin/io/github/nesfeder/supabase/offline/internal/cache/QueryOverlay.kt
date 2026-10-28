@@ -15,6 +15,7 @@ import io.github.nesfeder.supabase.offline.internal.db.knownOperation
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueue
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.PrimaryKeys
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.primaryKeyOf
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 import io.github.nesfeder.supabase.offline.internal.postgrest.QueryAdmission
 import io.github.nesfeder.supabase.offline.internal.postgrest.QueryShape
@@ -250,14 +251,24 @@ internal class QueryOverlay(
 
     /**
      * This overlay as served: whether one of [mutations] that is still pending, not synced, changed
-     * a row it shows.
+     * a row it shows, and the keys of the rows those changed. Both are read from the pass that
+     * built the payload, so they describe the rows it holds.
      */
     private fun OverlaidPayload.served(mutations: List<MutationRow>): ServedOverlay {
+        if (shownChangedBy.isEmpty()) return ServedOverlay(payload, hasPendingMutations = false)
         val pendingIds =
             mutations.mapNotNullTo(HashSet()) { mutation ->
                 mutation.id.takeIf { mutation.syncedAtMs == null }
             }
-        return ServedOverlay(payload, shownChangedBy.any { id -> id in pendingIds })
+        val keyColumns = primaryKeys.of(mutations.first().table)
+        var hasPending = false
+        val keys = LinkedHashSet<JsonObject>()
+        shownChangedBy.forEach { (id, rows) ->
+            if (id !in pendingIds) return@forEach
+            hasPending = true
+            rows.forEach { row -> primaryKeyOf(row, keyColumns)?.let(keys::add) }
+        }
+        return ServedOverlay(payload, hasPending, keys)
     }
 
     /**
@@ -347,6 +358,7 @@ internal class QueryOverlay(
                     fetchedAtMillis = servedRow?.let { stored -> fetchedAtOf(stored.updatedAt) },
                     isStale = servedRow == null || isStaleStamp(servedRow.updatedAt),
                     hasPendingMutations = overlay.hasPendingMutations,
+                    pendingRowKeys = overlay.pendingRowKeys,
                 )
             }
             return payload to value

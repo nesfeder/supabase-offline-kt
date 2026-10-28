@@ -448,6 +448,35 @@ public func querySnapshot<Value: Sendable>(
     )
 }
 
+/// One state of a live read that names the rows a queued write changed: `pendingRowKeys` reads the
+/// keys given, and `hasPendingMutations` reads `true` exactly when there is one, as the library's own
+/// snapshot does when each row changed carries its key. For a write that changed a row without a key
+/// to name, build the snapshot with the other `querySnapshot` and `hasPendingMutations: true`.
+///
+/// - Parameters:
+///   - result: The rows, or `nil` while nothing is known for the query.
+///   - isFromCache: Whether the rows are the device's copy.
+///   - fetchedAt: When they were fetched; `nil` while nothing is cached.
+///   - pendingRowKeys: The primary keys of the rows a queued write added, changed or removed, each
+///     the table's key columns, such as `["id": "a1"]`.
+///   - refresh: How the refresh behind the read stands.
+public func querySnapshot<Value: Sendable>(
+    result: Value?,
+    isFromCache: Bool,
+    fetchedAt: Date?,
+    pendingRowKeys: Set<[String: OfflineJSON]>,
+    refresh: RefreshState = .idle
+) -> QuerySnapshot<Value> {
+    QuerySnapshot(
+        result: result,
+        isFromCache: isFromCache,
+        fetchedAt: fetchedAt,
+        hasPendingMutations: !pendingRowKeys.isEmpty,
+        refresh: refresh,
+        pendingRowKeys: pendingRowKeys
+    )
+}
+
 /// An upload waiting in the mutation queue, as `OfflineStorage.pendingUploads()` lists one; wrap it
 /// in `UploadOutcome.queued(pendingUpload:)` for an upload's outcome.
 ///
@@ -571,6 +600,36 @@ public func offlineResponse<Value: Sendable>(
     )
 }
 
+/// The answer to a one-shot read that names the rows a queued write changed: `pendingRowKeys` reads
+/// the keys given, and `hasPendingMutations` reads `true` exactly when there is one.
+///
+/// - Parameters:
+///   - value: The decoded body.
+///   - data: The body as sent; by default, empty.
+///   - count: The total a count asked for.
+///   - isFromCache: Whether the rows are the device's copy.
+///   - fetchedAt: When the rows were fetched; `nil` for an answer straight from the server.
+///   - pendingRowKeys: The primary keys of the rows a queued write added, changed or removed, each
+///     the table's key columns.
+public func offlineResponse<Value: Sendable>(
+    value: Value,
+    data: Data = Data(),
+    count: Int? = nil,
+    isFromCache: Bool = false,
+    fetchedAt: Date? = nil,
+    pendingRowKeys: Set<[String: OfflineJSON]>
+) -> OfflineResponse<Value> {
+    OfflineResponse(
+        value: value,
+        data: data,
+        count: count,
+        isFromCache: isFromCache,
+        fetchedAt: fetchedAt,
+        hasPendingMutations: !pendingRowKeys.isEmpty,
+        pendingRowKeys: pendingRowKeys
+    )
+}
+
 /// The answer to a one-shot read the cache answered, as a fake of the app's own repository returns
 /// one: `isFromCache` reads `true`, `fetchedAt` the time given, and `hasPendingMutations` the flag
 /// given.
@@ -595,6 +654,34 @@ public func cachedResponse<Value: Sendable>(
         isFromCache: true,
         fetchedAt: fetchedAt,
         hasPendingMutations: hasPendingMutations
+    )
+}
+
+/// The answer to a one-shot read the cache answered that names the rows a queued write changed:
+/// `isFromCache` reads `true`, `fetchedAt` the time given, `pendingRowKeys` the keys given, and
+/// `hasPendingMutations` `true` exactly when there is one.
+///
+/// - Parameters:
+///   - value: The decoded rows.
+///   - data: The body as the cache holds it; by default, empty.
+///   - count: The total a count asked for.
+///   - fetchedAt: When the rows were fetched from the server.
+///   - pendingRowKeys: The primary keys of the rows a queued write added, changed or removed, each
+///     the table's key columns.
+public func cachedResponse<Value: Sendable>(
+    value: Value,
+    data: Data = Data(),
+    count: Int? = nil,
+    fetchedAt: Date,
+    pendingRowKeys: Set<[String: OfflineJSON]>
+) -> OfflineResponse<Value> {
+    offlineResponse(
+        value: value,
+        data: data,
+        count: count,
+        isFromCache: true,
+        fetchedAt: fetchedAt,
+        pendingRowKeys: pendingRowKeys
     )
 }
 
