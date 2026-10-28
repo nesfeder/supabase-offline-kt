@@ -87,6 +87,24 @@ All notable changes to this project are recorded in this file. The format follow
   what was refused: `cachedFile` and `ensureCachedFile` never answer a refused upload, since
   Storage may hold other bytes at its path. The Swift package's `RejectedUpload` has it too, and
   each testing artifact's `rejectedUpload` has an overload that takes it.
+- The testing artifact's `InMemoryStore` keeps an in-memory client's local data for the next
+  client built over it: a client built with `inMemory(clock, store)` or
+  `inMemory(clock, realtime, store)` after an earlier one closed finds its queued writes, which it
+  replays, its rejected and conflicted lists, and its cached queries and files, so a test can
+  simulate an app killed and relaunched. A client built over a store another client holds fails
+  with `IllegalStateException`. The Swift testing product has the same `InMemoryStore` and
+  `inMemory(…, store:)` overloads.
+- `cachedResult(data, supabase, fetchedAt, hasPendingMutations)` in the testing artifact builds a
+  `PostgrestResult` that `isFromCache`, `fetchedAt` and `hasPendingMutations` read as given, for a
+  fake of an app's own repository. The Swift testing product has
+  `cachedResponse(value:data:count:fetchedAt:hasPendingMutations:)`.
+- `FakeRealtime.joinCount`, in Kotlin and Swift, counts the joins the client has handled: once it
+  moves, the client has reported the channel subscribed and asked for the named tables to be read
+  again, so a test that waits for it reports a change after the join instead of racing it.
+- `realtimeTableStatus` says where each table named in `realtime { }` stands, keyed and ordered as
+  named, beside `realtimeStatus`; the Swift package reads it as a `RealtimeTableStatusSequence` of
+  `[RealtimeTable: RealtimeStatus]`. `FakeRealtime.failTable` refuses one table in a test, in both
+  testing artifacts.
 
 ### Changed
 
@@ -102,34 +120,10 @@ All notable changes to this project are recorded in this file. The format follow
   before the read returned, and starts when a running count of the cached lists' length passes the
   bound, where every response of 4 KiB or more, and every 32nd response, summed every cached list
   first; a pass reads each list's length once and deletes the lists it chose in one transaction.
-- The testing artifact's `InMemoryStore` keeps an in-memory client's local data for the next
-  client built over it: a client built with `inMemory(clock, store)` or
-  `inMemory(clock, realtime, store)` after an earlier one closed finds its queued writes, which it
-  replays, its rejected and conflicted lists, and its cached queries and files, so a test can
-  simulate an app killed and relaunched. A client built over a store another client holds fails
-  with `IllegalStateException`. The Swift testing product has the same `InMemoryStore` and
-  `inMemory(…, store:)` overloads.
-- `cachedResult(data, supabase, fetchedAt, hasPendingMutations)` in the testing artifact builds a
-  `PostgrestResult` that `isFromCache`, `fetchedAt` and `hasPendingMutations` read as given, for a
-  fake of an app's own repository. The Swift testing product has
-  `cachedResponse(value:data:count:fetchedAt:hasPendingMutations:)`.
-- `FakeRealtime.joinCount`, in Kotlin and Swift, counts the joins the client has handled: once it
-  moves, the client has reported the channel subscribed and asked for the named tables to be read
-  again, so a test that waits for it reports a change after the join instead of racing it.
-
-### Changed
-
 - `FakeRealtime` applies the table's `RealtimeFilter` as the server does: an insert or an update
   whose record does not meet it is dropped and counted in `droppedReportCount`, and a delete
   reaches the client whatever the filter. Before, every report to a followed table reached the
   client, so a test could see a change a device never receives.
-- `realtimeTableStatus` says where each table named in `realtime { }` stands, keyed and ordered as
-  named, beside `realtimeStatus`; the Swift package reads it as a `RealtimeTableStatusSequence` of
-  `[RealtimeTable: RealtimeStatus]`. `FakeRealtime.failTable` refuses one table in a test, in both
-  testing artifacts.
-
-### Changed
-
 - Each table named in `realtime { }` is followed on a channel of its own, so a table the server
   refuses, such as one whose filter names a column a migration renamed, stalls and is joined again
   alone while the others keep receiving, and each join reads only its own table again. Before, one
@@ -140,7 +134,6 @@ All notable changes to this project are recorded in this file. The format follow
   tables' channels for a moment, as their socket is closed to end the rejoin supabase-kt runs in
   its read loop; `install(Realtime) { maxAttempts = 1 }` keeps them joined throughout.
   `FakeRealtime.failChannel` and `dropChannel` end every table's channel.
-
 - Concurrent `ensureCachedFile` calls for one uncached object share one download instead of each
   fetching the whole object, and a bytes or channel download of an object such a call is fetching
   waits for it and reads its file. A call canceled while another still waits for that download
@@ -345,8 +338,7 @@ All notable changes to this project are recorded in this file. The format follow
 - `isNetworkOrConnectivityFailure()` is `false` for a failure with an HTTP status further down its
   chain, as `httpStatusOrNull()` reads it, such as an I/O failure raised around a Storage error or a
   `SyncFailedException`. Before, it looked only for PostgREST's errors and Ktor's response failures
-  there, so such a failure read as the network's while `httpStatusOrNull()` gave its status, and a
-  read could fall back to the cache on it.
+  there, so such a failure read as the network's while `httpStatusOrNull()` gave its status.
 
 ## [0.2.0] - 2026-10-20
 

@@ -656,7 +656,8 @@ stands in for it.
 Inside the client, four parts carry what is not a call's own: `SessionIdentity` tells whom the
 session speaks for, to the cache, the queue and the replayer; `SessionCoordinator` acts on the
 session and the cache's owner (the passes a settled session or a returning network asks for, the
-cache dropped for a new user, and the clear), and its KDoc states the lock order those take;
+cache dropped for a new user, and the clear; the last two take the locks in
+[the lock order](#the-lock-order));
 `SyncStatusTracker` keeps `syncStatus`; and `RealtimeApplier` runs the follower and applies server
 rows, the app's own included.
 
@@ -701,7 +702,9 @@ flowchart TB
     OC["OfflineClient"] --> CP["CachePatcher"]
     OC --> MQ["MutationQueue"]
     SC --> CO["CacheOwnership"]
+    SC --> MQ
     RA["RealtimeApplier"] --> CP
+    RA --> CF
     ST["SyncStatusTracker"] --> MQ
     T["OfflineTable"] --> MQ
     T --> CP
