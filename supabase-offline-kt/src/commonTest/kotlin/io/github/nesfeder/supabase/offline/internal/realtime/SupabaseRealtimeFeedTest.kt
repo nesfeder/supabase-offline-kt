@@ -148,21 +148,25 @@ class SupabaseRealtimeFeedTest {
                     )
                 )
 
-                // Then — each as sent, with its table and schema
+                // Then — each as sent, with its table and schema. Each table's changes are
+                // collected on their own, so two tables' changes may arrive in either order
                 assertEquals(
-                    ServerChangeEvent.Saved(
-                        "tasks",
-                        "public",
-                        buildJsonObject {
-                            put("id", "t1")
-                            put("title", "Milk")
-                        },
+                    setOf(
+                        ServerChangeEvent.Saved(
+                            "tasks",
+                            "public",
+                            buildJsonObject {
+                                put("id", "t1")
+                                put("title", "Milk")
+                            },
+                        ),
+                        ServerChangeEvent.Deleted(
+                            "audit",
+                            "app",
+                            buildJsonObject { put("id", "a1") },
+                        ),
                     ),
-                    events.receiveWithin(),
-                )
-                assertEquals(
-                    ServerChangeEvent.Deleted("audit", "app", buildJsonObject { put("id", "a1") }),
-                    events.receiveWithin(),
+                    setOf(events.receiveWithin(), events.receiveWithin()),
                 )
 
                 // When — the collector is canceled
