@@ -36,6 +36,7 @@ import io.github.nesfeder.supabase.offline.fetchedAt
 import io.github.nesfeder.supabase.offline.hasPendingMutations
 import io.github.nesfeder.supabase.offline.internal.testing.ValueConstructors
 import io.github.nesfeder.supabase.offline.isFromCache
+import io.github.nesfeder.supabase.offline.pendingRowKeys
 import kotlin.time.Instant
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -201,6 +202,38 @@ public fun querySnapshot(
     ValueConstructors.querySnapshot(result, isFromCache, fetchedAt, hasPendingMutations, refresh)
 
 /**
+ * One emission of a reactive read that names the rows a queued write changed, as `selectAsFlow`
+ * hands one out: [QuerySnapshot.pendingRowKeys] reads [pendingRowKeys], and
+ * [QuerySnapshot.hasPendingMutations] reads `true` exactly when it is not empty, as the library's
+ * own snapshot does when each row changed carries its key. For a write that changed a row without a
+ * key to name, build the snapshot with the other `querySnapshot` and `hasPendingMutations = true`.
+ *
+ * @param result the rows, or `null` while nothing is known for the query; build one as for
+ *   [appliedOutcome].
+ * @param isFromCache whether the rows are the device's copy.
+ * @param fetchedAt when they were fetched, or `null` while nothing is cached.
+ * @param pendingRowKeys the primary keys of the rows a queued write added, changed or removed, each
+ *   an object of the table's key columns, such as `{"id": "a1"}`.
+ * @param refresh how the refresh behind the read stands.
+ */
+@OptIn(OfflineInternal::class)
+public fun querySnapshot(
+    result: PostgrestResult?,
+    isFromCache: Boolean,
+    fetchedAt: Instant?,
+    pendingRowKeys: Set<JsonObject>,
+    refresh: RefreshState = RefreshState.Idle,
+): QuerySnapshot =
+    ValueConstructors.querySnapshot(
+        result,
+        isFromCache,
+        fetchedAt,
+        hasPendingMutations = pendingRowKeys.isNotEmpty(),
+        refresh,
+        pendingRowKeys,
+    )
+
+/**
  * The result of a one-shot read the cache answered, as a fake of the app's own repository returns
  * it: [PostgrestResult.isFromCache] reads `true`, [PostgrestResult.fetchedAt] the time given, to
  * the millisecond, and [PostgrestResult.hasPendingMutations] the flag given. The library stamps a
@@ -222,6 +255,32 @@ public fun cachedResult(
     hasPendingMutations: Boolean = false,
 ): PostgrestResult =
     ValueConstructors.cachedResult(data, supabase.postgrest, fetchedAt, hasPendingMutations)
+
+/**
+ * The result of a one-shot read the cache answered that names the rows a queued write changed:
+ * [cachedResult], with [PostgrestResult.pendingRowKeys] reading [pendingRowKeys] and
+ * [PostgrestResult.hasPendingMutations] reading `true` exactly when it is not empty.
+ *
+ * @param data the rows, as the JSON text a read returns.
+ * @param supabase a client with `Postgrest` installed, built on a Ktor `MockEngine`.
+ * @param fetchedAt when the rows were fetched from the server.
+ * @param pendingRowKeys the primary keys of the rows a queued write added, changed or removed, each
+ *   an object of the table's key columns.
+ */
+@OptIn(OfflineInternal::class)
+public fun cachedResult(
+    data: String,
+    supabase: SupabaseClient,
+    fetchedAt: Instant,
+    pendingRowKeys: Set<JsonObject>,
+): PostgrestResult =
+    ValueConstructors.cachedResult(
+        data,
+        supabase.postgrest,
+        fetchedAt,
+        hasPendingMutations = pendingRowKeys.isNotEmpty(),
+        pendingRowKeys,
+    )
 
 /**
  * What a call of [Offline.syncPendingMutations] did. Its [SyncReport.stopReason] is the one the

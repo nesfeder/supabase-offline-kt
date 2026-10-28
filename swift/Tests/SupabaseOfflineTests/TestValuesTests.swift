@@ -188,6 +188,30 @@ struct TestValuesTests {
         #expect(defaulted.refresh == .idle)
     }
 
+    @Test func theFactoriesThatTakeRowKeysNameThoseRowsAndReadAsPendingWhenThereAreAny() {
+        // When
+        let keys: Set<[String: OfflineJSON]> = [["id": "a1"]]
+        let snapshot: QuerySnapshot<[String]> = querySnapshot(result: ["Milk"], isFromCache: true, fetchedAt: Self.at, pendingRowKeys: keys)
+        let none: QuerySnapshot<[String]> = querySnapshot(result: nil, isFromCache: false, fetchedAt: nil, pendingRowKeys: [])
+        let plain: QuerySnapshot<[String]> = querySnapshot(result: nil, isFromCache: false, fetchedAt: nil)
+        let cached = cachedResponse(value: [1], fetchedAt: Self.at, pendingRowKeys: keys)
+        let response = offlineResponse(value: [1], pendingRowKeys: keys)
+
+        // Then
+        #expect(snapshot.pendingRowKeys == keys)
+        #expect(snapshot.hasPendingMutations)
+        #expect(snapshot.refresh == .idle)
+        #expect(!none.hasPendingMutations)
+        #expect(plain.pendingRowKeys.isEmpty)
+        #expect(cached.pendingRowKeys == keys)
+        #expect(cached.hasPendingMutations)
+        #expect(cached.isFromCache)
+        #expect(cached.fetchedAt == Self.at)
+        #expect(response.pendingRowKeys == keys)
+        #expect(response.hasPendingMutations)
+        #expect(!response.isFromCache)
+    }
+
     @Test func aCachedResponseReadsAsTheCachesAtTheTimeGiven() {
         // When
         let body = Data(#"[{"id":1}]"#.utf8)
