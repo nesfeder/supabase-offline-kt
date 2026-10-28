@@ -27,13 +27,27 @@ public struct OfflineResponse<Value: Sendable>: Sendable {
     /// Whether a queued write added, changed or removed one of the rows.
     public let hasPendingMutations: Bool
 
-    package init(value: Value, data: Data, count: Int?, isFromCache: Bool, fetchedAt: Date?, hasPendingMutations: Bool) {
+    /// Which rows a queued write added, changed or removed, as ``QuerySnapshot/pendingRowKeys`` says
+    /// it for a live read: the primary key of each. A row such a write removed keeps its key here;
+    /// a row without its whole key adds none. Empty for an answer straight from the server.
+    public let pendingRowKeys: Set<[String: OfflineJSON]>
+
+    package init(
+        value: Value,
+        data: Data,
+        count: Int?,
+        isFromCache: Bool,
+        fetchedAt: Date?,
+        hasPendingMutations: Bool,
+        pendingRowKeys: Set<[String: OfflineJSON]> = []
+    ) {
         self.value = value
         self.data = data
         self.count = count
         self.isFromCache = isFromCache
         self.fetchedAt = fetchedAt
         self.hasPendingMutations = hasPendingMutations
+        self.pendingRowKeys = pendingRowKeys
     }
 }
 
@@ -47,7 +61,8 @@ extension OfflineResponse {
             count: result.count.map { Int($0.int64Value) },
             isFromCache: result.isFromCache,
             fetchedAt: result.fetchedAtEpochMillis.map { Date(epochMilliseconds: $0.int64Value) },
-            hasPendingMutations: result.hasPendingMutations
+            hasPendingMutations: result.hasPendingMutations,
+            pendingRowKeys: try RowCoding.decode(Set<[String: OfflineJSON]>.self, from: result.pendingRowKeysJson)
         )
     }
 }

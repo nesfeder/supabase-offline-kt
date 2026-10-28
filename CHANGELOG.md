@@ -15,6 +15,13 @@ All notable changes to this project are recorded in this file. The format follow
 
 ### Added
 
+- `QuerySnapshot.pendingRowKeys` names the rows a queued write added, changed or removed: the
+  primary key of each, worked out in the pass that lays the writes over the rows, so a per-row
+  pending mark never shows before its row or stays after the write is sent. A row a write removed
+  keeps its key, and a row without its whole key adds none. A one-shot read's result has the same
+  `pendingRowKeys`, and the Swift package's `QuerySnapshot` and `OfflineResponse` have it as a set
+  of key dictionaries. The testing artifacts' `querySnapshot` and `cachedResult` (in Swift,
+  `querySnapshot`, `cachedResponse` and `offlineResponse`) have overloads that take the keys.
 - `Offline.rejectedMutationList()` and `Offline.conflictedMutationList()` read the rejected and
   conflicted lists once, the list `rejectedMutations()` and `conflictedMutations()` emit first, as
   `pendingMutationCount()` reads the queue's count; the Swift package has the same two calls.
@@ -110,6 +117,12 @@ All notable changes to this project are recorded in this file. The format follow
   waits for it and reads its file. A call canceled while another still waits for that download
   returns at once, and the download goes on for the other; the last caller to cancel still returns
   only once its partial file is deleted.
+- A Storage download of an object whose cached copy has an `ETag` asks the server whether it
+  changed, with `If-None-Match`: a "not modified" answer serves the cached copy without sending the
+  body again and moves its `fetchedAt` to the time of the answer, where every download fetched the
+  whole object before. The Swift package's downloads do the same. Each cached file's row records
+  the `ETag` it was sent under, in the `eTag` column, which was always empty; a file an earlier
+  version cached has none, so its next download fetches it whole once and records it.
 - The rejected list keeps a guarded write's base in each guarded entry, under two new keys
   (`baseVersion`, `baseJson`), so a retry replays guarded. A list an earlier build wrote reads back
   without them, and a retry of such an entry replays unguarded, as it did there.
@@ -155,6 +168,11 @@ All notable changes to this project are recorded in this file. The format follow
 - On a case-insensitive volume, such as the iOS simulator's or a Mac's, two objects whose names
   differ only in case, such as `photo` and `PHOTO`, shared one cached file, so the one downloaded
   second replaced the other's bytes. The second is now stored apart, and each object serves its own.
+- With Room 2.8.5 or later, which an app can resolve itself, `pendingMutations()` and
+  `pendingMutationCountFlow()` called after `close()` threw Room's `IllegalStateException`
+  from the call, where a `catch` on the flow could not see it. Each now returns a flow that
+  fails with `OfflineClientClosedException` when collected, as every flow made after `close()`
+  does, on every Room version.
 - In the Swift package, a call that failed for a reason of its own while the client closed threw
   `clientClosed`: any `IllegalStateException` or cancellation met during the close read as the
   closed client, such as the failure of a download whose local data was cleared. It now keeps its

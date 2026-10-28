@@ -30,6 +30,7 @@ import io.github.nesfeder.supabase.offline.SyncStopReason
 import io.github.nesfeder.supabase.offline.internal.postgrest.ResultProvenance
 import io.github.nesfeder.supabase.offline.internal.postgrest.provenancedResult
 import io.github.nesfeder.supabase.offline.isNetworkOrConnectivityFailure
+import io.github.nesfeder.supabase.offline.pendingRowKeys
 import kotlin.experimental.ExperimentalObjCRefinement
 import kotlin.native.HiddenFromObjC
 import kotlin.time.Instant
@@ -104,14 +105,26 @@ public object ValueConstructors {
     public fun stalledRealtime(cause: Throwable): RealtimeStatus.Stalled =
         RealtimeStatus.Stalled(cause)
 
-    /** A [QuerySnapshot] with the given fields. */
+    /** A [QuerySnapshot] with the given fields and no [QuerySnapshot.pendingRowKeys]. */
     public fun querySnapshot(
         result: PostgrestResult?,
         isFromCache: Boolean,
         fetchedAt: Instant?,
         hasPendingMutations: Boolean,
         refresh: RefreshState,
-    ): QuerySnapshot = QuerySnapshot(result, isFromCache, fetchedAt, hasPendingMutations, refresh)
+    ): QuerySnapshot =
+        QuerySnapshot(result, isFromCache, fetchedAt, hasPendingMutations, refresh, emptySet())
+
+    /** A [QuerySnapshot] with the given fields, [QuerySnapshot.pendingRowKeys] included. */
+    public fun querySnapshot(
+        result: PostgrestResult?,
+        isFromCache: Boolean,
+        fetchedAt: Instant?,
+        hasPendingMutations: Boolean,
+        refresh: RefreshState,
+        pendingRowKeys: Set<JsonObject>,
+    ): QuerySnapshot =
+        QuerySnapshot(result, isFromCache, fetchedAt, hasPendingMutations, refresh, pendingRowKeys)
 
     /**
      * A [PostgrestResult] of [data] stamped as a read the cache answered, as a one-shot read's is:
@@ -132,6 +145,26 @@ public object ValueConstructors {
                     isFromCache = true,
                     fetchedAtMillis = fetchedAt.toEpochMilliseconds(),
                     hasPendingMutations = hasPendingMutations,
+                ),
+        )
+
+    /** [cachedResult], with [PostgrestResult.pendingRowKeys] reading [pendingRowKeys] as well. */
+    public fun cachedResult(
+        data: String,
+        postgrest: Postgrest,
+        fetchedAt: Instant,
+        hasPendingMutations: Boolean,
+        pendingRowKeys: Set<JsonObject>,
+    ): PostgrestResult =
+        provenancedResult(
+            data = data,
+            postgrest = postgrest,
+            provenance =
+                ResultProvenance(
+                    isFromCache = true,
+                    fetchedAtMillis = fetchedAt.toEpochMilliseconds(),
+                    hasPendingMutations = hasPendingMutations,
+                    pendingRowKeys = pendingRowKeys,
                 ),
         )
 

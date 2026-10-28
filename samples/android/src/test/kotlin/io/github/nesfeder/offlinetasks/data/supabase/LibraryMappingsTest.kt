@@ -184,6 +184,29 @@ class LibraryMappingsTest {
     }
 
     @Test
+    fun a_snapshot_marks_the_rows_its_queued_writes_changed_by_id() {
+        // Given — two task rows a queued write changed, and a key without an id
+        val snapshot =
+            querySnapshot(
+                result = null,
+                isFromCache = true,
+                fetchedAt = MADE,
+                pendingRowKeys =
+                    setOf(
+                        buildJsonObject { put("id", "a1") },
+                        buildJsonObject { put("id", "b2") },
+                        buildJsonObject { put("code", 7) },
+                    ),
+            )
+        val clean = querySnapshot(result = null, isFromCache = false, fetchedAt = MADE)
+
+        // When / Then — the ids are marked; a snapshot with no queued write marks none
+        assertEquals(setOf("a1", "b2"), snapshot.pendingRowIds())
+        assertTrue(snapshot.toRowsSnapshot { "rows" }.hasPendingMutations)
+        assertEquals(emptySet(), clean.pendingRowIds())
+    }
+
+    @Test
     fun a_cached_file_keeps_its_path_its_time_and_its_size() {
         assertEquals(
             PhotoFile("/cache/a.jpg", MADE, 1_024),

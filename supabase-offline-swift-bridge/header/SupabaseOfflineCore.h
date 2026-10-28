@@ -1068,6 +1068,8 @@ __attribute__((swift_name("BridgePendingMutation")))
  * @property fetchedAtEpochMillis when the rows were fetched from the server, by the device's clock,
  *   in milliseconds since 1970; `null` for an answer the library did not stamp.
  * @property hasPendingMutations whether a queued write changed one of the rows.
+ * @property pendingRowKeysJson the primary keys of the rows a queued write added, changed or
+ *   removed, as text: a JSON array of objects, `[]` for none.
  */
 __attribute__((objc_subclassing_restricted))
 __attribute__((swift_name("BridgeQueryResult")))
@@ -1077,6 +1079,7 @@ __attribute__((swift_name("BridgeQueryResult")))
 @property (readonly) SOCLong * _Nullable fetchedAtEpochMillis __attribute__((swift_name("fetchedAtEpochMillis")));
 @property (readonly) BOOL hasPendingMutations __attribute__((swift_name("hasPendingMutations")));
 @property (readonly) BOOL isFromCache __attribute__((swift_name("isFromCache")));
+@property (readonly) NSString *pendingRowKeysJson __attribute__((swift_name("pendingRowKeysJson")));
 @end
 
 
@@ -1090,6 +1093,8 @@ __attribute__((swift_name("BridgeQueryResult")))
  * @property fetchedAtEpochMillis when the rows were fetched, in milliseconds since 1970, or `null`.
  * @property hasPendingMutations whether a queued write changed one of the rows shown.
  * @property refresh how the refresh behind the read stands.
+ * @property pendingRowKeysJson the primary keys of the rows a queued write added, changed or
+ *   removed, as text: a JSON array of objects, `[]` for none.
  */
 __attribute__((objc_subclassing_restricted))
 __attribute__((swift_name("BridgeQuerySnapshot")))
@@ -1098,6 +1103,7 @@ __attribute__((swift_name("BridgeQuerySnapshot")))
 @property (readonly) SOCLong * _Nullable fetchedAtEpochMillis __attribute__((swift_name("fetchedAtEpochMillis")));
 @property (readonly) BOOL hasPendingMutations __attribute__((swift_name("hasPendingMutations")));
 @property (readonly) BOOL isFromCache __attribute__((swift_name("isFromCache")));
+@property (readonly) NSString *pendingRowKeysJson __attribute__((swift_name("pendingRowKeysJson")));
 @property (readonly) SOCBridgeRefreshState *refresh __attribute__((swift_name("refresh")));
 @end
 

@@ -217,15 +217,19 @@ internal class StorageFileCache(
     private suspend fun rowOf(bucketId: String, path: String): CachedFileRow? =
         cachedFileDao.getByKey(cachedFileKeyOf(bucketId, path))
 
-    /** Records [file] as the cached copy of [path] in [bucketId], fetched at [fetchedAt]. */
+    /**
+     * Records [file] as the cached copy of [path] in [bucketId], fetched at [fetchedAt], with the
+     * [eTag] the server sent it under.
+     */
     private suspend fun recordRow(
         bucketId: String,
         path: String,
         file: Path,
         size: Long?,
+        eTag: String?,
         fetchedAt: Long = fetchedAtMillis(),
     ) {
-        cachedFileDao.upsert(cachedFileRowOf(bucketId, path, file, size, eTag = null, fetchedAt))
+        cachedFileDao.upsert(cachedFileRowOf(bucketId, path, file, size, eTag, fetchedAt))
     }
 
     private val dataDirectory: Path by lazy { dataDirectoryProvider().normalized() }
@@ -446,6 +450,78 @@ internal class StorageFileCache(
         }
 
     /**
+     * The ETag of each cached copy of the object at [objectPath] that has one, the original's and
+     * each image transform's, keyed by its entry's key: what a download of the object asks the
+     * server about. Empty while the cache does not serve the current identity, and when the rows
+     * cannot be read (logged): the download then asks about nothing.
+     *
+     * @param bucketId the bucket.
+     * @param objectPath the object path.
+     * @return entry key to ETag.
+     */
+    suspend fun eTagsOf(bucketId: String, objectPath: String): Map<String, String> =
+        withContext(ioDispatcher) {
+            if (!ownership.cacheServesCurrentIdentity()) return@withContext emptyMap()
+            try {
+                cachedFileDao
+                    .forObject(
+                        bucketId,
+                        objectPath,
+                        variantPrefix = "$objectPath$VARIANT_SEPARATOR",
+                        variantBound = "$objectPath$VARIANT_BOUND",
+                    )
+                    .mapNotNull { row -> row.eTag?.let { eTag -> row.key to eTag } }
+                    .toMap()
+            } catch (failure: Exception) {
+                currentCoroutineContext().ensureActive()
+                engineLogger.debug { "Storage cache could not read the copies' ETags: $failure" }
+                emptyMap()
+            }
+        }
+
+    /**
+     * Records that the server confirmed [entry]'s cached copy is current: it answered HTTP 304 to a
+     * download that began at [start] and asked about the copy whose ETag is [eTag]. The copy's
+     * fetch time becomes now; a failure to record it is logged, and the copy is still current.
+     *
+     * Refused, changing nothing, when that copy is no longer the one cached: local data or the file
+     * cache was cleared, the cache is another identity's, the object or [entry] was dropped since
+     * [start] — a write or an eviction the answer may predate — or the row records another ETag,
+     * another file, or a size the file on disk does not have.
+     *
+     * @param entry the entry the download asked about.
+     * @param eTag the ETag the download's `If-None-Match` carried.
+     * @param start the download's [beginDownload].
+     * @return whether the copy was confirmed, and can be served.
+     */
+    suspend fun confirmCopy(entry: FileCacheEntry, eTag: String, start: DownloadStart): Boolean =
+        withContext(ioDispatcher) {
+            lock.withLock {
+                if (
+                    generation.load() != start.generation ||
+                        !ownership.cacheTakesWritesOfCurrentIdentity() ||
+                        downloadsLock.withLock { invalidatedSince(entry, start) }
+                )
+                    return@withLock false
+                val row = rowOf(entry.bucketId, entry.rowPath) ?: return@withLock false
+                val file = row.recordedFileOf(entry)
+                if (row.eTag != eTag || file == null) return@withLock false
+                if (!resolvesInsideDataDirectory(file)) return@withLock false
+                val size = lookUp(file)?.takeIf { it.isRegularFile }?.size ?: return@withLock false
+                if (row.sizeBytes != null && row.sizeBytes != size) return@withLock false
+                try {
+                    cachedFileDao.upsert(row.copy(lastFetchedEpochMs = fetchedAtMillis()))
+                } catch (failure: Exception) {
+                    currentCoroutineContext().ensureActive()
+                    engineLogger.warning {
+                        "Storage cache could not record a revalidated file (${failure::class.simpleName})"
+                    }
+                }
+                true
+            }
+        }
+
+    /**
      * Records a use of [entry]'s copy in [file], whose use last written to it is [markedAtMillis]:
      * on the file once [USE_MARK_INTERVAL] has passed since that one (or the clock went back past
      * it), in [recentUses] before then, where the eviction pass finds it all the same.
@@ -601,8 +677,14 @@ internal class StorageFileCache(
      * thrown: the download's bytes are already the caller's.
      *
      * @param start the download's [beginDownload].
+     * @param eTag the ETag the server sent the bytes under, or `null` for none.
      */
-    suspend fun write(entry: FileCacheEntry, bytes: ByteArray, start: DownloadStart) {
+    suspend fun write(
+        entry: FileCacheEntry,
+        bytes: ByteArray,
+        start: DownloadStart,
+        eTag: String? = null,
+    ) {
         val temporary = openTemporaryDownload(entry) ?: return
         try {
             withContext(ioDispatcher) { temporary.sink.write(bytes) }
@@ -614,7 +696,7 @@ internal class StorageFileCache(
             }
             return
         }
-        if (commit(temporary, start) != CommitOutcome.COMMITTED) discard(temporary)
+        if (commit(temporary, start, eTag) != CommitOutcome.COMMITTED) discard(temporary)
     }
 
     /**
@@ -625,45 +707,50 @@ internal class StorageFileCache(
      * file is deleted once the new one is in.
      *
      * @param start the download's [beginDownload].
+     * @param eTag the ETag the server sent the file under, recorded with it; `null` for none.
      * @return what happened, even to a caller canceled meanwhile; on anything but
      *   [CommitOutcome.COMMITTED] the caller reads, then [discard]s, the temporary file.
      */
-    suspend fun commit(temporary: TemporaryDownload, start: DownloadStart): CommitOutcome =
-        onIoHandingBackItsResult {
-            val entry = temporary.entry
-            // Closed and synced outside the lock: the file is this download's alone, and a sync
-            // takes as long as the drive does
-            try {
-                temporary.sink.close()
-            } catch (failure: IOException) {
-                engineLogger.warning {
-                    "Storage cache could not finish a file (${failure::class.simpleName}); not caching"
-                }
-                return@onIoHandingBackItsResult CommitOutcome.FAILED
+    suspend fun commit(
+        temporary: TemporaryDownload,
+        start: DownloadStart,
+        eTag: String?,
+    ): CommitOutcome = onIoHandingBackItsResult {
+        val entry = temporary.entry
+        // Closed and synced outside the lock: the file is this download's alone, and a sync
+        // takes as long as the drive does
+        try {
+            temporary.sink.close()
+        } catch (failure: IOException) {
+            engineLogger.warning {
+                "Storage cache could not finish a file (${failure::class.simpleName}); not caching"
             }
-            try {
-                syncFile(temporary.path)
-            } catch (failure: IOException) {
-                // The read side's size check catches what a power loss leaves of the file
-                engineLogger.debug { "Storage cache could not sync a file to disk: $failure" }
-            }
-            val outcome = commitLocked(temporary, start)
-            if (outcome == CommitOutcome.COMMITTED) {
-                try {
-                    enforceSizeBound(protectedKey = entry.key)
-                } catch (failure: Exception) {
-                    engineLogger.warning {
-                        "Storage cache could not enforce its size bound (${failure::class.simpleName})"
-                    }
-                }
-            }
-            outcome
+            return@onIoHandingBackItsResult CommitOutcome.FAILED
         }
+        try {
+            syncFile(temporary.path)
+        } catch (failure: IOException) {
+            // The read side's size check catches what a power loss leaves of the file
+            engineLogger.debug { "Storage cache could not sync a file to disk: $failure" }
+        }
+        val outcome = commitLocked(temporary, start, eTag)
+        if (outcome == CommitOutcome.COMMITTED) {
+            try {
+                enforceSizeBound(protectedKey = entry.key)
+            } catch (failure: Exception) {
+                engineLogger.warning {
+                    "Storage cache could not enforce its size bound (${failure::class.simpleName})"
+                }
+            }
+        }
+        outcome
+    }
 
     /** [commit]'s part under [lock]: the row, then the rename. */
     private suspend fun commitLocked(
         temporary: TemporaryDownload,
         start: DownloadStart,
+        eTag: String?,
     ): CommitOutcome {
         val entry = temporary.entry
         return lock.withLock {
@@ -708,6 +795,7 @@ internal class StorageFileCache(
                     path = entry.rowPath,
                     file = destination,
                     size = size,
+                    eTag = eTag,
                 )
             } catch (failure: Exception) {
                 engineLogger.warning {
@@ -1154,7 +1242,9 @@ internal class StorageFileCache(
 
     /**
      * Moves [sourceFile], the source's cached copy, into [destination]'s place, recording the
-     * destination first, with the fetch time of [sourceRow]: the bytes are the ones fetched then.
+     * destination first, with the fetch time and the ETag of [sourceRow]: the bytes are the ones
+     * fetched then. A server that gives the moved object another ETag answers the next download
+     * whole.
      */
     private suspend fun moveFileLocked(
         sourceFile: Path,
@@ -1173,6 +1263,7 @@ internal class StorageFileCache(
                 path = destination.rowPath,
                 file = target,
                 size = size,
+                eTag = sourceRow.eTag,
                 fetchedAt = sourceRow.lastFetchedEpochMs,
             )
             trackedBytes = trackedBytes?.plus(size)
