@@ -1036,23 +1036,11 @@ internal class MutationQueue(
     }
 
     /**
-     * The queued Storage uploads the app is shown, in queue order: the current identity's, and the
-     * ownerless ones it may adopt; none while the identity cannot be told. Read from the uploads'
-     * shared read ([tableMutationsNow]), which is read again only when an upload's row changes, so
-     * a lookup costs no query while the queue holds none.
-     */
-    suspend fun shownPendingUploads(): List<MutationRow> =
-        shownTo(
-            identityProvider(),
-            tableMutationsNow(STORAGE_UPLOADS_TABLE_NAME).rows.filter { row ->
-                row.syncedAtMs == null && row.isQueuedUpload
-            },
-        )
-
-    /**
-     * The queued Storage uploads the overlay would show, in queue order: [shownPendingUploads], or
-     * every identity's while the identity cannot be told, as a write is never hidden from its
-     * maker.
+     * The queued Storage uploads the overlay would show, in queue order: the current identity's and
+     * the ownerless ones it may adopt, or every identity's while the identity cannot be told, as a
+     * write is never hidden from its maker. Read from the uploads' shared read
+     * ([tableMutationsNow]), which is read again only when an upload's row changes, so a lookup
+     * costs no query while the queue holds none.
      */
     suspend fun visiblePendingUploads(): List<MutationRow> =
         visibleTo(
@@ -1062,7 +1050,11 @@ internal class MutationQueue(
             },
         )
 
-    /** [shownPendingUploads] as the queue changes. */
+    /**
+     * The queued Storage uploads the app is shown, in queue order, as the queue changes: the
+     * current identity's, and the ownerless ones it may adopt; none while the identity cannot be
+     * told.
+     */
     fun shownPendingUploadsFlow(): Flow<List<MutationRow>> =
         shownPendingMutationsFlow(STORAGE_UPLOADS_TABLE_NAME).map { rows ->
             rows.filter { row -> row.isQueuedUpload }

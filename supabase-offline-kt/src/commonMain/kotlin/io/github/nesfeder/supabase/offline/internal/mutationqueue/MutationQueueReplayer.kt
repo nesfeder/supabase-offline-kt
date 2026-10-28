@@ -1382,22 +1382,17 @@ internal class MutationQueueReplayer(
         failure: Exception,
         identity: QueueIdentity,
     ): ReplayOutcome =
-        if (mutation.isQueuedUpload) classifyUploadFailure(mutation, failure, identity)
+        if (mutation.isQueuedUpload) classifyUploadFailure(failure)
         else classifyRowWriteFailure(mutation, failure, identity)
 
     /**
      * Where a queued upload's failed send leaves it. A failure that may pass keeps it queued and
      * stops the pass: no connection or no answer, a token Storage refused or that could not be
      * refreshed, a status that says the request did not finish, and any `5xx`. A refusal (another
-     * `4xx`) while an earlier write of [identity] is still queued holds it: Storage's policy may
-     * read the row that write adds, and hosted Storage answers a policy refusal with a `400`. Any
-     * other refusal goes to the rejected list.
+     * `4xx`) goes to the rejected list: by then every earlier write of the user has been sent or
+     * settled, so none can be the row Storage's policy reads.
      */
-    private suspend fun classifyUploadFailure(
-        mutation: MutationRow,
-        failure: Exception,
-        identity: QueueIdentity,
-    ): ReplayOutcome {
+    private fun classifyUploadFailure(failure: Exception): ReplayOutcome {
         val status = failure.storageStatusOrNull()
         return when {
             failure.isNetworkOrConnectivityFailure() -> {
@@ -1410,12 +1405,6 @@ internal class MutationQueueReplayer(
                         "keeping it for a later sync"
                 }
                 ReplayOutcome.Stopped(failure)
-            }
-            mutationQueue.hasEarlierPendingMutation(mutation.id, identity.storedValue) -> {
-                engineLogger.warning {
-                    "Holding a queued upload ($status) behind an earlier pending mutation"
-                }
-                ReplayOutcome.Held(failure)
             }
             else -> {
                 val serverError = failure.storageServerErrorOrNull()
@@ -1829,7 +1818,7 @@ internal class MutationQueueReplayer(
     /**
      * What Storage answered with [this] refusal, as the rejected list keeps it: the HTTP status,
      * Storage's error name as the code when supabase-kt kept it apart from the message, and the
-     * message.
+     * message. supabase-kt's Storage throws a `RestException` for every error answer.
      */
     private fun Throwable.storageServerErrorOrNull(): StoredServerError? {
         var current: Throwable? = this
@@ -1843,11 +1832,6 @@ internal class MutationQueueReplayer(
                             message = description,
                         )
                     } ?: StoredServerError(status = current.statusCode, message = current.error)
-                is ResponseException ->
-                    return StoredServerError(
-                        status = current.response.status.value,
-                        message = current.response.status.description,
-                    )
             }
             current = current.cause
         }

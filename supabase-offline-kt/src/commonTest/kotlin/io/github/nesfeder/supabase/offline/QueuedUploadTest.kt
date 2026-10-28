@@ -4,11 +4,13 @@ package io.github.nesfeder.supabase.offline
 
 import io.github.jan.supabase.SupabaseClient
 import io.github.nesfeder.supabase.offline.internal.OfflineClient
+import io.github.nesfeder.supabase.offline.internal.logging.EngineLogLevel
 import io.github.nesfeder.supabase.offline.internal.storage.QUEUED_UPLOADS_DIRECTORY_NAME
 import io.github.nesfeder.supabase.offline.internal.testing.InMemoryCachedFileDao
 import io.github.nesfeder.supabase.offline.internal.testing.InMemoryFileSystem
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
+import io.github.nesfeder.supabase.offline.testdoubles.RecordingLogSink
 import io.github.nesfeder.supabase.offline.testdoubles.UploadAndRowServer
 import io.github.nesfeder.supabase.offline.testdoubles.UploadAndRowServer.UploadAnswer
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
@@ -58,6 +60,7 @@ class QueuedUploadTest {
     private val queryCacheDao = FakeQueryCacheDao()
     private val cachedFileDao = InMemoryCachedFileDao()
     private val mutationDao = FakeMutationDao()
+    private val logs = RecordingLogSink()
     private val opened = mutableListOf<OfflineClient>()
 
     @AfterTest fun closeClients() = runTest { opened.forEach { client -> client.close() } }
@@ -73,6 +76,7 @@ class QueuedUploadTest {
                 fileSystem = fileSystem,
                 syncFile = {},
                 config = Offline.Config().apply { autoSync = false },
+                engineLogger = logs.asEngineLogger(EngineLogLevel.DEBUG),
             )
             .also { client -> opened += client }
 
@@ -546,6 +550,25 @@ class QueuedUploadTest {
         assertTrue(failure.isNetworkOrConnectivityFailure())
         assertEquals(0, client.pendingMutationCount())
         assertEquals(emptyList(), queuedFiles())
+    }
+
+    @Test
+    fun what_is_logged_at_info_and_above_names_the_bucket_never_the_object_path() = runTest {
+        // Given — an upload queued offline, held by a failure that may pass, then refused
+        val client = openClient()
+        server.online = false
+        client.storage.from(BUCKET).upload(PATH, BYTES, QueueIfOffline)
+        client.from(PHOTOS).insert(row("photo"))
+        server.online = true
+        server.uploadAnswer = { UploadAnswer.Refuse(503, 503, "Unavailable") }
+        client.syncPendingMutations()
+        server.uploadAnswer = { UploadAnswer.Refuse(400, 403, "Unauthorized") }
+        client.syncPendingMutations()
+
+        // Then
+        val shown = logs.entries.filter { it.level >= EngineLogLevel.INFO }
+        assertTrue(shown.isNotEmpty())
+        assertEquals(emptyList(), shown.filter { PATH in it.message || "photo-1" in it.message })
     }
 
     @Test

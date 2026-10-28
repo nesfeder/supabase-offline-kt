@@ -132,15 +132,13 @@ sends that token whoever is signed in, so the owner check of
 | (The library can no longer replay it exactly as it was made) | Moves to the rejected list with no `serverError`, and the pass goes on |
 | No row at the version the device saw, on a table with a version column | One read by key tells the case: already applied or gone (synced), a policy denial (the rejected list), or a moved row, which the resolver settles: resent, dropped or parked on the conflicted list, and the pass goes on ([Conflicts and merging](conflicts.md#the-five-outcomes)) |
 
-A queued upload meets Storage's answers the same way, with three differences. A refusal (a `4xx`
-other than `401`, `408` and `429`, and other than Storage refusing the token as invalid or
-expired, which hosted Storage answers with a `400`) while an earlier write of the user is still
-queued holds it, with the pass stopped, rather than rejecting it: Storage's policy may read the row
-that write adds. A refused upload keeps its bytes on the device, for a retry. And an upload whose
-earlier send's answer was lost first asks Storage whether the object is there: when it is, the
-upload is counted sent and already on the server, and is not sent again; one that may overwrite is
-simply sent again. Once Storage has it, its bytes become the object's cached copy and its file on
-the device goes.
+A queued upload meets Storage's answers the same way, with two differences. A refused upload (a
+`4xx` other than `401`, `408` and `429`, and other than Storage refusing the token as invalid or
+expired, which hosted Storage answers with a `400`) keeps its bytes on the device, for a retry. And
+an upload whose earlier send's answer was lost first asks Storage whether the object is there: when
+it is, the upload is counted sent and already on the server, and is not sent again; one that may
+overwrite is simply sent again. Once Storage has it, its bytes become the object's cached copy and
+its file on the device goes.
 
 ## What a sync returns
 
@@ -178,7 +176,7 @@ gives the reason its last pass ended for. In Swift it is a `kind`, with the fail
 | --- | --- | --- |
 | `Completed` | It went through every write it found queued: each was sent, refused, parked or dropped | Only the writes queued while it ran |
 | `NetworkUnavailable` | A write could not reach the server, or got no answer in time | That write and those after it |
-| `ServerFailure(error)` | The server answered a write with a failure that may pass: a `5xx`, `408`, `429` or `401`, a schema cache miss, a `403` or `409` while an earlier write is still queued, or Storage's refusal of a queued upload while an earlier write is still queued. `error` has the status and code | That write and those after it |
+| `ServerFailure(error)` | The server answered a write with a failure that may pass: a `5xx`, `408`, `429` or `401`, a schema cache miss, or a `403` or `409` while an earlier write is still queued. `error` has the status and code | That write and those after it |
 | `LocalFailure(error)` | A failure on the device: the local database failing, a request header the HTTP client refuses, or the pass canceled by something other than the caller or a clear | The writes it did not send |
 | `SessionNotReady` | The session did not settle within the wait, or could not be told while it restored or refreshed | Every write; a pass sends them once the session settles |
 | `SessionChanged` | The session changed user while it ran | The new user's writes go in a later pass |

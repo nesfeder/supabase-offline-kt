@@ -7,6 +7,7 @@ import io.github.jan.supabase.postgrest.Postgrest
 import io.github.nesfeder.supabase.offline.internal.OfflineClient
 import io.github.nesfeder.supabase.offline.internal.db.MutationRow
 import io.github.nesfeder.supabase.offline.internal.db.STORAGE_UPLOADS_TABLE_NAME
+import io.github.nesfeder.supabase.offline.internal.logging.EngineLogLevel
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.STORAGE_NOT_INSTALLED_REASON
 import io.github.nesfeder.supabase.offline.internal.storage.MISSING_UPLOAD_FILE_REASON
 import io.github.nesfeder.supabase.offline.internal.storage.QUEUED_UPLOADS_DIRECTORY_NAME
@@ -17,6 +18,7 @@ import io.github.nesfeder.supabase.offline.internal.testing.InMemoryFileSystem
 import io.github.nesfeder.supabase.offline.testdoubles.FakeFailingFileSystem
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
+import io.github.nesfeder.supabase.offline.testdoubles.RecordingLogSink
 import io.github.nesfeder.supabase.offline.testdoubles.UploadAndRowServer
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
 import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
@@ -52,6 +54,7 @@ class QueuedUploadRefusalTest {
     private val queryCacheDao = FakeQueryCacheDao()
     private val cachedFileDao = InMemoryCachedFileDao()
     private val mutationDao = FakeMutationDao()
+    private val logs = RecordingLogSink()
     private val opened = mutableListOf<OfflineClient>()
     private val temporaryDirectories = mutableListOf<Path>()
 
@@ -75,18 +78,20 @@ class QueuedUploadRefusalTest {
                 fileSystem = files,
                 syncFile = {},
                 config = Offline.Config().apply { autoSync = false },
+                engineLogger = logs.asEngineLogger(EngineLogLevel.DEBUG),
             )
             .also { client -> opened += client }
 
     @Test
     fun an_upload_whose_file_left_the_device_is_refused_and_the_pass_goes_on() = runTest {
-        // Given — an upload and a row queued offline, and the upload's file deleted
+        // Given — an upload queued offline, its file deleted before any pass could read it, then
+        // a row queued behind it
         val client = openClient()
         server.online = false
         client.storage.from(BUCKET).upload(PATH, BYTES, MutationStrategy.QueueIfOffline)
-        client.from(PHOTOS).insert(JsonArray(emptyList()))
         val directory = dataDirectory / QUEUED_UPLOADS_DIRECTORY_NAME
         fileSystem.list(directory).forEach { file -> fileSystem.delete(file) }
+        client.from(PHOTOS).insert(JsonArray(emptyList()))
 
         // When
         server.online = true
