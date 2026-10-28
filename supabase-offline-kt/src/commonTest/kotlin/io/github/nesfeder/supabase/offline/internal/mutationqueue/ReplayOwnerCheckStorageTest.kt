@@ -38,37 +38,33 @@ class ReplayOwnerCheckStorageTest {
             .also { client -> client.installReplayOwnerCheck() }
 
     @Test
-    fun an_upload_whose_token_names_another_user_is_stopped_before_it_leaves() = runTest {
-        // Given — A's upload, while the provider returns B's token
+    fun an_upload_goes_only_with_its_owners_token() = runTest {
+        // Given — A's upload
         val owner = ownerOf(QueueIdentity.User("user-a"))
 
-        // When
+        // When — the provider returns B's token
         assertFails {
             withContext(owner) { supabase.storage.from(BUCKET).upload(PATH, BYTES) }
         }
 
-        // Then
+        // Then — stopped before it left the device
         assertTrue(owner.stoppedForAnotherSession)
         assertTrue(server.requests.isEmpty())
-    }
 
-    @Test
-    fun an_upload_with_its_owners_token_goes() = runTest {
-        // Given — A's upload, while the provider returns A's token
+        // When — the provider returns A's token
         token = testJwt("user-a")
-        val owner = ownerOf(QueueIdentity.User("user-a"))
-
-        // When
-        withContext(owner) { supabase.storage.from(BUCKET).upload(PATH, BYTES) }
+        val again = ownerOf(QueueIdentity.User("user-a"))
+        withContext(again) { supabase.storage.from(BUCKET).upload(PATH, BYTES) }
 
         // Then
-        assertFalse(owner.stoppedForAnotherSession)
+        assertFalse(again.stoppedForAnotherSession)
         assertEquals("Bearer ${testJwt("user-a")}", server.requests.single().authorization)
     }
 
     @Test
-    fun a_storage_configured_with_its_own_token_is_not_checked() = runTest {
-        // Given — Storage sends a token of its own, whoever is signed in
+    fun a_storage_that_sends_its_own_token_is_not_checked_as_one_with_the_sessions_is() = runTest {
+        // Given — one Storage with a token of its own, whoever is signed in, and this test's
+        // Storage, which sends the session's
         val ownToken =
             newTestSupabaseClient(engine = server.engine) {
                     accessToken = { token }
@@ -80,12 +76,20 @@ class ReplayOwnerCheckStorageTest {
                 .also { client -> client.installReplayOwnerCheck() }
         val owner = ownerOf(QueueIdentity.User("user-a"))
 
-        // When
+        // When — A's upload, while the provider returns B's token
         withContext(owner) { ownToken.storage.from(BUCKET).upload(PATH, BYTES) }
+        val withSessionToken = ownerOf(QueueIdentity.User("user-a"))
+        assertFails {
+            withContext(withSessionToken) { supabase.storage.from(BUCKET).upload(PATH, BYTES) }
+        }
 
-        // Then
+        // Then — the first went with its own token, the second was stopped
         assertFalse(owner.stoppedForAnotherSession)
-        assertEquals(1, server.requests.size)
+        assertTrue(withSessionToken.stoppedForAnotherSession)
+        assertEquals(
+            listOf("Bearer ${testJwt("service")}"),
+            server.requests.map { it.authorization },
+        )
     }
 
     private fun ownerOf(identity: QueueIdentity): ReplayOwner =

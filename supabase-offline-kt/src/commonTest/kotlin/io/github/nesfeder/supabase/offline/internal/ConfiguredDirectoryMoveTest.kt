@@ -110,24 +110,39 @@ class ConfiguredDirectoryMoveTest {
     }
 
     @Test
-    fun a_database_that_cannot_move_keeps_the_queued_uploads_files_with_it() {
+    fun a_failed_move_keeps_the_queued_uploads_files_with_the_database_until_the_next_start() {
         // Given — a disk that refuses to move the database file itself, after the rest
         leaveDataAtTheDefaultLocation()
         write(default.dataDirectory / "storage-uploads" / QUEUED_FILE, "queued bytes")
+        var refuseTheDatabase = true
         val disk =
             FakeFailingFileSystem().apply {
                 onMove = { source, _ ->
-                    if (source == default.databasePath) throw IOException("Operation not permitted")
+                    if (refuseTheDatabase && source == default.databasePath) {
+                        throw IOException("Operation not permitted")
+                    }
                 }
             }
 
         // When
-        val opened = moveDefaultDatabaseIfUnclaimed(configured, default, engineLogger, disk)
+        val first = moveDefaultDatabaseIfUnclaimed(configured, default, engineLogger, disk)
 
         // Then — both stay where they were, together
-        assertEquals(default.databasePath, opened)
+        assertEquals(default.databasePath, first)
         assertEquals("queued bytes", read(default.dataDirectory / "storage-uploads" / QUEUED_FILE))
         assertFalse(exists(configured.dataDirectory / "storage-uploads"))
+
+        // When — the next start, on a disk that lets the database move
+        refuseTheDatabase = false
+        val next = moveDefaultDatabaseIfUnclaimed(configured, default, engineLogger, disk)
+
+        // Then — both move, together
+        assertEquals(configured.databasePath, next)
+        assertEquals(
+            "queued bytes",
+            read(configured.dataDirectory / "storage-uploads" / QUEUED_FILE),
+        )
+        assertFalse(exists(default.dataDirectory / "storage-uploads"))
     }
 
     @Test
