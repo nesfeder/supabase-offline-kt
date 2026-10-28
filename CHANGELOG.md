@@ -162,7 +162,8 @@ All notable changes to this project are recorded in this file. The format follow
   `Refreshing` until the changes paused; a row deleted while a request was out is still not brought
   back. A change that cannot be laid over exactly (an insert, a move in an ordered list or a
   window, a row read without its key) has the read ask once more, and if that answer has one too,
-  it is kept stale, to be read again, instead of as the server's answer.
+  it is kept stale and returned as the device's copy (`isFromCache`), to be read again, instead of
+  as the server's answer.
 - An upsert, or a Realtime record, into a table whose cached list was read without its key column
   was added to that list as a new row, beside the row it changed. The list is now marked stale and
   read again.

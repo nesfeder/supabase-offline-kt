@@ -100,6 +100,8 @@ internal class StaleResponseException(table: String) :
  *   [isRowListResponse].
  * @property rebasedPayload the rows the cache wrote in its place, with the server changes its
  *   request left before laid over them; `null` when it wrote [response] as it came, or nothing.
+ * @property staleStamp the stale stamp the cache wrote it with when those changes could not be laid
+ *   over it exactly, so its rows are the device's copy; `null` when it wrote it fresh, or nothing.
  */
 private data class FetchedResponse(
     val response: PostgrestResult,
@@ -109,6 +111,7 @@ private data class FetchedResponse(
     val receivedAtMillis: Long,
     val isRowList: Boolean,
     val rebasedPayload: String? = null,
+    val staleStamp: Long? = null,
 ) {
     /** Whether the server's own body held no rows: an empty list, not a body of another shape. */
     val isEmpty: Boolean
@@ -1226,15 +1229,17 @@ internal class QueryReader(
                 nowMillis(),
                 isRowList,
                 written.rebasedPayload,
+                written.staleStamp,
             )
         }
     }
 
     /**
      * What a one-shot read serves for [fetched]: the server's rows (as the cache wrote them, with
-     * the server changes its request left before laid over them, without the server's headers), or
-     * the cache when they were refused as older than a local write, or when they are not a list of
-     * rows and the cache holds rows [cacheServes] takes (`null` never does), with pending mutations
+     * the server changes its request left before laid over them, without the server's headers; from
+     * the cache when it wrote them stale, since they are not the server's answer), or the cache
+     * when they were refused as older than a local write, or when they are not a list of rows and
+     * the cache holds rows [cacheServes] takes (`null` never does), with pending mutations
      * overlaid.
      */
     private suspend fun overlaidResponse(
@@ -1266,11 +1271,13 @@ internal class QueryReader(
                     serverJson = fetched.rebasedPayload ?: fetched.response.data,
                     shape = slot.shape,
                 )
+        // Rows written stale, the server changes laid over them inexactly, are the device's copy
         val provenance =
             ResultProvenance(
-                isFromCache = cached != null,
+                isFromCache = cached != null || fetched.staleStamp != null,
                 fetchedAtMillis =
                     cached?.let { payload -> fetchedAtOf(payload.updatedAt) }
+                        ?: fetched.staleStamp?.let(::fetchedAtOf)
                         ?: fetched.receivedAtMillis,
                 hasPendingMutations = overlaid.hasPendingMutations,
             )

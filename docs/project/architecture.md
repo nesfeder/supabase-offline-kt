@@ -860,8 +860,9 @@ its `RowWindow`), the response is written so, fresh: a one-shot read returns tho
 the server's headers when the changes altered them. When it is not (a change shows a row the
 response lacks, moves one, or may leave the query wrong, as a patch would mark it stale), the
 response is refused as for a local write, and the reader's one more ask is its last: that answer is
-written stale-stamped, with the changes laid over it, or as it came when they may leave it wrong,
-and the read settles instead of asking again. One
+written stale-stamped, with the changes laid over it, or, when they may leave it wrong, as it came
+less the rows they took out, and the read settles instead of asking again, a one-shot read with
+`isFromCache` set. One
 whose request started before a clear is refused and not asked again, since it may carry the cleared
 session's token. One that started before the cache was dropped for a new owner is not written: a
 reactive read's refresh asks again, and a one-shot read asks again only when the session was

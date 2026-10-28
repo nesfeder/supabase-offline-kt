@@ -301,9 +301,9 @@ internal class CachePatcher(
      * Lays [writes], server changes logged since a response's request left, over [answer], the
      * response's rows, with the overlay and the reading of the rows other queries hold that
      * patching them in uses, as if the response had landed first. When they may leave the query
-     * wrong ([patchMayLeaveWrong]), the answer stays as it came; when they only approximate it
-     * ([rebaseOnlyApproximates]), it has them laid over it. Neither is exact. Caller holds
-     * [table]'s write lock.
+     * wrong ([patchMayLeaveWrong]), the answer stays as it came but for the rows they took out;
+     * when they only approximate it ([rebaseOnlyApproximates]), it has them laid over it. Neither
+     * is exact. Caller holds [table]'s write lock.
      */
     override suspend fun rebase(
         table: String,
@@ -322,7 +322,11 @@ internal class CachePatcher(
         val pass = patchPassOver(table, writes, cached)
         val patched = pass.patch(cacheKey, shape ?: pass.shapes[cacheKey], rows)
         return when {
-            patched.wrong -> Rebased(answer, isExact = false)
+            patched.wrong ->
+                Rebased(
+                    withoutRowsTakenOut(answer, rows, patched, pass.keyColumns),
+                    isExact = false,
+                )
             patched.rows == rows -> Rebased(answer, isExact = true)
             else ->
                 Rebased(
@@ -330,6 +334,31 @@ internal class CachePatcher(
                     isExact = !rebaseOnlyApproximates(rows, patched.rows, pass.keyColumns, window),
                 )
         }
+    }
+
+    /**
+     * [answer], whose [rows] the changes laid over as [patched] may leave wrong, without the rows
+     * they took out, found by [keyColumns]: a delete takes out only a row its filter provably
+     * matches, and a saved row leaves a query only when its own values no longer meet the filters,
+     * so those removals stand where the rows the changes place may not. A row deleted while the
+     * request was out is never brought back. A row without its key stays: nothing tells whether one
+     * took it out.
+     */
+    private fun withoutRowsTakenOut(
+        answer: ParsedPayload,
+        rows: List<JsonElement>,
+        patched: PatchedRows,
+        keyColumns: List<String>,
+    ): ParsedPayload {
+        val left =
+            patched.rows.mapNotNullTo(HashSet()) { element ->
+                (element as? JsonObject)?.let { row -> keyOf(row, keyColumns) }
+            }
+        val kept = rows.filter { element ->
+            val key = (element as? JsonObject)?.let { row -> keyOf(row, keyColumns) }
+            key == null || key in left
+        }
+        return if (kept.size == rows.size) answer else ParsedPayload(patched.encode(kept), kept)
     }
 
     /**
@@ -415,8 +444,8 @@ internal class CachePatcher(
         val wrong: Boolean,
         private val overlay: MutationOverlay,
     ) {
-        /** [rows] as a payload. */
-        fun encode(): String = overlay.encode(rows)
+        /** [rows], or [others] of the same query, as a payload. */
+        fun encode(others: List<JsonElement> = rows): String = overlay.encode(others)
     }
 
     /**

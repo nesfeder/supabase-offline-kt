@@ -70,6 +70,7 @@ class ServerChangesOverAnswersTest {
         // cache does not hold the deleted row
         assertEquals(CacheWriteOutcome.WRITTEN, written.outcome)
         assertEquals(oneProject, written.rebasedPayload)
+        assertNull(written.staleStamp)
         val row = queryCacheDao.getRow("projects", "sig-A")
         assertEquals(oneProject, row?.payload)
         assertTrue(row != null && !isStaleStamp(row.updatedAt), "the answer is not stale")
@@ -710,10 +711,47 @@ class ServerChangesOverAnswersTest {
             // one asks again
             assertEquals(CacheWriteOutcome.WRITTEN, written.outcome)
             assertNull(written.rebasedPayload)
+            assertTrue(written.staleStamp != null, "reported as written stale")
             val row = queryCacheDao.getRow("todos", "titles")
             assertEquals(answer, row?.payload)
             assertTrue(row != null && isStaleStamp(row.updatedAt), "the answer is not fresh")
         }
+
+    @Test
+    fun a_last_ask_answer_with_an_unplaceable_change_still_drops_a_deleted_row() = runTest {
+        // Given — "all" holds p1 and p2, a list read with other columns holds p3, and the last
+        // ask of "all" out at tick 10
+        val queryCacheDao = FakeQueryCacheDao()
+        queryCacheDao.seedPayload("projects", "all", """[{"id":"p1"},{"id":"p2"}]""")
+        queryCacheDao.seedPayload("projects", "titles", """[{"id":"p3","title":"T"}]""")
+        var tick = 10L
+        val store = buildStore(queryCacheDao) { tick }
+        store.recordQueryShape("projects", "all") {}
+        store.recordQueryShape("projects", "titles", columns = Columns.list("id,title")) {}
+        val requestStartedAtTick = store.freshness.tickNow()
+
+        // When — one Realtime batch deletes p2 and saves p3, which only a list of other columns
+        // holds, so the patch may leave "all" wrong; then the answer, which holds p2, lands
+        tick = 20L
+        store.applyServerChanges(deleted("p2"), saved("p3", "title" to "T2"))
+        tick = 30L
+        val written =
+            store.queryCache.cacheResponseReporting(
+                table = "projects",
+                cacheKey = "all",
+                payload = """[{"id":"p1"},{"id":"p2"}]""",
+                requestStartedAtTick = requestStartedAtTick,
+                lastAsk = true,
+            )
+
+        // Then — it is written stale without p2: the delete Realtime delivered is not undone, and
+        // no later event would remove the row
+        assertEquals(CacheWriteOutcome.WRITTEN, written.outcome)
+        val row = queryCacheDao.getRow("projects", "all")
+        assertEquals("""[{"id":"p1"}]""", row?.payload)
+        assertTrue(row != null && isStaleStamp(row.updatedAt), "the answer is not fresh")
+        assertEquals(row.updatedAt, written.staleStamp)
+    }
 
     @Test
     fun a_change_too_long_for_the_log_refuses_an_answer_that_left_before_it() = runTest {

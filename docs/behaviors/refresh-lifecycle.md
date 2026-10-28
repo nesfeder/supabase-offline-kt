@@ -99,6 +99,7 @@ with the next one, and a change the cache cannot place, such as one over rows re
 key. An answer with such a change is never written as the server's: the read asks once more, as for
 a local write. When the changes during that request cannot be laid over its answer exactly either,
 it is written with them anyway, marked stale, and the read takes it instead of asking again: a
-one-shot read returns it, a reactive read settles showing the rows as the device's copy
-(`isFromCache`), and the next read asks the server again. A change the cache cannot place is left
-off that answer, written as the server sent it.
+one-shot read returns it and a reactive read settles on it, both as the device's copy
+(`isFromCache`), and the next read asks the server again. When the cache cannot place a change,
+that answer is written as the server sent it, less the rows the changes took out: a row deleted
+while the request was out is still not brought back.

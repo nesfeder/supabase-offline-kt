@@ -12,7 +12,9 @@ import io.github.nesfeder.supabase.offline.MutationOperation
 import io.github.nesfeder.supabase.offline.QuerySnapshot
 import io.github.nesfeder.supabase.offline.ReadStrategy
 import io.github.nesfeder.supabase.offline.RefreshState
+import io.github.nesfeder.supabase.offline.fetchedAt
 import io.github.nesfeder.supabase.offline.internal.cache.ServerRowChange
+import io.github.nesfeder.supabase.offline.internal.db.fetchedAtOf
 import io.github.nesfeder.supabase.offline.internal.db.isStaleStamp
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentity
 import io.github.nesfeder.supabase.offline.isFromCache
@@ -1616,12 +1618,15 @@ class QueryReaderRecoveryTest {
             val result = resolver.select(Columns.ALL, ReadStrategy.NetworkFirst()) {}
 
             // Then: the first answer is refused, and the one more ask is served with the insert
-            // during it laid over; the cache holds it stale, so the next read asks again
+            // during it laid over, as the device's copy: the cache holds it stale, so the next read
+            // asks again
             assertEquals(2, networkCalls)
             assertEquals(projectsThrough(3), result.data)
             val row = queryCacheDao.allForTable("projects").single()
             assertEquals(projectsThrough(3), row.payload)
             assertTrue(isStaleStamp(row.updatedAt))
+            assertTrue(result.isFromCache, "rows the server has not confirmed are the device's")
+            assertEquals(fetchedAtOf(row.updatedAt), result.fetchedAt?.toEpochMilliseconds())
         }
 
     // ── helpers ─────────────────────────────────────────────────────────────

@@ -76,8 +76,15 @@ internal enum class CacheWriteOutcome {
  * @property rebasedPayload the rows written in its place when server changes patched in after its
  *   request left changed them ([ResponseRebase]); `null` when it was written as it came, or not
  *   written.
+ * @property staleStamp the stale stamp it was written with when those changes could not be laid
+ *   over it exactly ([Rebased.isExact]), so the rows are not the server's answer; `null` when it
+ *   was written fresh, or not written.
  */
-internal class ResponseWrite(val outcome: CacheWriteOutcome, val rebasedPayload: String? = null)
+internal class ResponseWrite(
+    val outcome: CacheWriteOutcome,
+    val rebasedPayload: String? = null,
+    val staleStamp: Long? = null,
+)
 
 /**
  * Lays the server changes a response's request left before over its rows, as patching them in would
@@ -107,8 +114,8 @@ internal fun interface ResponseRebase {
  * What [ResponseRebase.rebase] made of an answer.
  *
  * @property payload what is written in the answer's place: the answer with the changes laid over it
- *   (the answer itself when they change none of its rows), or the answer as it came when they may
- *   leave the query wrong.
+ *   (the answer itself when they change none of its rows), or, when they may leave the query wrong,
+ *   the answer as it came without the rows they took out.
  * @property isExact whether [payload] is what the server would answer now: every change removes a
  *   row by its key, or changes one the answer holds in place, and moves no row the server would
  *   place elsewhere. Not when a change may leave the query wrong, shows a row the answer does not
@@ -278,6 +285,7 @@ internal class QueryCache(
         val ownedByCurrentIdentity = ownership.cacheTakesWritesOfCurrentIdentity()
         var replacedLength = 0L
         var rebased: Rebased? = null
+        var staleStamp: Long? = null
         // The guards and the write are one critical section under the table's write lock, so a
         // response is judged against the watermark *after* any overlay in progress has recorded
         // its write, and never lands between an overlay's snapshot and its write-back (where the
@@ -352,7 +360,9 @@ internal class QueryCache(
                                         cacheKey = cacheKey,
                                         payload = written,
                                         updatedAt =
-                                            if (inexact) staleStampOf(nowMillis()) else nowMillis(),
+                                            if (inexact)
+                                                staleStampOf(nowMillis()).also { staleStamp = it }
+                                            else nowMillis(),
                                         syncedThrough =
                                             if (requestStartedAtTick != null)
                                                 mutationQueue.latestSyncSequence()
@@ -382,6 +392,7 @@ internal class QueryCache(
             outcome,
             rebasedPayload =
                 laid?.text?.takeIf { text -> outcome == CacheWriteOutcome.WRITTEN && text != rows },
+            staleStamp = staleStamp,
         )
     }
 
