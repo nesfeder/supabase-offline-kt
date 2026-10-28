@@ -33,7 +33,11 @@ A downloaded object is stored at `storage/<bucket>/<object path>` under the file
 its bucket and path are short printable names. Any other name, and every image-transform variant,
 is stored under `storage-hashed/`, in a file named by a hash of its key. So is a name with a
 segment that starts with a letter and a colon, like `u:42`, which a path library would read as a
-Windows drive. A download is written to a temporary file first, written through to the disk, and
+Windows drive. So is an object whose place another object of its bucket takes: `album` and
+`album/cover.png` would need one name to be both a file and a folder, so the one downloaded second
+goes to its file under `storage-hashed/`, and its row records that. The same holds for `photo`
+and `PHOTO` on a case-insensitive volume, such as the iOS simulator's. A download is written to a
+temporary file first, written through to the disk, and
 moved into place whole; a temporary file a crash left behind is deleted once it is more than a day
 old. The row records the file's size. A file whose size differs from its row, which a power loss
 right after a download can leave, is not served: it is deleted with its row, and the object is
@@ -76,7 +80,7 @@ It is unique on (`bucketId`, `path`).
 | `key` | TEXT | no | `<bucket>::<path>` |
 | `bucketId` | TEXT | no | The bucket |
 | `path` | TEXT | no | The object's path in the bucket |
-| `localPath` | TEXT | no | Where the file was written; its place is always derived from the bucket and path |
+| `localPath` | TEXT | no | Where the file was written. Its place is always derived from the bucket and path; this says only whether it is under `storage/` or `storage-hashed/` |
 | `sizeBytes` | INTEGER | yes | The file's size |
 | `eTag` | TEXT | yes | The `ETag` the server sent the file under, which the next download asks about; `NULL` when it sent none, or for a file an earlier version of the library cached |
 | `lastFetchedEpochMs` | INTEGER | no | When the file was downloaded, or the server last answered that it had not changed, in milliseconds since 1970: `CachedFile.fetchedAt` |

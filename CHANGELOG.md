@@ -73,6 +73,14 @@ All notable changes to this project are recorded in this file. The format follow
 
 ### Changed
 
+- When an object and a folder of the same name are both cached in one bucket, or two objects whose
+  names differ only in case on a case-insensitive volume, the one downloaded second is stored under
+  `storage-hashed/`, in the file named by a hash of its key, and its row's `localPath` records that
+  file. Files and rows already on a device stay as they are and are read as before. An earlier build
+  that finds such a row drops it when the object is next read, downloads the object again, and
+  leaves the file until the file cache or local data is cleared. Until that read, an earlier build
+  on iOS stops at such a row in every eviction pass, so its size bound evicts nothing while a row
+  like `album/cover.png` beside the file `album` is there.
 - The query cache's eviction pass runs in the background after a response is written, where it ran
   before the read returned, and starts when a running count of the cached lists' length passes the
   bound, where every response of 4 KiB or more, and every 32nd response, summed every cached list
@@ -174,6 +182,14 @@ All notable changes to this project are recorded in this file. The format follow
 
 ### Fixed
 
+- An object and a folder of the same name in one bucket, such as `album` and `album/cover.png`, can
+  both be cached now. On disk they would need one name to be both a file and a folder, so the one
+  downloaded second was never cached: `ensureCachedFile` threw for it every time, a channel download
+  of it could fetch it twice, and it was not served offline.
+- On a case-insensitive volume, such as the iOS simulator's or a Mac's, two objects whose names
+  differ only in case, such as `photo` and `PHOTO`, or whose buckets' names do, shared one cached
+  file, so the one downloaded second replaced the other's bytes, and a write to one deleted the
+  other's copy. The second is now stored apart, and each object serves its own.
 - With Room 2.8.5 or later, which an app can resolve itself, `pendingMutations()` and
   `pendingMutationCountFlow()` called after `close()` threw Room's `IllegalStateException`
   from the call, where a `catch` on the flow could not see it. Each now returns a flow that
