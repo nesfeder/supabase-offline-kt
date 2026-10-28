@@ -1,8 +1,14 @@
 // Copyright (c) 2026 nesfeder
 // SPDX-License-Identifier: MIT
+@file:OptIn(ExperimentalAtomicApi::class)
+
 package io.github.nesfeder.supabase.offline.bridge
 
 import io.github.nesfeder.supabase.offline.bridge.internal.toNSData
+import kotlin.concurrent.Volatile
+import kotlin.concurrent.atomics.AtomicReference
+import kotlin.concurrent.atomics.ExperimentalAtomicApi
+import kotlin.concurrent.atomics.update
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -17,10 +23,25 @@ import kotlinx.serialization.json.jsonPrimitive
 class BridgeQueuedUploadTest {
 
     /** Whether Storage refuses uploads, as a policy does. */
-    private var refusing = false
+    @Volatile private var refusing = false
+
+    /** The object paths Storage holds, from the uploads it accepted. */
+    private val stored = AtomicReference(emptySet<String>())
 
     private val server = RecordingServer { request ->
         when {
+            // `exists`: an object Storage does not hold is "not found", which hosted Storage
+            // answers with a 400. The library asks it before sending an upload again whose earlier
+            // send may have reached Storage, as the offline attempt here may have
+            request.method == "HEAD" && request.path.startsWith("/storage/v1/object/") ->
+                if (request.path in stored.load()) {
+                    ScriptedAnswer.json(200, "")
+                } else {
+                    ScriptedAnswer.json(
+                        400,
+                        """{"statusCode":"404","error":"not_found","message":"Object not found"}""",
+                    )
+                }
             request.method == "POST" && request.path.startsWith("/storage/v1/object/") ->
                 if (refusing) {
                     ScriptedAnswer.json(
@@ -28,6 +49,7 @@ class BridgeQueuedUploadTest {
                         """{"statusCode":"403","error":"Unauthorized","message":"refused"}""",
                     )
                 } else {
+                    stored.update { paths -> paths + request.path }
                     ScriptedAnswer.json(200, """{"Key":"avatars/a.png","Id":"object-1"}""")
                 }
             else -> RecordingServer.defaultAnswer(request)
@@ -80,7 +102,7 @@ class BridgeQueuedUploadTest {
         assertEquals(0, report.remainingCount)
         assertEquals(emptyList(), report.rejectedUploads)
         assertEquals(emptyList(), after.awaitValue())
-        assertTrue(server.requests.any { it.method == "POST" && it.body == "image bytes" })
+        assertEquals(setOf("/storage/v1/object/avatars/a.png"), stored.load())
         client.closeAndWait()
     }
 
@@ -124,8 +146,8 @@ class BridgeQueuedUploadTest {
             queued.completion,
         )
         assertNotNull(queued.awaitValue())
-        server.online = true
         refusing = true
+        server.online = true
 
         // When
         val synced = CompletionProbe<BridgeSyncReport>()
