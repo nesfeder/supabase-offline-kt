@@ -355,6 +355,12 @@ class FaultInjectionTest {
                 {
                     valued<BridgeCachedFile> { storage.ensureCachedFile("b", "p", false, it) }
                 },
+            "ensureCachedFileWithProgress" to
+                {
+                    valued<BridgeCachedFile> {
+                        storage.ensureCachedFileWithProgress("b", "p", false, { _, _ -> }, it)
+                    }
+                },
             "evictCachedFile" to { unvalued { storage.evictCachedFile("b", "p", null, it) } },
             "clearFileCache" to { unvalued { storage.clearFileCache(it) } },
             "pinCachedFile" to { unvalued { storage.pinCachedFile("b", "p", it) } },

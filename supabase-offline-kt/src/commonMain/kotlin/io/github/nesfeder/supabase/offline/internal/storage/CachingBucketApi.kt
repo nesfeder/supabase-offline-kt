@@ -23,6 +23,7 @@ import io.github.jan.supabase.storage.UploadSignedUrl
 import io.github.jan.supabase.storage.resumable.ResumableClient
 import io.github.jan.supabase.storage.storage
 import io.github.nesfeder.supabase.offline.CachedFile
+import io.github.nesfeder.supabase.offline.DownloadProgress
 import io.github.nesfeder.supabase.offline.MutationStrategy
 import io.github.nesfeder.supabase.offline.OfflineBucketApi
 import io.github.nesfeder.supabase.offline.OfflineInternal
@@ -185,10 +186,29 @@ internal class CachingBucketApi(
     }
 
     override suspend fun ensureCachedFile(path: String, isPublic: Boolean): CachedFile =
-        operationGate.cancellableCall(backgroundScope) { ensureCachedFileNow(path, isPublic) }
+        operationGate.cancellableCall(backgroundScope) {
+            ensureCachedFileNow(path, isPublic, onProgress = null)
+        }
 
-    /** [ensureCachedFile]'s body, run while the call holds the client's gate. */
-    private suspend fun ensureCachedFileNow(path: String, isPublic: Boolean): CachedFile {
+    // Run on the caller's dispatcher, so onProgress is called there
+    override suspend fun ensureCachedFile(
+        path: String,
+        isPublic: Boolean,
+        onProgress: (DownloadProgress) -> Unit,
+    ): CachedFile =
+        operationGate.cancellableCall(backgroundScope) {
+            ensureCachedFileNow(path, isPublic, onProgress)
+        }
+
+    /**
+     * [ensureCachedFile]'s body, run while the call holds the client's gate, handing [onProgress]
+     * the progress of each download it runs or joins.
+     */
+    private suspend fun ensureCachedFileNow(
+        path: String,
+        isPublic: Boolean,
+        onProgress: ((DownloadProgress) -> Unit)?,
+    ): CachedFile {
         val entry = requireCacheableEntry(path)
         // Storage does not hold a queued upload yet: its copy on the device is the one to return
         queuedUploads?.uploads?.queuedCopyOf(bucketId, path)?.let { queued ->
@@ -204,9 +224,10 @@ internal class CachingBucketApi(
             // looks at the cache first, so a call that missed just before a commit downloads
             // nothing.
             val shared =
-                cache.downloadsInFlight.joinOrStart(entry.key, backgroundScope) { ensureWanted ->
+                cache.downloadsInFlight.joinOrStart(entry.key, backgroundScope, onProgress) {
+                    ensureWanted ->
                     if (cache.useCachedCopy(entry) != null) CommitOutcome.COMMITTED
-                    else downloadIntoCache(entry, path, isPublic, ensureWanted)
+                    else downloadIntoCache(entry, path, isPublic, progress = this, ensureWanted)
                 }
             val outcome =
                 when (shared) {
@@ -254,6 +275,8 @@ internal class CachingBucketApi(
      * [ensureCachedFile] of [path] shares. A request that fetched only part of the object, by a
      * header set on this bucket, is refused: the fragment cannot be the cached copy.
      *
+     * @param progress where each chunk written is reported, with the object's size once the answer
+     *   gives it.
      * @param ensureWanted throws a cancellation when every caller waiting for this download has
      *   been canceled; called just before the commit, so a download they all gave up leaves no
      *   file.
@@ -263,17 +286,23 @@ internal class CachingBucketApi(
         entry: FileCacheEntry,
         path: String,
         isPublic: Boolean,
+        progress: DownloadProgressRelay,
         ensureWanted: () -> Unit,
     ): CommitOutcome {
         val sentUnsettled = isSessionUnsettled()
         val file = OwnedTemporaryFile()
         val start = cache.beginDownload()
+        val checked = CheckedDownload()
         try {
             val download =
                 try {
-                    downloadToTemporaryFile(file, entryProvider = { entry }) { target ->
+                    downloadToTemporaryFile(
+                        file,
+                        entryProvider = { entry },
+                        onWritten = { bytes -> progress.report(bytes, checked.expectedLength) },
+                    ) { target ->
                         networkAccess.ensureEnabled()
-                        checkingDownloadStatus {
+                        checkingDownloadStatus(checked) {
                             if (isPublic) delegate.downloadPublic(path, target) {}
                             else delegate.downloadAuthenticated(path, target) {}
                         }
@@ -845,11 +874,15 @@ internal class CachingBucketApi(
      * names none, a request for part of the object, straight into [passThrough] when there is one.
      * A failed or canceled download leaves the file to [file]'s owner; a disk that refuses it
      * deletes it at once, cancels the download and reports [StreamedDownload.CacheRefused].
+     *
+     * @param onWritten told how many bytes the file holds after each chunk written to it, and once
+     *   that it holds none when the object is empty.
      */
     private suspend fun downloadToTemporaryFile(
         file: OwnedTemporaryFile,
         entryProvider: () -> FileCacheEntry?,
         passThrough: ByteWriteChannel? = null,
+        onWritten: ((bytesWritten: Long) -> Unit)? = null,
         fetch: suspend (ByteWriteChannel) -> CheckedDownload,
     ): StreamedDownload = coroutineScope {
         val pipe = ByteChannel()
@@ -862,6 +895,7 @@ internal class CachingBucketApi(
             }
         }
         val buffer = ByteArray(DOWNLOAD_BUFFER_BYTES)
+        var written = 0L
         while (true) {
             val read = readOrRethrow(pipe, buffer) { producer.await() }
             if (read < 0) break
@@ -890,8 +924,12 @@ internal class CachingBucketApi(
                     uncacheable = false,
                 )
             }
+            written += read
+            onWritten?.invoke(written)
         }
         val checked = producer.await()
+        // An empty object wrote no chunk: its one progress is that it is whole
+        if (written == 0L) onWritten?.invoke(0L)
         val target =
             file.temporary
                 ?: file.open(entryProvider())

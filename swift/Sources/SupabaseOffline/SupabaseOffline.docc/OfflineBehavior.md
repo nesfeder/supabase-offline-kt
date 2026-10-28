@@ -112,7 +112,8 @@ A transformed download is kept apart from the original, and
 queued writes and the cached query results. ``OfflineBucketApi/pinCachedFile(path:)`` keeps an
 object's copies through every eviction, across restarts, until
 ``OfflineBucketApi/unpinCachedFile(path:)``, an eviction or removal of the object, or one of those
-clears.
+clears. ``OfflineBucketApi/ensureCachedFile(path:isPublic:onProgress:)`` hands a closure the
+download's ``DownloadProgress`` on a background thread, for a progress bar.
 
 An object name holding `%`, `?` or `#` is never kept on the device, and other requests than the URL
 builders, signing and uploads to a signed URL can mistake it for another object: keep those

@@ -119,6 +119,25 @@ From the samples: [TaskPhotoFiles.kt](https://github.com/nesfeder/supabase-offli
     --8<-- "Data/TaskRepository+Photos.swift:share-photo"
     ```
 
+### Download progress
+
+```kotlin
+--8<-- "StorageExamples.kt:progress"
+```
+
+`ensureCachedFile(path) { progress -> … }` hands the download's progress to its lambda: the
+`bytesReceived` so far, and `totalBytes`, the object's size when the server's answer gave it, or
+`null`. Every call waiting for one object's download is handed its progress, and a call that joins
+the download late starts from where it stands; each is handed the last progress before it returns.
+The lambda runs in the caller's coroutine, on its dispatcher, so it can update a UI from the main
+thread, one call at a time: a progress that arrives while it runs replaces any it has not been
+handed yet. What it throws ends that call alone, and the download goes on for the others. A cached
+copy is returned without a call. A download started again counts from zero: after the object was
+written meanwhile, or after a download the call joined failed, when the call makes its own request.
+A call without the lambda adds nothing to the download. The Swift package has
+`ensureCachedFile(path:isPublic:onProgress:)`, whose closure runs on a background thread; when its
+task is canceled, one call already under way may finish after the `CancellationError` is thrown.
+
 ## Evicting and clearing
 
 ```kotlin

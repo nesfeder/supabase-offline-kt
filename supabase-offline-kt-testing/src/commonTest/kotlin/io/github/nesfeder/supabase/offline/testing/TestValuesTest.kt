@@ -50,6 +50,18 @@ class TestValuesTest {
     }
 
     @Test
+    fun a_download_progress_holds_its_fields() {
+        // Given / When
+        val known = downloadProgress(bytesReceived = 4, totalBytes = 18)
+        val unknown = downloadProgress(bytesReceived = 4, totalBytes = null)
+
+        // Then
+        assertEquals(4, known.bytesReceived)
+        assertEquals(18, known.totalBytes)
+        assertEquals(null, unknown.totalBytes)
+    }
+
+    @Test
     fun the_exceptions_carry_their_message_and_cause() {
         // Given
         val offline = IOException("network down")

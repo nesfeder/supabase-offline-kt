@@ -82,6 +82,7 @@ io.github.nesfeder.supabase.offline: suspend fun Offline.syncPendingMutations(ta
 io.github.nesfeder.supabase.offline: suspend fun OfflineBucketApi.cachedFile(path: String)
 io.github.nesfeder.supabase.offline: suspend fun OfflineBucketApi.cachedFile(path: String, transform: ImageTransformation.() -> Unit)
 io.github.nesfeder.supabase.offline: suspend fun OfflineBucketApi.ensureCachedFile(path: String, isPublic: Boolean = …)
+io.github.nesfeder.supabase.offline: suspend fun OfflineBucketApi.ensureCachedFile(path: String, isPublic: Boolean = …, onProgress: (DownloadProgress) -> Unit)
 io.github.nesfeder.supabase.offline: suspend fun OfflineBucketApi.evictCachedFile(path: String)
 io.github.nesfeder.supabase.offline: suspend fun OfflineBucketApi.evictCachedFile(path: String, transform: ImageTransformation.() -> Unit)
 io.github.nesfeder.supabase.offline: suspend fun OfflineBucketApi.isCachedFilePinned(path: String)

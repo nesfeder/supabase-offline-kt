@@ -4,6 +4,7 @@ import Foundation
 import SupabaseOfflineCore
 import SupabaseOfflineTesting
 import Testing
+import os
 @testable import SupabaseOffline
 
 /// Storage through the in-memory client: the file cache, failures, and what each operation sends.
@@ -66,6 +67,28 @@ struct StorageTests {
         #expect(storage.requests(below: "object/public/avatars/b.png").count == 1)
         #expect(missing?.code == .connectivity)
         #expect(missing?.isNetworkOrConnectivityFailure == true)
+        try await client.close()
+    }
+
+    @Test func ensureCachedFileHandsItsProgressBeforeItReturnsAndNoneForACachedCopy() async throws {
+        // Given nothing cached, and a list the background-thread closure appends to
+        let storage = FakeStorageServer()
+        let client = Self.makeClient(storage)
+        let bucket = client.storage.from("avatars")
+        let handed = OSAllocatedUnfairLock<[DownloadProgress]>(initialState: [])
+
+        // When downloaded with progress, then asked again with the copy cached
+        let file = try await bucket.ensureCachedFile(path: "a.png") { progress in
+            handed.withLock { $0.append(progress) }
+        }
+        let duringTheDownload = handed.withLock { $0 }
+        _ = try await bucket.ensureCachedFile(path: "a.png") { progress in
+            handed.withLock { $0.append(progress) }
+        }
+
+        // Then the last progress held the whole file, and the cached copy handed none
+        #expect(duringTheDownload.last?.bytesReceived == file.sizeBytes)
+        #expect(handed.withLock { $0 } == duringTheDownload)
         try await client.close()
     }
 

@@ -75,6 +75,9 @@ internal class RecordingStorageServer {
     /** How many downloads were answered HTTP 304. */
     var notModifiedAnswers: Int = 0
 
+    /** When set, a download of the whole object or transform carries its `Content-Length`. */
+    var sendsContentLength: Boolean = false
+
     /**
      * When set, every request waits for it before answering, so a test can act while a download is
      * in flight. Complete it to let the requests through.
@@ -286,7 +289,14 @@ internal class RecordingStorageServer {
         downloadGate?.await()
         val octetStream =
             HttpHeaders.ContentType to listOf(ContentType.Application.OctetStream.toString())
-        val tagged = listOfNotNull(octetStream, eTag?.let { HttpHeaders.ETag to listOf(it) })
+        val tagged =
+            listOfNotNull(
+                octetStream,
+                eTag?.let { HttpHeaders.ETag to listOf(it) },
+                (HttpHeaders.ContentLength to listOf("${whole.size}")).takeIf {
+                    sendsContentLength
+                },
+            )
         if (request.method.value == "HEAD") {
             return respond(
                 content = ByteArray(0),

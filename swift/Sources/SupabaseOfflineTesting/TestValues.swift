@@ -619,6 +619,16 @@ public func cachedFile(path: String, fetchedAt: Date, sizeBytes: Int) -> CachedF
     CachedFile(path: path, fetchedAt: fetchedAt, sizeBytes: sizeBytes)
 }
 
+/// The progress of a download into the file cache, as a bucket's
+/// `ensureCachedFile(path:isPublic:onProgress:)` reports it.
+///
+/// - Parameters:
+///   - bytesReceived: The bytes received so far.
+///   - totalBytes: The object's size; `nil` when the server gave none.
+public func downloadProgress(bytesReceived: Int, totalBytes: Int?) -> DownloadProgress {
+    DownloadProgress(bytesReceived: bytesReceived, totalBytes: totalBytes)
+}
+
 /// The answer to a one-shot read, an applied write or a function call, as `execute` returns one;
 /// wrap it in `MutationOutcome.applied(result:)` for a write.
 ///
