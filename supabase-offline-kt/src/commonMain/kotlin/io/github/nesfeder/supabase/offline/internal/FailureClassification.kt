@@ -21,15 +21,19 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.io.IOException
 
 /**
- * The HTTP status carried by this throwable or a cause, as a [PostgrestRestException] or a
- * [ResponseException], or `null` when neither is in the chain.
+ * The HTTP status the server answered with, read from this throwable or a cause: a supabase-kt
+ * [RestException] (PostgREST's and Storage's errors among them), a Ktor [ResponseException], or a
+ * [SyncFailedException]; `null` when none is in the chain. The public `httpStatusOrNull` is this
+ * one, so [isNetworkOrConnectivityFailure] never calls a failure the network's when the app is told
+ * its status.
  */
 internal fun Throwable.httpStatusOrNull(): Int? {
     var current: Throwable? = this
     while (current != null) {
         when (current) {
-            is PostgrestRestException -> return current.statusCode
+            is RestException -> return current.statusCode
             is ResponseException -> return current.response.status.value
+            is SyncFailedException -> return current.httpStatus
         }
         current = current.cause
     }

@@ -7,11 +7,10 @@ import io.github.jan.supabase.exceptions.RestException
 import io.github.jan.supabase.postgrest.exception.PostgrestRestException
 import io.github.nesfeder.supabase.offline.SyncFailedException
 import io.github.nesfeder.supabase.offline.SyncStopReason
-import io.github.nesfeder.supabase.offline.httpStatusOrNull
 import io.github.nesfeder.supabase.offline.internal.POSTGREST_DID_NOT_RUN_CODES
 import io.github.nesfeder.supabase.offline.internal.SCHEMA_CACHE_MISS_CODES
 import io.github.nesfeder.supabase.offline.internal.db.MutationRow
-import io.github.nesfeder.supabase.offline.internal.httpStatusOrNull as engineHttpStatusOrNull
+import io.github.nesfeder.supabase.offline.internal.httpStatusOrNull
 import io.github.nesfeder.supabase.offline.internal.isNetworkOrConnectivityFailure
 import io.github.nesfeder.supabase.offline.internal.isPermanentMutationFailure
 import io.github.nesfeder.supabase.offline.internal.isStorageRefusal
@@ -181,7 +180,7 @@ private suspend fun classifyRowWriteFailure(
             ReplayOutcome.SchemaCacheMiss(failure)
 
         failure.isPermanentMutationFailure() -> {
-            val status = failure.engineHttpStatusOrNull()
+            val status = failure.httpStatusOrNull()
             val mayDependOnEarlierWrite = status == HTTP_FORBIDDEN || status == HTTP_CONFLICT
             if (
                 mayDependOnEarlierWrite &&
@@ -204,7 +203,7 @@ private suspend fun classifyRowWriteFailure(
         }
 
         else -> {
-            val status = failure.engineHttpStatusOrNull()
+            val status = failure.httpStatusOrNull()
             engineLogger.warning {
                 "Replay of ${mutation.operation} on ${mutation.table} failed " +
                     "(${status ?: failure::class.simpleName}); keeping it for a later sync"
