@@ -1,9 +1,11 @@
 # Storage caching
 
 A download through the offline bucket goes to the network first and is kept on disk; when the
-network fails, the kept copy is served instead. Writes (uploads, updates, deletes, moves and
-copies) are online only and never queued, and one that reaches the server drops the cached copies
-it made stale.
+network fails, the kept copy is served instead. An upload made with a `MutationStrategy` can wait
+in the mutation queue with the row writes around it, its bytes on the device
+([below](#queued-uploads)). Every other write (an upload without one, updates, deletes, moves and
+copies) is online only and never queued, and one that reaches the server drops the cached copies it
+made stale.
 
 From the samples: [TaskPhotoFiles.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/TaskPhotoFiles.kt) · [TaskRepository+Photos.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository+Photos.swift)
 
@@ -126,16 +128,71 @@ but is not cached, as across `clearLocalData()`: an `ensureCachedFile` running m
 `IllegalStateException`. The Swift package has the same calls: `evictCachedFile(path:)`,
 `evictCachedFile(path:transform:)` and `storage.clearFileCache()`.
 
+## Queued uploads
+
+```kotlin
+--8<-- "StorageExamples.kt:queued-upload"
+```
+
+`upload(path, data, mutationStrategy)` makes an upload as a row write is made
+([Writes and the offline queue](mutations.md#storage-uploads-in-the-queue)). Under
+`QueueIfOffline` the bytes are first written to the device and the upload queued, then it is sent
+at once when nothing of the user waits ahead of it: the result is `UploadOutcome.Applied` with
+Storage's response. Otherwise it waits and is `UploadOutcome.Queued`, with a `PendingUpload`: no
+connection or no answer, an answer that says the request did not finish (a `408`, `429`, `502`,
+`503`, `504`, `520`, `522` or `524`), a token Storage refused, earlier writes still pending, network
+access off, or a session still restoring. A later pass sends it in the order it was made among the
+user's writes, so a row written after it that names the file reaches the server after the file, and
+one written before it, a task the photo belongs to, say, before it. Sent at once and refused, or
+failing with another `5xx`, it throws Storage's error and is not kept. `OnlineOnly` is the plain
+upload, its response wrapped in `Applied`.
+
+- **Where the bytes wait**: a file of their own under `storage-uploads/` in the data directory
+  ([On-device data](../reference/on-device-data.md#the-files)), written through to the disk before
+  the upload is queued. The file cache's bound never evicts it and `clearFileCache()` leaves it.
+- **While it waits**, `cachedFile(path)` and `ensureCachedFile(path)` return that file, with no
+  request, and so do the platform helpers built on them, so a photo shows at once: the newest
+  upload of the path wins over any cached copy, and its `fetchedAt` is when it was queued. Once
+  Storage has the file its bytes become the object's cached copy, and the file under
+  `storage-uploads/` goes. A transform's copy is never answered from it, and a download still asks
+  the server, which does not hold the file yet.
+- **Options**: `upsert`, `contentType` and `userMetadata` are kept with it. An upload whose options
+  add an `httpOverride`, one through a bucket with a header set by `setHeader`, one whose user
+  cannot be told, one whose bytes the device cannot write, and one on its way into the queue while
+  local data is cleared are sent at once instead; offline they throw
+  `MutationNotQueueableException` with the connectivity failure as its cause.
+- **Replay**: it is a write of the user's queue, sent with that user's token and never another's,
+  through the same order and the same stops as a row ([Replaying the queue](sync.md#what-happens-to-each-write)).
+  An upload whose earlier send's answer was lost first asks Storage whether the object is there,
+  and is not sent twice; one with `upsert` is sent again.
+- **Refusals**: an upload Storage refuses for good moves to the rejected list with its bytes, as
+  `storage.rejectedUploads()` lists it, with Storage's status, error name (`code`) and message;
+  `retryRejectedMutation(id)` queues it again at the end of the queue, and
+  `dismissRejectedMutation(id)` drops it with its file. A refused upload does not hold the writes
+  behind it: a row that names its file is still sent, so show the refusal and let the user retry.
+
+```kotlin
+--8<-- "StorageExamples.kt:queued-upload-lists"
+```
+
+`storage.pendingUploads()` lists the current user's uploads still to send, in queue order, each a
+`PendingUpload` with its `id`, `bucketId`, `path`, `createdAt`, `sizeBytes`, `contentType` and
+`upsert`; `discardPendingMutation(id)` drops one, with its file. They count as writes in
+`syncStatus` and in `pendingMutationCount()` with no table; `pendingMutations()` lists the row
+writes beside them. They stay with the user who made them across a sign-out, as queued rows do,
+and go with `clearLocalData()` ([Signing out and switching users](sign-out.md)). Resumable uploads,
+and every other write, are never queued.
+
 ## Writes
 
-Uploads, updates, deletes, moves and copies are online only, and nothing is queued. Offline, a
-write is tried whatever the connectivity monitor says and fails with supabase-kt's own
-connectivity error; with network access off, every Storage call but a download throws
+Uploads without a strategy, updates, deletes, moves and copies are online only, and nothing is
+queued. Offline, a write is tried whatever the connectivity monitor says and fails with
+supabase-kt's own connectivity error; with network access off, every Storage call but a download throws
 `NetworkDisabledException` and sends nothing, and a download is answered from the file cache (or
 throws `NetworkDisabledException` with nothing cached). A write that reaches the server drops the
-cached copies it made stale, a resumable upload once it finishes. An upload does not put its bytes
-in the cache, so a file uploaded just before the device goes offline is not available offline
-until it is downloaded. The sample uploads a photo with progress, from its own queue of photos
+cached copies it made stale, a resumable upload once it finishes. Such an upload does not put its
+bytes in the cache, so a file uploaded just before the device goes offline is not available offline
+until it is downloaded; a [queued upload](#queued-uploads) does. The sample uploads a photo with progress, from its own queue of photos
 waiting to upload ([below](#photos-picked-offline-the-apps-own-queue)), replaces a file in place,
 and moves or copies one to another task's folder, writing the photo's row too, since the schema
 ties a row to its path:
@@ -204,10 +261,10 @@ From the samples: [TaskPhotoFiles.kt](https://github.com/nesfeder/supabase-offli
 
 ## Photos picked offline: the app's own queue
 
-The library never queues a Storage write, so an app that lets a user add a photo offline keeps the
-photo in a queue of its own until the upload lands, and then references the library's cached copy.
-Both samples do this; the queue is theirs, not the library's, and Storage writes still need a
-connection, as [Writes](#writes) says.
+Both samples keep a queue of their own for photos picked offline, written before the library could
+queue an upload ([above](#queued-uploads)): they hold the photo until the upload lands, and then
+reference the library's cached copy. The queue is theirs, not the library's, and their uploads are
+made without a strategy, so they need a connection, as [Writes](#writes) says.
 
 - **A directory the app owns**, never the library's data directory or file cache: per photo, a JPEG
   named by the photo's id (made on the device, encoded as every upload is) and, written after it, a
@@ -361,7 +418,9 @@ segment that starts with a letter and a colon, like `u:42`, is cached, under a h
 
 With Auth installed, the file cache belongs to one user at a time, like the query cache, and
 `clearLocalData()` deletes every file ([Signing out and switching users](sign-out.md)); a download
-in flight keeps its temporary file until it ends, then deletes it. Its bound is
+in flight keeps its temporary file until it ends, then deletes it. A queued upload's file belongs to
+the user who made it, as the upload does: it stays when the file cache passes to another user, and
+goes with `clearLocalData()`. Its bound is
 `fileCacheSizeBytes` ([Cache size and eviction](eviction.md#the-file-cache)); where the files live
 is on [On-device data](../reference/on-device-data.md).
 
@@ -370,7 +429,9 @@ is on [On-device data](../reference/on-device-data.md).
 Facts about the engine; one row per condition, the conditions those of the
 [one-shot read matrix](read-strategies.md#behavior-matrix), with warm and cold saying whether the
 object is cached. Writes are `upload`, `update`, `delete`, `move`, `copy` and the resumable and
-signed-URL uploads.
+signed-URL uploads; an upload made with a strategy follows the queue instead
+([Queued uploads](#queued-uploads)), and while it waits `cachedFile` and `ensureCachedFile`
+answer its file under every condition.
 
 | Condition | `downloadAuthenticated` / `downloadPublic` | `ensureCachedFile` | `cachedFile` | Writes |
 |---|---|---|---|---|

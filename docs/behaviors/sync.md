@@ -111,7 +111,10 @@ user's queue, so a child row queued after its parent in another table is sent af
 `syncPendingMutations(table)` sends one table's writes but never ahead of an earlier write of the
 user still queued in another table: it stops at the first write that has one and counts what it
 held back in `SyncReport.heldBehindOtherTablesCount`. `OnlineOnly` writes, writes the queue cannot
-hold, `rpc` and Storage writes are never queued, so they go around the queue.
+hold, `rpc` and Storage writes are never queued, so they go around the queue, but for an upload
+made with `QueueIfOffline` ([Storage caching](storage.md#queued-uploads)): that is a write of the
+queue, sent where its id falls, after the row writes made before it and before those made after
+it. It belongs to no table, so a call for one table stops at a write queued behind it.
 
 A pass first waits, for at most 10 seconds, for the session to settle (signed in, or signed out),
 except when the network is known to be down. A PostgREST plugin configured with its own `jwtToken`
@@ -129,14 +132,25 @@ sends that token whoever is signed in, so the owner check of
 | (The library can no longer replay it exactly as it was made) | Moves to the rejected list with no `serverError`, and the pass goes on |
 | No row at the version the device saw, on a table with a version column | One read by key tells the case: already applied or gone (synced), a policy denial (the rejected list), or a moved row, which the resolver settles: resent, dropped or parked on the conflicted list, and the pass goes on ([Conflicts and merging](conflicts.md#the-five-outcomes)) |
 
+A queued upload meets Storage's answers the same way, with three differences. A refusal (a `4xx`
+other than `401`, `408` and `429`, and other than Storage refusing the token as invalid or
+expired, which hosted Storage answers with a `400`) while an earlier write of the user is still
+queued holds it, with the pass stopped, rather than rejecting it: Storage's policy may read the row
+that write adds. A refused upload keeps its bytes on the device, for a retry. And an upload whose
+earlier send's answer was lost first asks Storage whether the object is there: when it is, the
+upload is counted sent and already on the server, and is not sent again; one that may overwrite is
+simply sent again. Once Storage has it, its bytes become the object's cached copy and its file on
+the device goes.
+
 ## What a sync returns
 
 | `SyncReport` field | Meaning |
 | --- | --- |
-| `syncedCount` | The writes this call sent and the server accepted |
+| `syncedCount` | The writes this call sent and the server accepted, queued uploads included |
 | `rejected` | The `RejectedMutation`s refused during this call, now on `rejectedMutations()` |
-| `remainingCount` | The writes still queued when the call returned |
-| `alreadyOnServerCount` | Of `syncedCount`, the inserts whose rows the server already held, because an earlier send whose answer was lost had reached it; and on a table with a version column, the updates whose row already held their values and the guarded deletes whose row was already gone |
+| `rejectedUploads` | The `RejectedUpload`s Storage refused during this call, now on `storage.rejectedUploads()` |
+| `remainingCount` | The writes still queued when the call returned, queued uploads included |
+| `alreadyOnServerCount` | Of `syncedCount`, the inserts whose rows the server already held, because an earlier send whose answer was lost had reached it, and the uploads Storage already held for the same reason; and on a table with a version column, the updates whose row already held their values and the guarded deletes whose row was already gone |
 | `heldBehindOtherTablesCount` | Of `remainingCount`, the writes a call for one table held back behind an earlier write to another table; `0` for a call over every table |
 | `conflictsResolvedCount` | Of `syncedCount`, the conflicts settled with `KeepLocal` or `Apply`, by the resolver or the default, and sent |
 | `conflictsKeptServerCount` | The writes dropped for the server's row, with `KeepServer`: by default, an update whose row is gone |
@@ -164,7 +178,7 @@ gives the reason its last pass ended for. In Swift it is a `kind`, with the fail
 | --- | --- | --- |
 | `Completed` | It went through every write it found queued: each was sent, refused, parked or dropped | Only the writes queued while it ran |
 | `NetworkUnavailable` | A write could not reach the server, or got no answer in time | That write and those after it |
-| `ServerFailure(error)` | The server answered a write with a failure that may pass: a `5xx`, `408`, `429` or `401`, a schema cache miss, or a `403` or `409` while an earlier write is still queued. `error` has the status and code | That write and those after it |
+| `ServerFailure(error)` | The server answered a write with a failure that may pass: a `5xx`, `408`, `429` or `401`, a schema cache miss, a `403` or `409` while an earlier write is still queued, or Storage's refusal of a queued upload while an earlier write is still queued. `error` has the status and code | That write and those after it |
 | `LocalFailure(error)` | A failure on the device: the local database failing, a request header the HTTP client refuses, or the pass canceled by something other than the caller or a clear | The writes it did not send |
 | `SessionNotReady` | The session did not settle within the wait, or could not be told while it restored or refreshed | Every write; a pass sends them once the session settles |
 | `SessionChanged` | The session changed user while it ran | The new user's writes go in a later pass |
@@ -197,7 +211,7 @@ From the samples: [LibraryMappings.kt](https://github.com/nesfeder/supabase-offl
 | Field | Meaning |
 | --- | --- |
 | `network` | `UNKNOWN` (nothing has said yet; counts as online), `ONLINE`, `OFFLINE` or `DISABLED` (after `disableNetwork()`) |
-| `pendingMutationCount`, `rejectedMutationCount`, `conflictedMutationCount` | The current user's queued writes, rejected entries and conflicted entries. They follow each change to the queue shortly after it, read together, so a write moving between them is counted in exactly one |
+| `pendingMutationCount`, `rejectedMutationCount`, `conflictedMutationCount` | The current user's queued writes, rejected entries and conflicted entries, queued and refused uploads among them. They follow each change to the queue shortly after it, read together, so a write moving between them is counted in exactly one |
 | `isSyncing` | Whether a pass is sending, started by you or by the library |
 | `lastSyncedAt` | When a pass, or a write sent at once, last left the user's queue empty. Kept in memory only |
 | `lastSyncError` | The failure that last stopped a pass with writes queued (a `NetworkUnavailable`, `ServerFailure` or `LocalFailure` stop); cleared when a later pass runs to the end or stops because the session changed user, when sending empties the queue, and when local data is cleared. A pass stopped because the session is not ready, access is off or a write waits behind another table leaves it as it was |

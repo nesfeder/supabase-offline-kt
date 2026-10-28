@@ -152,7 +152,7 @@ Simulate offline does not survive a restart, so use the device's airplane mode f
    upload". The **Photos** tab has them too. Open one: the viewer shows it, and says why Details,
    Share link, Replace, Move and Duplicate need the photo on the server.
 4. In the dashboard, the `task_photos` table and the bucket's folder for the task have nothing new:
-   Storage writes are never queued, so the photos wait in the app's own queue.
+   the photos wait in the app's own queue, which uploads them without a strategy.
 5. Switch **Simulate offline** off. The queued task is sent and the photos upload one at a time;
    each photo's row follows once Storage has its file, behind its task's, and its mark goes.
    Refresh `task_photos` and the bucket: both photos are there.
