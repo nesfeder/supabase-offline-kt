@@ -3,9 +3,11 @@
 package io.github.nesfeder.supabase.offline.internal
 
 /**
- * The engine's fixed limits, in one place: each bounds what one structure keeps or what one step
- * reads, and none is a setting. The cache's bound itself, `cacheSizeBytes`, is the app's to set;
- * these follow it or stand on their own.
+ * The engine's fixed limits on what its caches and queue keep: each bounds what one structure holds
+ * or what one step reads, and none is a setting. The cache's bound itself, `cacheSizeBytes`, is the
+ * app's to set; these follow it or stand on their own. The bounds that keep one SQL statement
+ * within SQLite's 999 bound variables, or one eviction pass's reads finite, stay beside the queries
+ * they guard, in `QueryCache`.
  */
 internal object EngineLimits {
 

@@ -66,31 +66,20 @@ internal class PatchOverlays(
      */
     fun overlayFor(
         admission: QueryAdmission,
-        batch: PatchWrites? = null,
-        keyed: KeyedUpdates? = null,
+        batch: PatchWrites,
+        keyed: KeyedUpdates?,
     ): MutationOverlay =
-        if (batch == null) {
-            MutationOverlay(
-                json = json,
-                admission = admission,
-                primaryKeys = primaryKeys,
-                mayAlreadyHold = { true },
-                placesKeylessUpsertRows = false,
-                onMutationFailure = onMutationFailure,
-            )
-        } else {
-            MutationOverlay(
-                json = json,
-                admission = admission,
-                primaryKeys = primaryKeys,
-                mayAlreadyHold = { true },
-                placesKeylessUpsertRows = false,
-                onMutationFailure = onMutationFailure,
-                bodyOf = batch::bodyOf,
-                filterFor = batch::filterOf,
-                keyed = keyed,
-            )
-        }
+        MutationOverlay(
+            json = json,
+            admission = admission,
+            primaryKeys = primaryKeys,
+            mayAlreadyHold = { true },
+            placesKeylessUpsertRows = false,
+            onMutationFailure = onMutationFailure,
+            bodyOf = batch::bodyOf,
+            filterFor = batch::filterOf,
+            keyed = keyed,
+        )
 
     /**
      * [writes] as [KeyedUpdates] when each is an UPDATE naming one key under [keyColumns]

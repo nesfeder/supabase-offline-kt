@@ -33,7 +33,8 @@ import kotlinx.serialization.json.JsonObject
  * index ([TableKeyIndexes]). A live reader keeps its overlay in a [LiveOverlay]; a patch builds its
  * overlays with [PatchOverlays]. Owns the [TableSnapshotLocks].
  *
- * @param queryCacheDao the object cache, whose write counts say when a key index is stale.
+ * @param queryCacheDao the object cache: the payloads a read overlays, and the writes to a table
+ *   that wake its live readers.
  * @param freshness the clear lock, under which a read's record of its query's shape is written.
  * @param identityProvider the current identity's stored value, or `null` when it cannot be told.
  * @param identityChanges emits when the session may have changed, so a reader's overlay is laid
