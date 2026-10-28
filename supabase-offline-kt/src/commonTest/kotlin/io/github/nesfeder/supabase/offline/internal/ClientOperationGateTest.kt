@@ -31,6 +31,7 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.produceIn
 import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
@@ -152,29 +153,23 @@ class ClientOperationGateTest {
         // two values when close() runs (so close() runs the collection's handler itself). It offers
         // the second before its cancellation reaches it, into a channel close() has already ended,
         // as an upstream caught between two statements does; here it waits, deaf to cancellation,
-        // to be sure
+        // to be sure. The app's scope runs on this test's scheduler: the deferreds fix the order,
+        // and no step waits on the clock, however slow the machine
         val gate = ClientOperationGate()
         val uncaught = RecordingUncaughtExceptions()
-        val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default + uncaught)
+        val appScope =
+            CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler) + uncaught)
         val betweenValues = CompletableDeferred<Unit>()
         val closeReturned = CompletableDeferred<Unit>()
         val upstream = FakeUpstreamPastItsCancellation(betweenValues, closeReturned)
         val values = gate.callCollecting(upstream).produceIn(appScope)
-        withContext(Dispatchers.Default) {
-            withTimeout(5.seconds) {
-                assertEquals(1, values.receive())
-                betweenValues.await()
-            }
-        }
+        assertEquals(1, values.receive())
+        betweenValues.await()
 
         // When
         gate.close()
         closeReturned.complete(Unit)
-        withContext(Dispatchers.Default) {
-            withTimeout(5.seconds) {
-                appScope.coroutineContext.job.children.forEach { child -> child.join() }
-            }
-        }
+        appScope.coroutineContext.job.children.forEach { child -> child.join() }
 
         // Then — the collection's own channel completed, and nothing reached the app's handler
         val ending = values.receiveCatching()
