@@ -7,6 +7,8 @@ import io.github.jan.supabase.storage.storage
 import io.github.nesfeder.supabase.offline.OfflineBucketApi
 import io.github.nesfeder.supabase.offline.internal.db.CachedFileRow
 import io.github.nesfeder.supabase.offline.internal.db.RESERVED_TABLE_NAME
+import io.github.nesfeder.supabase.offline.internal.logging.EngineLogLevel
+import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentity
 import io.github.nesfeder.supabase.offline.internal.testing.InMemoryCachedFileDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeBucketApi
@@ -230,6 +232,75 @@ class StoragePinnedFileTest {
     }
 
     @Test
+    fun a_pinned_object_kept_in_its_hashed_file_is_spared_and_its_explicit_removals_take_the_pin() =
+        runTest {
+            // Given — a folder `album` holding cover.png, then an object named `album`, whose own
+            // place the folder takes, so its copy lives in its hashed file; the object pinned
+            server.objects["$BUCKET/$ALBUM_COVER"] = ByteArray(FILE_SIZE) { 1 }
+            server.objects["$BUCKET/$ALBUM"] = ByteArray(FILE_SIZE) { 2 }
+            val cache = cache(maxSizeBytes = 25)
+            val bucket = bucket(cache)
+            bucket.pinCachedFile(ALBUM)
+            download(bucket, ALBUM_COVER, minute = 1)
+            download(bucket, ALBUM, minute = 2)
+            val album = assertNotNull(bucket.cachedFile(ALBUM))
+            now = 3 * MINUTE
+            assertNotNull(bucket.cachedFile(ALBUM_COVER))
+
+            // When — a download takes the cache past its bound, the album the least recently used
+            download(bucket, OLDER, minute = 4)
+            val albumAfterPass = bucket.cachedFile(ALBUM)
+            val coverAfterPass = bucket.cachedFile(ALBUM_COVER)
+            // Then evicted, and once pinned again and cached, the file cache cleared
+            bucket.evictCachedFile(ALBUM)
+            val pinnedAfterEviction = bucket.isCachedFilePinned(ALBUM)
+            val albumAfterEviction = bucket.cachedFile(ALBUM)
+            bucket.pinCachedFile(ALBUM)
+            download(bucket, ALBUM, minute = 5)
+            cache.clearFiles()
+
+            // Then — the pass spared the hashed copy and took the next file; each explicit removal
+            // took the copy and the pin
+            assertTrue(HASHED_DIRECTORY_NAME in album.path, album.path)
+            assertNotNull(albumAfterPass)
+            assertNull(coverAfterPass)
+            assertFalse(pinnedAfterEviction)
+            assertNull(albumAfterEviction)
+            assertFalse(bucket.isCachedFilePinned(ALBUM))
+            assertNull(bucket.cachedFile(ALBUM))
+        }
+
+    @Test
+    fun eviction_and_a_clear_leave_queued_uploads_files_alone_with_pins_present() = runTest {
+        // Given — a queued upload's file beside the cache, and a pinned object
+        val uploads =
+            QueuedUploadFiles(
+                dataDirectoryProvider = { dataDirectory },
+                engineLogger = EngineLogger(null, EngineLogLevel.INFO),
+            )
+        val staged = uploads.stage("bytes waiting to be sent".encodeToByteArray())
+        uploads.endStaging(staged)
+        val cache = cache(maxSizeBytes = 25)
+        val bucket = bucket(cache)
+        bucket.pinCachedFile(PINNED)
+        download(bucket, PINNED, minute = 1)
+        download(bucket, OLDER, minute = 2)
+
+        // When — an eviction pass, then the file cache cleared
+        download(bucket, NEWER, minute = 3)
+        val olderAfterPass = bucket.cachedFile(OLDER)
+        val stagedAfterPass = FileSystem.SYSTEM.exists(uploads.fileOf(staged))
+        cache.clearFiles()
+
+        // Then — the pass took an unpinned copy and the clear every copy and pin; the upload's
+        // file stayed through both
+        assertNull(olderAfterPass)
+        assertTrue(stagedAfterPass)
+        assertTrue(FileSystem.SYSTEM.exists(uploads.fileOf(staged)))
+        assertFalse(bucket.isCachedFilePinned(PINNED))
+    }
+
+    @Test
     fun an_unpinned_objects_copies_are_evicted_again() = runTest {
         // Given
         val bucket = bucket(cache(maxSizeBytes = 25))
@@ -449,6 +520,8 @@ class StoragePinnedFileTest {
         const val COPIED = "copied.png"
         const val UNCACHEABLE = "/leading-slash.png"
         const val UNPINNABLE = "photo?v=1.png"
+        const val ALBUM = "album"
+        const val ALBUM_COVER = "album/cover.png"
         const val FILE_SIZE = 10
         const val MINUTE = 60_000L
     }

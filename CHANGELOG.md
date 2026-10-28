@@ -70,9 +70,34 @@ All notable changes to this project are recorded in this file. The format follow
   the same `transform { … }` keeps, so a cached thumbnail can be handed to an image loader as a
   file. `localUriIfCached(path) { … }` on Android and `localPathIfCached(path) { … }` on iOS give it
   in the platform's terms, and the Swift package has `cachedFile(path:transform:)`.
+- A Storage upload can wait in the mutation queue with the row writes around it:
+  `upload(path, data, MutationStrategy.QueueIfOffline)` on an offline bucket keeps the file's bytes
+  on the device and returns `UploadOutcome.Queued` when it cannot be sent at once, and a later pass
+  sends it in the order it was made, so a row written after it that names the file is sent after the
+  file. It survives a restart, belongs to the user who made it, is refused onto the rejected list
+  with its bytes kept for a retry, and goes with `clearLocalData()`; while it waits, `cachedFile`,
+  `ensureCachedFile` and the platform helpers return its bytes on the device, and once Storage has
+  it they become the cached copy. An upload whose answer was lost is sent again, and its refusal
+  counts as stored only when the object at its path is verifiably its bytes.
+  `offline.storage.pendingUploads()`, `rejectedUploads()` and `rejectedUploadList()` list them,
+  `SyncReport.rejectedUploads` reports a refusal, and `discardPendingMutation`,
+  `dismissRejectedMutation` and `retryRejectedMutation` take an upload's id. The Swift package has
+  the same calls, and both testing artifacts build the new values.
+- `RejectedUpload.localPath` is a refused upload's kept file on the device, for the app to show
+  what was refused: `cachedFile` and `ensureCachedFile` never answer a refused upload, since
+  Storage may hold other bytes at its path. The Swift package's `RejectedUpload` has it too, and
+  each testing artifact's `rejectedUpload` has an overload that takes it.
 
 ### Changed
 
+- When an object and a folder of the same name are both cached in one bucket, or two objects whose
+  names differ only in case on a case-insensitive volume, the one downloaded second is stored under
+  `storage-hashed/`, in the file named by a hash of its key, and its row's `localPath` records that
+  file. Files and rows already on a device stay as they are and are read as before. An earlier build
+  that finds such a row drops it when the object is next read, downloads the object again, and
+  leaves the file until the file cache or local data is cleared. Until that read, an earlier build
+  on iOS stops at such a row in every eviction pass, so its size bound evicts nothing while a row
+  like `album/cover.png` beside the file `album` is there.
 - The query cache's eviction pass runs in the background after a response is written, where it ran
   before the read returned, and starts when a running count of the cached lists' length passes the
   bound, where every response of 4 KiB or more, and every 32nd response, summed every cached list
@@ -164,6 +189,15 @@ All notable changes to this project are recorded in this file. The format follow
   row, with the queued writes laid over it; no row or several fail as before. It was never cached,
   so a detail screen had nothing offline. `maybeSingle()` on supabase-kt 3.8 is cached the same
   way, and offline answers only its one row, never `null`.
+- The mutation queue can hold a Storage upload: a row of a new kind beside the row writes, with
+  its bytes in a `storage-uploads` directory beside the file cache, excluded from iOS backups as the
+  database is and moved with the database into a configured `dataDirectory`. Data already on a
+  device is untouched: nothing moves, and no stored format changes. An earlier version that opens a
+  queue holding an upload refuses it onto its rejected list.
+- `SyncStatus.pendingMutationCount` and `rejectedMutationCount`, `pendingMutationCount()` with no
+  table, and a sync's `syncedCount`, `remainingCount` and `alreadyOnServerCount` count a queued
+  upload as a write; `pendingMutations()` and `rejectedMutations()` still list row writes only. An
+  app that queues no upload sees the counts it saw.
 
 ### Deprecated
 
@@ -171,6 +205,14 @@ All notable changes to this project are recorded in this file. The format follow
 
 ### Fixed
 
+- An object and a folder of the same name in one bucket, such as `album` and `album/cover.png`, can
+  both be cached now. On disk they would need one name to be both a file and a folder, so the one
+  downloaded second was never cached: `ensureCachedFile` threw for it every time, a channel download
+  of it could fetch it twice, and it was not served offline.
+- On a case-insensitive volume, such as the iOS simulator's or a Mac's, two objects whose names
+  differ only in case, such as `photo` and `PHOTO`, or whose buckets' names do, shared one cached
+  file, so the one downloaded second replaced the other's bytes, and a write to one deleted the
+  other's copy. The second is now stored apart, and each object serves its own.
 - With Room 2.8.5 or later, which an app can resolve itself, `pendingMutations()` and
   `pendingMutationCountFlow()` called after `close()` threw Room's `IllegalStateException`
   from the call, where a `catch` on the flow could not see it. Each now returns a flow that

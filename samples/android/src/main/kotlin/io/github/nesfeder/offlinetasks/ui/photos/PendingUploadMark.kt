@@ -10,14 +10,12 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Icon
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -26,9 +24,8 @@ import io.github.nesfeder.offlinetasks.data.PendingPhotoState
 import io.github.nesfeder.offlinetasks.data.PendingUpload
 
 /**
- * The strip across the foot of a photo still in the app's pending-photo queue: a mark and a word
- * for where its upload stands, as a task waiting to sync carries its cloud mark, and the progress
- * while it uploads.
+ * The strip across the foot of a photo Storage does not have yet: a mark and a word for where its
+ * upload stands, as a task waiting to sync carries its cloud mark.
  */
 @Composable
 fun PendingUploadMark(upload: PendingUpload, modifier: Modifier = Modifier) {
@@ -60,30 +57,19 @@ fun PendingUploadMark(upload: PendingUpload, modifier: Modifier = Modifier) {
                 overflow = TextOverflow.Ellipsis,
             )
         }
-        if (upload.state == PendingPhotoState.Uploading) {
-            val fraction = upload.progress
-            if (fraction == null) LinearProgressIndicator(Modifier.fillMaxWidth())
-            else LinearProgressIndicator(progress = { fraction }, Modifier.fillMaxWidth())
-        }
     }
 }
 
-/** Why a pending photo's upload failed, and how many tries it has had, in a sentence or two. */
+/** Why Storage refused a photo's upload, in a sentence or two. */
 @Composable
 fun failedUploadText(upload: PendingUpload): String =
-    pluralStringResource(
-        R.plurals.photo_upload_failed,
-        upload.attempts,
-        upload.attempts,
-        upload.failure.orEmpty(),
-    )
+    stringResource(R.string.photo_upload_failed, upload.failure.orEmpty())
 
 /** The word for where a pending photo's upload stands. */
 val PendingPhotoState.label: Int
     get() =
         when (this) {
             PendingPhotoState.Waiting -> R.string.photo_pending_waiting
-            PendingPhotoState.Uploading -> R.string.photo_pending_uploading
             PendingPhotoState.Failed -> R.string.photo_pending_failed
         }
 
@@ -92,6 +78,5 @@ private val PendingPhotoState.icon: Int
     get() =
         when (this) {
             PendingPhotoState.Waiting -> R.drawable.ic_cloud_upload
-            PendingPhotoState.Uploading -> R.drawable.ic_cloud_sync
             PendingPhotoState.Failed -> R.drawable.ic_sync_problem
         }

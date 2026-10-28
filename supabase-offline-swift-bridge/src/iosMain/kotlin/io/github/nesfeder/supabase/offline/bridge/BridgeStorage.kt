@@ -2,9 +2,11 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.bridge
 
+import io.github.nesfeder.supabase.offline.MutationStrategy
 import io.github.nesfeder.supabase.offline.Offline
 import io.github.nesfeder.supabase.offline.OfflineBucketApi
 import io.github.nesfeder.supabase.offline.bridge.internal.OperationRunner
+import io.github.nesfeder.supabase.offline.bridge.internal.UnsupportedDescriptionException
 import io.github.nesfeder.supabase.offline.bridge.internal.encodeFileObject
 import io.github.nesfeder.supabase.offline.bridge.internal.encodeFileObjects
 import io.github.nesfeder.supabase.offline.bridge.internal.encodeSignedUrls
@@ -17,12 +19,15 @@ import io.github.nesfeder.supabase.offline.bridge.internal.toByteArray
 import io.github.nesfeder.supabase.offline.bridge.internal.toNSData
 import io.github.nesfeder.supabase.offline.bridge.internal.uploadOptionsOf
 import kotlin.time.Duration.Companion.seconds
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import platform.Foundation.NSData
 
 /**
  * Storage buckets through the offline client: every object operation of the offline bucket, and its
  * file cache. Downloads are kept on the device and served from there offline; uploads, updates,
- * deletes, moves and copies are online only and drop the cached copies they make stale.
+ * deletes, moves and copies are online only and drop the cached copies they make stale, but for the
+ * upload that takes a strategy, which can wait in the mutation queue with the row writes.
  *
  * Every call names its bucket. Options and transforms cross as JSON text, results that are not
  * bytes or files as JSON text too (the formats are in the contract note beside this module); bytes
@@ -51,6 +56,66 @@ internal constructor(
             val response =
                 bucketOf(bucket).upload(path, data.toByteArray()) { upload.applyTo(this) }
             encodeUploadResponse(response)
+        }
+
+    /**
+     * Uploads [data] to [path] under [mutationStrategy], as a write is made: `queueIfOffline` lets
+     * it wait in the mutation queue, its bytes kept on the device, and be sent in the order it was
+     * made among the user's writes; `onlineOnly` sends it now and keeps nothing.
+     *
+     * @param mutationStrategy `queueIfOffline` or `onlineOnly`; another name fails with
+     *   [BridgeErrorKind.UNSUPPORTED].
+     * @param options as for the [upload] without a strategy.
+     * @param completion the outcome (applied, with Storage's response, or queued), or the failure.
+     */
+    public fun upload(
+        bucket: String,
+        path: String,
+        data: NSData,
+        mutationStrategy: String,
+        options: String?,
+        completion: (BridgeUploadResult?, BridgeError?) -> Unit,
+    ): BridgeCancellable =
+        runner.runOnce("queueableUpload", completion) {
+            val strategy = mutationStrategyNamed(mutationStrategy)
+            val upload = uploadOptionsOf(options)
+            bucketOf(bucket)
+                .upload(path, data.toByteArray(), strategy) { upload.applyTo(this) }
+                .toBridge()
+        }
+
+    /** The current user's queued uploads, in every bucket, in the order they will be sent. */
+    public fun pendingUploads(
+        completion: (List<BridgePendingUpload>?, BridgeError?) -> Unit
+    ): BridgeCancellable =
+        runner.runOnce("pendingUploads", completion) {
+            offline().storage.pendingUploads().first().map { it.toBridge() }
+        }
+
+    /** [pendingUploads] as the queue changes; [onCompletion] fires once, when it ends. */
+    public fun observePendingUploads(
+        onUploads: (List<BridgePendingUpload>) -> Unit,
+        onCompletion: (BridgeError?) -> Unit,
+    ): BridgeCancellable =
+        runner.subscribe("observePendingUploads", onUploads, onCompletion) {
+            offline().storage.pendingUploads().map { uploads -> uploads.map { it.toBridge() } }
+        }
+
+    /** The current user's queued uploads Storage refused for good on replay, oldest first. */
+    public fun rejectedUploads(
+        completion: (List<BridgeRejectedUpload>?, BridgeError?) -> Unit
+    ): BridgeCancellable =
+        runner.runOnce("rejectedUploads", completion) {
+            offline().storage.rejectedUploadList().map { it.toBridge() }
+        }
+
+    /** [rejectedUploads] as the list changes; [onCompletion] fires once, when it ends. */
+    public fun observeRejectedUploads(
+        onUploads: (List<BridgeRejectedUpload>) -> Unit,
+        onCompletion: (BridgeError?) -> Unit,
+    ): BridgeCancellable =
+        runner.subscribe("observeRejectedUploads", onUploads, onCompletion) {
+            offline().storage.rejectedUploads().map { uploads -> uploads.map { it.toBridge() } }
         }
 
     /** Replaces the object at [path] with [data]; [options] and the answer as for [upload]. */
@@ -366,6 +431,17 @@ internal constructor(
     /** The offline bucket [bucket]. */
     private fun bucketOf(bucket: String): OfflineBucketApi = offline().storage.from(bucket)
 }
+
+/** The strategy [name] names: `queueIfOffline` or `onlineOnly`, as a write description's. */
+private fun mutationStrategyNamed(name: String): MutationStrategy =
+    when (name) {
+        "queueIfOffline" -> MutationStrategy.QueueIfOffline
+        "onlineOnly" -> MutationStrategy.OnlineOnly
+        else ->
+            throw UnsupportedDescriptionException(
+                "mutationStrategy: \"$name\" is not a strategy this build offers"
+            )
+    }
 
 /**
  * A Storage object held in the offline file cache: read it or open it, but never move or write it.

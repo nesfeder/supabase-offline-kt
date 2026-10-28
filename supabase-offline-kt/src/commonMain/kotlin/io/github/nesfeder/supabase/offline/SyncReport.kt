@@ -13,9 +13,13 @@ package io.github.nesfeder.supabase.offline
  * refusal is found on [Offline.rejectedMutations] and a parked write on
  * [Offline.conflictedMutations].
  *
+ * A Storage upload queued with the row writes ([OfflineBucketApi.upload] with a [MutationStrategy])
+ * is a write of the queue: the counts count it, and a refused one is in
+ * [SyncReport.rejectedUploads] rather than [SyncReport.rejected].
+ *
  * @property syncedCount the writes this call sent and the server accepted.
- * @property rejected the writes the server refused for good during this call, now on the rejected
- *   list ([Offline.rejectedMutations]) unless local data was cleared since.
+ * @property rejected the row writes the server refused for good during this call, now on the
+ *   rejected list ([Offline.rejectedMutations]) unless local data was cleared since.
  * @property remainingCount the writes still queued when the call returned. More than zero when the
  *   call was stopped short, and [SyncReport.stopReason] says why: the network could not be reached,
  *   the server or the device failed in a way that may pass, the session was not ready or changed,
@@ -39,6 +43,8 @@ package io.github.nesfeder.supabase.offline
  * @property stopReason why the call returned when it did: [SyncStopReason.Completed] when it went
  *   through every write it found queued, or what stopped it short. A call that waited for the
  *   library's own sending gives the reason its last pass ended for.
+ * @property rejectedUploads the queued uploads Storage refused for good during this call, now on
+ *   the rejected list ([OfflineStorage.rejectedUploads]) unless local data was cleared since.
  */
 @ConsistentCopyVisibility
 public data class SyncReport
@@ -52,4 +58,5 @@ internal constructor(
     public val conflictsKeptServerCount: Int,
     public val conflicted: List<ConflictedMutation>,
     public val stopReason: SyncStopReason,
+    public val rejectedUploads: List<RejectedUpload>,
 )

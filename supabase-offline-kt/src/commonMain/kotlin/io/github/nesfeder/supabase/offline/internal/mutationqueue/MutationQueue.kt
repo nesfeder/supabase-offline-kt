@@ -15,6 +15,7 @@ import io.github.nesfeder.supabase.offline.internal.db.MutationDao
 import io.github.nesfeder.supabase.offline.internal.db.MutationRow
 import io.github.nesfeder.supabase.offline.internal.db.OpenDatabaseRegistry
 import io.github.nesfeder.supabase.offline.internal.db.QueryCacheDao
+import io.github.nesfeder.supabase.offline.internal.db.STORAGE_UPLOADS_TABLE_NAME
 import io.github.nesfeder.supabase.offline.internal.db.inTransaction
 import io.github.nesfeder.supabase.offline.internal.db.isReservedTable
 import io.github.nesfeder.supabase.offline.internal.db.knownOperation
@@ -24,6 +25,10 @@ import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 import io.github.nesfeder.supabase.offline.internal.postgrest.decodeFilterOrNull
 import io.github.nesfeder.supabase.offline.internal.postgrest.encodeFilter
+import io.github.nesfeder.supabase.offline.internal.storage.StoredUpload
+import io.github.nesfeder.supabase.offline.internal.storage.UPLOAD_OPERATION_NAME
+import io.github.nesfeder.supabase.offline.internal.storage.isQueuedUpload
+import io.github.nesfeder.supabase.offline.internal.storage.storedUploadOf
 import kotlin.concurrent.atomics.AtomicBoolean
 import kotlin.concurrent.atomics.AtomicReference
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
@@ -236,6 +241,28 @@ internal class MutationQueue(
                 filter = filter,
                 base = base,
             )
+
+        /**
+         * Queues a Storage upload, whose bytes [upload] names a file of; the file is written first,
+         * so a row always has one.
+         *
+         * @return The row as stored.
+         */
+        suspend fun enqueueUpload(upload: StoredUpload): MutationRow {
+            val row =
+                MutationRow(
+                    table = STORAGE_UPLOADS_TABLE_NAME,
+                    operation = UPLOAD_OPERATION_NAME,
+                    bodyJson = upload.toBodyJson(json),
+                    filterJson = null,
+                    createdAtMs = nowMillis(),
+                    syncedAtMs = null,
+                    owner = owner,
+                )
+            val stored = row.copy(id = mutationDao.insert(row))
+            noteMutationsChanged(STORAGE_UPLOADS_TABLE_NAME)
+            return stored
+        }
 
         /** Stores one pending mutation of [owner]'s, tells [table]'s readers, and returns it. */
         private suspend fun insert(
@@ -1013,6 +1040,53 @@ internal class MutationQueue(
     }
 
     /**
+     * The queued Storage uploads the overlay would show, in queue order: the current identity's and
+     * the ownerless ones it may adopt, or every identity's while the identity cannot be told, as a
+     * write is never hidden from its maker. Read from the uploads' shared read
+     * ([tableMutationsNow]), which is read again only when an upload's row changes, so a lookup
+     * costs no query while the queue holds none.
+     */
+    suspend fun visiblePendingUploads(): List<MutationRow> =
+        visibleTo(
+            identityProvider(),
+            tableMutationsNow(STORAGE_UPLOADS_TABLE_NAME).rows.filter { row ->
+                row.syncedAtMs == null && row.isQueuedUpload
+            },
+        )
+
+    /**
+     * The queued Storage uploads the app is shown, in queue order, as the queue changes: the
+     * current identity's, and the ownerless ones it may adopt; none while the identity cannot be
+     * told.
+     */
+    fun shownPendingUploadsFlow(): Flow<List<MutationRow>> =
+        shownPendingMutationsFlow(STORAGE_UPLOADS_TABLE_NAME).map { rows ->
+            rows.filter { row -> row.isQueuedUpload }
+        }
+
+    /**
+     * Every queued file a pending upload or a rejected entry names, whoever's it is. Read under the
+     * queue lock ([holdingQueueLock]) by a caller deleting the files it does not name, so no upload
+     * is queued in between.
+     */
+    suspend fun queuedUploadFileNames(): Set<String> {
+        val pending =
+            mutationDao.pendingForTable(STORAGE_UPLOADS_TABLE_NAME).filter { row ->
+                row.isQueuedUpload
+            }
+        val rejected =
+            rejectedList
+                .rejections()
+                .filter { entry -> entry.isQueuedUpload }
+                .map { entry ->
+                    entry.bodyJson
+                }
+        return (pending.map { row -> row.bodyJson } + rejected).mapNotNullTo(HashSet()) { body ->
+            storedUploadOf(body, json)?.file
+        }
+    }
+
+    /**
      * Emits once at once, and once for each committed change to any mutation row or a change of
      * session: when a count of the queue may have moved.
      */
@@ -1126,16 +1200,18 @@ internal class MutationQueue(
 
     /**
      * Records, before its request goes out, that the send of mutation [id] has started — when it is
-     * an INSERT whose rows all carry the table's primary key, the only kind whose replay can
-     * tolerate finding its rows already on the server. It then replays as an upsert that ignores
-     * duplicates, until [clearUnconfirmedSend] or its removal clears the record.
+     * an INSERT whose rows all carry the table's primary key, or a queued upload: the kinds whose
+     * replay can tolerate finding what they write already on the server. The INSERT then replays as
+     * an upsert that ignores duplicates, and a refusal of the upload counts as stored when the
+     * object at its path is verifiably its bytes, until [clearUnconfirmedSend] or its removal
+     * clears the record.
      *
      * @return `true` when this call added the record; `false` when there was one already, or none
      *   is kept for this mutation.
      */
     suspend fun markSendUnconfirmed(id: Long): Boolean {
         val mutation = mutationDao.byId(id) ?: return false
-        if (!isKeyedInsert(mutation)) return false
+        if (!isKeyedInsert(mutation) && !mutation.isQueuedUpload) return false
         return mutationQueueMutex.withLock {
             unconfirmedSends()
             val marked = mutationDao.markSendUnconfirmed(id) > 0

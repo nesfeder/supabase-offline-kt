@@ -837,6 +837,119 @@ struct StorageTests {
         try await client.close()
     }
 
+    // MARK: - Uploads made with a strategy
+
+    @Test func anUploadQueuedOfflineIsListedAnsweredFromTheDeviceAndSentLater() async throws {
+        // Given offline
+        let storage = FakeStorageServer()
+        let client = Self.makeClient(storage)
+        let bucket = client.storage.from("avatars")
+        storage.goOffline()
+
+        // When
+        let outcome = try await bucket.upload(
+            "folder/a.png",
+            data: FakeStorageServer.photo,
+            mutationStrategy: .queueIfOffline,
+            options: OfflineBucketApi.UploadOptions(contentType: "image/png")
+        )
+        let listed = try await client.storage.pendingUploads().first()
+        let cached = try #require(try await bucket.cachedFile(path: "folder/a.png"))
+        let ensured = try await bucket.ensureCachedFile(path: "folder/a.png")
+        let count = try await client.pendingMutationCount()
+
+        // Then it is queued, listed, counted, and its bytes on the device answer at once
+        guard case .queued(let pending) = outcome else {
+            Issue.record("expected a queued upload, got \(outcome)")
+            return
+        }
+        #expect(outcome.isQueued)
+        #expect(outcome.response == nil)
+        #expect(pending.bucketId == "avatars")
+        #expect(pending.path == "folder/a.png")
+        #expect(pending.sizeBytes == FakeStorageServer.photo.count)
+        #expect(pending.contentType == "image/png")
+        #expect(!pending.upsert)
+        #expect(listed == [pending])
+        #expect(cached.sizeBytes == FakeStorageServer.photo.count)
+        #expect(ensured == cached)
+        #expect(count == 1)
+
+        // When the network is back and the queue is sent
+        storage.goOnline()
+        let report = try await client.syncPendingMutations()
+
+        // Then Storage has it, and nothing waits
+        #expect(report.remainingCount == 0)
+        #expect(report.rejectedUploads.isEmpty)
+        #expect(try await client.storage.pendingUploads().first().isEmpty)
+        #expect(storage.requests.values.contains { $0.method == "POST" && $0.body == FakeStorageServer.photo })
+        try await client.close()
+    }
+
+    @Test func anUploadSentAtOnceAnswersWithStoragesResponse() async throws {
+        // Given
+        let storage = FakeStorageServer()
+        let client = Self.makeClient(storage)
+
+        // When
+        let outcome = try await client.storage.from("avatars").upload(
+            "folder/a.png",
+            data: FakeStorageServer.photo,
+            mutationStrategy: .queueIfOffline
+        )
+
+        // Then
+        #expect(!outcome.isQueued)
+        #expect(outcome.response == OfflineBucketApi.FileUploadResponse(id: "object-1", path: "folder/a.png", key: "avatars/a.png"))
+        #expect(try await client.storage.pendingUploads().first().isEmpty)
+        try await client.close()
+    }
+
+    @Test func aRefusedUploadIsListedWithStoragesAnswerAndDismissedById() async throws {
+        // Given an upload queued offline, then refused by Storage's policy
+        let storage = FakeStorageServer()
+        let client = Self.makeClient(storage)
+        storage.goOffline()
+        _ = try await client.storage.from("avatars").upload("a.png", data: FakeStorageServer.photo, mutationStrategy: .queueIfOffline)
+        storage.answer { _ in FakeStorageServer.refusal(ScriptedStorageRefusal(status: 400, code: "Unauthorized", message: "refused")) }
+
+        // When
+        _ = try await client.syncPendingMutations()
+        let refused = try await client.storage.rejectedUploadList()
+        let rows = try await client.rejectedMutationList()
+
+        // Then it is on the rejected list, apart from the row writes, and can be dismissed by id
+        let entry = try #require(refused.first)
+        #expect(refused.count == 1)
+        #expect(entry.path == "a.png")
+        #expect(entry.localPath != nil)
+        #expect(entry.serverError?.status == 400)
+        #expect(entry.isRetryable)
+        #expect(rows.isEmpty)
+        #expect(try await client.storage.rejectedUploads().first() == refused)
+        try await client.dismissRejectedMutation(id: entry.id)
+        #expect(try await client.storage.rejectedUploadList().isEmpty)
+        try await client.close()
+    }
+
+    @Test func emptyDataIsRefusedBeforeAnUploadIsQueued() async throws {
+        // Given
+        let storage = FakeStorageServer()
+        let client = Self.makeClient(storage)
+
+        // When
+        let error = await #expect(throws: OfflineError.self) {
+            try await client.storage.from("avatars").upload("a.png", data: Data(), mutationStrategy: .queueIfOffline)
+        }
+
+        // Then
+        #expect(error?.code == .invalidRequest)
+        #expect(storage.requests.values.isEmpty)
+        #expect(try await client.pendingMutationCount() == 0)
+        try await client.close()
+    }
+
     @Test func aBucketOfAClosedClientThrowsClientClosed() async throws {
         // Given
         let storage = FakeStorageServer()

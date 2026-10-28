@@ -75,6 +75,11 @@ your test scripts: see <doc:TestingYourApp>.
 - ``OfflineBucketApi``
 - ``CachedFile``
 - ``DownloadProgress``
+- ``UploadOutcome``
+- ``PendingUpload``
+- ``PendingUploadSequence``
+- ``RejectedUpload``
+- ``RejectedUploadSequence``
 
 ### The queue and sync
 

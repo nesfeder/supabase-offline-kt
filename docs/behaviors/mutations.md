@@ -3,7 +3,8 @@
 By default every `insert`, `upsert`, `update` and `delete` is saved to the mutation queue first,
 and sent at once when nothing of the same user waits ahead of it; otherwise it waits and is sent
 by a later pass, in the order it was made. A write returns a `MutationOutcome`, `Applied` with the
-server's answer or `Queued`, and every cached read shows it at once either way.
+server's answer or `Queued`, and every cached read shows it at once either way. A Storage upload
+made with a strategy joins the same queue ([below](#storage-uploads-in-the-queue)).
 
 From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/OfflineTaskRepository.kt) · [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift)
 
@@ -258,6 +259,19 @@ table with a version column, or `null` when the write is not checked
 write the server keeps failing, which holds every later write of the user behind it. The queue is
 never evicted and has no size bound. Sending it is on [Replaying the queue](sync.md); refused
 writes are on [Failures and the rejected list](failures.md#the-rejected-list).
+
+## Storage uploads in the queue
+
+A bucket's `upload(path, data, mutationStrategy)` is a write of the same queue
+([Storage caching](storage.md#queued-uploads)): under `QueueIfOffline` its bytes are kept on the
+device, it takes the next id, and it is sent in that order among the user's row writes, so a row
+written after it that names the file is sent after the file. It returns an `UploadOutcome`,
+`Applied` with Storage's response or `Queued` with a `PendingUpload`. The ids are one sequence:
+`discardPendingMutation`, `dismissRejectedMutation` and `retryRejectedMutation` take an upload's
+id, and `pendingMutationCount()` with no table, `pendingMutationCountFlow()` and the sync status
+count it. `pendingMutations()` lists row writes only, since `PendingMutation.operation` names the
+four row operations; `storage.pendingUploads()` lists the uploads, and `storage.rejectedUploads()`
+the refused ones. A table's count never includes an upload.
 
 ## Behavior matrix
 

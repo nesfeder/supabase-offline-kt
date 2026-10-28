@@ -11,11 +11,13 @@ public struct SyncStatus: Sendable {
     /// ``SupabaseOfflineClient/disableNetwork()`` or ``SupabaseOfflineClient/enableNetwork()`` returns.
     public let network: NetworkStatus
 
-    /// The current user's queued writes. The three counts are read together, so a write moving from
-    /// the queue to the rejected or conflicted list is counted in exactly one.
+    /// The current user's queued writes, the uploads queued with them included
+    /// (``OfflineStorage/pendingUploads()``). The three counts are read together, so a write moving
+    /// from the queue to the rejected or conflicted list is counted in exactly one.
     public let pendingMutationCount: Int
 
-    /// The current user's entries on the rejected list.
+    /// The current user's entries on the rejected list, refused uploads included
+    /// (``OfflineStorage/rejectedUploads()``).
     public let rejectedMutationCount: Int
 
     /// Whether a sync pass is sending, started by the app or by the client.

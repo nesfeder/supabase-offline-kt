@@ -8,7 +8,9 @@ import SupabaseOfflineCore
 /// A download goes to the network first and is kept in the client's file cache; when the network
 /// fails, the cached copy answers. Every other operation reaches the server: uploads, updates,
 /// moves, copies and removals are never queued, fail at once offline, and drop the cached copies
-/// they make stale (a move carries its source's copy to the destination). Signed URLs, listings,
+/// they make stale (a move carries its source's copy to the destination). The one exception is
+/// ``upload(_:data:mutationStrategy:options:)``, which can wait in the mutation queue with the row
+/// writes around it. Signed URLs, listings,
 /// ``info(path:)`` and ``exists(path:)`` always ask the server.
 ///
 /// An object name that cannot be mapped onto a file safely (a leading `/`, an empty, `.` or `..`
@@ -47,6 +49,55 @@ public struct OfflineBucketApi: Sendable {
         return try await client.connection.call { core, complete in
             core.storage.upload(bucket: bucketId, path: path, data: data, options: optionsText) { answer, failure in
                 complete(coreResult(answer, failure) { try FileUploadResponse(coreText: requiredValue($0)) })
+            }
+        }
+    }
+
+    /// Uploads `data` as a new object at `path` under `mutationStrategy`, as a write is made:
+    /// ``MutationStrategy/queueIfOffline`` lets it wait in the mutation queue, in the order it was
+    /// made among the current user's writes, so a row written after it that names the file is sent
+    /// after the file.
+    ///
+    /// Under ``MutationStrategy/queueIfOffline`` the bytes are first kept on the device and the
+    /// upload queued; it is sent at once when nothing of the user waits ahead of it, and the outcome
+    /// is ``UploadOutcome/applied(response:)``. Otherwise it waits, ``UploadOutcome/queued(pendingUpload:)``:
+    /// no connection or no answer, an answer that says the request did not finish (a `408`, `429`,
+    /// `502`, `503`, `504`, `520`, `522` or `524`), a token Storage refused, earlier writes still
+    /// queued, or the network turned off. A later sync sends it, and a refusal is kept on
+    /// ``OfflineStorage/rejectedUploads()`` with its bytes instead of being thrown. Sent at once and
+    /// refused, or failing with another `5xx`, it throws and does not stay queued. While it waits it
+    /// is listed by ``OfflineStorage/pendingUploads()``, ``cachedFile(path:)`` and
+    /// ``ensureCachedFile(path:isPublic:)`` return its bytes on the device, and
+    /// ``SupabaseOfflineClient/discardPendingMutation(id:)`` drops it. Once Storage holds the file,
+    /// its bytes become the object's cached copy. The queued upload keeps the options' `contentType`,
+    /// `upsert` and `userMetadata`.
+    ///
+    /// ``MutationStrategy/onlineOnly`` is ``upload(_:data:options:)``, its response wrapped in
+    /// ``UploadOutcome/applied(response:)``: sent now, throwing when it cannot be, nothing kept.
+    /// Empty data, and data of 2 GiB or more, is refused with ``OfflineError/Code/invalidRequest``
+    /// before anything is kept or sent.
+    ///
+    /// - Throws: ``OfflineError``: `invalidRequest` for empty or oversized data;
+    ///   `mutationNotQueueable` for an upload the queue cannot keep that could not be sent; under
+    ///   ``MutationStrategy/onlineOnly``, as ``upload(_:data:options:)`` throws.
+    @discardableResult
+    public func upload(
+        _ path: String,
+        data: Data,
+        mutationStrategy: MutationStrategy,
+        options: UploadOptions = UploadOptions()
+    ) async throws -> UploadOutcome {
+        let optionsText = try options.coreText()
+        let strategy = mutationStrategy.coreName
+        return try await client.connection.call { core, complete in
+            core.storage.upload(
+                bucket: bucketId,
+                path: path,
+                data: data,
+                mutationStrategy: strategy,
+                options: optionsText
+            ) { outcome, failure in
+                complete(coreResult(outcome, failure) { try UploadOutcome(core: requiredValue($0)) })
             }
         }
     }
@@ -285,9 +336,14 @@ public struct OfflineBucketApi: Sendable {
     /// The cached copy of the object at `path`, or `nil` when there is none; never touches the
     /// network.
     ///
-    /// Only an untransformed ``download(path:options:isPublic:)`` or ``ensureCachedFile(path:isPublic:)``
-    /// caches the copy this returns; a transformed download's copy is found with
-    /// ``cachedFile(path:transform:)``.
+    /// Only an untransformed ``download(path:options:isPublic:)``, ``ensureCachedFile(path:isPublic:)``
+    /// or a queued upload Storage has stored caches the copy this returns; a transformed download's
+    /// copy is found with ``cachedFile(path:transform:)``. While the current user has an upload of
+    /// the object waiting in the mutation queue, it returns that upload's bytes on the device
+    /// instead, the newest when there are several: its ``CachedFile/fetchedAt`` is when the upload
+    /// was queued, and the file goes once the upload is sent, discarded or cleared. A refused
+    /// upload's bytes are never answered here, since Storage may hold other bytes at the path:
+    /// ``RejectedUpload/localPath`` names them.
     ///
     /// - Throws: ``OfflineError``: `clientClosed` once the client is closed.
     public func cachedFile(path: String) async throws -> CachedFile? {
@@ -412,7 +468,10 @@ public struct OfflineBucketApi: Sendable {
     /// The cached copy of the object at `path`, downloading it into the cache first when there is
     /// none.
     ///
-    /// A cached copy is returned however old it is. Throws ``OfflineError/Code/invalidRequest``
+    /// A cached copy is returned however old it is, and an upload of the object still queued for the
+    /// current user is returned as ``cachedFile(path:)`` returns it, with no request; a refused one
+    /// is not, and the object is downloaded as when nothing is cached. Throws
+    /// ``OfflineError/Code/invalidRequest``
     /// for a name the cache cannot hold (see ``OfflineBucketApi``), sending nothing; one holding
     /// `%`, `?` or `#` is refused before the client is asked. Canceling the task throws
     /// `CancellationError` at once, and the download may still finish and be kept, as with
