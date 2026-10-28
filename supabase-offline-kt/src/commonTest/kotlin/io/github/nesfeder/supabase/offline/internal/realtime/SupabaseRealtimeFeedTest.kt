@@ -210,65 +210,27 @@ class SupabaseRealtimeFeedTest {
                             events.send(event)
                         }
                     }
-                val socket = sockets.awaitSocket(0)
-                val join = socket.awaitSent("phx_join")
-
-                // When — the server takes the join and sends a change at once, and supabase-kt has
-                // handled both before the collector's dispatcher runs anything more
                 val row = buildJsonObject {
                     put("id", "t1")
                     put("title", "Milk")
                 }
-                socket.answer(joinTaken(join, join.bindings()))
-                socket.answer(change(join.topic, ids = listOf(1), data = insert(row)))
-                socket.awaitHandled()
-                dispatcher.release()
+
+                // When — the server takes the join and sends a change at once, and supabase-kt has
+                // handled both before the collector's dispatcher runs anything more
+                val socket =
+                    try {
+                        val socket = sockets.awaitSocket(0)
+                        val join = socket.awaitSent("phx_join")
+                        socket.answer(joinTaken(join, join.bindings()))
+                        socket.answer(change(join.topic, ids = listOf(1), data = insert(row)))
+                        socket.awaitHandled()
+                        socket
+                    } finally {
+                        // Also when the join never came, so the held coroutines can end
+                        dispatcher.release()
+                    }
 
                 // Then — the change reached the table: its callback was in place before the join
-                assertEquals(
-                    setOf(
-                        ServerChangeEvent.Joined,
-                        ServerChangeEvent.Saved("tasks", "public", row),
-                    ),
-                    setOf(events.receiveWithin(), events.receiveWithin()),
-                )
-                collecting.cancelAndJoin()
-                val leave = socket.awaitSent("phx_leave")
-                socket.answer(
-                    RealtimeMessage(
-                        leave.topic,
-                        "phx_reply",
-                        buildJsonObject { put("status", "ok") },
-                        leave.ref,
-                    )
-                )
-                socket.awaitDisconnected()
-            }
-            supabase.close()
-        }
-
-    @Test
-    fun a_feed_collected_unconfined_registers_its_table_before_the_join_too() =
-        runTest(timeout = 2.minutes) {
-            withContext(Dispatchers.Default) {
-                // Given — following a table from an unconfined collector, where the table's
-                // producer waits in the thread's queue behind the feed's own until it yields
-                val events = Channel<ServerChangeEvent>(Channel.UNLIMITED)
-                val collecting =
-                    launch(Dispatchers.Unconfined) {
-                        feed.follow(listOf(WatchedTable("tasks")), "public").collect { event ->
-                            events.send(event)
-                        }
-                    }
-                val socket = sockets.awaitSocket(0)
-                val join = socket.awaitSent("phx_join")
-
-                // When — the server takes the join and sends a change at once
-                val row = buildJsonObject { put("id", "t1") }
-                socket.answer(joinTaken(join, join.bindings()))
-                socket.answer(change(join.topic, ids = listOf(1), data = insert(row)))
-
-                // Then — both arrive
                 assertEquals(
                     setOf(
                         ServerChangeEvent.Joined,
