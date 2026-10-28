@@ -1,5 +1,7 @@
 // Copyright (c) 2026 nesfeder
 // SPDX-License-Identifier: MIT
+@file:OptIn(ExperimentalCoroutinesApi::class)
+
 package io.github.nesfeder.supabase.offline.internal
 
 import io.github.nesfeder.supabase.offline.testdoubles.FakeUpstreamPastItsCancellation
@@ -16,6 +18,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
@@ -32,6 +35,7 @@ import kotlinx.coroutines.flow.produceIn
 import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
@@ -42,6 +46,10 @@ import kotlinx.coroutines.withTimeoutOrNull
  * database under a query the collection is still running; and closing ends it however its collector
  * is stuck. A collection live at close() completes, as a flow does at its end; one started after it
  * gets the closed error, as a call does.
+ *
+ * Each test runs the gate on this test's scheduler, where deferreds fix the order and no step waits
+ * on the clock, unless it races the gate's own threads on purpose: those run on
+ * [Dispatchers.Default], each step bounded by [CONCURRENT_STEP_BOUND], which only a hang reaches.
  */
 class ClientOperationGateTest {
 
@@ -50,7 +58,7 @@ class ClientOperationGateTest {
         // Given — a live collection whose work, once canceled, still has a moment to finish, as a
         // query does. The cancellation may land in emit, which returns once the collector is done
         val gate = ClientOperationGate()
-        val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val appScope = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
         val entered = CompletableDeferred<Unit>()
         val finishing = CompletableDeferred<Unit>()
         val finish = CompletableDeferred<Unit>()
@@ -66,15 +74,13 @@ class ClientOperationGateTest {
             }
         }
         appScope.launch { gate.callCollecting(work).collect { entered.complete(Unit) } }
-        withContext(Dispatchers.Default) { withTimeout(5.seconds) { entered.await() } }
+        entered.await()
 
-        // When — the app cancels the collector
+        // When — the app cancels the collector, and the cancellation reaches every part of the
+        // collection: everything that can run now has run
         appScope.cancel()
-        withContext(Dispatchers.Default) {
-            withTimeout(5.seconds) { finishing.await() }
-            // Time for the cancellation to reach every part of the collection
-            delay(200)
-        }
+        finishing.await()
+        runCurrent()
 
         // Then — the collection counts until that work has finished, and not after
         assertEquals(
@@ -83,14 +89,14 @@ class ClientOperationGateTest {
             "the collection left the gate while its work was still running",
         )
         finish.complete(Unit)
-        withContext(Dispatchers.Default) { withTimeout(5.seconds) { gate.awaitNoCallsInFlight() } }
+        gate.awaitNoCallsInFlight()
     }
 
     @Test
     fun closing_ends_a_collection_whose_collector_is_stuck_in_its_body() = runTest {
         // Given — a collector stuck in its body after the first value
         val gate = ClientOperationGate()
-        val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val appScope = CoroutineScope(SupervisorJob() + StandardTestDispatcher(testScheduler))
         val entered = CompletableDeferred<Unit>()
         appScope.launch {
             gate.callCollecting(flow { repeat(Int.MAX_VALUE) { emit(it) } }).collect {
@@ -98,13 +104,13 @@ class ClientOperationGateTest {
                 awaitCancellation()
             }
         }
-        withContext(Dispatchers.Default) { withTimeout(5.seconds) { entered.await() } }
+        entered.await()
 
         // When
         gate.close()
 
         // Then — the gate empties although the collector never reads again
-        withContext(Dispatchers.Default) { withTimeout(5.seconds) { gate.awaitNoCallsInFlight() } }
+        gate.awaitNoCallsInFlight()
         appScope.cancel()
     }
 
@@ -131,14 +137,18 @@ class ClientOperationGateTest {
                     }
                     outcome.exceptionOrNull()
                 }
-            withContext(Dispatchers.Default) { withTimeout(5.seconds) { entered.await() } }
+            withContext(Dispatchers.Default) {
+                withTimeout(CONCURRENT_STEP_BOUND) { entered.await() }
+            }
 
             // When
             gate.close()
 
             // Then — it completed, with no error and no cancellation
             val failure =
-                withContext(Dispatchers.Default) { withTimeout(5.seconds) { collection.await() } }
+                withContext(Dispatchers.Default) {
+                    withTimeout(CONCURRENT_STEP_BOUND) { collection.await() }
+                }
             assertNull(
                 failure,
                 "attempt $attempt: the collection live at close() ended with $failure",
@@ -191,7 +201,7 @@ class ClientOperationGateTest {
         val gate = ClientOperationGate()
         val uncaught = RecordingUncaughtExceptions()
         val appJob = Job()
-        val appScope = CoroutineScope(appJob + Dispatchers.Default + uncaught)
+        val appScope = CoroutineScope(appJob + StandardTestDispatcher(testScheduler) + uncaught)
         val sibling = appScope.launch { awaitCancellation() }
         val values = CompletableDeferred<ReceiveChannel<Int>>()
         val holder = appScope.launch {
@@ -207,11 +217,11 @@ class ClientOperationGateTest {
             channel.receive()
             values.complete(channel)
         }
-        val channel = withContext(Dispatchers.Default) { withTimeout(5.seconds) { values.await() } }
+        val channel = values.await()
 
         // When
         gate.close()
-        withContext(Dispatchers.Default) { withTimeout(5.seconds) { holder.join() } }
+        holder.join()
 
         // Then — the app's launch ended as it would have, not failed; its scope and the job beside
         // it are untouched; nothing reached the app's handler; and reading again finds the channel
@@ -241,7 +251,7 @@ class ClientOperationGateTest {
             // When
             val failure =
                 withContext(Dispatchers.Default) {
-                    withTimeout(5.seconds) {
+                    withTimeout(CONCURRENT_STEP_BOUND) {
                         runCatching {
                             gate
                                 .callCollecting(
@@ -325,26 +335,23 @@ class ClientOperationGateTest {
     @Test
     fun a_slow_collector_is_handed_at_most_one_value_a_newer_one_has_replaced() = runTest {
         // Given — a source of snapshots, as every read the gate carries is, that moves on while the
-        // collector is busy with its first value
+        // collector is busy with its first value; the delays are the test's clock, so the gate's
+        // upstream runs in each of them
         val gate = ClientOperationGate()
         val source = MutableStateFlow(0)
         val seen = mutableListOf<Int>()
 
         // When
-        withContext(Dispatchers.Default) {
-            withTimeout(5.seconds) {
-                gate.callCollecting(source).first { value ->
-                    seen += value
-                    if (value == 0) {
-                        for (next in 1..LAST_SNAPSHOT) {
-                            source.value = next
-                            delay(2)
-                        }
-                        delay(50)
-                    }
-                    value == LAST_SNAPSHOT
+        gate.callCollecting(source).first { value ->
+            seen += value
+            if (value == 0) {
+                for (next in 1..LAST_SNAPSHOT) {
+                    source.value = next
+                    delay(2)
                 }
+                delay(50)
             }
+            value == LAST_SNAPSHOT
         }
 
         // Then — from the first snapshot to the latest, with at most the one snapshot the gate had
@@ -361,7 +368,7 @@ class ClientOperationGateTest {
         gate.close()
         val uncaught = RecordingUncaughtExceptions()
         val appJob = Job()
-        val appScope = CoroutineScope(appJob + Dispatchers.Default + uncaught)
+        val appScope = CoroutineScope(appJob + StandardTestDispatcher(testScheduler) + uncaught)
         val ending = CompletableDeferred<Throwable?>()
 
         // When
@@ -374,7 +381,7 @@ class ClientOperationGateTest {
                     .exceptionOrNull()
             )
         }
-        withContext(Dispatchers.Default) { withTimeout(5.seconds) { holder.join() } }
+        holder.join()
 
         // Then — the app's launch and scope were not failed, and the reader got the closed error
         assertEquals(false, holder.isCancelled, "the app's launch was failed by the closed error")
@@ -396,26 +403,19 @@ class ClientOperationGateTest {
             val emptied = CompletableDeferred<Boolean>()
 
             // When — its collector closes the gate and waits for it to empty, as close() does
-            val failure =
-                withContext(Dispatchers.Default) {
-                    withTimeout(5.seconds) {
-                        runCatching {
-                            gate
-                                .callCollecting(flow { repeat(Int.MAX_VALUE) { emit(it) } })
-                                .collect {
-                                    if (!emptied.isCompleted) {
-                                        gate.close()
-                                        emptied.complete(
-                                            withTimeoutOrNull(EMPTIES_AT_ONCE_OR_NEVER) {
-                                                gate.awaitNoCallsInFlight()
-                                            } != null
-                                        )
-                                    }
-                                }
-                        }
-                            .exceptionOrNull()
+            val failure = runCatching {
+                gate.callCollecting(flow { repeat(Int.MAX_VALUE) { emit(it) } }).collect {
+                    if (!emptied.isCompleted) {
+                        gate.close()
+                        emptied.complete(
+                            withTimeoutOrNull(EMPTIES_AT_ONCE_OR_NEVER) {
+                                gate.awaitNoCallsInFlight()
+                            } != null
+                        )
                     }
                 }
+            }
+                .exceptionOrNull()
 
             // Then — the gate emptied while the collector was still inside its body, and the
             // collection completed
@@ -481,9 +481,15 @@ class ClientOperationGateTest {
         const val LAST_SNAPSHOT = 10
 
         /**
-         * The gate empties at once or never, so a generous bound costs nothing when it passes and
-         * cannot fail on a slow machine.
+         * The gate empties at once or never: on the test's clock, which moves only once nothing
+         * else can run, this bound passes without the clock moving, or fails at once.
          */
         val EMPTIES_AT_ONCE_OR_NEVER: Duration = 10.seconds
+
+        /**
+         * The bound on one step of a test that races the gate's threads on [Dispatchers.Default] on
+         * purpose: generous, so a loaded machine never reaches it, and only a hang does.
+         */
+        val CONCURRENT_STEP_BOUND: Duration = 60.seconds
     }
 }
