@@ -33,6 +33,7 @@ import io.github.nesfeder.offlinetasks.testing.FakeSupabaseServer
 import io.github.nesfeder.offlinetasks.testing.FakeUserSession
 import io.github.nesfeder.offlinetasks.testing.addUploadedPhoto
 import io.github.nesfeder.supabase.offline.offline
+import java.io.File
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
@@ -498,7 +499,11 @@ class OfflineTaskRepositoryTest {
         val upload = assertNotNull(failed.pendingUpload)
         assertTrue(upload.retryable)
         assertEquals("new row violates row-level security policy", upload.failure)
-        assertEquals(8L, repository.cachedPhotoFile(failed)?.sizeBytes)
+        // Drawn from the file its rejected entry names, never the cache's answer
+        val kept = assertNotNull(upload.refusedFile)
+        assertEquals(File(kept).toURI().toString(), repository.photoUriIfCached(failed))
+        assertEquals(kept, repository.photoFileToShare(failed))
+        assertNull(repository.cachedPhotoFile(failed))
         assertTrue(server.files.isEmpty())
 
         // When — Storage back, and Retry
@@ -530,7 +535,7 @@ class OfflineTaskRepositoryTest {
     }
 
     @Test
-    fun an_upload_whose_answer_was_lost_is_not_sent_again() = runTest {
+    fun an_upload_whose_answer_was_lost_counts_as_stored_once_storage_shows_its_bytes() = runTest {
         // Given — a photo whose file was stored, and whose answer the connection lost
         repository.addTask("Stored once", notes = null)
         val task = repository.tasks().awaitValue { it.isNotEmpty() }.single()
@@ -542,9 +547,12 @@ class OfflineTaskRepositoryTest {
         server.loseUploadAnswers = false
         repository.syncPendingMutations()
 
-        // Then — the file was found in the bucket rather than sent twice, and the row written
+        // Then — sent again, refused as a duplicate, and taken as stored once the object in the
+        // bucket is its bytes; the row written
         repository.photos(task.id).awaitValue { photos -> photos.isUploaded() }
-        assertEquals(1, server.requests.count { it.startsWith("POST /storage/v1/object/") })
+        assertEquals(2, server.requests.count { it.startsWith("POST /storage/v1/object/") })
+        assertEquals(1, server.requests.count { it.startsWith("GET /storage/v1/object/info/") })
+        assertEquals(1, server.files.size)
         assertEquals(1, server.rows(Tables.TASK_PHOTOS).size)
     }
 
@@ -565,6 +573,54 @@ class OfflineTaskRepositoryTest {
         release.complete(Unit)
 
         // Then — the file is deleted again, and no row names it
+        assertTrue(removing.await())
+        withTimeout(WAIT) { while (server.files.isNotEmpty()) delay(POLL) }
+        repository.photos(task.id).awaitValue { it.isEmpty() }
+        repository.syncPendingMutations()
+        assertTrue(server.rows(Tables.TASK_PHOTOS).isEmpty())
+    }
+
+    @Test
+    fun a_photo_added_online_shows_waiting_until_its_row_is_written() = runTest {
+        // Given — a task, and Storage slow to answer
+        val task = taskWithPhotosRead("Slow upload")
+        val release = CompletableDeferred<Unit>()
+        server.holdUploadAnswers = release
+
+        // When — added online, its upload on the wire
+        val adding = scope.async { repository.addPhoto(task.id, EncodedPhoto(ByteArray(8), 4, 3)) }
+
+        // Then — shown at once, marked waiting, before Storage answers
+        val shown = repository.photos(task.id).awaitValue { it.isNotEmpty() }.single()
+        assertEquals(PendingPhotoState.Waiting, shown.pendingUpload?.state)
+        assertTrue(adding.isActive)
+
+        // When — Storage answers
+        release.complete(Unit)
+        adding.await()
+
+        // Then — the same photo, uploaded, its row written
+        val uploaded = repository.photos(task.id).awaitValue { it.isUploaded() }.single()
+        assertEquals(shown.id, uploaded.id)
+        assertEquals(1, server.rows(Tables.TASK_PHOTOS).size)
+    }
+
+    @Test
+    fun a_photo_removed_while_it_is_added_online_leaves_no_file_and_no_row() = runTest {
+        // Given — a photo being added online, its upload on the wire
+        val task = taskWithPhotosRead("Removed at once")
+        val release = CompletableDeferred<Unit>()
+        server.holdUploadAnswers = release
+        val adding = scope.async { repository.addPhoto(task.id, EncodedPhoto(ByteArray(8), 4, 3)) }
+        val shown = repository.photos(task.id).awaitValue { it.isNotEmpty() }.single()
+        withTimeout(WAIT) { server.uploadsHeld.first { it == 1 } }
+
+        // When — removed, which waits for the add to end, then Storage answers
+        val removing = scope.async { repository.removePendingPhoto(shown.id) }
+        release.complete(Unit)
+
+        // Then
+        adding.await()
         assertTrue(removing.await())
         withTimeout(WAIT) { while (server.files.isNotEmpty()) delay(POLL) }
         repository.photos(task.id).awaitValue { it.isEmpty() }
@@ -652,6 +708,51 @@ class OfflineTaskRepositoryTest {
         assertTrue(supabase.offline.storage.pendingUploads().first().isEmpty())
         assertTrue(server.requests.none { it.startsWith("POST /storage/v1/object/") })
         assertTrue(server.files.isEmpty())
+    }
+
+    @Test
+    fun a_task_deleted_while_its_photo_uploads_leaves_no_file_behind() = runTest {
+        // Given — a photo added offline, its upload on the wire once the network is back
+        val task = taskWithPhotosRead("Deleted mid-upload")
+        repository.setNetworkEnabled(false)
+        repository.addPhoto(task.id, EncodedPhoto(ByteArray(8), 4, 3))
+        repository.photos(task.id).awaitValue { it.isNotEmpty() }
+        val release = CompletableDeferred<Unit>()
+        server.holdUploadAnswers = release
+        repository.setNetworkEnabled(true)
+        withTimeout(WAIT) { server.uploadsHeld.first { it == 1 } }
+
+        // When — the task deleted while Storage holds the answer, which then arrives
+        val deleting = scope.async { repository.deleteTask(task.id) }
+        release.complete(Unit)
+        deleting.await()
+
+        // Then — the file that landed is deleted too
+        repository.syncPendingMutations()
+        assertTrue(server.files.isEmpty(), "a file outlived its task: ${server.files.keys}")
+        assertTrue(server.rows(Tables.TASKS).isEmpty())
+    }
+
+    @Test
+    fun starting_over_while_a_photo_uploads_leaves_no_file_behind() = runTest {
+        // Given — a photo added offline, its upload on the wire once the network is back
+        val task = taskWithPhotosRead("Started over mid-upload")
+        repository.setNetworkEnabled(false)
+        repository.addPhoto(task.id, EncodedPhoto(ByteArray(8), 4, 3))
+        repository.photos(task.id).awaitValue { it.isNotEmpty() }
+        val release = CompletableDeferred<Unit>()
+        server.holdUploadAnswers = release
+        repository.setNetworkEnabled(true)
+        withTimeout(WAIT) { server.uploadsHeld.first { it == 1 } }
+
+        // When
+        val startingOver = scope.async { repository.startOver() }
+        release.complete(Unit)
+        startingOver.await()
+
+        // Then — nothing of the first user is left in the bucket
+        assertTrue(server.files.isEmpty(), "a file outlived its user: ${server.files.keys}")
+        assertEquals(1, session.newUserCount)
     }
 
     @Test

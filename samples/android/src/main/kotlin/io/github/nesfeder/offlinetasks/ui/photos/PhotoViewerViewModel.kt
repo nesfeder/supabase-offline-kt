@@ -147,7 +147,8 @@ class PhotoViewerViewModel(
 
     /**
      * Hands the photo itself to the share sheet: the library's copy on the device (a pending
-     * photo's queued file, or the cached copy, downloaded first if needed).
+     * photo's queued file, a refused one's kept file, or the cached copy, downloaded first if
+     * needed).
      */
     fun share() {
         val showing = uiState.value as? PhotoViewerUiState.Showing ?: return

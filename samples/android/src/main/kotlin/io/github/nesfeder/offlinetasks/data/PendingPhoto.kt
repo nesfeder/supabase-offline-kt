@@ -13,14 +13,18 @@ enum class PendingPhotoState {
 
 /**
  * What a photo shown before Storage has its file carries: where its upload stands. The screens draw
- * it from the library's copy on the device, as they draw every photo.
+ * a waiting one from the library's copy on the device, as they draw every photo, and a refused one
+ * from the file its rejected entry names.
  *
  * @property failure why Storage refused it, in Storage's words; null unless [state] is
  *   [PendingPhotoState.Failed].
  * @property retryable false once its file is no longer on the device, so a retry cannot send it.
+ * @property refusedFile the path of a refused upload's file on the device, which the screens draw
+ *   it from; null unless [state] is [PendingPhotoState.Failed] and the file is still whole.
  */
 data class PendingUpload(
     val state: PendingPhotoState,
     val failure: String? = null,
     val retryable: Boolean = true,
+    val refusedFile: String? = null,
 )

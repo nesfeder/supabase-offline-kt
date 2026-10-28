@@ -160,7 +160,8 @@ interface TaskRepository {
 
     /**
      * Gives up the photo [photoId] before Storage has its file: its waiting or refused upload, and
-     * its row. False when there is none, because it finished uploading meanwhile.
+     * its row. A photo still being added online is given up once the add ends, its file deleted
+     * if it landed. False when there is none, because a waiting upload finished meanwhile.
      */
     suspend fun removePendingPhoto(photoId: String): Boolean
 
