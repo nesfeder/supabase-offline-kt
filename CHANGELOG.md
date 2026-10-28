@@ -54,6 +54,11 @@ All notable changes to this project are recorded in this file. The format follow
 
 ### Changed
 
+- When an object and a folder of the same name are both cached in one bucket, the one downloaded
+  second is stored under `storage-hashed/`, in the file named by a hash of its key, and its row's
+  `localPath` records that file. Files and rows already on a device stay as they are and are read as
+  before. An earlier build that finds such a row drops it and downloads the object again, and leaves
+  its file until the file cache or local data is cleared.
 - The query cache's eviction pass runs in the background after a response is written, where it ran
   before the read returned, and starts when a running count of the cached lists' length passes the
   bound, where every response of 4 KiB or more, and every 32nd response, summed every cached list
@@ -140,6 +145,10 @@ All notable changes to this project are recorded in this file. The format follow
 
 ### Fixed
 
+- An object and a folder of the same name in one bucket, such as `album` and `album/cover.png`, can
+  both be cached now. On disk they would need one name to be both a file and a folder, so the one
+  downloaded second was never cached: `ensureCachedFile` threw for it every time, a channel download
+  of it could fetch it twice, and it was not served offline.
 - In the Swift package, a call that failed for a reason of its own while the client closed threw
   `clientClosed`: any `IllegalStateException` or cancellation met during the close read as the
   closed client, such as the failure of a download whose local data was cleared. It now keeps its
