@@ -266,6 +266,48 @@ struct TestValuesTests {
         #expect(given.url == URL(filePath: "/tmp/photos/a.jpg"))
     }
 
+    @Test func theUploadValuesTakeEveryFieldAndTheOutcomeWrapsThem() {
+        // When
+        let pending = pendingUpload(id: 7, bucketId: "photos", path: "a/b.jpg", createdAt: Self.at, sizeBytes: 3)
+        let refused = rejectedUpload(
+            id: 8,
+            bucketId: "photos",
+            path: "a/c.jpg",
+            createdAt: Self.at,
+            sizeBytes: 4,
+            contentType: "image/jpeg",
+            upsert: true,
+            serverError: serverError(status: 400, code: "Unauthorized", message: "no"),
+            message: "no",
+            rejectedAt: Self.at.addingTimeInterval(60),
+            isRetryable: false
+        )
+        let response = fileUploadResponse(id: "object-1", path: "a/b.jpg", key: "photos/a/b.jpg")
+        let report = syncReport(syncedCount: 1, rejectedUploads: [refused])
+
+        // Then
+        #expect(pending.id == 7)
+        #expect(pending.bucketId == "photos")
+        #expect(pending.path == "a/b.jpg")
+        #expect(pending.createdAt == Self.at)
+        #expect(pending.sizeBytes == 3)
+        #expect(pending.contentType == nil)
+        #expect(!pending.upsert)
+        #expect(refused.contentType == "image/jpeg")
+        #expect(refused.upsert)
+        #expect(refused.serverError?.status == 400)
+        #expect(refused.message == "no")
+        #expect(refused.rejectedAt == Self.at.addingTimeInterval(60))
+        #expect(!refused.isRetryable)
+        #expect(UploadOutcome.applied(response: response).response == response)
+        #expect(UploadOutcome.queued(pendingUpload: pending).isQueued)
+        #expect(response.key == "photos/a/b.jpg")
+        #expect(report.syncedCount == 1)
+        #expect(report.rejectedUploads == [refused])
+        #expect(report.stopReason.kind == .completed)
+        #expect(syncReport(stopReason: syncStopReason(kind: .completed)).rejectedUploads.isEmpty)
+    }
+
     @Test func aCacheMissErrorIsCaughtByItsCode() {
         // When
         let error = cacheMissError()

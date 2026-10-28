@@ -5,6 +5,7 @@ package io.github.nesfeder.supabase.offline.testing
 import io.github.jan.supabase.SupabaseClient
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.jan.supabase.postgrest.result.PostgrestResult
+import io.github.jan.supabase.storage.FileUploadResponse
 import io.github.nesfeder.supabase.offline.CacheMissException
 import io.github.nesfeder.supabase.offline.CachedFile
 import io.github.nesfeder.supabase.offline.ConflictResolver
@@ -19,15 +20,18 @@ import io.github.nesfeder.supabase.offline.Offline
 import io.github.nesfeder.supabase.offline.OfflineClientClosedException
 import io.github.nesfeder.supabase.offline.OfflineInternal
 import io.github.nesfeder.supabase.offline.PendingMutation
+import io.github.nesfeder.supabase.offline.PendingUpload
 import io.github.nesfeder.supabase.offline.QuerySnapshot
 import io.github.nesfeder.supabase.offline.RealtimeStatus
 import io.github.nesfeder.supabase.offline.RefreshState
 import io.github.nesfeder.supabase.offline.RejectedMutation
+import io.github.nesfeder.supabase.offline.RejectedUpload
 import io.github.nesfeder.supabase.offline.ServerError
 import io.github.nesfeder.supabase.offline.SyncFailedException
 import io.github.nesfeder.supabase.offline.SyncReport
 import io.github.nesfeder.supabase.offline.SyncStatus
 import io.github.nesfeder.supabase.offline.SyncStopReason
+import io.github.nesfeder.supabase.offline.UploadOutcome
 import io.github.nesfeder.supabase.offline.fetchedAt
 import io.github.nesfeder.supabase.offline.hasPendingMutations
 import io.github.nesfeder.supabase.offline.internal.testing.ValueConstructors
@@ -387,6 +391,49 @@ public fun syncReport(
     )
 
 /**
+ * What a call of [Offline.syncPendingMutations] did, with the queued uploads Storage refused; every
+ * field but [rejectedUploads], which selects this overload, defaults to the value of a call that
+ * sent nothing and ran to the end.
+ *
+ * @param syncedCount the writes sent and accepted, uploads included.
+ * @param rejected the row writes the server refused for good.
+ * @param remainingCount the writes still queued, uploads included.
+ * @param alreadyOnServerCount of [syncedCount], the writes the server already held.
+ * @param heldBehindOtherTablesCount of [remainingCount], the writes a call for one table held back
+ *   behind an earlier write to another table.
+ * @param conflictsResolvedCount of [syncedCount], the conflicts settled and sent.
+ * @param conflictsKeptServerCount the writes dropped so the server's row stands.
+ * @param conflicted the writes parked on the conflicted list.
+ * @param stopReason why the call returned when it did.
+ * @param rejectedUploads the queued uploads Storage refused for good.
+ */
+@OptIn(OfflineInternal::class)
+public fun syncReport(
+    syncedCount: Int = 0,
+    rejected: List<RejectedMutation> = emptyList(),
+    remainingCount: Int = 0,
+    alreadyOnServerCount: Int = 0,
+    heldBehindOtherTablesCount: Int = 0,
+    conflictsResolvedCount: Int = 0,
+    conflictsKeptServerCount: Int = 0,
+    conflicted: List<ConflictedMutation> = emptyList(),
+    stopReason: SyncStopReason = SyncStopReason.Completed,
+    rejectedUploads: List<RejectedUpload>,
+): SyncReport =
+    ValueConstructors.syncReport(
+        syncedCount,
+        rejected,
+        remainingCount,
+        alreadyOnServerCount,
+        heldBehindOtherTablesCount,
+        conflictsResolvedCount,
+        conflictsKeptServerCount,
+        conflicted,
+        stopReason,
+        rejectedUploads,
+    )
+
+/**
  * The reason of a sync call the server stopped with a failure that may pass, such as a `503`.
  *
  * @param error the failure, as [SyncStatus.lastSyncError] would hold it: build it with
@@ -589,6 +636,90 @@ public fun rejectedMutation(
         createdAt,
         rowKeys,
         body,
+        serverError,
+        message,
+        rejectedAt,
+        isRetryable,
+    )
+
+/**
+ * The outcome of an upload Storage stored, as a test double of the app's own returns it.
+ *
+ * @param response Storage's response: `FileUploadResponse(id, path, key)`.
+ */
+@OptIn(OfflineInternal::class)
+public fun appliedUploadOutcome(response: FileUploadResponse): UploadOutcome.Applied =
+    ValueConstructors.appliedUpload(response)
+
+/**
+ * The outcome of an upload that waits in the mutation queue.
+ *
+ * @param pendingUpload the queued upload.
+ */
+@OptIn(OfflineInternal::class)
+public fun queuedUploadOutcome(pendingUpload: PendingUpload): UploadOutcome.Queued =
+    ValueConstructors.queuedUpload(pendingUpload)
+
+/**
+ * An upload waiting in the mutation queue, as `OfflineStorage.pendingUploads` lists one.
+ *
+ * @param id its id in the queue.
+ * @param bucketId the bucket the file goes to.
+ * @param path the object path within the bucket.
+ * @param createdAt when it was queued.
+ * @param sizeBytes the file's size.
+ * @param contentType the content type it is sent with, or `null` for none.
+ * @param upsert whether it overwrites an object already at the path.
+ */
+@OptIn(OfflineInternal::class)
+public fun pendingUpload(
+    id: Long,
+    bucketId: String,
+    path: String,
+    createdAt: Instant,
+    sizeBytes: Long,
+    contentType: String? = null,
+    upsert: Boolean = false,
+): PendingUpload =
+    ValueConstructors.pendingUpload(id, bucketId, path, createdAt, sizeBytes, contentType, upsert)
+
+/**
+ * A queued upload Storage refused for good, as `OfflineStorage.rejectedUploads` lists one.
+ *
+ * @param id its id in the queue.
+ * @param bucketId the bucket the file was going to.
+ * @param path the object path within the bucket.
+ * @param createdAt when it was queued.
+ * @param sizeBytes the file's size.
+ * @param contentType the content type it was sent with, or `null` for none.
+ * @param upsert whether it overwrites an object already at the path.
+ * @param serverError what Storage answered, or `null` when the library refused it.
+ * @param message why it was refused.
+ * @param rejectedAt when it was refused.
+ * @param isRetryable whether it can be queued again.
+ */
+@OptIn(OfflineInternal::class)
+public fun rejectedUpload(
+    id: Long,
+    bucketId: String,
+    path: String,
+    createdAt: Instant,
+    sizeBytes: Long,
+    contentType: String? = null,
+    upsert: Boolean = false,
+    serverError: ServerError? = null,
+    message: String,
+    rejectedAt: Instant,
+    isRetryable: Boolean = true,
+): RejectedUpload =
+    ValueConstructors.rejectedUpload(
+        id,
+        bucketId,
+        path,
+        createdAt,
+        sizeBytes,
+        contentType,
+        upsert,
         serverError,
         message,
         rejectedAt,

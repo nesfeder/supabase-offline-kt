@@ -187,7 +187,8 @@ Open a task and tap **Add photo** in its Photos section, or add photos as you cr
 one JPEG under 5 MB, kept on the device first: it shows at once, offline too, marked **Waiting to
 upload**, then **Uploading** (with no progress bar).
 
-The library never queues a Storage write, so the app keeps a queue of its own: a folder in its
+The app keeps a queue of its own for photos, written before the library could queue an upload
+([Queued uploads](../behaviors/storage.md#queued-uploads)): a folder in its
 Application Support, one JPEG and one small record per photo (`Data/PendingPhotoQueue.swift`; the
 [recipe](../behaviors/storage.md#photos-picked-offline-the-apps-own-queue) says how it works). While
 the network is up the app uploads the waiting photos one at a time, oldest first, and writes a

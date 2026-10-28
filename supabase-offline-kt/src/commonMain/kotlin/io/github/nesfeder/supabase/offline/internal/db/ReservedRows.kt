@@ -49,12 +49,26 @@ internal const val QUERY_SHAPE_CACHE_KEY_PREFIX: String =
 internal const val QUERY_SHAPE_CACHE_KEY_PREFIX_LENGTH: Int = 12
 
 /**
- * Whether [table] is the engine's reserved state table rather than a table of the app's.
+ * The `mutation_cache` table name of every queued Storage upload's row: a write of the one queue,
+ * ordered with the row writes around it, that targets no table of the app's. It cannot collide with
+ * a table reachable through PostgREST for the reason [RESERVED_TABLE_NAME] cannot, and
+ * `OfflineClient.from` refuses it, so no table's reads, overlay, counts or single-table pass meet
+ * an upload.
+ *
+ * Changing this value orphans every installed device's queued uploads, so it never changes.
+ */
+internal const val STORAGE_UPLOADS_TABLE_NAME: String =
+    "__supabase_offline_kt__.storage_uploads.this_name_is_longer_than_any_postgres_identifier"
+
+/**
+ * Whether [table] is one of the engine's own table names rather than a table of the app's: the
+ * reserved state table, or the one queued uploads are filed under.
  *
  * @param table A table name as a caller passed it.
- * @return `true` only for [RESERVED_TABLE_NAME].
+ * @return `true` only for [RESERVED_TABLE_NAME] and [STORAGE_UPLOADS_TABLE_NAME].
  */
-internal fun isReservedTable(table: String): Boolean = table == RESERVED_TABLE_NAME
+internal fun isReservedTable(table: String): Boolean =
+    table == RESERVED_TABLE_NAME || table == STORAGE_UPLOADS_TABLE_NAME
 
 /**
  * Refuses the engine's reserved state table as the target of a cache write or a queued write, so no

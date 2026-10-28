@@ -7,6 +7,7 @@ package io.github.nesfeder.supabase.offline.internal.testing
 import io.github.jan.supabase.createSupabaseClient
 import io.github.jan.supabase.postgrest.Postgrest
 import io.github.jan.supabase.postgrest.postgrest
+import io.github.jan.supabase.storage.FileUploadResponse
 import io.github.nesfeder.supabase.offline.OfflineInternal
 import io.github.nesfeder.supabase.offline.RefreshState
 import io.github.nesfeder.supabase.offline.SyncStopReason
@@ -33,6 +34,71 @@ import kotlinx.serialization.json.put
  * gives a report with those counts.
  */
 class ValueConstructorsTest {
+
+    @Test
+    fun the_upload_values_hold_what_they_were_given() {
+        // Given
+        val at = Instant.fromEpochMilliseconds(1_700_000_000_000)
+        val response = FileUploadResponse(id = "id-1", path = "a.jpg", key = "photos/a.jpg")
+        val error = ValueConstructors.serverError(400, "Unauthorized", "no", null, null)
+
+        // When
+        val pending =
+            ValueConstructors.pendingUpload(1, "photos", "a.jpg", at, 3, "image/png", true)
+        val refused =
+            ValueConstructors.rejectedUpload(
+                2,
+                "photos",
+                "b.jpg",
+                at,
+                4,
+                null,
+                false,
+                error,
+                "no",
+                at,
+                true,
+            )
+        val report =
+            ValueConstructors.syncReport(
+                1,
+                emptyList(),
+                0,
+                0,
+                0,
+                0,
+                0,
+                emptyList(),
+                SyncStopReason.Completed,
+                rejectedUploads = listOf(refused),
+            )
+
+        // Then
+        assertEquals(response, ValueConstructors.appliedUpload(response).response)
+        assertEquals(pending, ValueConstructors.queuedUpload(pending).pendingUpload)
+        assertEquals(listOf(1L, 3L), listOf(pending.id, pending.sizeBytes))
+        assertEquals("image/png", pending.contentType)
+        assertTrue(pending.upsert)
+        assertEquals(listOf("photos", "b.jpg"), listOf(refused.bucketId, refused.path))
+        assertEquals(error, refused.serverError)
+        assertTrue(refused.isRetryable)
+        assertEquals(listOf(refused), report.rejectedUploads)
+        assertEquals(
+            emptyList(),
+            ValueConstructors.syncReport(
+                    1,
+                    emptyList(),
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    emptyList(),
+                    SyncStopReason.Completed,
+                )
+                .rejectedUploads,
+        )
+    }
 
     @Test
     fun a_cached_result_reads_as_the_cache_s_with_the_time_and_flag_given() {

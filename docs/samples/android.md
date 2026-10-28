@@ -134,7 +134,8 @@ still shows offline: the Photos tab marks it available offline.
 ![New task with a title, notes and two photos picked, each with a button to take it off, before Add](../assets/samples/android/new-task-photos.png){ width="270" loading=lazy }
 ![The new task's detail with Simulate offline on: "Saved on this device — will sync when online", and its two photos marked "Waiting to upload"](../assets/samples/android/photo-waiting.png){ width="270" loading=lazy }
 
-The library never queues a Storage write, so the app keeps its own queue: a photo added offline
+The app keeps its own queue for photos, written before the library could queue an upload
+([Queued uploads](../behaviors/storage.md#queued-uploads)): a photo added offline
 (Simulate offline on, say) waits on the device, marked "Waiting to upload", and uploads when the
 network comes back, its row written only once Storage has the file. One that fails says why, with
 **Retry**, and **Remove** to give it up. Until it is uploaded, the viewer offers Share and Remove

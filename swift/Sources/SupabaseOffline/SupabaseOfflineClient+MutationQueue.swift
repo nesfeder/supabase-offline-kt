@@ -8,7 +8,8 @@ import SupabaseOfflineCore
 
 extension SupabaseOfflineClient {
 
-    /// The current user's queued writes, of `table` or of every table, as the queue changes.
+    /// The current user's queued row writes, of `table` or of every table, as the queue changes.
+    /// The uploads queued among them are listed by ``OfflineStorage/pendingUploads()``.
     ///
     /// Iterate it for the list now and each change; ``PendingMutationSequence/first()`` reads it once.
     public func pendingMutations(table: String? = nil) -> PendingMutationSequence {
@@ -41,7 +42,8 @@ extension SupabaseOfflineClient {
     }
 
     /// How many of the current user's writes wait, of `table` or of every table: the writes
-    /// ``pendingMutations(table:)`` lists.
+    /// ``pendingMutations(table:)`` lists, and with no `table` the uploads
+    /// ``OfflineStorage/pendingUploads()`` lists too.
     ///
     /// - Throws: ``OfflineError``: `clientClosed` once the client is closed.
     public func pendingMutationCount(table: String? = nil) async throws -> Int {
@@ -70,7 +72,8 @@ extension SupabaseOfflineClient {
     /// show again as the server last sent them, and what waited behind it is sent.
     ///
     /// When the write is on the wire, this waits for that send to end, then discards it if it is
-    /// still queued. An id that is not one of the current user's queued writes is ignored.
+    /// still queued. An id that is not one of the current user's queued writes is ignored. A queued
+    /// upload's id (``PendingUpload/id``) discards the upload, and its bytes on the device.
     ///
     /// - Throws: ``OfflineError``: `clientClosed` once the client is closed.
     public func discardPendingMutation(id: Int64) async throws {
@@ -84,7 +87,8 @@ extension SupabaseOfflineClient {
     ///
     /// Iterate it for the list now and each change; ``RejectedMutationSequence/first()`` and
     /// ``rejectedMutationList()`` read it once. Entries stay on the device across restarts until
-    /// each is dismissed or retried.
+    /// each is dismissed or retried. Refused uploads, entries of the same list, are listed by
+    /// ``OfflineStorage/rejectedUploads()``.
     public func rejectedMutations() -> RejectedMutationSequence {
         RejectedMutationSequence(
             live: liveSequence { core, yield, finish in
@@ -121,7 +125,8 @@ extension SupabaseOfflineClient {
     }
 
     /// Removes an entry from the rejected list for good; its write is lost. An id that is not one of
-    /// the current user's entries is ignored.
+    /// the current user's entries is ignored. A refused upload's id (``RejectedUpload/id``) removes
+    /// the upload, and its bytes on the device.
     ///
     /// - Throws: ``OfflineError``: `clientClosed` once the client is closed.
     public func dismissRejectedMutation(id: Int64) async throws {
@@ -134,10 +139,11 @@ extension SupabaseOfflineClient {
     /// asks for a sync pass; the entry leaves the rejected list.
     ///
     /// For when the cause has been fixed, such as a missing parent row or a policy. An id that is
-    /// not one of the current user's entries is ignored.
+    /// not one of the current user's entries is ignored. A refused upload's id
+    /// (``RejectedUpload/id``) queues the upload again, from the bytes the device kept.
     ///
     /// - Throws: ``OfflineError``: `invalidRequest` when the entry's ``RejectedMutation/isRetryable``
-    ///   is `false`; `clientClosed` once the client is closed.
+    ///   or ``RejectedUpload/isRetryable`` is `false`; `clientClosed` once the client is closed.
     public func retryRejectedMutation(id: Int64) async throws {
         try await connection.call { core, complete in
             core.retryRejectedMutation(id: id) { failure in complete(coreResult(failure)) }

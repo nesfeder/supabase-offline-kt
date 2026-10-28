@@ -6,6 +6,7 @@ import io.github.jan.supabase.createSupabaseClient
 import io.github.jan.supabase.postgrest.Postgrest
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.jan.supabase.postgrest.result.PostgrestResult
+import io.github.jan.supabase.storage.FileUploadResponse
 import io.github.nesfeder.supabase.offline.MutationOperation
 import io.github.nesfeder.supabase.offline.NetworkStatus
 import io.github.nesfeder.supabase.offline.RealtimeStatus
@@ -360,6 +361,56 @@ class TestValuesTest {
         )
         assertEquals(emptyList(), plainReport.conflicted)
         assertEquals(0, plainStatus.conflictedMutationCount)
+    }
+
+    @Test
+    fun the_upload_values_hold_their_fields() {
+        // Given
+        val at = Instant.fromEpochMilliseconds(1_700_000_000_000)
+        val response = FileUploadResponse(id = "id-1", path = "a/b.jpg", key = "photos/a/b.jpg")
+
+        // When
+        val pending =
+            pendingUpload(
+                id = 7,
+                bucketId = "photos",
+                path = "a/b.jpg",
+                createdAt = at,
+                sizeBytes = 3,
+            )
+        val refused =
+            rejectedUpload(
+                id = 8,
+                bucketId = "photos",
+                path = "a/c.jpg",
+                createdAt = at,
+                sizeBytes = 4,
+                contentType = "image/jpeg",
+                upsert = true,
+                serverError = serverError(status = 400, code = "Unauthorized", message = "no"),
+                message = "no",
+                rejectedAt = at,
+                isRetryable = false,
+            )
+        val report = syncReport(syncedCount = 1, rejectedUploads = listOf(refused))
+
+        // Then
+        assertEquals(response, appliedUploadOutcome(response).response)
+        assertEquals(response, appliedUploadOutcome(response).responseOrNull())
+        assertEquals(pending, queuedUploadOutcome(pending).pendingUpload)
+        assertTrue(queuedUploadOutcome(pending).isQueued)
+        assertEquals(null, pending.contentType)
+        assertFalse(pending.upsert)
+        assertEquals("photos", refused.bucketId)
+        assertEquals("a/c.jpg", refused.path)
+        assertEquals(4, refused.sizeBytes)
+        assertEquals("image/jpeg", refused.contentType)
+        assertTrue(refused.upsert)
+        assertEquals(400, refused.serverError?.status)
+        assertFalse(refused.isRetryable)
+        assertEquals(listOf(refused), report.rejectedUploads)
+        assertEquals(SyncStopReason.Completed, report.stopReason)
+        assertEquals(emptyList(), syncReport(stopReason = SyncStopReason.Completed).rejectedUploads)
     }
 
     @Test

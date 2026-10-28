@@ -13,6 +13,7 @@ import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueue
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.NoVersionColumns
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.PrimaryKeys
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.VersionColumns
+import io.github.nesfeder.supabase.offline.internal.storage.QueuedUploadFiles
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
 
@@ -72,6 +73,8 @@ internal class CacheComponents(
  *   is written: the client's own scope, which closing the client cancels.
  * @param beforePayloadWriteHeard runs before a live reader hears of a payload write; a test delays
  *   it so a reader hears of the write after other changes. `null` for none.
+ * @param queuedUploadFiles the queued uploads' files, which a clear deletes with their rows; `null`
+ *   for a client that keeps none.
  * @return the components, wired.
  */
 internal fun buildCacheComponents(
@@ -94,6 +97,7 @@ internal fun buildCacheComponents(
     versionColumns: VersionColumns = NoVersionColumns,
     backgroundScope: CoroutineScope,
     beforePayloadWriteHeard: (suspend (table: String) -> Unit)? = null,
+    queuedUploadFiles: QueuedUploadFiles? = null,
 ): CacheComponents {
     val countingQueryCacheDao = PayloadWriteCountingDao(queryCacheDao, beforePayloadWriteHeard)
     val freshness = CacheFreshness(monotonicTick)
@@ -174,6 +178,7 @@ internal fun buildCacheComponents(
             mutationQueue = mutationQueue,
             queryCache = queryCache,
             queryOverlay = queryOverlay,
+            queuedUploadFiles = queuedUploadFiles,
         )
     return CacheComponents(
         queryCacheDao = countingQueryCacheDao,

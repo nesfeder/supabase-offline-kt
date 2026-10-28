@@ -58,6 +58,18 @@ All notable changes to this project are recorded in this file. The format follow
   the same `transform { … }` keeps, so a cached thumbnail can be handed to an image loader as a
   file. `localUriIfCached(path) { … }` on Android and `localPathIfCached(path) { … }` on iOS give it
   in the platform's terms, and the Swift package has `cachedFile(path:transform:)`.
+- A Storage upload can wait in the mutation queue with the row writes around it:
+  `upload(path, data, MutationStrategy.QueueIfOffline)` on an offline bucket keeps the file's bytes
+  on the device and returns `UploadOutcome.Queued` when it cannot be sent at once, and a later pass
+  sends it in the order it was made, so a row written after it that names the file is sent after the
+  file. It survives a restart, belongs to the user who made it, is refused onto the rejected list
+  with its bytes kept for a retry, and goes with `clearLocalData()`; while it waits, `cachedFile`,
+  `ensureCachedFile` and the platform helpers return its bytes on the device, and once Storage has
+  it they become the cached copy. An upload whose answer was lost is sent again, and its refusal
+  counts as stored only when the object at its path is verifiably its bytes. `offline.storage.pendingUploads()`, `rejectedUploads()` and
+  `rejectedUploadList()` list them, `SyncReport.rejectedUploads` reports a refusal, and
+  `discardPendingMutation`, `dismissRejectedMutation` and `retryRejectedMutation` take an upload's
+  id. The Swift package has the same calls, and both testing artifacts build the new values.
 
 ### Changed
 
@@ -154,6 +166,15 @@ All notable changes to this project are recorded in this file. The format follow
   row, with the queued writes laid over it; no row or several fail as before. It was never cached,
   so a detail screen had nothing offline. `maybeSingle()` on supabase-kt 3.8 is cached the same
   way, and offline answers only its one row, never `null`.
+- The mutation queue can hold a Storage upload: a row of a new kind beside the row writes, with
+  its bytes in a `storage-uploads` directory beside the file cache, excluded from iOS backups as the
+  database is and moved with the database into a configured `dataDirectory`. Data already on a
+  device is untouched: nothing moves, and no stored format changes. An earlier version that opens a
+  queue holding an upload refuses it onto its rejected list.
+- `SyncStatus.pendingMutationCount` and `rejectedMutationCount`, `pendingMutationCount()` with no
+  table, and a sync's `syncedCount`, `remainingCount` and `alreadyOnServerCount` count a queued
+  upload as a write; `pendingMutations()` and `rejectedMutations()` still list row writes only. An
+  app that queues no upload sees the counts it saw.
 
 ### Deprecated
 

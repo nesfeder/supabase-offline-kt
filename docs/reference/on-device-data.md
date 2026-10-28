@@ -1,7 +1,8 @@
 # On-device data
 
 Everything the library keeps on the device is in one SQLite database, `supabase_offline.db`, and
-one directory of downloaded files, both in the app's private storage. This page lists where they
+one directory of files (downloaded objects, and the bytes of queued uploads), both in the app's
+private storage. This page lists where they
 are, what they hold, and what removes it.
 
 ## Where it lives
@@ -42,6 +43,17 @@ old. The row records the file's size. A file whose size differs from its row, wh
 right after a download can leave, is not served: it is deleted with its row, and the object is
 downloaded again when next asked for.
 
+The bytes of each [queued upload](../behaviors/storage.md#queued-uploads) are in
+`storage-uploads/`, in a file named by 32 random hex characters, written to a `.partial` file,
+through to the disk, and renamed into place before the upload's row is queued. The row in
+`mutation_cache` names the file. It is deleted once the upload is sent and its row gone, when the
+upload is discarded or its rejected entry dismissed, and by `clearLocalData()`; it stays while the
+entry waits on the rejected list. A file no queued upload and no rejected entry names, as a crash
+between the rename and the row can leave, is deleted when a client opens. The file cache's bound
+and `clearFileCache()` never touch the directory. On iOS it is excluded from backups as the rest
+is, and when the database moves into a configured `dataDirectory`, the directory moves with it,
+first, so a failed move leaves both where they were.
+
 ## The database
 
 Room schema version 2, identity hash `5f1a878933e35eebaa2b64aac7fccab0`.
@@ -81,9 +93,9 @@ It is indexed on (`owner`, `synced_at_ms`) and indexed on (`table_name`).
 | Column | Type | Null | What it holds |
 | --- | --- | --- | --- |
 | `id` | INTEGER | no | The write's id and its place in the queue: `PendingMutation.id` |
-| `table_name` | TEXT | no | The table the write targets |
-| `operation` | TEXT | no | `INSERT`, `UPSERT`, `UPDATE` or `DELETE` |
-| `body_json` | TEXT | no | The body the write sends, as JSON text; `{}` for a DELETE |
+| `table_name` | TEXT | no | The table the write targets; for a queued upload, a reserved name 88 bytes long |
+| `operation` | TEXT | no | `INSERT`, `UPSERT`, `UPDATE` or `DELETE`, or `UPLOAD` for a queued Storage upload |
+| `body_json` | TEXT | no | The body the write sends, as JSON text; `{}` for a DELETE. For an upload, `{"version":1,"bucket","path","file","size","upsert","contentType","userMetadata"}`, the last two only when set, `file` naming its file under `storage-uploads/` |
 | `filter_json` | TEXT | yes | The UPDATE's or DELETE's filter, encoded so a replay rebuilds it |
 | `created_at_ms` | INTEGER | no | When the write was made, by the device's clock |
 | `synced_at_ms` | INTEGER | yes | When a pass replayed it; `NULL` while it waits |
@@ -93,7 +105,7 @@ It is indexed on (`owner`, `synced_at_ms`) and indexed on (`table_name`).
 | `owner` | TEXT | yes | Who made the write: `user:` and the user's id, or `anonymous` when nobody was signed in; `NULL` when none was recorded |
 | `sync_sequence` | INTEGER | yes | The order in which replayed writes were accepted, against the lists that have seen them |
 | `schema_cache_misses` | INTEGER, default `0` | no | How many times PostgREST's schema cache did not know the table or a column yet |
-| `send_unconfirmed` | INTEGER, default `0` | no | Whether a send may have reached the server without its answer arriving |
+| `send_unconfirmed` | INTEGER, default `0` | no | Whether a send may have reached the server without its answer arriving: kept for an insert whose rows carry their key, and for an upload |
 | `base_version` | TEXT | yes | The version of the row an UPDATE or DELETE targets, as the device last saw it; `NULL` when the write replays unchecked |
 | `base_json` | TEXT | yes | That row's columns the write sets, and its version, as JSON text; `NULL` with `base_version` |
 
@@ -114,8 +126,8 @@ filters on.
 
 | Event | What goes | What stays |
 | --- | --- | --- |
-| `clearLocalData()` | Every cached list, every downloaded file, every queued write (never sent), the rejected list and the conflicted list. The database is rewritten without them, as far as open reads allow ([details](../behaviors/sign-out.md#what-clearlocaldata-deletes)) | The database file itself, empty |
-| `storage.clearFileCache()` | Every downloaded file, in every bucket, with its row in `storage_objects` | The cached lists, the mutation queue, the rejected list and the conflicted list. The database is not rewritten without the deleted rows, as it is by `clearLocalData()` |
+| `clearLocalData()` | Every cached list, every downloaded file, every queued write (never sent), queued uploads with their files, the rejected list and the conflicted list. The database is rewritten without them, as far as open reads allow ([details](../behaviors/sign-out.md#what-clearlocaldata-deletes)) | The database file itself, empty |
+| `storage.clearFileCache()` | Every downloaded file, in every bucket, with its row in `storage_objects` | The cached lists, the mutation queue with its queued uploads' files, the rejected list and the conflicted list. The database is not rewritten without the deleted rows, as it is by `clearLocalData()` |
 | A bucket's `evictCachedFile(path)` | That object's downloaded files, the untransformed one and every image transform, with their rows; with a transform, that transform's file and row alone | Every other object's files, and everything else |
 | A user signs out, or another signs in (with Auth) | Once the session settles as someone else: the cached lists and the downloaded files | The mutation queue, the rejected list and the conflicted list: each user's writes wait for that user |
 | Sign-out without Auth, or with your own token provider, and `identityFromAccessToken` off | Nothing: there is one identity for the life of the install | Everything |

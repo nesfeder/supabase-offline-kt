@@ -361,6 +361,9 @@ def classify_dump(
             )
 
     removed, added = count_changes(before, after)
+    # A case of a sealed type or an enum the base did not declare comes with its type: no `when`
+    # written against the base can match it, so none can stop being exhaustive
+    declared_before = {entry.fqn for entry in before.entries if entry.fqn}
     removed_paths = {entry_path(entry) for entry in removed}
     for entry in removed:
         # A removed class reports once; its members are implied.
@@ -373,7 +376,11 @@ def classify_dump(
         parent_text = entry.parents[-1] if entry.parents else ""
         parent_fqn = parent_fqn_of(entry, after)
         if klib and entry.text.startswith("enum entry "):
-            level = "additive" if parent_fqn in input_only else "breaking"
+            level = (
+                "additive"
+                if parent_fqn in input_only or parent_fqn not in declared_before
+                else "breaking"
+            )
             name = entry.text[len("enum entry "):]
             report.add(Finding(level, "kotlin-enum-entry-added", f"{path}: {parent_fqn}.{name}"))
             continue
@@ -387,7 +394,11 @@ def classify_dump(
             name = words[4] if len(words) > 4 else entry.text
             if name.startswith("$"):
                 continue
-            level = "additive" if parent_fqn in input_only else "breaking"
+            level = (
+                "additive"
+                if parent_fqn in input_only or parent_fqn not in declared_before
+                else "breaking"
+            )
             report.add(Finding(level, "kotlin-enum-entry-added", f"{path}: {parent_fqn}.{name}"))
             continue
         if klib and KLIB_CLASS_HEAD.match(entry.text):
@@ -398,7 +409,11 @@ def classify_dump(
             ]
             if sealed_parents:
                 sealed_type = sealed_parents[0]
-                level = "additive" if sealed_type in input_only else "breaking"
+                level = (
+                    "additive"
+                    if sealed_type in input_only or sealed_type not in declared_before
+                    else "breaking"
+                )
                 report.add(
                     Finding(
                         level,
@@ -521,8 +536,9 @@ def classify_swift(
 
     Each line is one declaration (`<kind> <path> | <declaration>`), one conformance, or the
     package's platform. A line removed or changed is breaking; a line added is an addition, except
-    a case of an enum callers may match exhaustively and a requirement of a protocol apps may
-    adopt, which break a `switch` and a conformance. A raised platform is a dependency floor.
+    a case of an enum callers may match exhaustively and the base already declared, and a
+    requirement of a protocol apps may adopt, which break a `switch` and a conformance. A raised
+    platform is a dependency floor.
     """
     input_only = set(policy.get("inputOnlyTypes", {}).get("swift", []))
     if base is None and head is None:
@@ -545,6 +561,7 @@ def classify_swift(
         else:
             report.add(Finding("breaking", "swift-platform-unreadable", detail))
     before_set, after_set = set(before), set(after)
+    declared_before = {line.partition(" ")[2].split(" | ", 1)[0] for line in before}
     for line in before:
         if line not in after_set and not line.startswith("platform "):
             report.add(Finding("breaking", "swift-removed", f"{path}: {line}"))
@@ -555,7 +572,9 @@ def classify_swift(
         symbol_path = rest.split(" | ", 1)[0]
         owner = symbol_path.rsplit(".", 1)[0] if "." in symbol_path else ""
         if kind == "enum.case":
-            level = "additive" if owner in input_only else "breaking"
+            level = (
+                "additive" if owner in input_only or owner not in declared_before else "breaking"
+            )
             report.add(Finding(level, "swift-enum-case-added", f"{path}: {symbol_path}"))
         elif kind == "requirement":
             report.add(Finding("breaking", "swift-protocol-requirement-added", f"{path}: {owner}: {rest}"))
@@ -1404,6 +1423,19 @@ def self_test() -> int:
         ["kotlin-sealed-subtype-added"],
     )
     scenario(
+        "a new sealed type with its subtypes",
+        with_klib(
+            "final class io.example/HolderTwo {",
+            "sealed interface io.example/UploadOutcome { // io.example/UploadOutcome|null[0]\n"
+            "    final object Queued : io.example/UploadOutcome // io.example/UploadOutcome.Queued|null[0]\n"
+            "    final object Applied : io.example/UploadOutcome // io.example/UploadOutcome.Applied|null[0]\n"
+            "}\n\n"
+            "final class io.example/HolderTwo {",
+        ),
+        "additive",
+        ["kotlin-sealed-subtype-added"],
+    )
+    scenario(
         "a subtype of an input-only sealed type",
         with_klib(
             "    final object NetworkOnly : io.example/ReadStrategy // io.example/ReadStrategy.NetworkOnly|null[0]\n",
@@ -1499,6 +1531,15 @@ def self_test() -> int:
         with_swift("enum.case NetworkStatus.online | case online\n",
                    "enum.case NetworkStatus.online | case online\nenum.case NetworkStatus.paused | case paused\n"),
         "breaking",
+        ["swift-enum-case-added"],
+    )
+    scenario(
+        "a new Swift enum with its cases",
+        with_swift("enum.case NetworkStatus.online | case online\n",
+                   "enum.case NetworkStatus.online | case online\n"
+                   "enum UploadOutcome | enum UploadOutcome\n"
+                   "enum.case UploadOutcome.applied(response:) | case applied(response: String)\n"),
+        "additive",
         ["swift-enum-case-added"],
     )
     scenario(
