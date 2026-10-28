@@ -28,11 +28,14 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.io.IOException
+import kotlinx.serialization.json.JsonPrimitive
+import okio.ByteString.Companion.toByteString
 
 /**
- * One server answering PostgREST writes and Storage uploads, downloads and `exists` for tests of
- * queued uploads: it records every request in the order it arrived, so a test can tell whether a
- * file went before or after the rows around it.
+ * One server answering PostgREST writes and Storage uploads, downloads, `info` and `exists` for
+ * tests of queued uploads: it records every request in the order it arrived, so a test can tell
+ * whether a file went before or after the rows around it. As hosted Storage does, it refuses an
+ * upload that may not overwrite an object it already holds as a duplicate.
  */
 internal class UploadAndRowServer {
 
@@ -40,8 +43,8 @@ internal class UploadAndRowServer {
      * One request as it reached the server.
      *
      * @property method the HTTP method.
-     * @property target `rest/<table>` for PostgREST, `upload/<bucket>/<path>`, `exists/...` or
-     *   `download/...` for Storage.
+     * @property target `rest/<table>` for PostgREST, `upload/<bucket>/<path>`, `exists/...`,
+     *   `info/...` or `download/...` for Storage.
      * @property body the request's body, as text.
      * @property authorization the request's `Authorization` header.
      * @property headers the request's headers that a queued upload carries.
@@ -89,6 +92,26 @@ internal class UploadAndRowServer {
      */
     var uploadAnswer: ((key: String) -> UploadAnswer?)? = null
 
+    /**
+     * The ETag `info` answers for an object's bytes, or `null` for none: by default their MD5,
+     * quoted, as S3 gives a single-part upload's.
+     */
+    var etagOf: (ByteArray) -> String? = { bytes -> "\"" + bytes.toByteString().md5().hex() + "\"" }
+
+    /**
+     * How Storage answers `info` of `bucket/path` instead of from [objects], or `null` for that.
+     */
+    var infoAnswer: ((key: String) -> InfoAnswer?)? = null
+
+    /** What Storage does with an `info` request instead of answering it from [objects]. */
+    sealed interface InfoAnswer {
+        /** Answers [status] with [body]. */
+        data class Respond(val status: Int, val body: String) : InfoAnswer
+
+        /** Fails at the transport layer, as with no network. */
+        data object Unreachable : InfoAnswer
+    }
+
     /** How many requests arrived, as a flow a test can wait on. */
     val arrived: MutableStateFlow<Int> = MutableStateFlow(0)
 
@@ -111,6 +134,8 @@ internal class UploadAndRowServer {
                     "rest/" + segments.drop(2).joinToString("/")
                 segments.take(4) == listOf("storage", "v1", "object", "authenticated") ->
                     "download/" + segments.drop(4).joinToString("/")
+                segments.take(4) == listOf("storage", "v1", "object", "info") ->
+                    "info/" + segments.drop(4).joinToString("/")
                 segments.take(3) == listOf("storage", "v1", "object") &&
                     request.method == HttpMethod.Head ->
                     "exists/" + segments.drop(3).joinToString("/")
@@ -158,6 +183,34 @@ internal class UploadAndRowServer {
                         HttpStatusCode.BadRequest,
                         json,
                     )
+            target.startsWith("info/") -> {
+                when (val answer = infoAnswer?.invoke(key)) {
+                    is InfoAnswer.Respond ->
+                        return@MockEngine respond(
+                            answer.body,
+                            HttpStatusCode.fromValue(answer.status),
+                            json,
+                        )
+                    InfoAnswer.Unreachable -> throw IOException("network unreachable")
+                    null -> Unit
+                }
+                val stored =
+                    objects.value[key]
+                        ?: return@MockEngine respond(
+                            """{"statusCode":"404","error":"not_found","message":"Object not found"}""",
+                            HttpStatusCode.BadRequest,
+                            json,
+                        )
+                val etag =
+                    etagOf(stored)?.let { tag -> ",\"etag\":${JsonPrimitive(tag)}" }.orEmpty()
+                respond(
+                    """{"name":"${key.substringAfter('/')}","id":"object","version":"v1",""" +
+                        """"created_at":"2026-10-27T00:00:00Z","size":${stored.size},""" +
+                        """"content_type":"application/octet-stream"$etag}""",
+                    HttpStatusCode.OK,
+                    json,
+                )
+            }
             target.startsWith("download/") -> {
                 val stored =
                     objects.value[key]
@@ -188,6 +241,13 @@ internal class UploadAndRowServer {
                         objects.update { stored -> stored + (key to bytes) }
                         throw IOException("the answer was lost")
                     }
+                    null if request.headers["x-upsert"] != "true" && key in objects.value ->
+                        respond(
+                            """{"statusCode":"409","error":"Duplicate",""" +
+                                """"message":"The resource already exists"}""",
+                            HttpStatusCode.BadRequest,
+                            json,
+                        )
                     null -> {
                         objects.update { stored -> stored + (key to bytes) }
                         respond(

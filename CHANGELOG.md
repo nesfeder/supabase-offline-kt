@@ -58,7 +58,8 @@ All notable changes to this project are recorded in this file. The format follow
   file. It survives a restart, belongs to the user who made it, is refused onto the rejected list
   with its bytes kept for a retry, and goes with `clearLocalData()`; while it waits, `cachedFile`,
   `ensureCachedFile` and the platform helpers return its bytes on the device, and once Storage has
-  it they become the cached copy. `offline.storage.pendingUploads()`, `rejectedUploads()` and
+  it they become the cached copy. An upload whose answer was lost is sent again, and its refusal
+  counts as stored only when the object at its path is verifiably its bytes. `offline.storage.pendingUploads()`, `rejectedUploads()` and
   `rejectedUploadList()` list them, `SyncReport.rejectedUploads` reports a refusal, and
   `discardPendingMutation`, `dismissRejectedMutation` and `retryRejectedMutation` take an upload's
   id. The Swift package has the same calls, and both testing artifacts build the new values.

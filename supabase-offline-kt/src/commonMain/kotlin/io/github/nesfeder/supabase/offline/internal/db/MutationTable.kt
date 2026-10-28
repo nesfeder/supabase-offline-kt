@@ -89,9 +89,10 @@ internal data class MutationRow(
     /**
      * Whether a send of this INSERT, or this queued upload, started and its outcome is unknown. The
      * server may then hold its rows, so it replays as an upsert that takes them as its own; or
-     * Storage may hold the file, so the upload first asks whether the object is there. Set only for
-     * an INSERT whose rows all carry the table's key and for an upload, before its request goes
-     * out; cleared on proof that the write did not run, and when it replays.
+     * Storage may hold the file, so a refusal of the upload's next send counts as stored when the
+     * object at its path is verifiably the upload's bytes. Set only for an INSERT whose rows all
+     * carry the table's key and for an upload, before its request goes out; cleared on proof that
+     * the write did not run, and when it replays.
      */
     @ColumnInfo(name = "send_unconfirmed", defaultValue = "0") val sendUnconfirmed: Boolean = false,
 
