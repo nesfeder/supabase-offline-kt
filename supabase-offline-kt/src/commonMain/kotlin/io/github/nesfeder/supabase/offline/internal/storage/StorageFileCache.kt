@@ -1237,7 +1237,8 @@ internal class StorageFileCache(
 
     /**
      * Gives the object at [to] the pin of the one at [from], when [from] has one and [to] can be
-     * cached; [from] loses it unless [keepSource]. [to]'s own pin stays either way.
+     * pinned, as [pinObject]'s caller requires: mapped onto a file, and a name supabase-kt's
+     * requests reach. [from] loses it unless [keepSource]. [to]'s own pin stays either way.
      */
     private suspend fun movePinLocked(
         fromBucket: String,
@@ -1248,7 +1249,9 @@ internal class StorageFileCache(
     ) {
         if (!pinRecords.isPinned(fromBucket, from)) return
         pinRecords.runInTransaction {
-            if (entryFor(toBucket, to) != null) pinRecords.pin(toBucket, to)
+            if (entryFor(toBucket, to) != null && isRequestedByItsOwnName(to)) {
+                pinRecords.pin(toBucket, to)
+            }
             if (!keepSource) pinRecords.unpin(fromBucket, from)
         }
     }
@@ -1267,8 +1270,9 @@ internal class StorageFileCache(
      * at again, and removed, under [lock] and [readLock]. Spared are [protectedKey], the copies of
      * pinned objects, entries a read holds and files used within [RECENT_USE_GRACE], and the scan
      * is skipped until the oldest file it had to spare ages out. Pinned copies count toward the
-     * bound: when they fill it, the cache stays over it, and every other file goes once its grace
-     * has passed.
+     * bound. When they alone pass the mark a tenth below it, the pass stops at the bound itself,
+     * rather than take every other file to reach a mark it cannot; when they fill the bound, the
+     * cache stays over it, and every other file goes once its grace has passed.
      */
     private suspend fun enforceSizeBound(protectedKey: String) {
         val limit = maxSizeBytes ?: return
@@ -1282,9 +1286,9 @@ internal class StorageFileCache(
         val scannedAt = nowMillis()
         val usesAtScan = readLock.withLock { recentUses.toMap() }
         val pinnedAtScan = pinRecords.pinnedObjectKeys()
+        val rows = cachedFileDao.all()
         val candidates =
-            cachedFileDao
-                .all()
+            rows
                 .filter { row -> row.key != protectedKey && objectKeyOf(row) !in pinnedAtScan }
                 .map { row -> row to lastUsedMillis(row, usesAtScan) }
                 .sortedBy { (_, lastUsed) -> lastUsed }
@@ -1293,11 +1297,15 @@ internal class StorageFileCache(
             var remaining = trackedBytes ?: return
             // Read again: an object pinned since the scan was pinned under this lock
             val pinned = pinRecords.pinnedObjectKeys()
+            val pinnedBytes =
+                rows.filter { row -> objectKeyOf(row) in pinned }.sumOf { it.sizeBytes ?: 0L }
+            // Pinned copies alone past the low-water mark: stop once within the bound
+            val target = if (pinnedBytes > lowWater) limit else lowWater
             var evicted = 0
             var oldestSpared: Long? = null
             try {
                 for ((scanned, usedAtScan) in candidates) {
-                    if (remaining <= lowWater) break
+                    if (remaining <= target) break
                     if (objectKeyOf(scanned) in pinned) continue
                     if (usedAtScan >= scannedAt - grace) {
                         oldestSpared = minOf(oldestSpared ?: usedAtScan, usedAtScan)
@@ -1333,7 +1341,7 @@ internal class StorageFileCache(
             // ages out.
             val spared = oldestSpared
             evictionIdleUntilMillis =
-                if (remaining > lowWater && spared != null) spared + grace else Long.MIN_VALUE
+                if (remaining > target && spared != null) spared + grace else Long.MIN_VALUE
             engineLogger.debug {
                 "Storage cache evicted $evicted file(s) to stay within $limit bytes"
             }

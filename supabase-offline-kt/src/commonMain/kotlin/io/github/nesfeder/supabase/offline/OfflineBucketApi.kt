@@ -159,7 +159,7 @@ public interface OfflineBucketApi : BucketApi {
      * object, a delete of the object through this bucket, [OfflineStorage.clearFileCache], or
      * clearing local data; the file cache emptied for another user takes it too. A write to the
      * object drops its copies, as for any object, and keeps the pin, and a move through this bucket
-     * takes the pin to the new path.
+     * takes the pin to the new path, or drops it when the new path cannot be cached.
      *
      * Pinned copies count toward [Offline.Config.fileCacheSizeBytes]. When they alone fill it, the
      * cache stays over its bound, and every other file is evicted once it is no longer in use.

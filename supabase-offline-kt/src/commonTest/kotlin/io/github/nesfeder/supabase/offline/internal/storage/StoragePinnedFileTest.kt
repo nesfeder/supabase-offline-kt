@@ -6,6 +6,7 @@ import io.github.jan.supabase.storage.BucketApi
 import io.github.jan.supabase.storage.storage
 import io.github.nesfeder.supabase.offline.OfflineBucketApi
 import io.github.nesfeder.supabase.offline.internal.db.CachedFileRow
+import io.github.nesfeder.supabase.offline.internal.db.RESERVED_TABLE_NAME
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentity
 import io.github.nesfeder.supabase.offline.internal.testing.InMemoryCachedFileDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeBucketApi
@@ -183,6 +184,49 @@ class StoragePinnedFileTest {
         assertNull(bucket.cachedFile(NEWER))
         assertNotNull(bucket.cachedFile(NEWEST))
         assertEquals(3L * FILE_SIZE, store.cachedFileDao.totalSizeBytes())
+    }
+
+    @Test
+    fun pinned_files_under_the_bound_but_past_its_low_water_mark_flush_every_other_file() =
+        runTest {
+            // Given — a bound of 100 (low water 90), and a pinned file of 92 bytes, which passes
+            // the low-water mark without filling the bound
+            server.objects["$BUCKET/big.png"] = ByteArray(92) { 7 }
+            for (name in listOf("a", "b", "c")) server.objects["$BUCKET/$name.png"] = ByteArray(3)
+            val bucket = bucket(cache(maxSizeBytes = 100))
+            bucket.pinCachedFile("big.png")
+            download(bucket, "big.png", minute = 1)
+            download(bucket, "a.png", minute = 2)
+            download(bucket, "b.png", minute = 3)
+
+            // When — c.png takes the cache to 101; evicting a.png alone brings it to 98
+            download(bucket, "c.png", minute = 4)
+
+            // Then — the least recently used file went, and only it: the pass stopped at the bound
+            assertNull(bucket.cachedFile("a.png"))
+            assertNotNull(bucket.cachedFile("b.png"))
+            assertNotNull(bucket.cachedFile("c.png"))
+            assertNotNull(bucket.cachedFile("big.png"))
+            assertEquals(98L, store.cachedFileDao.totalSizeBytes())
+        }
+
+    @Test
+    fun a_move_onto_a_name_that_cannot_be_pinned_drops_the_pin() = runTest {
+        // Given — a pinned object
+        val fake = FakeBucketApi(bucketId = BUCKET, onDownload = { ByteArray(FILE_SIZE) })
+        val bucket = bucket(cache(), delegate = fake)
+        bucket.pinCachedFile(PINNED)
+
+        // When — moved to a name whose downloads are never cached, which pinCachedFile refuses
+        bucket.move(PINNED, UNPINNABLE)
+
+        // Then — neither end is pinned, and no record of a pin is left for the new name
+        assertFalse(bucket.isCachedFilePinned(PINNED))
+        assertFalse(bucket.isCachedFilePinned(UNPINNABLE))
+        assertFailsWith<IllegalArgumentException> { bucket.pinCachedFile(UNPINNABLE) }
+        assertNull(
+            store.queryCacheDao.get(RESERVED_TABLE_NAME, "pinned_file\u001F$BUCKET::$UNPINNABLE")
+        )
     }
 
     @Test
@@ -404,6 +448,7 @@ class StoragePinnedFileTest {
         const val MOVED = "moved.png"
         const val COPIED = "copied.png"
         const val UNCACHEABLE = "/leading-slash.png"
+        const val UNPINNABLE = "photo?v=1.png"
         const val FILE_SIZE = 10
         const val MINUTE = 60_000L
     }

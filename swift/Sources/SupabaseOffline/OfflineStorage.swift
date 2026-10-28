@@ -28,7 +28,8 @@ public struct OfflineStorage: Sendable {
         OfflineBucketApi(client: client, bucketId: bucketId)
     }
 
-    /// Deletes every downloaded file the client keeps on the device, in every bucket.
+    /// Deletes every downloaded file the client keeps on the device, in every bucket, and every pin
+    /// (``OfflineBucketApi/pinCachedFile(path:)``).
     ///
     /// The queued writes, the cached query results and the rejected and conflicted lists stay, and
     /// nothing is sent: call it to free the device's storage without dropping writes waiting to

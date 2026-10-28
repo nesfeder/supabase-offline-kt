@@ -159,14 +159,15 @@ cannot be pinned: `pinCachedFile` throws `IllegalArgumentException` and sends no
 
 The pin is stored in the database and outlives a restart. It stays through every write to the
 object: an upload or update drops its copies, as for any object, and the next download is kept
-pinned. A move through the bucket takes the pin to the new path; a delete through the bucket
-removes it, as do `evictCachedFile(path)`, `clearFileCache()`, `clearLocalData()` and the cache
-passing to another user. A move or delete that timed out leaves the pin where the object may be:
-on both ends of the move, and on the object that may not have been deleted. Pinned while the cache
-still belongs to the user before, until a sign-in settles, the pin is not kept, as a download then
-is not.
+pinned. A move through the bucket takes the pin to the new path, or drops it when the new path
+cannot be pinned; a delete through the bucket removes it, as do `evictCachedFile(path)`,
+`clearFileCache()`, `clearLocalData()` and the cache passing to another user. A move or delete that
+timed out leaves the pin where the object may be: on both ends of the move, and on the object that
+may not have been deleted. Pinned while the cache still belongs to the user before, until a sign-in
+settles, the pin is not kept, as a download then is not.
 
-Pinned copies count toward `fileCacheSizeBytes`. When they alone fill it, the cache stays over its
+Pinned copies count toward `fileCacheSizeBytes`. When they alone take more than nine tenths of it,
+eviction stops at the bound rather than a tenth below; when they fill it, the cache stays over its
 bound, and every other file is evicted once it has not been used for 30 seconds
 ([Cache size and eviction](eviction.md#the-file-cache)). The Swift package has the same calls:
 `pinCachedFile(path:)`, `unpinCachedFile(path:)` and `isCachedFilePinned(path:)`.

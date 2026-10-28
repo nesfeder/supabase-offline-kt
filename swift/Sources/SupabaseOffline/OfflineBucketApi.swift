@@ -321,7 +321,8 @@ public struct OfflineBucketApi: Sendable {
 
     /// Deletes every cached copy of the object at `path` from the device: the untransformed copy
     /// and each image transformation. Nothing is sent, and the object stays in the bucket; the next
-    /// download fetches it again. Other objects' copies stay.
+    /// download fetches it again. Other objects' copies stay. A pin on the object
+    /// (``pinCachedFile(path:)``) goes too.
     ///
     /// A download of the object still running answers its caller but is not kept, as when the
     /// object is uploaded again: an ``ensureCachedFile(path:isPublic:)`` running meanwhile
@@ -336,7 +337,8 @@ public struct OfflineBucketApi: Sendable {
     /// the copy ``cachedFile(path:transform:)`` with the same transformation returns.
     ///
     /// The untransformed copy and the other transformations stay; a transformation that sets
-    /// nothing is the untransformed copy, which goes alone. Nothing is sent.
+    /// nothing is the untransformed copy, which goes alone. Nothing is sent, and a pin on the
+    /// object stays.
     ///
     /// - Parameters:
     ///   - path: The object's path in the bucket.
@@ -364,7 +366,8 @@ public struct OfflineBucketApi: Sendable {
     /// ``evictCachedFile(path:)``, a removal of the object through this bucket,
     /// ``OfflineStorage/clearFileCache()`` or ``SupabaseOfflineClient/clearLocalData()``; the kept
     /// files emptied for another user take it too. An upload over the object drops its copies and
-    /// keeps the pin, and a move takes the pin to the new path.
+    /// keeps the pin, and a move takes the pin to the new path, or drops it when the new path
+    /// cannot be kept on the device.
     ///
     /// Pinned copies count toward the file cache's size bound. When they alone fill it, the cache
     /// stays over its bound, and every other file is evicted once it is no longer in use.

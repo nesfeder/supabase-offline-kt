@@ -116,8 +116,10 @@ All notable changes to this project are recorded in this file. The format follow
   version cached has none, so its next download fetches it whole once and records it.
 - Each pinned Storage object is recorded in a row of its own among the library's records in the
   database (`pinned_file` and the object's key), so pins outlive a restart. Nothing already on a
-  device changes. An earlier version of the library ignores those rows and evicts pinned files as
-  any other.
+  device changes. An earlier version of the library ignores those rows: 0.2.0 evicts pinned files
+  as any other, deletes the rows with `clearLocalData()`, and keeps them when another user signs
+  in, so after going back to 0.2.0, a switch of user and an upgrade again, the new user has the
+  earlier user's pins (their files are not kept).
 - The rejected list keeps a guarded write's base in each guarded entry, under two new keys
   (`baseVersion`, `baseJson`), so a retry replays guarded. A list an earlier build wrote reads back
   without them, and a retry of such an entry replays unguarded, as it did there.
