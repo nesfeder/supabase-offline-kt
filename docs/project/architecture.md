@@ -205,6 +205,7 @@ pins what supabase-kt sends.
 | `fetchedAt: Instant?` | When the rows were fetched from the server, by the device's clock; never the time of a later local change applied to them. For rows the library built from written rows alone, when it built them. |
 | `hasPendingMutations: Boolean` | Whether a queued write added, changed or removed a row shown. |
 | `refresh: RefreshState` | How the refresh behind the read stands. |
+| `pendingRowKeys: Set<JsonObject>` | The primary key of each row a queued write added, changed or removed, from the pass that built `result`. A removed row keeps its key; a row without its whole key adds none, so the set is empty whenever `hasPendingMutations` is `false`. |
 
 Each emission is read as one view of the cache, the queue and the refresh, so its fields are true
 together, and a change to any of them emits.
@@ -218,10 +219,10 @@ together, and a change to any of them emits.
 | `Paused` | The refresh waits for the network, which the library knows to be unavailable. Nothing is failing. |
 | `Stalled(cause)` | The refresh keeps failing; `cause` is the failure that stalled it, and a later, different failure does not replace it. It is still tried, at most a minute apart. |
 
-A one-shot read carries the same provenance as three extension properties on `PostgrestResult`:
-`isFromCache`, `fetchedAt: Instant?` and `hasPendingMutations`. The library stamps them in
-response headers PostgREST never sends (`X-Supabase-Offline-…`); a result from supabase-kt itself
-reads `false`, `null` and `false`.
+A one-shot read carries the same provenance as four extension properties on `PostgrestResult`:
+`isFromCache`, `fetchedAt: Instant?`, `hasPendingMutations` and `pendingRowKeys: Set<JsonObject>`.
+The library stamps them in response headers PostgREST never sends (`X-Supabase-Offline-…`); a
+result from supabase-kt itself reads `false`, `null`, `false` and an empty set.
 
 `CacheMissException`: a read that may use only the cache found nothing there it may serve, or
 asked for a shape the cache never holds. No request was sent.

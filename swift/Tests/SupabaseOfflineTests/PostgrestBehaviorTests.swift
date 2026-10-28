@@ -37,6 +37,7 @@ struct PostgrestBehaviorTests {
         #expect(offline.isFromCache)
         #expect(offline.fetchedAt == fetchedAt)
         #expect(!offline.hasPendingMutations)
+        #expect(offline.pendingRowKeys.isEmpty)
         #expect(cacheOnly.value == Self.decodedServerRows)
         #expect(server.requests(withMethod: "GET").count == 2)
         try await client.close()
@@ -75,6 +76,7 @@ struct PostgrestBehaviorTests {
         let shown = await eventually {
             snapshots.values.last?.result == Self.decodedServerRows + [TodoRow(id: 3, title: "Tea", done: false)]
                 && snapshots.values.last?.hasPendingMutations == true
+                && snapshots.values.last?.pendingRowKeys == [["id": 3]]
         }
         #expect(shown, "last snapshot: \(String(describing: snapshots.values.last))")
         reading.cancel()

@@ -236,8 +236,8 @@ From the samples: [LibraryMappingsTest.kt](https://github.com/nesfeder/supabase-
 | `appliedOutcome`, `queuedOutcome` | `MutationOutcome.Applied`, `MutationOutcome.Queued` |
 | `pendingMutation`, `rejectedMutation`, `serverError` | The queue's values; an overload of `pendingMutation` takes `baseVersion` |
 | `mutationConflict`, `conflictedMutation` | What a resolver is shown, and an entry of the conflicted list |
-| `querySnapshot`, `stalledRefresh` | A live read's emission, and a stalled refresh |
-| `cachedResult` | A one-shot read's result as the cache answered it: `isFromCache`, `fetchedAt` and `hasPendingMutations` read as given |
+| `querySnapshot`, `stalledRefresh` | A live read's emission, and a stalled refresh; an overload takes `pendingRowKeys`, and reads as pending exactly when there is one |
+| `cachedResult` | A one-shot read's result as the cache answered it: `isFromCache`, `fetchedAt` and `hasPendingMutations` read as given; an overload takes `pendingRowKeys` in place of the flag |
 | `syncReport`, `syncStatus` | What a sync returns, and the status; overloads take the conflict counts, `conflicted` and `conflictedMutationCount` |
 | `cachedFile` | A Storage file in the cache |
 | `cacheMissException`, `mutationNotQueueableException`, `networkDisabledException`, `offlineClientClosedException`, `syncFailedException` | The exceptions; `syncFailedException(isConnectivityFailure = true)` is one `isNetworkOrConnectivityFailure()` accepts |

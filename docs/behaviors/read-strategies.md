@@ -57,10 +57,11 @@ From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabas
 
 ## Where the rows came from
 
-Three extension properties on supabase-kt's `PostgrestResult` say whether the rows came from the
+Extension properties on supabase-kt's `PostgrestResult` say whether the rows came from the
 cache, when they were fetched, and whether a queued write changed them; the sample's pull to
 refresh turns them into the caption under the list's title ("Updated just now", "From this
-device, 3 minutes ago"):
+device, 3 minutes ago"). A fourth, `pendingRowKeys`, names the rows a queued write changed, as a
+live read's snapshot does ([Optimistic overlay](overlay.md#which-rows-are-named)):
 
 From the samples: [LibraryMappings.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/LibraryMappings.kt) · [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift) · [QueueWording.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Sync/QueueWording.swift)
 
@@ -79,7 +80,7 @@ From the samples: [LibraryMappings.kt](https://github.com/nesfeder/supabase-offl
     ```
 
 The library stamps them in response headers PostgREST never sends, so a result supabase-kt
-returned itself reads `false`, `null` and `false`, and a read the cache never holds, such as a
+returned itself reads `false`, `null`, `false` and no keys, and a read the cache never holds, such as a
 `count`, keeps the server's own headers.
 
 ## Edge cases
