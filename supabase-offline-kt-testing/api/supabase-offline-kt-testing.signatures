@@ -31,6 +31,7 @@ io.github.nesfeder.supabase.offline.testing: fun queuedOutcome(pendingMutation: 
 io.github.nesfeder.supabase.offline.testing: fun queuedUploadOutcome(pendingUpload: PendingUpload)
 io.github.nesfeder.supabase.offline.testing: fun rejectedMutation(id: Long, table: String, operation: MutationOperation, createdAt: Instant, rowKeys: List<JsonObject> = …, body: JsonElement? = …, serverError: ServerError? = …, message: String, rejectedAt: Instant, isRetryable: Boolean = …)
 io.github.nesfeder.supabase.offline.testing: fun rejectedUpload(id: Long, bucketId: String, path: String, createdAt: Instant, sizeBytes: Long, contentType: String? = …, upsert: Boolean = …, serverError: ServerError? = …, message: String, rejectedAt: Instant, isRetryable: Boolean = …)
+io.github.nesfeder.supabase.offline.testing: fun rejectedUpload(id: Long, bucketId: String, path: String, createdAt: Instant, sizeBytes: Long, contentType: String? = …, upsert: Boolean = …, serverError: ServerError? = …, message: String, rejectedAt: Instant, isRetryable: Boolean = …, localPath: String?)
 io.github.nesfeder.supabase.offline.testing: fun serverError(status: Int, code: String? = …, message: String, details: String? = …, hint: String? = …)
 io.github.nesfeder.supabase.offline.testing: fun serverFailureStop(error: SyncFailedException)
 io.github.nesfeder.supabase.offline.testing: fun stalledRealtime(cause: Throwable)

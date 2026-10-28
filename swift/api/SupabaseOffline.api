@@ -454,6 +454,7 @@ property RejectedUpload.contentType | let contentType: String?
 property RejectedUpload.createdAt | let createdAt: Date
 property RejectedUpload.id | let id: Int64
 property RejectedUpload.isRetryable | let isRetryable: Bool
+property RejectedUpload.localPath | let localPath: String?
 property RejectedUpload.message | let message: String
 property RejectedUpload.path | let path: String
 property RejectedUpload.rejectedAt | let rejectedAt: Date

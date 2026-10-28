@@ -47,6 +47,13 @@ public struct RejectedUpload: Sendable, Hashable, Identifiable {
     /// file is still on the device, whole.
     public let isRetryable: Bool
 
+    /// The refused bytes on this device, as a file-system path, so the app can show what was
+    /// refused: ``OfflineBucketApi/cachedFile(path:)`` never answers them, as Storage may hold other
+    /// bytes at ``path``. The file is the client's: read it, never move or change it. It is deleted
+    /// once the entry is dismissed, its retry is sent or discarded, or local data is cleared. `nil`
+    /// when the file is no longer on the device, whole.
+    public let localPath: String?
+
     /// Built by the package, and by the testing product's factories.
     package init(
         id: Int64,
@@ -59,7 +66,8 @@ public struct RejectedUpload: Sendable, Hashable, Identifiable {
         serverError: OfflineError.ServerError?,
         message: String,
         rejectedAt: Date,
-        isRetryable: Bool
+        isRetryable: Bool,
+        localPath: String?
     ) {
         self.id = id
         self.bucketId = bucketId
@@ -72,6 +80,7 @@ public struct RejectedUpload: Sendable, Hashable, Identifiable {
         self.message = message
         self.rejectedAt = rejectedAt
         self.isRetryable = isRetryable
+        self.localPath = localPath
     }
 }
 
@@ -90,7 +99,8 @@ extension RejectedUpload {
             serverError: upload.serverError.map(OfflineError.ServerError.init(core:)),
             message: upload.message,
             rejectedAt: Date(epochMilliseconds: upload.rejectedAtEpochMillis),
-            isRetryable: upload.isRetryable
+            isRetryable: upload.isRetryable,
+            localPath: upload.localPath
         )
     }
 }

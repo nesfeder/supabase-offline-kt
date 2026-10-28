@@ -28,6 +28,11 @@ import kotlin.time.Instant
  * @property rejectedAt when it was refused, by the device's clock.
  * @property isRetryable whether [Offline.retryRejectedMutation] can queue it again: whether its
  *   file is still on the device, whole.
+ * @property localPath the refused bytes on this device, as a file-system path, so the app can show
+ *   what was refused: `cachedFile` never answers them, as Storage may hold other bytes at its
+ *   `path`. The file is the library's: read it, never move or change it. It is deleted once the
+ *   entry is dismissed, its retry is sent or discarded, or local data is cleared. `null` when the
+ *   file is no longer on the device, whole.
  */
 @ConsistentCopyVisibility
 public data class RejectedUpload
@@ -43,4 +48,5 @@ internal constructor(
     public val message: String,
     public val rejectedAt: Instant,
     public val isRetryable: Boolean,
+    public val localPath: String?,
 )

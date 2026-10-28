@@ -243,11 +243,8 @@ internal class QueuedUploads(
      */
     suspend fun rejectedUploadOf(entry: StoredRejection): RejectedUpload {
         val stored = storedUploadOf(entry.bodyJson, json)
-        val retryable =
-            entry.bodyOmittedChars == null &&
-                stored != null &&
-                stored.hasQueuedFileName &&
-                files.sizeOf(stored.file) == stored.size
+        val whole =
+            stored != null && stored.hasQueuedFileName && files.sizeOf(stored.file) == stored.size
         return RejectedUpload(
             id = entry.id,
             bucketId = stored?.bucket.orEmpty(),
@@ -268,7 +265,8 @@ internal class QueuedUploads(
                 },
             message = entry.message,
             rejectedAt = Instant.fromEpochMilliseconds(entry.rejectedAtMs),
-            isRetryable = retryable,
+            isRetryable = entry.bodyOmittedChars == null && whole,
+            localPath = if (whole) files.fileOf(checkNotNull(stored).file).toString() else null,
         )
     }
 

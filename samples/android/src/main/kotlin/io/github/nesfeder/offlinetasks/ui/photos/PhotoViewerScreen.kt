@@ -291,18 +291,16 @@ private fun PendingFooter(
     Column(modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
         FooterText(if (failed) failedUploadText(upload) else stringResource(upload.state.label))
         FooterText(stringResource(R.string.photo_pending_note))
-        // Remove while it waits or after it failed; not while it is on its way up.
-        if (upload.state != PendingPhotoState.Uploading) {
-            val onDark = ButtonDefaults.textButtonColors(contentColor = Color.White)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (failed) {
-                    TextButton(onClick = onRetry, enabled = upload.retryable, colors = onDark) {
-                        Text(stringResource(R.string.action_retry))
-                    }
+        // Remove while it waits or after it failed
+        val onDark = ButtonDefaults.textButtonColors(contentColor = Color.White)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (failed) {
+                TextButton(onClick = onRetry, enabled = upload.retryable, colors = onDark) {
+                    Text(stringResource(R.string.action_retry))
                 }
-                TextButton(onClick = onRemove, colors = onDark) {
-                    Text(stringResource(R.string.action_remove))
-                }
+            }
+            TextButton(onClick = onRemove, colors = onDark) {
+                Text(stringResource(R.string.action_remove))
             }
         }
     }

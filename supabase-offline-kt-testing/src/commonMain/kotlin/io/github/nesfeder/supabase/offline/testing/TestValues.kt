@@ -727,6 +727,53 @@ public fun rejectedUpload(
     )
 
 /**
+ * A queued upload Storage refused for good, with its bytes on the device at [localPath], as
+ * `OfflineStorage.rejectedUploads` lists one whose file is still whole.
+ *
+ * @param id its id in the queue.
+ * @param bucketId the bucket the file was going to.
+ * @param path the object path within the bucket.
+ * @param createdAt when it was queued.
+ * @param sizeBytes the file's size.
+ * @param contentType the content type it was sent with, or `null` for none.
+ * @param upsert whether it overwrites an object already at the path.
+ * @param serverError what Storage answered, or `null` when the library refused it.
+ * @param message why it was refused.
+ * @param rejectedAt when it was refused.
+ * @param isRetryable whether it can be queued again.
+ * @param localPath the file-system path of its bytes on the device, or `null` when they are gone.
+ */
+@OptIn(OfflineInternal::class)
+public fun rejectedUpload(
+    id: Long,
+    bucketId: String,
+    path: String,
+    createdAt: Instant,
+    sizeBytes: Long,
+    contentType: String? = null,
+    upsert: Boolean = false,
+    serverError: ServerError? = null,
+    message: String,
+    rejectedAt: Instant,
+    isRetryable: Boolean = true,
+    localPath: String?,
+): RejectedUpload =
+    ValueConstructors.rejectedUpload(
+        id,
+        bucketId,
+        path,
+        createdAt,
+        sizeBytes,
+        contentType,
+        upsert,
+        serverError,
+        message,
+        rejectedAt,
+        isRetryable,
+        localPath,
+    )
+
+/**
  * What the server answered when it refused a write.
  *
  * @param status the HTTP status.

@@ -126,7 +126,8 @@ public interface OfflineBucketApi : BucketApi {
      * While the current user has an upload of the object waiting in the mutation queue, it returns
      * that upload's bytes on the device instead, the newest when there are several: its
      * [CachedFile.fetchedAt] is when the upload was queued. The file is deleted once the upload is
-     * sent, discarded or cleared.
+     * sent, discarded or cleared. A refused upload's bytes are never answered here, since Storage
+     * may hold other bytes at the path: [RejectedUpload.localPath] names them.
      *
      * @param path the object path within this bucket.
      * @return the cached file, or `null`.
@@ -158,9 +159,10 @@ public interface OfflineBucketApi : BucketApi {
      * copy is returned as it is, however old, without asking the server; check
      * [CachedFile.fetchedAt] against your own freshness rule, and download the object to refresh
      * it. An upload of the object still queued for the current user is returned as [cachedFile]
-     * returns it, with no request. Canceled mid-download, it returns once its partial file is
-     * deleted (see [OfflineBucketApi] on how long that can take), unless another call is still
-     * waiting for the download, which then goes on for that call.
+     * returns it, with no request; a refused one is not, and the object is downloaded as when
+     * nothing is cached. Canceled mid-download, it returns once its partial file is deleted (see
+     * [OfflineBucketApi] on how long that can take), unless another call is still waiting for the
+     * download, which then goes on for that call.
      *
      * @param path the object path within this bucket.
      * @param isPublic whether to download through the public URL rather than the authenticated one.

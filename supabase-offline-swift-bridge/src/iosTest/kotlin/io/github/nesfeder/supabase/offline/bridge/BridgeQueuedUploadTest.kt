@@ -156,6 +156,7 @@ class BridgeQueuedUploadTest {
         assertEquals("a.png", refused.path)
         assertEquals(400, refused.serverError?.status)
         assertTrue(refused.isRetryable)
+        assertNotNull(refused.localPath)
         client.closeAndWait()
     }
 
