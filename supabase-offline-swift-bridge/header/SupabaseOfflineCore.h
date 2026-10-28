@@ -6,7 +6,7 @@
 #import <Foundation/NSString.h>
 #import <Foundation/NSValue.h>
 
-@class NSData, SOCBridgeAccessTokenCallback, SOCBridgeCachedFile, SOCBridgeCancellable, SOCBridgeClient, SOCBridgeClientCompanion, SOCBridgeClientOptions, SOCBridgeClientOptionsCompanion, SOCBridgeConflict, SOCBridgeConflictAnswer, SOCBridgeConflictDecision, SOCBridgeConflictedMutation, SOCBridgeError, SOCBridgeErrorKind, SOCBridgeFakeRealtime, SOCBridgeHttpRequest, SOCBridgeHttpResponder, SOCBridgeInMemoryStore, SOCBridgeLogLevel, SOCBridgeMutationOperation, SOCBridgeMutationResult, SOCBridgeNetworkStatus, SOCBridgeOpenResult, SOCBridgePendingMutation, SOCBridgeQueryResult, SOCBridgeQuerySnapshot, SOCBridgeRealtimeFilter, SOCBridgeRealtimeStatus, SOCBridgeRealtimeStatusKind, SOCBridgeRealtimeTable, SOCBridgeRealtimeTableStatus, SOCBridgeRefreshKind, SOCBridgeRefreshState, SOCBridgeRejectedMutation, SOCBridgeServerError, SOCBridgeStorage, SOCBridgeStringResult, SOCBridgeSyncReport, SOCBridgeSyncStatus, SOCBridgeSyncStopKind, SOCBridgeSyncStopReason, SOCBridgeTesting, SOCKotlinArray<T>, SOCKotlinEnum<E>, SOCKotlinEnumCompanion;
+@class NSData, SOCBridgeAccessTokenCallback, SOCBridgeCachedFile, SOCBridgeCancellable, SOCBridgeClient, SOCBridgeClientCompanion, SOCBridgeClientOptions, SOCBridgeClientOptionsCompanion, SOCBridgeConflict, SOCBridgeConflictAnswer, SOCBridgeConflictDecision, SOCBridgeConflictedMutation, SOCBridgeError, SOCBridgeErrorKind, SOCBridgeFakeRealtime, SOCBridgeHttpRequest, SOCBridgeHttpResponder, SOCBridgeInMemoryStore, SOCBridgeLogLevel, SOCBridgeMutationOperation, SOCBridgeMutationResult, SOCBridgeNetworkStatus, SOCBridgeOpenResult, SOCBridgePendingMutation, SOCBridgePendingUpload, SOCBridgeQueryResult, SOCBridgeQuerySnapshot, SOCBridgeRealtimeFilter, SOCBridgeRealtimeStatus, SOCBridgeRealtimeStatusKind, SOCBridgeRealtimeTable, SOCBridgeRealtimeTableStatus, SOCBridgeRefreshKind, SOCBridgeRefreshState, SOCBridgeRejectedMutation, SOCBridgeRejectedUpload, SOCBridgeServerError, SOCBridgeStorage, SOCBridgeStringResult, SOCBridgeSyncReport, SOCBridgeSyncStatus, SOCBridgeSyncStopKind, SOCBridgeSyncStopReason, SOCBridgeTesting, SOCBridgeUploadResult, SOCKotlinArray<T>, SOCKotlinEnum<E>, SOCKotlinEnumCompanion;
 
 @protocol SOCBridgeAccessTokenProvider, SOCBridgeClock, SOCBridgeConflictResolver, SOCBridgeFakeServer, SOCBridgeLogSink, SOCKotlinComparable, SOCKotlinIterator;
 
@@ -1058,6 +1058,31 @@ __attribute__((swift_name("BridgePendingMutation")))
 
 
 /**
+ * One upload waiting in the mutation queue, a write of the queue whose id the queue's id-based
+ * calls take ([BridgeClient.discardPendingMutation]).
+ *
+ * @property id the upload's id in the queue, which a later rejection keeps.
+ * @property bucketId the bucket the file goes to.
+ * @property path the object path within the bucket.
+ * @property createdAtEpochMillis when it was queued, in milliseconds since 1970.
+ * @property sizeBytes the file's size.
+ * @property contentType the content type it is sent with; `null` when the upload set none.
+ * @property upsert whether it overwrites an object already at the path.
+ */
+__attribute__((objc_subclassing_restricted))
+__attribute__((swift_name("BridgePendingUpload")))
+@interface SOCBridgePendingUpload : SOCBase
+@property (readonly) NSString *bucketId __attribute__((swift_name("bucketId")));
+@property (readonly) NSString * _Nullable contentType __attribute__((swift_name("contentType")));
+@property (readonly) int64_t createdAtEpochMillis __attribute__((swift_name("createdAtEpochMillis")));
+@property (readonly) int64_t id __attribute__((swift_name("id")));
+@property (readonly) NSString *path __attribute__((swift_name("path")));
+@property (readonly) int64_t sizeBytes __attribute__((swift_name("sizeBytes")));
+@property (readonly) BOOL upsert __attribute__((swift_name("upsert")));
+@end
+
+
+/**
  * The answer to a one-shot read or a function call: the response body and where it came from.
  *
  * @property data the response body as the server sent it, or the cached rows with the user's queued
@@ -1252,6 +1277,41 @@ __attribute__((swift_name("BridgeRejectedMutation")))
 
 
 /**
+ * A queued upload Storage refused for good on replay, kept with its bytes until it is dismissed or
+ * retried ([BridgeClient.dismissRejectedMutation], [BridgeClient.retryRejectedMutation]).
+ *
+ * @property id the upload's id, as it had in the queue.
+ * @property bucketId the bucket the file was going to; empty for an entry the library can no longer
+ *   read.
+ * @property path the object path within the bucket; empty as the bucket is.
+ * @property createdAtEpochMillis when it was queued, in milliseconds since 1970.
+ * @property sizeBytes the file's size.
+ * @property contentType the content type it was sent with; `null` when the upload set none.
+ * @property upsert whether it overwrites an object already at the path.
+ * @property serverError what Storage answered; `null` when the library refused it itself.
+ * @property message why it was refused, in words.
+ * @property rejectedAtEpochMillis when it was refused, in milliseconds since 1970.
+ * @property isRetryable whether [BridgeClient.retryRejectedMutation] can queue it again: whether
+ *   its file is still on the device.
+ */
+__attribute__((objc_subclassing_restricted))
+__attribute__((swift_name("BridgeRejectedUpload")))
+@interface SOCBridgeRejectedUpload : SOCBase
+@property (readonly) NSString *bucketId __attribute__((swift_name("bucketId")));
+@property (readonly) NSString * _Nullable contentType __attribute__((swift_name("contentType")));
+@property (readonly) int64_t createdAtEpochMillis __attribute__((swift_name("createdAtEpochMillis")));
+@property (readonly) int64_t id __attribute__((swift_name("id")));
+@property (readonly) BOOL isRetryable __attribute__((swift_name("isRetryable")));
+@property (readonly) NSString *message __attribute__((swift_name("message")));
+@property (readonly) NSString *path __attribute__((swift_name("path")));
+@property (readonly) int64_t rejectedAtEpochMillis __attribute__((swift_name("rejectedAtEpochMillis")));
+@property (readonly) SOCBridgeServerError * _Nullable serverError __attribute__((swift_name("serverError")));
+@property (readonly) int64_t sizeBytes __attribute__((swift_name("sizeBytes")));
+@property (readonly) BOOL upsert __attribute__((swift_name("upsert")));
+@end
+
+
+/**
  * PostgREST's answer to a refused write, kept so it survives a restart.
  *
  * @property status the HTTP status.
@@ -1274,7 +1334,8 @@ __attribute__((swift_name("BridgeServerError")))
 /**
  * Storage buckets through the offline client: every object operation of the offline bucket, and its
  * file cache. Downloads are kept on the device and served from there offline; uploads, updates,
- * deletes, moves and copies are online only and drop the cached copies they make stale.
+ * deletes, moves and copies are online only and drop the cached copies they make stale, but for the
+ * upload that takes a strategy, which can wait in the mutation queue with the row writes.
  *
  * Every call names its bucket. Options and transforms cross as JSON text, results that are not
  * bytes or files as JSON text too (the formats are in the contract note beside this module); bytes
@@ -1369,8 +1430,20 @@ __attribute__((swift_name("BridgeStorage")))
 /** Moves the object at [from] to [to], in this bucket or [destinationBucket]. */
 - (SOCBridgeCancellable *)moveObjectBucket:(NSString *)bucket from:(NSString *)from to:(NSString *)to destinationBucket:(NSString * _Nullable)destinationBucket completion:(void (^)(SOCBridgeError * _Nullable))completion __attribute__((swift_name("moveObject(bucket:from:to:destinationBucket:completion:)")));
 
+/** [pendingUploads] as the queue changes; [onCompletion] fires once, when it ends. */
+- (SOCBridgeCancellable *)observePendingUploadsOnUploads:(void (^)(NSArray<SOCBridgePendingUpload *> *))onUploads onCompletion:(void (^)(SOCBridgeError * _Nullable))onCompletion __attribute__((swift_name("observePendingUploads(onUploads:onCompletion:)")));
+
+/** [rejectedUploads] as the list changes; [onCompletion] fires once, when it ends. */
+- (SOCBridgeCancellable *)observeRejectedUploadsOnUploads:(void (^)(NSArray<SOCBridgeRejectedUpload *> *))onUploads onCompletion:(void (^)(SOCBridgeError * _Nullable))onCompletion __attribute__((swift_name("observeRejectedUploads(onUploads:onCompletion:)")));
+
+/** The current user's queued uploads, in every bucket, in the order they will be sent. */
+- (SOCBridgeCancellable *)pendingUploadsCompletion:(void (^)(NSArray<SOCBridgePendingUpload *> * _Nullable, SOCBridgeError * _Nullable))completion __attribute__((swift_name("pendingUploads(completion:)")));
+
 /** The public URL of [path]; builds a URL and sends nothing. */
 - (SOCBridgeStringResult *)publicUrlBucket:(NSString *)bucket path:(NSString *)path __attribute__((swift_name("publicUrl(bucket:path:)")));
+
+/** The current user's queued uploads Storage refused for good on replay, oldest first. */
+- (SOCBridgeCancellable *)rejectedUploadsCompletion:(void (^)(NSArray<SOCBridgeRejectedUpload *> * _Nullable, SOCBridgeError * _Nullable))completion __attribute__((swift_name("rejectedUploads(completion:)")));
 
 /** Replaces the object at [path] with [data]; [options] and the answer as for [upload]. */
 - (SOCBridgeCancellable *)updateBucket:(NSString *)bucket path:(NSString *)path data:(NSData *)data options:(NSString * _Nullable)options completion:(void (^)(NSString * _Nullable, SOCBridgeError * _Nullable))completion __attribute__((swift_name("update(bucket:path:data:options:completion:)")));
@@ -1382,6 +1455,18 @@ __attribute__((swift_name("BridgeStorage")))
  * @param completion the upload response, `{"id", "path", "key"}`, or the failure.
  */
 - (SOCBridgeCancellable *)uploadBucket:(NSString *)bucket path:(NSString *)path data:(NSData *)data options:(NSString * _Nullable)options completion:(void (^)(NSString * _Nullable, SOCBridgeError * _Nullable))completion __attribute__((swift_name("upload(bucket:path:data:options:completion:)")));
+
+/**
+ * Uploads [data] to [path] under [mutationStrategy], as a write is made: `queueIfOffline` lets
+ * it wait in the mutation queue, its bytes kept on the device, and be sent in the order it was
+ * made among the user's writes; `onlineOnly` sends it now and keeps nothing.
+ *
+ * @param mutationStrategy `queueIfOffline` or `onlineOnly`; another name fails with
+ *   [BridgeErrorKind.UNSUPPORTED].
+ * @param options as for the [upload] without a strategy.
+ * @param completion the outcome (applied, with Storage's response, or queued), or the failure.
+ */
+- (SOCBridgeCancellable *)uploadBucket:(NSString *)bucket path:(NSString *)path data:(NSData *)data mutationStrategy:(NSString *)mutationStrategy options:(NSString * _Nullable)options completion:(void (^)(SOCBridgeUploadResult * _Nullable, SOCBridgeError * _Nullable))completion __attribute__((swift_name("upload(bucket:path:data:mutationStrategy:options:completion:)")));
 
 /**
  * Uploads [data] to [path] through a signed upload URL's [token]; [options] and the answer as
@@ -1415,6 +1500,8 @@ __attribute__((swift_name("BridgeStringResult")))
  *   stands.
  * @property conflicted the guarded writes parked during this call, now on the conflicted list.
  * @property stopReason why the call returned when it did.
+ * @property rejectedUploads the queued uploads Storage refused for good during this call, now on
+ *   the rejected list beside [rejected], which holds the row writes.
  */
 __attribute__((objc_subclassing_restricted))
 __attribute__((swift_name("BridgeSyncReport")))
@@ -1425,6 +1512,7 @@ __attribute__((swift_name("BridgeSyncReport")))
 @property (readonly) int32_t conflictsResolvedCount __attribute__((swift_name("conflictsResolvedCount")));
 @property (readonly) int32_t heldBehindOtherTablesCount __attribute__((swift_name("heldBehindOtherTablesCount")));
 @property (readonly) NSArray<SOCBridgeRejectedMutation *> *rejected __attribute__((swift_name("rejected")));
+@property (readonly) NSArray<SOCBridgeRejectedUpload *> *rejectedUploads __attribute__((swift_name("rejectedUploads")));
 @property (readonly) int32_t remainingCount __attribute__((swift_name("remainingCount")));
 @property (readonly) SOCBridgeSyncStopReason *stopReason __attribute__((swift_name("stopReason")));
 @property (readonly) int32_t syncedCount __attribute__((swift_name("syncedCount")));
@@ -1532,6 +1620,24 @@ __attribute__((swift_name("BridgeTesting")))
  *   client holds it.
  */
 - (SOCBridgeOpenResult *)openInMemoryOptions:(SOCBridgeClientOptions *)options server:(id<SOCBridgeFakeServer>)server clock:(id<SOCBridgeClock> _Nullable)clock realtime:(SOCBridgeFakeRealtime * _Nullable)realtime store:(SOCBridgeInMemoryStore * _Nullable)store __attribute__((swift_name("openInMemory(options:server:clock:realtime:store:)")));
+@end
+
+
+/**
+ * What became of an upload made with a strategy ([BridgeStorage.upload] with `mutationStrategy`):
+ * Storage stored it, or it waits in the mutation queue with its bytes kept on the device.
+ *
+ * @property isQueued whether the upload waits in the mutation queue.
+ * @property applied Storage's response when it stored the file, `{"id", "path", "key"}`; `null`
+ *   when queued.
+ * @property queued the queued upload when it waits; `null` when applied.
+ */
+__attribute__((objc_subclassing_restricted))
+__attribute__((swift_name("BridgeUploadResult")))
+@interface SOCBridgeUploadResult : SOCBase
+@property (readonly) NSString * _Nullable applied __attribute__((swift_name("applied")));
+@property (readonly) BOOL isQueued __attribute__((swift_name("isQueued")));
+@property (readonly) SOCBridgePendingUpload * _Nullable queued __attribute__((swift_name("queued")));
 @end
 
 __attribute__((objc_subclassing_restricted))

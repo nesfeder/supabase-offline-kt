@@ -300,6 +300,32 @@ class FaultInjectionTest {
                     unvalued { client.applyServerDelete("todos", """{"id":1}""", null, null, it) }
                 },
             "upload" to { valued<String> { storage.upload("b", "p", bytes, null, it) } },
+            "queueableUpload" to
+                {
+                    valued<BridgeUploadResult> {
+                        storage.upload("b", "p", bytes, "queueIfOffline", null, it)
+                    }
+                },
+            "pendingUploads" to
+                {
+                    valued<List<BridgePendingUpload>> { storage.pendingUploads(it) }
+                },
+            "observePendingUploads" to
+                {
+                    subscribed<List<BridgePendingUpload>> { value, end ->
+                        storage.observePendingUploads(value, end)
+                    }
+                },
+            "rejectedUploads" to
+                {
+                    valued<List<BridgeRejectedUpload>> { storage.rejectedUploads(it) }
+                },
+            "observeRejectedUploads" to
+                {
+                    subscribed<List<BridgeRejectedUpload>> { value, end ->
+                        storage.observeRejectedUploads(value, end)
+                    }
+                },
             "update" to { valued<String> { storage.update("b", "p", bytes, null, it) } },
             "uploadToSignedUrl" to
                 {

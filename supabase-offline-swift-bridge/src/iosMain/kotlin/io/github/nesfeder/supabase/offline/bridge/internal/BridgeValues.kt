@@ -9,14 +9,17 @@ import io.github.nesfeder.supabase.offline.MutationOperation
 import io.github.nesfeder.supabase.offline.MutationOutcome
 import io.github.nesfeder.supabase.offline.NetworkStatus
 import io.github.nesfeder.supabase.offline.PendingMutation
+import io.github.nesfeder.supabase.offline.PendingUpload
 import io.github.nesfeder.supabase.offline.QuerySnapshot
 import io.github.nesfeder.supabase.offline.RefreshState
 import io.github.nesfeder.supabase.offline.RejectedMutation
+import io.github.nesfeder.supabase.offline.RejectedUpload
 import io.github.nesfeder.supabase.offline.ServerError
 import io.github.nesfeder.supabase.offline.SyncFailedException
 import io.github.nesfeder.supabase.offline.SyncReport
 import io.github.nesfeder.supabase.offline.SyncStatus
 import io.github.nesfeder.supabase.offline.SyncStopReason
+import io.github.nesfeder.supabase.offline.UploadOutcome
 import io.github.nesfeder.supabase.offline.bridge.BridgeCachedFile
 import io.github.nesfeder.supabase.offline.bridge.BridgeConflictedMutation
 import io.github.nesfeder.supabase.offline.bridge.BridgeErrorKind
@@ -24,16 +27,19 @@ import io.github.nesfeder.supabase.offline.bridge.BridgeMutationOperation
 import io.github.nesfeder.supabase.offline.bridge.BridgeMutationResult
 import io.github.nesfeder.supabase.offline.bridge.BridgeNetworkStatus
 import io.github.nesfeder.supabase.offline.bridge.BridgePendingMutation
+import io.github.nesfeder.supabase.offline.bridge.BridgePendingUpload
 import io.github.nesfeder.supabase.offline.bridge.BridgeQueryResult
 import io.github.nesfeder.supabase.offline.bridge.BridgeQuerySnapshot
 import io.github.nesfeder.supabase.offline.bridge.BridgeRefreshKind
 import io.github.nesfeder.supabase.offline.bridge.BridgeRefreshState
 import io.github.nesfeder.supabase.offline.bridge.BridgeRejectedMutation
+import io.github.nesfeder.supabase.offline.bridge.BridgeRejectedUpload
 import io.github.nesfeder.supabase.offline.bridge.BridgeServerError
 import io.github.nesfeder.supabase.offline.bridge.BridgeSyncReport
 import io.github.nesfeder.supabase.offline.bridge.BridgeSyncStatus
 import io.github.nesfeder.supabase.offline.bridge.BridgeSyncStopKind
 import io.github.nesfeder.supabase.offline.bridge.BridgeSyncStopReason
+import io.github.nesfeder.supabase.offline.bridge.BridgeUploadResult
 import io.github.nesfeder.supabase.offline.fetchedAt
 import io.github.nesfeder.supabase.offline.hasPendingMutations
 import io.github.nesfeder.supabase.offline.isFromCache
@@ -86,6 +92,47 @@ internal fun MutationOutcome.toBridge(): BridgeMutationResult =
                 queued = pendingMutation.toBridge(),
             )
     }
+
+/** An upload's outcome; Storage's response as JSON text. */
+internal fun UploadOutcome.toBridge(): BridgeUploadResult =
+    when (this) {
+        is UploadOutcome.Applied ->
+            BridgeUploadResult(
+                isQueued = false,
+                applied = encodeUploadResponse(response),
+                queued = null,
+            )
+        is UploadOutcome.Queued ->
+            BridgeUploadResult(isQueued = true, applied = null, queued = pendingUpload.toBridge())
+    }
+
+/** A queued upload. */
+internal fun PendingUpload.toBridge(): BridgePendingUpload =
+    BridgePendingUpload(
+        id = id,
+        bucketId = bucketId,
+        path = path,
+        createdAtEpochMillis = createdAt.toEpochMilliseconds(),
+        sizeBytes = sizeBytes,
+        contentType = contentType,
+        upsert = upsert,
+    )
+
+/** A refused upload. */
+internal fun RejectedUpload.toBridge(): BridgeRejectedUpload =
+    BridgeRejectedUpload(
+        id = id,
+        bucketId = bucketId,
+        path = path,
+        createdAtEpochMillis = createdAt.toEpochMilliseconds(),
+        sizeBytes = sizeBytes,
+        contentType = contentType,
+        upsert = upsert,
+        serverError = serverError?.toBridge(),
+        message = message,
+        rejectedAtEpochMillis = rejectedAt.toEpochMilliseconds(),
+        isRetryable = isRetryable,
+    )
 
 /** A queued write. */
 internal fun PendingMutation.toBridge(): BridgePendingMutation =
@@ -163,6 +210,7 @@ internal fun SyncReport.toBridge(): BridgeSyncReport =
         conflictsKeptServerCount = conflictsKeptServerCount,
         conflicted = conflicted.map { it.toBridge() },
         stopReason = stopReason.toBridge(),
+        rejectedUploads = rejectedUploads.map { it.toBridge() },
     )
 
 /**

@@ -96,7 +96,13 @@ A download asks the network first and keeps the file it receives; when the netwo
 copy answers, and a "not found" drops it. ``OfflineBucketApi/ensureCachedFile(path:isPublic:)``
 returns the kept copy, downloading it first when there is none, and
 ``OfflineBucketApi/cachedFile(path:)`` never touches the network. Uploads, updates, moves, copies and
-removals are never queued, fail at once offline, and drop the copies they make stale.
+removals are never queued, fail at once offline, and drop the copies they make stale, but for
+``OfflineBucketApi/upload(_:data:mutationStrategy:options:)``: under
+``MutationStrategy/queueIfOffline`` its bytes are kept on the device and it waits in the mutation
+queue, sent in the order it was made among the row writes, so a row written after it that names the
+file is sent after the file. While it waits, ``OfflineStorage/pendingUploads()`` lists it and
+``OfflineBucketApi/cachedFile(path:)`` returns its bytes on the device; a refusal lands on
+``OfflineStorage/rejectedUploads()`` with its bytes, for a retry.
 
 A transformed download is kept apart from the original, and
 ``OfflineBucketApi/cachedFile(path:transform:)`` finds its copy. To free the device's storage,

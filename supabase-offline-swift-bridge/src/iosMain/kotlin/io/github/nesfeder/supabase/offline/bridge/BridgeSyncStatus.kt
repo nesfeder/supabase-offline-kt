@@ -57,6 +57,8 @@ public enum class BridgeNetworkStatus {
  *   stands.
  * @property conflicted the guarded writes parked during this call, now on the conflicted list.
  * @property stopReason why the call returned when it did.
+ * @property rejectedUploads the queued uploads Storage refused for good during this call, now on
+ *   the rejected list beside [rejected], which holds the row writes.
  */
 public class BridgeSyncReport
 internal constructor(
@@ -69,6 +71,7 @@ internal constructor(
     public val conflictsKeptServerCount: Int,
     public val conflicted: List<BridgeConflictedMutation>,
     public val stopReason: BridgeSyncStopReason,
+    public val rejectedUploads: List<BridgeRejectedUpload>,
 )
 
 /**

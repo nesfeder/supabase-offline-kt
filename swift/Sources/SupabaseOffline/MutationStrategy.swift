@@ -14,6 +14,11 @@ public enum MutationStrategy: Sendable, Hashable, CaseIterable {
 
     /// The strategy as a write description's `strategy` value.
     var descriptionValue: OfflineJSON {
+        .string(coreName)
+    }
+
+    /// The strategy's name as the core reads it.
+    var coreName: String {
         switch self {
         case .queueIfOffline: return "queueIfOffline"
         case .onlineOnly: return "onlineOnly"

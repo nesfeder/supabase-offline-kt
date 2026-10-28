@@ -29,6 +29,7 @@ client reports, for fakes of your own.
 - ``syncReport(syncedCount:rejected:remainingCount:alreadyOnServerCount:heldBehindOtherTablesCount:)``
 - ``syncReport(syncedCount:rejected:remainingCount:alreadyOnServerCount:heldBehindOtherTablesCount:conflictsResolvedCount:conflictsKeptServerCount:conflicted:)``
 - ``syncReport(syncedCount:rejected:remainingCount:alreadyOnServerCount:heldBehindOtherTablesCount:conflictsResolvedCount:conflictsKeptServerCount:conflicted:stopReason:)``
+- ``syncReport(syncedCount:rejected:remainingCount:alreadyOnServerCount:heldBehindOtherTablesCount:conflictsResolvedCount:conflictsKeptServerCount:conflicted:stopReason:rejectedUploads:)``
 - ``syncStopReason(kind:error:)``
 - ``syncStatus(network:pendingMutationCount:rejectedMutationCount:isSyncing:lastSyncedAt:lastSyncError:)``
 - ``syncStatus(network:pendingMutationCount:rejectedMutationCount:isSyncing:lastSyncedAt:lastSyncError:conflictedMutationCount:)``
@@ -38,6 +39,9 @@ client reports, for fakes of your own.
 - ``offlineResponse(value:data:count:isFromCache:fetchedAt:hasPendingMutations:)``
 - ``cachedResponse(value:data:count:fetchedAt:hasPendingMutations:)``
 - ``cachedFile(path:fetchedAt:sizeBytes:)``
+- ``pendingUpload(id:bucketId:path:createdAt:sizeBytes:contentType:upsert:)``
+- ``rejectedUpload(id:bucketId:path:createdAt:sizeBytes:contentType:upsert:serverError:message:rejectedAt:isRetryable:)``
+- ``fileUploadResponse(id:path:key:)``
 
 ### Errors
 
