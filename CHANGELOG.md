@@ -166,8 +166,9 @@ All notable changes to this project are recorded in this file. The format follow
   downloaded second was never cached: `ensureCachedFile` threw for it every time, a channel download
   of it could fetch it twice, and it was not served offline.
 - On a case-insensitive volume, such as the iOS simulator's or a Mac's, two objects whose names
-  differ only in case, such as `photo` and `PHOTO`, shared one cached file, so the one downloaded
-  second replaced the other's bytes. The second is now stored apart, and each object serves its own.
+  differ only in case, such as `photo` and `PHOTO`, or whose buckets' names do, shared one cached
+  file, so the one downloaded second replaced the other's bytes, and a write to one deleted the
+  other's copy. The second is now stored apart, and each object serves its own.
 - With Room 2.8.5 or later, which an app can resolve itself, `pendingMutations()` and
   `pendingMutationCountFlow()` called after `close()` threw Room's `IllegalStateException`
   from the call, where a `catch` on the flow could not see it. Each now returns a flow that
