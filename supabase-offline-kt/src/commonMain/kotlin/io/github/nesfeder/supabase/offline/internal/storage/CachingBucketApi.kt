@@ -857,7 +857,8 @@ internal class CachingBucketApi(
      * A failed or canceled download leaves the file to [file]'s owner; a disk that refuses it
      * deletes it at once, cancels the download and reports [StreamedDownload.CacheRefused].
      *
-     * @param onWritten told how many bytes the file holds after each chunk written to it.
+     * @param onWritten told how many bytes the file holds after each chunk written to it, and once
+     *   that it holds none when the object is empty.
      */
     private suspend fun downloadToTemporaryFile(
         file: OwnedTemporaryFile,
@@ -909,6 +910,8 @@ internal class CachingBucketApi(
             onWritten?.invoke(written)
         }
         val checked = producer.await()
+        // An empty object wrote no chunk: its one progress is that it is whole
+        if (written == 0L) onWritten?.invoke(0L)
         val target =
             file.temporary
                 ?: file.open(entryProvider())

@@ -440,11 +440,15 @@ public struct OfflineBucketApi: Sendable {
     ///
     /// Every call waiting for one object's shared download is handed its progress, and one that
     /// joins it late starts from where it stands. A cached copy is returned without a call to
-    /// `onProgress`, and a download started again, after the object was uploaded meanwhile, counts
-    /// from zero. `onProgress` runs on a background thread, one call at a time, and never after
-    /// this returns; hop to the main actor to update the interface. A progress that arrives while
-    /// it runs replaces any it has not been handed yet, and the last one is handed before this
-    /// returns.
+    /// `onProgress`. A download started again counts from zero: after the object was uploaded
+    /// meanwhile, or after a download this call joined failed, when the call makes its own
+    /// request.
+    ///
+    /// `onProgress` runs on a background thread, one call at a time, and never after this
+    /// returns, except when the task is canceled: one call already under way may then finish after
+    /// the `CancellationError` is thrown. Hop to the main actor to update the interface. A
+    /// progress that arrives while it runs replaces any it has not been handed yet, and the last
+    /// one is handed before this returns.
     ///
     /// - Parameters:
     ///   - path: The object's path in the bucket.

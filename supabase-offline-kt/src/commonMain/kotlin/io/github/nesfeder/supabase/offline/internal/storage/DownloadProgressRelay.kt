@@ -14,6 +14,7 @@ import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 /** Stands for a size the server gave none of. */
@@ -37,7 +38,10 @@ internal class DownloadProgressRelay(private val onPublished: () -> Unit = {}) {
     /** The object's size, or [UNKNOWN_SIZE] while the server gave none. */
     private val total = AtomicLong(UNKNOWN_SIZE)
 
-    /** The progress last published; `null` until one is. */
+    /**
+     * The progress last published; `null` until one is. Only [report], one chunk after another,
+     * sets it outright; a watcher's snapshot moves it only forward.
+     */
     private val latest = MutableStateFlow<DownloadProgress?>(null)
 
     /**
@@ -45,8 +49,9 @@ internal class DownloadProgressRelay(private val onPublished: () -> Unit = {}) {
      * server gave its size, and publishes it while a caller watches.
      */
     fun report(bytesReceived: Long, totalBytes: Long?) {
-        received.store(bytesReceived)
+        // The total first: a snapshot that reads these bytes reads their total too
         total.store(totalBytes ?: UNKNOWN_SIZE)
+        received.store(bytesReceived)
         if (watchers.load() > 0) publish(DownloadProgress(bytesReceived, totalBytes))
     }
 
@@ -63,8 +68,16 @@ internal class DownloadProgressRelay(private val onPublished: () -> Unit = {}) {
         watchers.incrementAndFetch()
         try {
             return coroutineScope {
-                // A caller joining a download under way starts from where it stands
-                snapshot()?.let(::publish)
+                // A caller joining a download under way starts from where it stands; never
+                // behind a chunk reported since the snapshot was read
+                snapshot()?.let { position ->
+                    latest.update { current ->
+                        if (current == null || current.bytesReceived < position.bytesReceived)
+                            position
+                        else current
+                    }
+                    onPublished()
+                }
                 var handed: DownloadProgress? = null
                 val watch = launch {
                     latest.filterNotNull().collect { progress ->

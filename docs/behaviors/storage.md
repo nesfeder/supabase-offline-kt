@@ -130,10 +130,11 @@ the download late starts from where it stands; each is handed the last progress 
 The lambda runs in the caller's coroutine, on its dispatcher, so it can update a UI from the main
 thread, one call at a time: a progress that arrives while it runs replaces any it has not been
 handed yet. What it throws ends that call alone, and the download goes on for the others. A cached
-copy is returned without a call, and a download started again, because the object was written
-meanwhile, counts from zero. A call without the lambda adds nothing to the download. The Swift
-package has `ensureCachedFile(path:isPublic:onProgress:)`, whose closure runs on a background
-thread.
+copy is returned without a call. A download started again counts from zero: after the object was
+written meanwhile, or after a download the call joined failed, when the call makes its own request.
+A call without the lambda adds nothing to the download. The Swift package has
+`ensureCachedFile(path:isPublic:onProgress:)`, whose closure runs on a background thread; when its
+task is canceled, one call already under way may finish after the `CancellationError` is thrown.
 
 ## Evicting and clearing
 

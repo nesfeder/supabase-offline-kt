@@ -1,6 +1,6 @@
 // Copyright (c) 2026 nesfeder
 // SPDX-License-Identifier: MIT
-@file:OptIn(OfflineInternal::class)
+@file:OptIn(OfflineInternal::class, ExperimentalAtomicApi::class)
 
 package io.github.nesfeder.supabase.offline.internal.storage
 
@@ -10,6 +10,8 @@ import io.github.nesfeder.supabase.offline.internal.OfflineClient
 import io.github.nesfeder.supabase.offline.internal.testing.ValueConstructors
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingStorageServer
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
+import kotlin.concurrent.atomics.AtomicBoolean
+import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.random.Random
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
@@ -19,8 +21,11 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withContext
 import okio.FileSystem
 import okio.Path
 import okio.SYSTEM
@@ -189,6 +194,69 @@ class StorageDownloadProgressTest {
     }
 
     @Test
+    fun an_empty_object_hands_a_final_progress() = runTest {
+        // Given — an object with no bytes
+        server.objects["$BUCKET/empty.txt"] = ByteArray(0)
+        val client = newClient()
+        val watched = Watched()
+
+        // When
+        val file =
+            client.storage.from(BUCKET).ensureCachedFile("empty.txt") { progress ->
+                watched.record(progress)
+            }
+
+        // Then — one progress, that it is whole
+        assertEquals(0L, file.sizeBytes)
+        assertEquals(listOf(progress(0, 0)), watched.events)
+        client.close()
+    }
+
+    @Test
+    fun a_late_joiner_never_moves_the_progress_back() = runTest {
+        // Given / When — on real threads, callers joining while the chunks of one download are
+        // reported, many times over
+        var backward = 0
+        var staleLast = 0
+        withContext(Dispatchers.Default) {
+            repeat(RACE_ITERATIONS) {
+                val relay = DownloadProgressRelay()
+                val handed = mutableListOf<DownloadProgress>()
+                val watching = CompletableDeferred<Unit>()
+                val finish = CompletableDeferred<Unit>()
+                // The caller that started the download, watching from before its first chunk
+                val first = async {
+                    relay.watching({ handed += it }) {
+                        watching.complete(Unit)
+                        finish.await()
+                    }
+                }
+                watching.await()
+                val done = AtomicBoolean(false)
+                val joiners =
+                    List(RACE_JOINERS) { async { while (!done.load()) relay.watching({}) {} } }
+                val reporter = async {
+                    for (bytes in 1L..RACE_CHUNKS) relay.report(bytes, RACE_CHUNKS)
+                    done.store(true)
+                }
+                reporter.await()
+                joiners.awaitAll()
+                finish.complete(Unit)
+                first.await()
+                if (handed.sortedBy { it.bytesReceived } != handed) backward++
+                if (handed.last() != progress(RACE_CHUNKS, RACE_CHUNKS)) staleLast++
+            }
+        }
+
+        // Then — the first caller never saw the download go back, and was handed its end
+        assertEquals(
+            "backward 0, stale last 0",
+            "backward $backward, stale last $staleLast",
+            "of $RACE_ITERATIONS iterations",
+        )
+    }
+
+    @Test
     fun nothing_is_published_for_a_download_no_call_watches() = runTest {
         // Given — a register that counts what its downloads publish
         var published = 0
@@ -241,5 +309,8 @@ class StorageDownloadProgressTest {
         const val CONTENT = "the original bytes"
         const val TOTAL = 18L
         const val KEY = "media::photos/a.png"
+        const val RACE_ITERATIONS = 2_000
+        const val RACE_JOINERS = 3
+        const val RACE_CHUNKS = 2_000L
     }
 }
