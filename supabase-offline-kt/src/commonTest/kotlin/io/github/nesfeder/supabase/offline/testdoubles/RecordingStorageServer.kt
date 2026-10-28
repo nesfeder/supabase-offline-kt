@@ -34,7 +34,9 @@ import kotlinx.io.IOException
  * (`"render?height=64&width=64:" + original`). A missing object answers HTTP 400 with a
  * `statusCode` of 404, which supabase-kt raises as a `NotFoundRestException`. A download with a
  * `Range` header answers that part of the object with HTTP 206, and a `HEAD` answers with no body,
- * as Storage does.
+ * as Storage does. With [answersETags] set, a whole download carries an `ETag`, and a `GET` whose
+ * `If-None-Match` names it is answered HTTP 304, before any `Range` is looked at, as RFC 9110
+ * (13.2.2) orders the two.
  */
 internal class RecordingStorageServer {
 
@@ -44,11 +46,14 @@ internal class RecordingStorageServer {
      * @property method the HTTP method.
      * @property encodedPath the URL path exactly as sent, percent-encoding included.
      * @property query the decoded query parameters.
+     * @property ifNoneMatch the `If-None-Match` header's values, joined with `", "`, or `null` when
+     *   the request carried none.
      */
     data class RecordedRequest(
         val method: String,
         val encodedPath: String,
         val query: Map<String, String>,
+        val ifNoneMatch: String? = null,
     )
 
     /** Stored objects, keyed `"bucket/objectPath"` with the object path decoded. */
@@ -59,6 +64,16 @@ internal class RecordingStorageServer {
 
     /** When `false`, every request fails at the transport layer, as it does with no network. */
     var online: Boolean = true
+
+    /**
+     * When set, a download of the whole object or transform carries its [eTagOf] as its `ETag`, and
+     * a `GET` whose `If-None-Match` names the ETag of what it would answer, among any others, is
+     * answered HTTP 304, with no body, whatever `Range` it carries.
+     */
+    var answersETags: Boolean = false
+
+    /** How many downloads were answered HTTP 304. */
+    var notModifiedAnswers: Int = 0
 
     /**
      * When set, every request waits for it before answering, so a test can act while a download is
@@ -116,6 +131,7 @@ internal class RecordingStorageServer {
                     request.url.parameters.names().associateWith { name ->
                         request.url.parameters[name].orEmpty()
                     },
+                ifNoneMatch = request.headers.getAll(HttpHeaders.IfNoneMatch)?.joinToString(", "),
             )
         requests += recorded
         requestArrived.complete(Unit)
@@ -263,16 +279,33 @@ internal class RecordingStorageServer {
                 )
         val whole =
             if (transform == null) original else "render?$transform:".encodeToByteArray() + original
+        // What the answer is, decided as the object is read: a write landing after this changes it
+        // no more than it changes the bytes
+        val eTag = if (answersETags) eTagOf(whole) else null
         downloadHeld.complete(Unit)
         downloadGate?.await()
         val octetStream =
             HttpHeaders.ContentType to listOf(ContentType.Application.OctetStream.toString())
+        val tagged = listOfNotNull(octetStream, eTag?.let { HttpHeaders.ETag to listOf(it) })
         if (request.method.value == "HEAD") {
             return respond(
                 content = ByteArray(0),
                 status = HttpStatusCode.OK,
                 headers =
                     headersOf(octetStream, HttpHeaders.ContentLength to listOf("${whole.size}")),
+            )
+        }
+        // RFC 9110 13.2.2: If-None-Match is evaluated before Range
+        val conditions =
+            request.headers.getAll(HttpHeaders.IfNoneMatch).orEmpty().flatMap { value ->
+                value.split(',').map { it.trim() }
+            }
+        if (eTag != null && eTag in conditions) {
+            notModifiedAnswers++
+            return respond(
+                content = ByteArray(0),
+                status = HttpStatusCode.NotModified,
+                headers = headersOf(HttpHeaders.ETag, eTag),
             )
         }
         val range = request.headers[HttpHeaders.Range]?.removePrefix("bytes=")?.split('-')
@@ -294,7 +327,7 @@ internal class RecordingStorageServer {
             return respond(
                 content = whole,
                 status = HttpStatusCode.OK,
-                headers = headersOf(octetStream),
+                headers = headersOf(*tagged.toTypedArray()),
             )
         }
         val body = ByteChannel()
@@ -306,8 +339,18 @@ internal class RecordingStorageServer {
             body.writeFully(whole, split, whole.size)
             body.flushAndClose()
         }
-        return respond(content = body, status = HttpStatusCode.OK, headers = headersOf(octetStream))
+        return respond(
+            content = body,
+            status = HttpStatusCode.OK,
+            headers = headersOf(*tagged.toTypedArray()),
+        )
     }
+
+    /**
+     * The ETag this server answers [bytes] under, as a download's whole answer holds them: the
+     * object's bytes, or a transform's.
+     */
+    fun eTagOf(bytes: ByteArray): String = "\"${bytes.contentHashCode().toUInt().toString(16)}\""
 
     /**
      * A supabase-kt client with the Storage plugin whose requests reach this server. Resumable

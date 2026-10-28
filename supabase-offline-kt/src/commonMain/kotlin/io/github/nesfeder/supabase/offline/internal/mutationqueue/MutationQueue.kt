@@ -39,6 +39,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.conflate
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.emitAll
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.sync.Mutex
@@ -999,10 +1001,12 @@ internal class MutationQueue(
 
     /**
      * The pending mutations the app is shown, of [table] or of every table, in insertion order, as
-     * they change.
+     * they change. The database's flow is made when this one is collected, not here: Room throws
+     * when one is made over a closed database, and a flow made after `close()` must fail in the
+     * collection, with the client's closed error.
      */
     fun shownPendingMutationsFlow(table: String?): Flow<List<MutationRow>> =
-        combine(mutationDao.pendingAllFlow(), identityChanges) { rows, _ ->
+        combine(flow { emitAll(mutationDao.pendingAllFlow()) }, identityChanges) { rows, _ ->
                 shownTo(identityProvider(), rows).filter { row ->
                     table == null || row.table == table
                 }

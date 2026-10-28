@@ -12,7 +12,7 @@ supabase-offline-kt file .jar
 supabase-offline-kt file .module
 supabase-offline-kt file .pom
 supabase-offline-kt klib .jar!commonMain/default/manifest unique_name=supabase-offline-kt_commonMain
-supabase-offline-kt pom dependency androidx.room:room-runtime:2.8.4 scope=runtime
+supabase-offline-kt pom dependency androidx.room:room-runtime:2.8.5 scope=runtime
 supabase-offline-kt pom dependency androidx.sqlite:sqlite-bundled:2.6.2 scope=runtime
 supabase-offline-kt pom dependency com.squareup.okio:okio:3.17.0 scope=runtime
 supabase-offline-kt pom dependency io.github.jan-tennert.supabase:auth-kt:(none) scope=runtime
@@ -33,7 +33,7 @@ supabase-offline-kt variant iosArm64SourcesElements-published available-at supab
 supabase-offline-kt variant iosSimulatorArm64ApiElements-published available-at supabase-offline-kt-iossimulatorarm64
 supabase-offline-kt variant iosSimulatorArm64MetadataElements-published available-at supabase-offline-kt-iossimulatorarm64
 supabase-offline-kt variant iosSimulatorArm64SourcesElements-published available-at supabase-offline-kt-iossimulatorarm64
-supabase-offline-kt variant metadataApiElements dependency androidx.room:room-runtime requires=2.8.4
+supabase-offline-kt variant metadataApiElements dependency androidx.room:room-runtime requires=2.8.5
 supabase-offline-kt variant metadataApiElements dependency androidx.sqlite:sqlite-bundled requires=2.6.2
 supabase-offline-kt variant metadataApiElements dependency com.squareup.okio:okio requires=3.17.0
 supabase-offline-kt variant metadataApiElements dependency io.github.jan-tennert.supabase:auth-kt (no version)
@@ -51,7 +51,7 @@ supabase-offline-kt-android file .aar
 supabase-offline-kt-android file .module
 supabase-offline-kt-android file .pom
 supabase-offline-kt-android kotlin-module .aar!classes.jar!META-INF/io.github.nesfeder.supabase-offline_supabase-offline-kt.kotlin_module
-supabase-offline-kt-android pom dependency androidx.room:room-runtime-android:2.8.4 scope=runtime
+supabase-offline-kt-android pom dependency androidx.room:room-runtime-android:2.8.5 scope=runtime
 supabase-offline-kt-android pom dependency androidx.sqlite:sqlite-bundled-android:2.6.2 scope=runtime
 supabase-offline-kt-android pom dependency androidx.startup:startup-runtime:1.2.0 scope=runtime
 supabase-offline-kt-android pom dependency com.squareup.okio:okio-jvm:3.17.0 scope=runtime
@@ -73,7 +73,7 @@ supabase-offline-kt-android variant androidApiElements-published dependency io.k
 supabase-offline-kt-android variant androidApiElements-published dependency org.jetbrains.kotlin:kotlin-stdlib requires=2.4.21
 supabase-offline-kt-android variant androidApiElements-published dependency org.jetbrains.kotlinx:kotlinx-coroutines-core requires=1.10.2
 supabase-offline-kt-android variant androidApiElements-published dependency org.jetbrains.kotlinx:kotlinx-serialization-json requires=1.11.0
-supabase-offline-kt-android variant androidRuntimeElements-published dependency androidx.room:room-runtime requires=2.8.4
+supabase-offline-kt-android variant androidRuntimeElements-published dependency androidx.room:room-runtime requires=2.8.5
 supabase-offline-kt-android variant androidRuntimeElements-published dependency androidx.sqlite:sqlite-bundled requires=2.6.2
 supabase-offline-kt-android variant androidRuntimeElements-published dependency androidx.startup:startup-runtime requires=1.2.0
 supabase-offline-kt-android variant androidRuntimeElements-published dependency com.squareup.okio:okio requires=3.17.0
@@ -94,7 +94,7 @@ supabase-offline-kt-iosarm64 file .module
 supabase-offline-kt-iosarm64 file .pom
 supabase-offline-kt-iosarm64 klib -metadata.jar!iosMain/default/manifest unique_name=io.github.nesfeder.supabase-offline:supabase-offline-kt_iosMain
 supabase-offline-kt-iosarm64 klib .klib!default/manifest unique_name=io.github.nesfeder.supabase-offline:supabase-offline-kt
-supabase-offline-kt-iosarm64 pom dependency androidx.room:room-runtime-iosarm64:2.8.4 scope=compile
+supabase-offline-kt-iosarm64 pom dependency androidx.room:room-runtime-iosarm64:2.8.5 scope=compile
 supabase-offline-kt-iosarm64 pom dependency androidx.sqlite:sqlite-bundled-iosarm64:2.6.2 scope=compile
 supabase-offline-kt-iosarm64 pom dependency com.squareup.okio:okio-iosarm64:3.17.0 scope=compile
 supabase-offline-kt-iosarm64 pom dependency io.github.jan-tennert.supabase:auth-kt:(none) scope=compile
@@ -106,7 +106,7 @@ supabase-offline-kt-iosarm64 pom dependency org.jetbrains.kotlin:kotlin-stdlib:2
 supabase-offline-kt-iosarm64 pom dependency org.jetbrains.kotlinx:kotlinx-coroutines-core-iosarm64:1.10.2 scope=compile
 supabase-offline-kt-iosarm64 pom dependency org.jetbrains.kotlinx:kotlinx-serialization-json-iosarm64:1.11.0 scope=compile
 supabase-offline-kt-iosarm64 pom managed io.github.jan-tennert.supabase:bom:3.6.0 scope=import type=pom
-supabase-offline-kt-iosarm64 variant iosArm64ApiElements-published dependency androidx.room:room-runtime requires=2.8.4
+supabase-offline-kt-iosarm64 variant iosArm64ApiElements-published dependency androidx.room:room-runtime requires=2.8.5
 supabase-offline-kt-iosarm64 variant iosArm64ApiElements-published dependency androidx.sqlite:sqlite-bundled requires=2.6.2
 supabase-offline-kt-iosarm64 variant iosArm64ApiElements-published dependency com.squareup.okio:okio requires=3.17.0
 supabase-offline-kt-iosarm64 variant iosArm64ApiElements-published dependency io.github.jan-tennert.supabase:auth-kt (no version)
@@ -118,7 +118,7 @@ supabase-offline-kt-iosarm64 variant iosArm64ApiElements-published dependency io
 supabase-offline-kt-iosarm64 variant iosArm64ApiElements-published dependency org.jetbrains.kotlin:kotlin-stdlib requires=2.4.21
 supabase-offline-kt-iosarm64 variant iosArm64ApiElements-published dependency org.jetbrains.kotlinx:kotlinx-coroutines-core requires=1.10.2
 supabase-offline-kt-iosarm64 variant iosArm64ApiElements-published dependency org.jetbrains.kotlinx:kotlinx-serialization-json requires=1.11.0
-supabase-offline-kt-iosarm64 variant iosArm64MetadataElements-published dependency androidx.room:room-runtime requires=2.8.4
+supabase-offline-kt-iosarm64 variant iosArm64MetadataElements-published dependency androidx.room:room-runtime requires=2.8.5
 supabase-offline-kt-iosarm64 variant iosArm64MetadataElements-published dependency androidx.sqlite:sqlite-bundled requires=2.6.2
 supabase-offline-kt-iosarm64 variant iosArm64MetadataElements-published dependency com.squareup.okio:okio requires=3.17.0
 supabase-offline-kt-iosarm64 variant iosArm64MetadataElements-published dependency io.github.jan-tennert.supabase:auth-kt (no version)
@@ -138,7 +138,7 @@ supabase-offline-kt-iossimulatorarm64 file .module
 supabase-offline-kt-iossimulatorarm64 file .pom
 supabase-offline-kt-iossimulatorarm64 klib -metadata.jar!iosMain/default/manifest unique_name=io.github.nesfeder.supabase-offline:supabase-offline-kt_iosMain
 supabase-offline-kt-iossimulatorarm64 klib .klib!default/manifest unique_name=io.github.nesfeder.supabase-offline:supabase-offline-kt
-supabase-offline-kt-iossimulatorarm64 pom dependency androidx.room:room-runtime-iossimulatorarm64:2.8.4 scope=compile
+supabase-offline-kt-iossimulatorarm64 pom dependency androidx.room:room-runtime-iossimulatorarm64:2.8.5 scope=compile
 supabase-offline-kt-iossimulatorarm64 pom dependency androidx.sqlite:sqlite-bundled-iossimulatorarm64:2.6.2 scope=compile
 supabase-offline-kt-iossimulatorarm64 pom dependency com.squareup.okio:okio-iossimulatorarm64:3.17.0 scope=compile
 supabase-offline-kt-iossimulatorarm64 pom dependency io.github.jan-tennert.supabase:auth-kt:(none) scope=compile
@@ -150,7 +150,7 @@ supabase-offline-kt-iossimulatorarm64 pom dependency org.jetbrains.kotlin:kotlin
 supabase-offline-kt-iossimulatorarm64 pom dependency org.jetbrains.kotlinx:kotlinx-coroutines-core-iossimulatorarm64:1.10.2 scope=compile
 supabase-offline-kt-iossimulatorarm64 pom dependency org.jetbrains.kotlinx:kotlinx-serialization-json-iossimulatorarm64:1.11.0 scope=compile
 supabase-offline-kt-iossimulatorarm64 pom managed io.github.jan-tennert.supabase:bom:3.6.0 scope=import type=pom
-supabase-offline-kt-iossimulatorarm64 variant iosSimulatorArm64ApiElements-published dependency androidx.room:room-runtime requires=2.8.4
+supabase-offline-kt-iossimulatorarm64 variant iosSimulatorArm64ApiElements-published dependency androidx.room:room-runtime requires=2.8.5
 supabase-offline-kt-iossimulatorarm64 variant iosSimulatorArm64ApiElements-published dependency androidx.sqlite:sqlite-bundled requires=2.6.2
 supabase-offline-kt-iossimulatorarm64 variant iosSimulatorArm64ApiElements-published dependency com.squareup.okio:okio requires=3.17.0
 supabase-offline-kt-iossimulatorarm64 variant iosSimulatorArm64ApiElements-published dependency io.github.jan-tennert.supabase:auth-kt (no version)
@@ -162,7 +162,7 @@ supabase-offline-kt-iossimulatorarm64 variant iosSimulatorArm64ApiElements-publi
 supabase-offline-kt-iossimulatorarm64 variant iosSimulatorArm64ApiElements-published dependency org.jetbrains.kotlin:kotlin-stdlib requires=2.4.21
 supabase-offline-kt-iossimulatorarm64 variant iosSimulatorArm64ApiElements-published dependency org.jetbrains.kotlinx:kotlinx-coroutines-core requires=1.10.2
 supabase-offline-kt-iossimulatorarm64 variant iosSimulatorArm64ApiElements-published dependency org.jetbrains.kotlinx:kotlinx-serialization-json requires=1.11.0
-supabase-offline-kt-iossimulatorarm64 variant iosSimulatorArm64MetadataElements-published dependency androidx.room:room-runtime requires=2.8.4
+supabase-offline-kt-iossimulatorarm64 variant iosSimulatorArm64MetadataElements-published dependency androidx.room:room-runtime requires=2.8.5
 supabase-offline-kt-iossimulatorarm64 variant iosSimulatorArm64MetadataElements-published dependency androidx.sqlite:sqlite-bundled requires=2.6.2
 supabase-offline-kt-iossimulatorarm64 variant iosSimulatorArm64MetadataElements-published dependency com.squareup.okio:okio requires=3.17.0
 supabase-offline-kt-iossimulatorarm64 variant iosSimulatorArm64MetadataElements-published dependency io.github.jan-tennert.supabase:auth-kt (no version)

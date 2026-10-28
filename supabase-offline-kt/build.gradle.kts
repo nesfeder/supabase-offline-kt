@@ -82,7 +82,7 @@ kotlin {
         if (iosUsesSystemSqlite) {
             binaries.all {
                 linkerOpts("-lsqlite3")
-                // Room 2.8.4 was built against androidx.sqlite 2.6; this variant links 2.7.1. Any
+                // Room 2.8.5 was built against androidx.sqlite 2.6; this variant links 2.7.1. Any
                 // ABI gap between them has to fail the link, not surface as a crash at runtime.
                 freeCompilerArgs += "-Xpartial-linkage-loglevel=ERROR"
             }

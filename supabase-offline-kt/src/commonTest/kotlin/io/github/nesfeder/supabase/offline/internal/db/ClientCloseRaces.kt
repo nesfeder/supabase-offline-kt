@@ -29,6 +29,8 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
@@ -213,6 +215,50 @@ internal object ClientCloseRaces {
             server.storageArrived.value,
             "a download was sent after close()",
         )
+    }
+
+    /**
+     * Every flow made after `close()` fails with the client's closed error when collected, inside
+     * the flow, where `catch` sees it; making one throws nothing. Room 2.8.5 and later throw when a
+     * query's flow is made over a closed database, which the in-memory tables never do.
+     */
+    suspend fun flowsMadeAfterCloseFailWhenCollected(
+        directory: Path,
+        openClient: OpenOfflineClient,
+    ) = onRealThreads {
+        // Given — a closed client, and a builder obtained before it closed
+        val server =
+            RecordingBackendServer(marker = "MARKER${Random.nextLong().toULong().toString(16)}")
+        val client = openClient(server.supabaseClient(), configIn(directory))
+        val builder = client.from(TABLE)
+        client.close()
+        val flows: List<Pair<String, () -> Flow<*>>> =
+            listOf<Pair<String, () -> Flow<*>>>(
+                "pendingMutationCountFlow()" to { client.pendingMutationCountFlow() },
+                "pendingMutationCountFlow(table)" to { client.pendingMutationCountFlow(TABLE) },
+                "pendingMutations()" to { client.pendingMutations() },
+                "pendingMutations(table)" to { client.pendingMutations(TABLE) },
+                "rejectedMutations()" to { client.rejectedMutations() },
+                "conflictedMutations()" to { client.conflictedMutations() },
+            ) +
+                everyFlowReadStrategy.map { strategy ->
+                    "selectAsFlow($strategy)" to { builder.selectAsFlow(readStrategy = strategy) }
+                }
+
+        for ((name, flowOf) in flows) {
+            // When — the flow is made and collected with an operator that catches its failure
+            val caught = mutableListOf<Throwable>()
+            val escaped =
+                withTimeout(5.seconds) {
+                    runCatching { flowOf().catch { failure -> caught += failure }.collect {} }
+                        .exceptionOrNull()
+                }
+
+            // Then — catch saw the closed error, and nothing was thrown past it
+            assertEquals(null, escaped, "$name threw past catch: $escaped")
+            assertEquals(1, caught.size, "$name: catch saw $caught")
+            assertClientClosedError(caught.single(), "$name made after close()")
+        }
     }
 
     /**
