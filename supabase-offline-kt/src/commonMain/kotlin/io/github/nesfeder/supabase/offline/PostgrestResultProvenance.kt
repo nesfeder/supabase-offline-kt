@@ -47,6 +47,9 @@ public val PostgrestResult.hasPendingMutations: Boolean
  * of the table's key columns with the values the row holds. A row such a write removed keeps its
  * key here; a row without its whole key adds none. Read from the pass that laid the writes over
  * these rows. Empty for a result supabase-kt returned itself.
+ *
+ * Each read parses the set again from the result's headers, so read it once per result and keep it,
+ * rather than once per row.
  */
 public val PostgrestResult.pendingRowKeys: Set<JsonObject>
     get() = pendingRowKeysStamped(this)

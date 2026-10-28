@@ -47,7 +47,7 @@ An `OnlineOnly` write is not patched in: the list changes when it is fetched aga
 | --- | --- |
 | Added or changed by a queued write | Its key, with the values the row shows |
 | Removed by a queued write: deleted, or changed so the query no longer admits it | Its key as the row last showed it, though the rows no longer hold it |
-| Shown without its whole key: a select that leaves a key column out, or a key column holding `null` | None. `hasPendingMutations` still counts it, so the set can be empty while the flag is `true` |
+| Shown without its whole key: a row from the server read with a select that leaves a key column out, or a key column holding `null` | None. `hasPendingMutations` still counts it, so the set can be empty while the flag is `true`. A queued insert or upsert carries every column it wrote, so one that wrote its key is named even in such a list |
 | Changed by a write a sync pass already sent | None, even while the list still shows the write until it is fetched again |
 
 A key is an object of the table's key columns, `id` unless you set another with `primaryKey`, so

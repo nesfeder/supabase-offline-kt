@@ -30,10 +30,12 @@ import kotlinx.serialization.json.JsonObject
  *   each, as an object of the table's key columns ([Offline.Config.primaryKeys]) with the values
  *   the row holds. A row a write removed from [QuerySnapshot.result], deleted or changed so the
  *   query no longer admits it, keeps its key here, as it last showed it. A row without its whole
- *   key (a select that leaves a key column out, a key column holding `null`) adds none, so the set
- *   can be empty while [QuerySnapshot.hasPendingMutations] is `true`, and is always empty while it
- *   is `false`. Both are worked out in the pass that laid the writes over the rows, so the set
- *   always describes the rows of this emission, never an earlier or later one.
+ *   key (a row from the server read with a select that leaves a key column out, a key column
+ *   holding `null`) adds none, so the set can be empty while [QuerySnapshot.hasPendingMutations] is
+ *   `true`, and is always empty while it is `false`. A queued row carries every column it wrote, so
+ *   a queued insert or upsert that wrote its key is named even in a list whose select leaves the
+ *   key out. Both are worked out in the pass that laid the writes over the rows, so the set always
+ *   describes the rows of this emission, never an earlier or later one.
  */
 @ConsistentCopyVisibility
 public data class QuerySnapshot

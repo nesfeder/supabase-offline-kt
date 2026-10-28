@@ -5,6 +5,7 @@
 package io.github.nesfeder.supabase.offline
 
 import io.github.jan.supabase.postgrest.postgrest
+import io.github.jan.supabase.postgrest.query.Columns
 import io.github.jan.supabase.postgrest.result.PostgrestResult
 import io.github.nesfeder.supabase.offline.internal.OfflineClient
 import io.github.nesfeder.supabase.offline.internal.postgrest.PENDING_ROW_KEYS_HEADER
@@ -162,6 +163,27 @@ class PendingRowKeysTest {
         assertEquals(4, shown.result?.let { rowsOf(it).size })
         assertTrue(shown.hasPendingMutations)
         assertEquals(emptySet(), shown.pendingRowKeys)
+    }
+
+    @Test
+    fun a_queued_insert_in_a_list_whose_select_leaves_the_key_out_is_named() = runTest {
+        // Given — a live read of titles only, whose server rows carry no key, then offline
+        val rig = rig()
+        rig.serverRows = """[{"title":"note 1"},{"title":"note 2"}]"""
+        val shown = collected(rig.scope, rig.client.from(TABLE).selectAsFlow(Columns.list("title")))
+        runCurrent()
+        rig.online = false
+
+        // When — an insert that writes its key
+        rig.client.from(TABLE).insert(row(4, title = "new"))
+        runCurrent()
+
+        // Then — the queued row carries every column it wrote, so its key is named; the server
+        // rows add none
+        assertEquals(3, shown.last().result?.let { rowsOf(it).size })
+        assertTrue(shown.last().hasPendingMutations)
+        assertEquals(setOf(key(4)), shown.last().pendingRowKeys)
+        rig.scope.cancel()
     }
 
     @Test
