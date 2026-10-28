@@ -17,19 +17,16 @@ import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
 import kotlin.concurrent.atomics.AtomicLong
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.concurrent.atomics.incrementAndFetch
-import kotlin.coroutines.ContinuationInterceptor
 import kotlin.time.Clock
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.ProducerScope
 import kotlinx.coroutines.channels.awaitClose
-import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.buffer
 import kotlinx.coroutines.flow.channelFlow
@@ -143,12 +140,12 @@ internal class SupabaseRealtimeFeed(
      * Lets the producers the loop above started register their callbacks before the join. They ran
      * at once unless this feed itself runs on a dispatcher that runs its work in place (unconfined,
      * or `Dispatchers.Main.immediate` on the main thread): there they may wait in the thread's
-     * queue behind this coroutine, and a yield lets them run first.
+     * queue of such work, behind this coroutine. A yield in that queue lets them run first. Where
+     * the queue is empty, as on any dispatcher that dispatches, it returns at once, without a
+     * dispatch.
      */
     private suspend fun awaitQueuedRegistrations() {
-        val context = currentCoroutineContext()
-        val dispatcher = context[ContinuationInterceptor] as? CoroutineDispatcher ?: return
-        if (!dispatcher.isDispatchNeeded(context)) yield()
+        withContext(Dispatchers.Unconfined) { yield() }
     }
 
     /**
