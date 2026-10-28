@@ -93,6 +93,8 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.addJsonObject
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 
 /** The schema both tables live in, the client's default. */
@@ -696,7 +698,9 @@ class OfflineTaskRepository(
     /** Discards the queued writes to [table]'s row [rowId], unsent. */
     private suspend fun discardQueuedWritesOf(table: String, rowId: String) {
         offline.pendingMutations(table).first().forEach { mutation ->
-            if (rowId in listOf(mutation).rowIds()) offline.discardPendingMutation(mutation.id)
+            val forRow =
+                mutation.rowKeys.any { key -> key[ID]?.jsonPrimitive?.contentOrNull == rowId }
+            if (forRow) offline.discardPendingMutation(mutation.id)
         }
     }
 
