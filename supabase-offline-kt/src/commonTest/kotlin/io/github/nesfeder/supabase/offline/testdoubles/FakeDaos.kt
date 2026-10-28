@@ -294,8 +294,15 @@ internal class FakeMutationDao : InMemoryMutationDao() {
     var pendingCounts: Int = 0
         private set
 
+    /**
+     * When set, runs before each count of an identity's pending mutations ([countPendingOwnedBy]):
+     * a test holds it to keep a count reading.
+     */
+    var beforePendingCount: (suspend () -> Unit)? = null
+
     override suspend fun countPendingOwnedBy(owner: String, includeOwnerless: Boolean): Int {
         pendingCounts++
+        beforePendingCount?.invoke()
         return super.countPendingOwnedBy(owner, includeOwnerless)
     }
 

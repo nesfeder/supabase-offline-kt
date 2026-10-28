@@ -41,6 +41,9 @@ enum.case Count.planned | case planned
 property Date.offlineFilterText | var offlineFilterText: String { get }
 property Decimal.offlineFilterText | var offlineFilterText: String { get }
 property Double.offlineFilterText | var offlineFilterText: String { get }
+struct DownloadProgress | struct DownloadProgress
+property DownloadProgress.bytesReceived | let bytesReceived: Int
+property DownloadProgress.totalBytes | let totalBytes: Int?
 enum FilterOperator | enum FilterOperator
 enum.case FilterOperator.adj | case adj
 enum.case FilterOperator.cd | case cd
@@ -175,6 +178,7 @@ method OfflineBucketApi.createSignedURLs(paths:expiresIn:) | func createSignedUR
 method OfflineBucketApi.createSignedUploadURL(path:upsert:) | func createSignedUploadURL(path: String, upsert: Bool = false) async throws -> OfflineBucketApi.UploadSignedURL
 method OfflineBucketApi.download(path:options:isPublic:) | func download(path: String, options: OfflineBucketApi.ImageTransformation? = nil, isPublic: Bool = false) async throws -> Data
 method OfflineBucketApi.ensureCachedFile(path:isPublic:) | func ensureCachedFile(path: String, isPublic: Bool = false) async throws -> CachedFile
+method OfflineBucketApi.ensureCachedFile(path:isPublic:onProgress:) | func ensureCachedFile(path: String, isPublic: Bool = false, onProgress: @escaping @Sendable (DownloadProgress) -> Void) async throws -> CachedFile
 method OfflineBucketApi.evictCachedFile(path:) | func evictCachedFile(path: String) async throws
 method OfflineBucketApi.evictCachedFile(path:transform:) | func evictCachedFile(path: String, transform: OfflineBucketApi.ImageTransformation) async throws
 method OfflineBucketApi.exists(path:) | func exists(path: String) async throws -> Bool
@@ -607,6 +611,9 @@ conformance Count | Swift.Equatable
 conformance Count | Swift.Hashable
 conformance Count | Swift.RawRepresentable
 conformance Count | Swift.Sendable
+conformance DownloadProgress | Swift.Equatable
+conformance DownloadProgress | Swift.Hashable
+conformance DownloadProgress | Swift.Sendable
 conformance FilterOperator | Swift.CaseIterable
 conformance FilterOperator | Swift.Equatable
 conformance FilterOperator | Swift.Hashable

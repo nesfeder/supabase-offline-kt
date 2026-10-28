@@ -42,6 +42,7 @@ client reports, for fakes of your own.
 - ``cachedResponse(value:data:count:fetchedAt:hasPendingMutations:)``
 - ``cachedResponse(value:data:count:fetchedAt:pendingRowKeys:)``
 - ``cachedFile(path:fetchedAt:sizeBytes:)``
+- ``downloadProgress(bytesReceived:totalBytes:)``
 - ``pendingUpload(id:bucketId:path:createdAt:sizeBytes:contentType:upsert:)``
 - ``rejectedUpload(id:bucketId:path:createdAt:sizeBytes:contentType:upsert:serverError:message:rejectedAt:isRetryable:)``
 - ``fileUploadResponse(id:path:key:)``

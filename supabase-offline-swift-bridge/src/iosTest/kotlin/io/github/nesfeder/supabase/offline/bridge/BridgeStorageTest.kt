@@ -131,6 +131,30 @@ class BridgeStorageTest {
     }
 
     @Test
+    fun ensureCachedFile_with_progress_hands_the_bytes_received_before_its_answer() = bridgeTest {
+        // Given
+        val client = openTestClient(server)
+        // Handed one at a time, each before the answer
+        val received = mutableListOf<Long>()
+
+        // When
+        val ensured = CompletionProbe<BridgeCachedFile>()
+        client.storage.ensureCachedFileWithProgress(
+            "avatars",
+            "a.png",
+            false,
+            { bytes, _ -> received += bytes },
+            ensured.completion,
+        )
+        val file = assertNotNull(ensured.awaitValue())
+
+        // Then — the last progress holds every byte of the file
+        assertEquals(7L, file.sizeBytes)
+        assertEquals(7L, received.last())
+        client.closeAndWait()
+    }
+
+    @Test
     fun a_pin_holds_until_unpinned_and_a_path_that_cannot_be_cached_is_refused() = bridgeTest {
         // Given
         val client = openTestClient(server)

@@ -74,6 +74,7 @@ your test scripts: see <doc:TestingYourApp>.
 - ``OfflineStorage``
 - ``OfflineBucketApi``
 - ``CachedFile``
+- ``DownloadProgress``
 - ``UploadOutcome``
 - ``PendingUpload``
 - ``PendingUploadSequence``

@@ -33,6 +33,7 @@ import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.StateFlow
@@ -357,6 +358,68 @@ class SyncStatusTest {
         )
         client.close()
     }
+
+    @Test
+    fun the_status_keeps_counting_after_the_rejected_list_fails_while_a_count_is_reading() =
+        runTest {
+            // Given — the status's first count is still reading the queue when its watch of the
+            // rejected list fails, as a slow disk and a failing read together would
+            var failing = true
+            val countReading = CompletableDeferred<Unit>()
+            val mutationDao =
+                FakeMutationDao().apply {
+                    beforePendingCount = { if (countReading.complete(Unit)) awaitCancellation() }
+                }
+            val cacheDao =
+                FakeQueryCacheDao().apply {
+                    onGetSnapshot = { table, key ->
+                        if (
+                            failing &&
+                                table == RESERVED_TABLE_NAME &&
+                                key == REJECTED_MUTATIONS_CACHE_KEY
+                        ) {
+                            countReading.await()
+                            error("Scripted failure reading the rejected list")
+                        }
+                    }
+                }
+            val logs = RecordingLogSink()
+            val server = RecordingPostgrestServer(answer = { connectivityFailure() })
+            val client =
+                newTestOfflineClient(
+                    supabase = server.supabaseClient(),
+                    queryCacheDao = cacheDao,
+                    mutationDao = mutationDao,
+                    engineLogger = logs.asEngineLogger(),
+                )
+            withContext(Dispatchers.Default) {
+                withTimeout(10.seconds) {
+                    while (logs.entries.none { "IllegalStateException" in it.message }) delay(
+                        10.milliseconds
+                    )
+                }
+            }
+            failing = false
+
+            // When — a write is queued offline
+            client.from(TABLE).insert(row(1))
+            val counted = runCatching {
+                client.syncStatus.awaiting { it.pendingMutationCount == 1 }
+            }
+
+            // Then — the status said it lost track, and follows the queue again
+            assertTrue(
+                counted.isSuccess,
+                "the status never counted the queued write (status=${client.syncStatus.value}); " +
+                    "${logs.entries}",
+            )
+            assertTrue(
+                logs.entries.any { "lost track of the queue" in it.message },
+                "${logs.entries}",
+            )
+            assertTrue(logs.entries.none { "failed unexpectedly" in it.message }, "${logs.entries}")
+            client.close()
+        }
 
     @Test
     fun the_status_can_be_read_after_close_and_holds_its_last_value() = runTest {

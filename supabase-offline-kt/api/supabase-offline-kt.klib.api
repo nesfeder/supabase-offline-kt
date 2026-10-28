@@ -140,6 +140,7 @@ abstract interface io.github.nesfeder.supabase.offline/OfflineBucketApi : io.git
     abstract suspend fun cachedFile(kotlin/String): io.github.nesfeder.supabase.offline/CachedFile? // io.github.nesfeder.supabase.offline/OfflineBucketApi.cachedFile|cachedFile(kotlin.String){}[0]
     abstract suspend fun cachedFile(kotlin/String, kotlin/Function1<io.github.jan.supabase.storage/ImageTransformation, kotlin/Unit>): io.github.nesfeder.supabase.offline/CachedFile? // io.github.nesfeder.supabase.offline/OfflineBucketApi.cachedFile|cachedFile(kotlin.String;kotlin.Function1<io.github.jan.supabase.storage.ImageTransformation,kotlin.Unit>){}[0]
     abstract suspend fun ensureCachedFile(kotlin/String, kotlin/Boolean = ...): io.github.nesfeder.supabase.offline/CachedFile // io.github.nesfeder.supabase.offline/OfflineBucketApi.ensureCachedFile|ensureCachedFile(kotlin.String;kotlin.Boolean){}[0]
+    abstract suspend fun ensureCachedFile(kotlin/String, kotlin/Boolean = ..., kotlin/Function1<io.github.nesfeder.supabase.offline/DownloadProgress, kotlin/Unit>): io.github.nesfeder.supabase.offline/CachedFile // io.github.nesfeder.supabase.offline/OfflineBucketApi.ensureCachedFile|ensureCachedFile(kotlin.String;kotlin.Boolean;kotlin.Function1<io.github.nesfeder.supabase.offline.DownloadProgress,kotlin.Unit>){}[0]
     abstract suspend fun evictCachedFile(kotlin/String) // io.github.nesfeder.supabase.offline/OfflineBucketApi.evictCachedFile|evictCachedFile(kotlin.String){}[0]
     abstract suspend fun evictCachedFile(kotlin/String, kotlin/Function1<io.github.jan.supabase.storage/ImageTransformation, kotlin/Unit>) // io.github.nesfeder.supabase.offline/OfflineBucketApi.evictCachedFile|evictCachedFile(kotlin.String;kotlin.Function1<io.github.jan.supabase.storage.ImageTransformation,kotlin.Unit>){}[0]
     abstract suspend fun isCachedFilePinned(kotlin/String): kotlin/Boolean // io.github.nesfeder.supabase.offline/OfflineBucketApi.isCachedFilePinned|isCachedFilePinned(kotlin.String){}[0]
@@ -519,6 +520,19 @@ final class io.github.nesfeder.supabase.offline/ConflictedMutation { // io.githu
     final fun equals(kotlin/Any?): kotlin/Boolean // io.github.nesfeder.supabase.offline/ConflictedMutation.equals|equals(kotlin.Any?){}[0]
     final fun hashCode(): kotlin/Int // io.github.nesfeder.supabase.offline/ConflictedMutation.hashCode|hashCode(){}[0]
     final fun toString(): kotlin/String // io.github.nesfeder.supabase.offline/ConflictedMutation.toString|toString(){}[0]
+}
+
+final class io.github.nesfeder.supabase.offline/DownloadProgress { // io.github.nesfeder.supabase.offline/DownloadProgress|null[0]
+    final val bytesReceived // io.github.nesfeder.supabase.offline/DownloadProgress.bytesReceived|{}bytesReceived[0]
+        final fun <get-bytesReceived>(): kotlin/Long // io.github.nesfeder.supabase.offline/DownloadProgress.bytesReceived.<get-bytesReceived>|<get-bytesReceived>(){}[0]
+    final val totalBytes // io.github.nesfeder.supabase.offline/DownloadProgress.totalBytes|{}totalBytes[0]
+        final fun <get-totalBytes>(): kotlin/Long? // io.github.nesfeder.supabase.offline/DownloadProgress.totalBytes.<get-totalBytes>|<get-totalBytes>(){}[0]
+
+    final fun component1(): kotlin/Long // io.github.nesfeder.supabase.offline/DownloadProgress.component1|component1(){}[0]
+    final fun component2(): kotlin/Long? // io.github.nesfeder.supabase.offline/DownloadProgress.component2|component2(){}[0]
+    final fun equals(kotlin/Any?): kotlin/Boolean // io.github.nesfeder.supabase.offline/DownloadProgress.equals|equals(kotlin.Any?){}[0]
+    final fun hashCode(): kotlin/Int // io.github.nesfeder.supabase.offline/DownloadProgress.hashCode|hashCode(){}[0]
+    final fun toString(): kotlin/String // io.github.nesfeder.supabase.offline/DownloadProgress.toString|toString(){}[0]
 }
 
 final class io.github.nesfeder.supabase.offline/MutationConflict { // io.github.nesfeder.supabase.offline/MutationConflict|null[0]

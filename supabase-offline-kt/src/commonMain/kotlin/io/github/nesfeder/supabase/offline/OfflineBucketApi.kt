@@ -181,6 +181,35 @@ public interface OfflineBucketApi : BucketApi {
     public suspend fun ensureCachedFile(path: String, isPublic: Boolean = false): CachedFile
 
     /**
+     * [ensureCachedFile], handing [onProgress] the progress of the download it runs or joins: the
+     * bytes received so far, and the object's size when the server's answer gave it. Every call
+     * waiting for one object's shared download is handed its progress, and one that joins it late
+     * starts from where it stands. A cached copy is returned without a call to [onProgress]. A
+     * download started again counts from zero: after the object was written meanwhile, or after a
+     * download this call joined failed, when the call makes its own request.
+     *
+     * [onProgress] runs in the caller's coroutine, on its dispatcher, so it may update a UI from
+     * the main thread; never two at once, and never after this returns. A progress that arrives
+     * while it runs replaces any it has not been handed yet, and the last one is handed before this
+     * returns. What it throws ends this call with that exception; the download goes on for the
+     * other calls waiting for it. A call made without [onProgress] adds nothing to the download.
+     *
+     * @param path the object path within this bucket.
+     * @param isPublic whether to download through the public URL rather than the authenticated one.
+     * @param onProgress handed each progress of the download.
+     * @return the cached file.
+     * @throws IllegalArgumentException as [ensureCachedFile] without it.
+     * @throws IllegalStateException as [ensureCachedFile] without it.
+     * @throws Exception as [ensureCachedFile] without it, or what [onProgress] threw.
+     */
+    @Throws(Throwable::class)
+    public suspend fun ensureCachedFile(
+        path: String,
+        isPublic: Boolean = false,
+        onProgress: (DownloadProgress) -> Unit,
+    ): CachedFile
+
+    /**
      * Deletes every cached copy of the object at [path] from this device: the untransformed copy
      * and each image transform. Nothing is sent, and the object stays on the server; the next
      * download fetches it again. Other objects' copies stay. A pin on the object ([pinCachedFile])

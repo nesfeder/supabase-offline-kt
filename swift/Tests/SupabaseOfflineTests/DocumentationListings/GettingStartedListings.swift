@@ -167,7 +167,11 @@ struct GettingStartedListingsTests {
         try await offline.close()
     }
 
-    @Test func aSignOutWithALiveReadOpenLeavesNothingOfTheUserForTheNext() async throws {
+    // Each step pulls the live read's snapshots until the one it waits for, rather than polling for
+    // it against a deadline: a step waits as long as the read takes on a busy simulator, and a read
+    // that fails throws out of the test where it does. The time limit bounds a read that never shows
+    // what a step waits for.
+    @Test(.timeLimit(.minutes(1))) func aSignOutWithALiveReadOpenLeavesNothingOfTheUserForTheNext() async throws {
         // Given user A signed in, with a live read of A's rows open, on a server that answers by token
         let supabase = FakeSupabaseSwiftClient(signedInWith: "user-a-token")
         let tokens = RecordingList<String>()
@@ -188,33 +192,49 @@ struct GettingStartedListingsTests {
             server: server
         )
         let shown = RecordingList<[String]>()
-        let live = Task {
-            for try await snapshot in offline.from("todos").selectAsSequence(as: [Todo].self) {
-                shown.append((snapshot.result ?? []).map(\.title))
-            }
+        do {
+            // The read's subscription ends when `live` goes, at the end of this block
+            var live = offline.from("todos").selectAsSequence(as: [Todo].self).makeAsyncIterator()
+            let showedA = try await pull(&live, until: ["A's errand"], recordingIn: shown)
+            try #require(showedA, "shown: \(shown.values), fetched with: \(tokens.values)")
+            let listings = GettingStartedListings(offline: offline, supabase: supabase)
+
+            // When A signs out as the article shows, the live read still open
+            try await listings.signOut()
+            let fetchedBeforeB = tokens.values.count
+            let showedNothing = try await pull(&live, until: [], recordingIn: shown)
+            try #require(showedNothing, "shown: \(shown.values)")
+            let cleared = shown.values.count - 1
+
+            // And B signs in
+            supabase.auth.signIn(accessToken: "user-b-token")
+            try await listings.didSignIn()
+
+            // Then the open live read shows B's rows, nothing was fetched with A's token after the
+            // sign-out, and nothing of A's is shown or kept
+            let showedB = try await pull(&live, until: ["B's errand"], recordingIn: shown)
+            try #require(showedB, "shown: \(shown.values), fetched with: \(tokens.values)")
+            #expect(tokens.values.dropFirst(fetchedBeforeB).allSatisfy { $0 == "user-b-token" }, "\(tokens.values)")
+            #expect(shown.values.dropFirst(cleared).allSatisfy { !$0.contains("A's errand") }, "\(shown.values)")
         }
-        #expect(await eventually { shown.values.last == ["A's errand"] })
-        let listings = GettingStartedListings(offline: offline, supabase: supabase)
-
-        // When A signs out as the article shows, the live read still open
-        try await listings.signOut()
-        let fetchedBeforeB = tokens.values.count
-        #expect(await eventually { shown.values.last == [] })
-        let cleared = shown.values.count - 1
-
-        // And B signs in
-        supabase.auth.signIn(accessToken: "user-b-token")
-        try await listings.didSignIn()
-
-        // Then the open live read shows B's rows, nothing was fetched with A's token after the
-        // sign-out, and nothing of A's is shown or kept
-        #expect(await eventually { shown.values.last == ["B's errand"] })
-        #expect(tokens.values.dropFirst(fetchedBeforeB).allSatisfy { $0 == "user-b-token" }, "\(tokens.values)")
-        #expect(shown.values.dropFirst(cleared).allSatisfy { !$0.contains("A's errand") }, "\(shown.values)")
-        live.cancel()
         try await offline.disableNetwork()
         let kept = try await offline.from("todos").select(readStrategy: .cacheOnly).execute([Todo].self).value
         #expect(kept.map(\.title) == ["B's errand"])
         try await offline.close()
+    }
+
+    /// Pulls `live`'s snapshots, recording the titles each one shows in `shown`, until one shows
+    /// `titles`: `false` when the read ends first. A read that fails throws its error here.
+    private func pull(
+        _ live: inout QuerySnapshotSequence<[Todo]>.Iterator,
+        until titles: [String],
+        recordingIn shown: RecordingList<[String]>
+    ) async throws -> Bool {
+        while let snapshot = try await live.next() {
+            let showing = (snapshot.result ?? []).map(\.title)
+            shown.append(showing)
+            if showing == titles { return true }
+        }
+        return false
     }
 }

@@ -60,6 +60,12 @@ All notable changes to this project are recorded in this file. The format follow
   `clearLocalData()` or a change of user. Pinning sends and downloads nothing, writes keep the pin,
   and a move takes it along; `isCachedFilePinned(path)` says whether an object is pinned. The Swift
   package has `pinCachedFile(path:)`, `unpinCachedFile(path:)` and `isCachedFilePinned(path:)`.
+- `ensureCachedFile(path) { progress -> … }` hands its lambda the download's progress: the bytes
+  received and the object's size, `null` when the server gave none, as a `DownloadProgress`. Every
+  call waiting for one object's shared download is handed it, in its own coroutine, and the last one
+  before it returns; a call without the lambda adds nothing to the download. The Swift package has
+  `ensureCachedFile(path:isPublic:onProgress:)` and `DownloadProgress`, and the testing artifacts a
+  `downloadProgress` factory.
 - `cachedFile(path) { … }` returns the cached copy of one image transform, the one a download with
   the same `transform { … }` keeps, so a cached thumbnail can be handed to an image loader as a
   file. `localUriIfCached(path) { … }` on Android and `localPathIfCached(path) { … }` on iOS give it
@@ -204,6 +210,11 @@ All notable changes to this project are recorded in this file. The format follow
   runs, which could be after the join was taken, and it drops a change nothing listens for. Each
   table now listens before its join goes out. The read of the table on every join usually made up
   for the loss.
+- `syncStatus` could stop counting the queue, the rejected list and the conflicted list for good
+  when a read of the rejected or conflicted list failed while a count was being read, as a failing
+  disk under load can make happen: its counts stayed where they were for the life of the client,
+  and a background failure was logged. Such a failure is now logged as any other failed read, and
+  the counts follow the queue again after the usual wait.
 - An object and a folder of the same name in one bucket, such as `album` and `album/cover.png`, can
   both be cached now. On disk they would need one name to be both a file and a folder, so the one
   downloaded second was never cached: `ensureCachedFile` threw for it every time, a channel download
