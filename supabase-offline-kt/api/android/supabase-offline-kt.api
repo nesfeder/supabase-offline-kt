@@ -290,8 +290,11 @@ public abstract interface class io/github/nesfeder/supabase/offline/OfflineBucke
 	public static synthetic fun ensureCachedFile$default (Lio/github/nesfeder/supabase/offline/OfflineBucketApi;Ljava/lang/String;ZLkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
 	public abstract fun evictCachedFile (Ljava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun evictCachedFile (Ljava/lang/String;Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public abstract fun isCachedFilePinned (Ljava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public abstract fun pinCachedFile (Ljava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public synthetic fun setHeader (Ljava/lang/String;Ljava/lang/String;)Lio/github/jan/supabase/storage/BucketApi;
 	public abstract fun setHeader (Ljava/lang/String;Ljava/lang/String;)Lio/github/nesfeder/supabase/offline/OfflineBucketApi;
+	public abstract fun unpinCachedFile (Ljava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 }
 
 public final class io/github/nesfeder/supabase/offline/OfflineBucketApi_androidKt {

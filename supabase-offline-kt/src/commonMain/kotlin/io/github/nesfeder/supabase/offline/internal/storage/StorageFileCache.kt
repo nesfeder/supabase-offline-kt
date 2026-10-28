@@ -178,11 +178,13 @@ internal fun cachedFileRowOf(
 /**
  * The client's file cache for Storage objects, shared by every bucket it hands out. An entry's file
  * is derived from its bucket and path, never read back from its row, and every file operation stays
- * inside the data directory; commits, evictions, invalidations and clears run under one lock, and
- * reads pin their files under a lock of their own, which an eviction holds only to unlink a file,
- * so no read waits behind those.
+ * inside the data directory; commits, evictions, invalidations, pins and clears run under one lock,
+ * and reads hold their files under a lock of their own, which an eviction holds only to unlink a
+ * file, so no read waits behind those. An object the app pinned keeps its copies through every
+ * eviction pass, until it is unpinned, evicted, deleted or the cache cleared.
  *
  * @param cachedFileDao the cached files' rows.
+ * @param pinRecords the pinned objects' records.
  * @param ownership whether the cache serves, and takes files for, the current identity.
  * @param fetchedAtMillis the clock a row's fetch time is read from.
  * @param maxSizeBytes the size bound, or `null` for none.
@@ -196,6 +198,7 @@ internal fun cachedFileRowOf(
  */
 internal class StorageFileCache(
     private val cachedFileDao: CachedFileDao,
+    private val pinRecords: PinnedFileRecords,
     private val ownership: CacheOwnership,
     private val fetchedAtMillis: () -> Long,
     private val dataDirectoryProvider: () -> Path,
@@ -282,15 +285,15 @@ internal class StorageFileCache(
     private val openTemporaryFiles = mutableSetOf<Path>()
 
     /**
-     * The read side's lock: [pins] and [recentUses]. It is never held over a database call or while
-     * waiting for [lock]. A read takes it alone, so no read waits behind a commit, an eviction pass
-     * or a clear; an eviction takes it under [lock], per file it removes, for no more than the pin
-     * check, the use check and the unlink.
+     * The read side's lock: [readHolds] and [recentUses]. It is never held over a database call or
+     * while waiting for [lock]. A read takes it alone, so no read waits behind a commit, an
+     * eviction pass or a clear; an eviction takes it under [lock], per file it removes, for no more
+     * than the hold check, the use check and the unlink.
      */
     private val readLock = Mutex()
 
     /** Entry key → number of reads in progress. Guarded by [readLock]. */
-    private val pins = mutableMapOf<String, Int>()
+    private val readHolds = mutableMapOf<String, Int>()
 
     /**
      * Entry key → the latest use [useCachedCopy] left off the file, within [USE_MARK_INTERVAL] of
@@ -540,22 +543,23 @@ internal class StorageFileCache(
     }
 
     /**
-     * Runs [block] with [entry] pinned, so no eviction removes its file while [block] reads it.
-     * Pins live under [readLock], so the read waits for no commit, eviction pass or clear.
+     * Runs [block] holding [entry] for a read, so no eviction removes its file while [block] reads
+     * it. Holds live under [readLock], so the read waits for no commit, eviction pass or clear.
      *
-     * @param entry the entry to pin.
+     * @param entry the entry to hold.
      * @param block the read.
      * @return what [block] returns.
      */
-    suspend fun <T> withPinned(entry: FileCacheEntry, block: suspend () -> T): T {
-        readLock.withLock { pins[entry.key] = (pins[entry.key] ?: 0) + 1 }
+    suspend fun <T> holdingForRead(entry: FileCacheEntry, block: suspend () -> T): T {
+        readLock.withLock { readHolds[entry.key] = (readHolds[entry.key] ?: 0) + 1 }
         try {
             return block()
         } finally {
             withContext(NonCancellable) {
                 readLock.withLock {
-                    val remaining = (pins[entry.key] ?: 1) - 1
-                    if (remaining <= 0) pins.remove(entry.key) else pins[entry.key] = remaining
+                    val remaining = (readHolds[entry.key] ?: 1) - 1
+                    if (remaining <= 0) readHolds.remove(entry.key)
+                    else readHolds[entry.key] = remaining
                 }
             }
         }
@@ -568,8 +572,8 @@ internal class StorageFileCache(
      * @return the bytes.
      */
     suspend fun readBytes(entry: FileCacheEntry): ByteArray? =
-        withPinned(entry) {
-            val cached = useCachedCopy(entry) ?: return@withPinned null
+        holdingForRead(entry) {
+            val cached = useCachedCopy(entry) ?: return@holdingForRead null
             withContext(ioDispatcher) {
                 try {
                     fileSystem.read(cached.path.toPath()) { readByteArray() }
@@ -590,8 +594,8 @@ internal class StorageFileCache(
      * @return `false` when nothing was cached, so nothing was written.
      */
     suspend fun copyTo(entry: FileCacheEntry, channel: ByteWriteChannel): Boolean =
-        withPinned(entry) {
-            val cached = useCachedCopy(entry) ?: return@withPinned false
+        holdingForRead(entry) {
+            val cached = useCachedCopy(entry) ?: return@holdingForRead false
             copyFile(cached.path.toPath(), channel)
             true
         }
@@ -843,9 +847,79 @@ internal class StorageFileCache(
     }
 
     /**
+     * Drops every cached copy of the object at [objectPath] and its pin, because the app no longer
+     * wants the object on the device: it evicted the object, or deleted it through this client.
+     * Downloads of it still running are never committed, as with [invalidateObject].
+     *
+     * @param bucketId the bucket.
+     * @param objectPath the object path.
+     */
+    suspend fun forgetObject(bucketId: String, objectPath: String) {
+        withContext(ioDispatcher + NonCancellable) {
+            lock.withLock {
+                removeObjectLocked(bucketId, objectPath)
+                pinRecords.unpin(bucketId, objectPath)
+            }
+        }
+    }
+
+    /**
+     * Pins the object at [objectPath]: no eviction pass removes its copies, the original's and each
+     * image transform's, cached now or later, until [unpinObject], [forgetObject] or a clear. A
+     * write to the object drops its copies and keeps the pin; a move takes the pin along. Nothing
+     * is downloaded. While the cache is not the current identity's, the pin is not recorded, as a
+     * download then is not kept (logged).
+     *
+     * Runs under [lock], which an eviction pass holds while it removes files: once this returns, no
+     * pass takes the object's copies.
+     *
+     * @param bucketId the bucket.
+     * @param objectPath the object path.
+     * @return whether the pin was recorded.
+     */
+    suspend fun pinObject(bucketId: String, objectPath: String): Boolean =
+        withContext(ioDispatcher) {
+            lock.withLock {
+                if (!ownership.cacheTakesWritesOfCurrentIdentity()) {
+                    engineLogger.info {
+                        "Storage pin in $bucketId not recorded: the file cache is another user's"
+                    }
+                    return@withLock false
+                }
+                pinRecords.pin(bucketId, objectPath)
+                true
+            }
+        }
+
+    /**
+     * Removes the pin of the object at [objectPath], if it has one. Its copies stay, for the next
+     * eviction pass to weigh as it does any other file's.
+     *
+     * @param bucketId the bucket.
+     * @param objectPath the object path.
+     */
+    suspend fun unpinObject(bucketId: String, objectPath: String) {
+        withContext(ioDispatcher) { lock.withLock { pinRecords.unpin(bucketId, objectPath) } }
+    }
+
+    /**
+     * Whether the object at [objectPath] is pinned; never while the cache is not the current
+     * identity's. Takes no lock: a pin and an unpin are one row each.
+     *
+     * @param bucketId the bucket.
+     * @param objectPath the object path.
+     * @return whether it is pinned.
+     */
+    suspend fun isObjectPinned(bucketId: String, objectPath: String): Boolean =
+        withContext(ioDispatcher) {
+            ownership.cacheServesCurrentIdentity() && pinRecords.isPinned(bucketId, objectPath)
+        }
+
+    /**
      * Mirrors a server-side move in the cache: the destination's stale copies are dropped, and the
      * source's copy, if cached, becomes the destination's. Transformed variants of the source are
-     * dropped; they are cached again when next downloaded.
+     * dropped; they are cached again when next downloaded. The source's pin moves to the
+     * destination, which keeps its own.
      */
     suspend fun moveObject(fromBucket: String, from: String, toBucket: String, to: String) {
         withContext(ioDispatcher + NonCancellable) {
@@ -863,18 +937,34 @@ internal class StorageFileCache(
                     moveFileLocked(source, destination, sourceRow)
                 }
                 removeObjectLocked(fromBucket, from)
+                movePinLocked(fromBucket, from, toBucket, to, keepSource = false)
+            }
+        }
+    }
+
+    /**
+     * Drops the cached copies at both ends of a move that may or may not have reached the server,
+     * as [invalidateObject] does for each. The source's pin stays, and the destination gets it too:
+     * the object is at one of the two.
+     */
+    suspend fun invalidateMove(fromBucket: String, from: String, toBucket: String, to: String) {
+        withContext(ioDispatcher + NonCancellable) {
+            lock.withLock {
+                removeObjectLocked(fromBucket, from)
+                removeObjectLocked(toBucket, to)
+                movePinLocked(fromBucket, from, toBucket, to, keepSource = true)
             }
         }
     }
 
     /**
      * Empties the cache, for an identity change or [clearFiles]. Runs [clearDatabase] — the store's
-     * own wipe, or the cache's rows alone, removing every storage row either way — and deletes both
-     * cache directories, all under the lock and after bumping the generation, so no download that
-     * started before can commit into the emptied cache. The temporary file of a download still
-     * running stays, for its caller to read and [discard].
+     * own wipe, or the cache's rows alone, removing every storage row and every pin either way —
+     * and deletes both cache directories, all under the lock and after bumping the generation, so
+     * no download that started before can commit into the emptied cache. The temporary file of a
+     * download still running stays, for its caller to read and [discard].
      *
-     * @param clearDatabase the wipe of the rows.
+     * @param clearDatabase the wipe of the rows and the pins.
      */
     suspend fun clear(clearDatabase: suspend () -> Unit) {
         withContext(ioDispatcher + NonCancellable) {
@@ -895,11 +985,16 @@ internal class StorageFileCache(
     }
 
     /**
-     * Empties the cache and nothing else, as [clear] does: every row and file goes, and no download
-     * that started before commits. The rest of the database is left as it is.
+     * Empties the cache and nothing else, as [clear] does: every row, file and pin goes, and no
+     * download that started before commits. The rest of the database is left as it is.
      */
     suspend fun clearFiles() {
-        clear { cachedFileDao.deleteAll() }
+        clear {
+            pinRecords.runInTransaction {
+                cachedFileDao.deleteAll()
+                pinRecords.unpinAll()
+            }
+        }
     }
 
     /**
@@ -1141,12 +1236,39 @@ internal class StorageFileCache(
     }
 
     /**
+     * Gives the object at [to] the pin of the one at [from], when [from] has one and [to] can be
+     * cached; [from] loses it unless [keepSource]. [to]'s own pin stays either way.
+     */
+    private suspend fun movePinLocked(
+        fromBucket: String,
+        from: String,
+        toBucket: String,
+        to: String,
+        keepSource: Boolean,
+    ) {
+        if (!pinRecords.isPinned(fromBucket, from)) return
+        pinRecords.runInTransaction {
+            if (entryFor(toBucket, to) != null) pinRecords.pin(toBucket, to)
+            if (!keepSource) pinRecords.unpin(fromBucket, from)
+        }
+    }
+
+    /**
+     * The key of the object [row] holds a copy of: the row's own key for the original, the
+     * original's for an image transform.
+     */
+    private fun objectKeyOf(row: CachedFileRow): String =
+        cachedFileKeyOf(row.bucketId, row.path.substringBefore(VARIANT_SEPARATOR))
+
+    /**
      * Once the cache is over its bound, evicts the least recently used files until it is a tenth
      * below it. The rows are read, and their files' use times looked up, outside [lock], so no
      * commit, invalidation or clear queues behind a look at every file; each file chosen is looked
-     * at again, and removed, under [lock] and [readLock]. Spared are [protectedKey], pinned entries
-     * and files used within [RECENT_USE_GRACE], and the scan is skipped until the oldest file it
-     * had to spare ages out.
+     * at again, and removed, under [lock] and [readLock]. Spared are [protectedKey], the copies of
+     * pinned objects, entries a read holds and files used within [RECENT_USE_GRACE], and the scan
+     * is skipped until the oldest file it had to spare ages out. Pinned copies count toward the
+     * bound: when they fill it, the cache stays over it, and every other file goes once its grace
+     * has passed.
      */
     private suspend fun enforceSizeBound(protectedKey: String) {
         val limit = maxSizeBytes ?: return
@@ -1159,20 +1281,24 @@ internal class StorageFileCache(
         if (!scanDue) return
         val scannedAt = nowMillis()
         val usesAtScan = readLock.withLock { recentUses.toMap() }
+        val pinnedAtScan = pinRecords.pinnedObjectKeys()
         val candidates =
             cachedFileDao
                 .all()
-                .filter { row -> row.key != protectedKey }
+                .filter { row -> row.key != protectedKey && objectKeyOf(row) !in pinnedAtScan }
                 .map { row -> row to lastUsedMillis(row, usesAtScan) }
                 .sortedBy { (_, lastUsed) -> lastUsed }
         lock.withLock {
             // Cleared since the scan: nothing is left to evict
             var remaining = trackedBytes ?: return
+            // Read again: an object pinned since the scan was pinned under this lock
+            val pinned = pinRecords.pinnedObjectKeys()
             var evicted = 0
             var oldestSpared: Long? = null
             try {
                 for ((scanned, usedAtScan) in candidates) {
                     if (remaining <= lowWater) break
+                    if (objectKeyOf(scanned) in pinned) continue
                     if (usedAtScan >= scannedAt - grace) {
                         oldestSpared = minOf(oldestSpared ?: usedAtScan, usedAtScan)
                         continue
@@ -1183,10 +1309,10 @@ internal class StorageFileCache(
                     val file = entryForRow(row)?.file
                     val metadata = file?.let { fileSystem.metadataOrNull(it) }
                     val contained = file != null && directoryContains(file)
-                    // The read side's lock only for the pin, the use in memory and the unlink: a
-                    // read that pins after this finds the file gone, never half gone
+                    // The read side's lock only for the hold, the use in memory and the unlink: a
+                    // read that holds the file after this finds it gone, never half gone
                     val taken = readLock.withLock {
-                        if (row.key in pins) return@withLock false
+                        if (row.key in readHolds) return@withLock false
                         val lastUsed = lastUsedMillis(metadata, recentUses[row.key])
                         if (lastUsed >= nowMillis() - grace) {
                             oldestSpared = minOf(oldestSpared ?: lastUsed, lastUsed)

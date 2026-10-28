@@ -301,6 +301,34 @@ internal constructor(
     public fun clearFileCache(completion: (BridgeError?) -> Unit): BridgeCancellable =
         runner.runToCompletion("clearFileCache", completion) { offline().storage.clearFileCache() }
 
+    /** Pins [path] on the device, so the cache never evicts its copies; downloads nothing. */
+    public fun pinCachedFile(
+        bucket: String,
+        path: String,
+        completion: (BridgeError?) -> Unit,
+    ): BridgeCancellable =
+        runner.runToCompletion("pinCachedFile", completion) { bucketOf(bucket).pinCachedFile(path) }
+
+    /** Removes the pin on [path], if it has one; its cached copies stay. */
+    public fun unpinCachedFile(
+        bucket: String,
+        path: String,
+        completion: (BridgeError?) -> Unit,
+    ): BridgeCancellable =
+        runner.runToCompletion("unpinCachedFile", completion) {
+            bucketOf(bucket).unpinCachedFile(path)
+        }
+
+    /** Whether [path] is pinned on the device; never touches the network. */
+    public fun isCachedFilePinned(
+        bucket: String,
+        path: String,
+        completion: (Boolean?, BridgeError?) -> Unit,
+    ): BridgeCancellable =
+        runner.runOnce("isCachedFilePinned", completion) {
+            bucketOf(bucket).isCachedFilePinned(path)
+        }
+
     /** The cached copy of [path], downloading it into the cache first when none is cached. */
     public fun ensureCachedFile(
         bucket: String,

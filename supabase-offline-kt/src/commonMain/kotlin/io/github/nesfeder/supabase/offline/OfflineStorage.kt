@@ -38,11 +38,11 @@ internal constructor(
 
     /**
      * Deletes every downloaded Storage file the library keeps on this device, in every bucket, with
-     * its record. The mutation queue, the cached query results and the rejected and conflicted
-     * lists stay, and nothing is sent. Call it to free the device's storage without dropping writes
-     * waiting to sync; the next download of each object fetches it again. At sign-out, call
-     * [Offline.clearLocalData] instead: it deletes these files too, and rewrites the database
-     * without what it deleted, which this does not.
+     * its record, and every pin ([OfflineBucketApi.pinCachedFile]). The mutation queue, the cached
+     * query results and the rejected and conflicted lists stay, and nothing is sent. Call it to
+     * free the device's storage without dropping writes waiting to sync; the next download of each
+     * object fetches it again. At sign-out, call [Offline.clearLocalData] instead: it deletes these
+     * files too, and rewrites the database without what it deleted, which this does not.
      *
      * A Storage download in flight may hand its bytes to its caller, or fail, but is not written
      * back, as with [Offline.clearLocalData]: an [OfflineBucketApi.ensureCachedFile] running

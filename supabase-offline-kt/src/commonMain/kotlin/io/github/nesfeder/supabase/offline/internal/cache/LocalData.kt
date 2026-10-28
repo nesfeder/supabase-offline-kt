@@ -4,6 +4,7 @@ package io.github.nesfeder.supabase.offline.internal.cache
 
 import io.github.nesfeder.supabase.offline.internal.db.CachedFileDao
 import io.github.nesfeder.supabase.offline.internal.db.MutationDao
+import io.github.nesfeder.supabase.offline.internal.db.PINNED_FILE_CACHE_KEY_PREFIX
 import io.github.nesfeder.supabase.offline.internal.db.PayloadWriteCountingDao
 import io.github.nesfeder.supabase.offline.internal.db.QUERY_SHAPE_CACHE_KEY_PREFIX
 import io.github.nesfeder.supabase.offline.internal.db.RESERVED_TABLE_NAME
@@ -68,9 +69,9 @@ internal class LocalData(
 
     /**
      * Empties the cache for [owner], the identity it now belongs to: every cached query with its
-     * shape record, and every Storage row, go in one transaction that records [owner]. The mutation
-     * queue and its records stay. No response or cache patch started before it lands afterward; the
-     * files of the Storage cache are its caller's to delete.
+     * shape record, and every Storage row and pin, go in one transaction that records [owner]. The
+     * mutation queue and its records stay. No response or cache patch started before it lands
+     * afterward; the files of the Storage cache are its caller's to delete.
      */
     suspend fun dropCacheFor(owner: String) {
         // The locks and order of [clearLocalData], which this is but for the mutation queue
@@ -84,6 +85,10 @@ internal class LocalData(
                         queryCacheDao.deleteWithCacheKeyPrefix(
                             RESERVED_TABLE_NAME,
                             QUERY_SHAPE_CACHE_KEY_PREFIX,
+                        )
+                        queryCacheDao.deleteWithCacheKeyPrefix(
+                            RESERVED_TABLE_NAME,
+                            PINNED_FILE_CACHE_KEY_PREFIX,
                         )
                         queryCacheDao.upsert(ownership.record.rowOf(owner))
                     }

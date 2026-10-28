@@ -45,12 +45,13 @@ import io.github.jan.supabase.storage.ImageTransformation
  * that does not begin a percent-escape throws [IllegalArgumentException] before anything is sent.
  *
  * The cache is bounded by [Offline.Config.fileCacheSizeBytes], evicting the least recently used
- * files first; [evictCachedFile] deletes one object's copies, and [OfflineStorage.clearFileCache]
- * and clearing local data empty it.
+ * files first and never those of an object pinned with [pinCachedFile]; [evictCachedFile] deletes
+ * one object's copies, and [OfflineStorage.clearFileCache] and clearing local data empty it.
  *
  * The members inherited from [BucketApi] keep supabase-kt's declarations, so they declare no
  * `@Throws`: in a framework exported to Swift, one that throws ends the app unless the caller's own
- * bridge catches around it. [cachedFile], [ensureCachedFile] and [evictCachedFile] declare it.
+ * bridge catches around it. [cachedFile], [ensureCachedFile], [evictCachedFile], [pinCachedFile],
+ * [unpinCachedFile] and [isCachedFilePinned] declare it.
  *
  * Only the library implements this interface; [OfflineInternal] marks it so.
  */
@@ -122,7 +123,8 @@ public interface OfflineBucketApi : BucketApi {
     /**
      * Deletes every cached copy of the object at [path] from this device: the untransformed copy
      * and each image transform. Nothing is sent, and the object stays on the server; the next
-     * download fetches it again. Other objects' copies stay.
+     * download fetches it again. Other objects' copies stay. A pin on the object ([pinCachedFile])
+     * goes too.
      *
      * A download of the object still running is handed to its caller but not cached, as when the
      * object is written through this bucket: an [ensureCachedFile] running meanwhile downloads it
@@ -137,8 +139,8 @@ public interface OfflineBucketApi : BucketApi {
      * Deletes the cached copy of one image transform of the object at [path] from this device: the
      * copy [cachedFile] with the same [transform] returns. The untransformed copy and the other
      * transforms stay; a transform that sets nothing is the untransformed copy, which goes alone.
-     * Nothing is sent. A download of that transform still running is handed to its caller but not
-     * cached.
+     * Nothing is sent, and a pin on the object stays. A download of that transform still running is
+     * handed to its caller but not cached.
      *
      * @param path the object path within this bucket.
      * @param transform the image transform, set as in a download's `transform { … }`.
@@ -146,4 +148,47 @@ public interface OfflineBucketApi : BucketApi {
      */
     @Throws(Throwable::class)
     public suspend fun evictCachedFile(path: String, transform: ImageTransformation.() -> Unit)
+
+    /**
+     * Pins the object at [path] on this device: the cache never evicts its copies, the
+     * untransformed one and each image transform's, cached now or later, however long ago they were
+     * used. Nothing is sent and nothing is downloaded; call [ensureCachedFile] to have a copy now.
+     * Pinning a pinned object changes nothing.
+     *
+     * The pin outlives a restart. It stays until [unpinCachedFile], [evictCachedFile] for the
+     * object, a delete of the object through this bucket, [OfflineStorage.clearFileCache], or
+     * clearing local data; the file cache emptied for another user takes it too. A write to the
+     * object drops its copies, as for any object, and keeps the pin, and a move through this bucket
+     * takes the pin to the new path.
+     *
+     * Pinned copies count toward [Offline.Config.fileCacheSizeBytes]. When they alone fill it, the
+     * cache stays over its bound, and every other file is evicted once it is no longer in use.
+     * While the cache still belongs to the user before, until a sign-in settles, the pin is not
+     * kept, as a download then is not.
+     *
+     * @param path the object path within this bucket.
+     * @throws IllegalArgumentException when [path] cannot be cached (see [OfflineBucketApi]).
+     * @throws IllegalStateException when the client is closed.
+     */
+    @Throws(Throwable::class) public suspend fun pinCachedFile(path: String)
+
+    /**
+     * Removes the pin [pinCachedFile] put on the object at [path], if it has one. Its cached copies
+     * stay, and the cache evicts them as it does any other file's once it is over its bound.
+     * Nothing is sent.
+     *
+     * @param path the object path within this bucket.
+     * @throws IllegalStateException when the client is closed.
+     */
+    @Throws(Throwable::class) public suspend fun unpinCachedFile(path: String)
+
+    /**
+     * Whether the object at [path] is pinned on this device ([pinCachedFile]), whether or not a
+     * copy of it is cached now. Never touches the network.
+     *
+     * @param path the object path within this bucket.
+     * @return `true` while the object is pinned.
+     * @throws IllegalStateException when the client is closed.
+     */
+    @Throws(Throwable::class) public suspend fun isCachedFilePinned(path: String): Boolean
 }

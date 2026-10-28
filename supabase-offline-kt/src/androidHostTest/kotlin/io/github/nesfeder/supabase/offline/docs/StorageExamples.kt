@@ -32,3 +32,17 @@ internal suspend fun freeSpace(offline: Offline, photos: OfflineBucketApi, path:
     // --8<-- [end:evict-and-clear]
     return thumbnail?.path
 }
+
+/** A "keep offline" switch: a pinned document stays on the device whatever the cache evicts. */
+internal suspend fun keepOffline(documents: OfflineBucketApi, path: String, keep: Boolean) {
+    // --8<-- [start:pin]
+    if (keep) {
+        // Never evicted from now on; downloaded now, so it is there offline
+        documents.pinCachedFile(path)
+        documents.ensureCachedFile(path)
+    } else {
+        // Evicted again when the cache needs the room
+        documents.unpinCachedFile(path)
+    }
+    // --8<-- [end:pin]
+}

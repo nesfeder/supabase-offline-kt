@@ -355,6 +355,57 @@ public struct OfflineBucketApi: Sendable {
         }
     }
 
+    /// Pins the object at `path` on the device: the cache never evicts its copies, the
+    /// untransformed one and each image transformation's, kept now or later, however long ago
+    /// they were used.
+    ///
+    /// Nothing is sent and nothing is downloaded; call ``ensureCachedFile(path:isPublic:)`` to
+    /// have a copy now. The pin outlives a restart. It stays until ``unpinCachedFile(path:)``,
+    /// ``evictCachedFile(path:)``, a removal of the object through this bucket,
+    /// ``OfflineStorage/clearFileCache()`` or ``SupabaseOfflineClient/clearLocalData()``; the kept
+    /// files emptied for another user take it too. An upload over the object drops its copies and
+    /// keeps the pin, and a move takes the pin to the new path.
+    ///
+    /// Pinned copies count toward the file cache's size bound. When they alone fill it, the cache
+    /// stays over its bound, and every other file is evicted once it is no longer in use.
+    ///
+    /// - Throws: ``OfflineError``: `invalidRequest` for a name the cache cannot hold (see
+    ///   ``OfflineBucketApi``), sending nothing, or `clientClosed` once the client is closed.
+    public func pinCachedFile(path: String) async throws {
+        try refuseANameTheCacheCannotHold(path)
+        try await client.connection.call { core, complete in
+            core.storage.pinCachedFile(bucket: bucketId, path: path) { failure in
+                complete(coreResult(failure))
+            }
+        }
+    }
+
+    /// Removes the pin ``pinCachedFile(path:)`` put on the object at `path`, if it has one.
+    ///
+    /// Its cached copies stay, and the cache evicts them as it does any other file's once it is
+    /// over its bound. Nothing is sent.
+    ///
+    /// - Throws: ``OfflineError``: `clientClosed` once the client is closed.
+    public func unpinCachedFile(path: String) async throws {
+        try await client.connection.call { core, complete in
+            core.storage.unpinCachedFile(bucket: bucketId, path: path) { failure in
+                complete(coreResult(failure))
+            }
+        }
+    }
+
+    /// Whether the object at `path` is pinned on the device (``pinCachedFile(path:)``), whether or
+    /// not a copy of it is kept now; never touches the network.
+    ///
+    /// - Throws: ``OfflineError``: `clientClosed` once the client is closed.
+    public func isCachedFilePinned(path: String) async throws -> Bool {
+        try await client.connection.call { core, complete in
+            core.storage.isCachedFilePinned(bucket: bucketId, path: path) { answer, failure in
+                complete(coreResult(answer, failure) { try requiredValue($0).boolValue })
+            }
+        }
+    }
+
     /// The cached copy of the object at `path`, downloading it into the cache first when there is
     /// none.
     ///
@@ -372,6 +423,17 @@ public struct OfflineBucketApi: Sendable {
     ///   Storage refuses the download, `connectivity` offline, or `networkDisabled` with the network
     ///   turned off.
     public func ensureCachedFile(path: String, isPublic: Bool = false) async throws -> CachedFile {
+        try refuseANameTheCacheCannotHold(path)
+        return try await client.connection.call { core, complete in
+            core.storage.ensureCachedFile(bucket: bucketId, path: path, isPublic: isPublic) { file, failure in
+                complete(coreResult(file, failure) { try CachedFile(coreFile: requiredValue($0)) })
+            }
+        }
+    }
+
+    /// Throws `invalidRequest` for a name holding `%`, `?` or `#`, in the package's own words,
+    /// before the client is asked; the core refuses the other names it cannot hold itself.
+    private func refuseANameTheCacheCannotHold(_ path: String) throws {
         // A copy of the core's rule, kept only for the wording: when the test
         // `theCoreStillRefusesANameHoldingEachDelimiter` fails, the core caches these names, and
         // this check and `escapingURLDelimiters` must go.
@@ -381,11 +443,6 @@ public struct OfflineBucketApi: Sendable {
                 message: "This object's name holds '%', '?' or '#', so it cannot be kept on the device: "
                     + "keep those characters out of the names of objects the app keeps on the device"
             )
-        }
-        return try await client.connection.call { core, complete in
-            core.storage.ensureCachedFile(bucket: bucketId, path: path, isPublic: isPublic) { file, failure in
-                complete(coreResult(file, failure) { try CachedFile(coreFile: requiredValue($0)) })
-            }
         }
     }
 }
@@ -407,7 +464,7 @@ extension CachedFile {
 ///
 /// The core writes the name into the URL unencoded today; a core that encodes it would encode it
 /// twice. When the test `theCoreStillRefusesANameHoldingEachDelimiter` fails, the core has started
-/// to: remove this helper, `holdsURLDelimiters` and the refusal in `ensureCachedFile`.
+/// to: remove this helper, `holdsURLDelimiters` and `refuseANameTheCacheCannotHold`.
 func escapingURLDelimiters(in name: String) -> String {
     guard holdsURLDelimiters(name) else { return name }
     return name.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? name

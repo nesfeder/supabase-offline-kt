@@ -131,6 +131,37 @@ class BridgeStorageTest {
     }
 
     @Test
+    fun a_pin_holds_until_unpinned_and_a_path_that_cannot_be_cached_is_refused() = bridgeTest {
+        // Given
+        val client = openTestClient(server)
+
+        // When — pinned before any download, then unpinned; and a path the cache cannot hold
+        val pinned = awaitErrorOnly { client.storage.pinCachedFile("avatars", "a.png", it) }
+        val whilePinned = isPinned(client, "a.png")
+        val unpinned = awaitErrorOnly { client.storage.unpinCachedFile("avatars", "a.png", it) }
+        val afterUnpin = isPinned(client, "a.png")
+        val refused = awaitErrorOnly { client.storage.pinCachedFile("avatars", "../a.png", it) }
+
+        // Then — nothing was sent
+        assertNull(pinned)
+        assertEquals(true, whilePinned)
+        assertNull(unpinned)
+        assertEquals(false, afterUnpin)
+        assertEquals(BridgeErrorKind.INVALID_ARGUMENT, refused?.kind)
+        assertTrue(server.requests.isEmpty())
+        client.closeAndWait()
+    }
+
+    /** Whether `avatars/[path]` is pinned, through the bridge. */
+    private suspend fun isPinned(client: BridgeClient, path: String): Boolean? {
+        val probe = CompletionProbe<Boolean>()
+        client.storage.isCachedFilePinned("avatars", path, probe.completion)
+        val (pinned, error) = probe.await()
+        assertNull(error)
+        return pinned
+    }
+
+    @Test
     fun listings_urls_and_existence_answer_as_supabase_kt_does() = bridgeTest {
         // Given
         val client = openTestClient(server)
