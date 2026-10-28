@@ -13,11 +13,13 @@ import io.github.nesfeder.supabase.offline.QuerySnapshot
 import io.github.nesfeder.supabase.offline.ReadStrategy
 import io.github.nesfeder.supabase.offline.RefreshState
 import io.github.nesfeder.supabase.offline.fetchedAt
+import io.github.nesfeder.supabase.offline.hasPendingMutations
 import io.github.nesfeder.supabase.offline.internal.cache.ServerRowChange
 import io.github.nesfeder.supabase.offline.internal.db.fetchedAtOf
 import io.github.nesfeder.supabase.offline.internal.db.isStaleStamp
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentity
 import io.github.nesfeder.supabase.offline.isFromCache
+import io.github.nesfeder.supabase.offline.pendingRowKeys
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeRemoteTable
@@ -1629,6 +1631,86 @@ class QueryReaderRecoveryTest {
             assertEquals(fetchedAtOf(row.updatedAt), result.fetchedAt?.toEpochMilliseconds())
         }
 
+    @Test
+    fun a_stale_written_one_shot_answer_names_the_rows_a_queued_write_changed() =
+        runTest(UnconfinedTestDispatcher()) {
+            // Given: a queued insert of project-9, and other users who add a project while each
+            // request is out, after the server read its answer
+            val postgrest = testPostgrest()
+            var projects = 1
+            var networkCalls = 0
+            val store = buildStore()
+            store.mutationQueue.enqueueInsert(table = "projects", body = projectRows("project-9"))
+            val remoteTable =
+                FakeRemoteTable(
+                    table = "projects",
+                    postgrest = postgrest,
+                    onSelect = {
+                        networkCalls++
+                        val answer = projectsThrough(projects)
+                        projects++
+                        store.cachePatcher.patchServerChanges(
+                            table = "projects",
+                            keyColumns = listOf("id"),
+                            changes = listOf(serverSaveOf("project-$projects")),
+                        )
+                        postgrestResultOf(answer, postgrest)
+                    },
+                )
+            val resolver = buildResolver(remoteTable, backgroundScope, store = store)
+
+            // When: a one-shot network-first read asks, and its one more ask is written stale
+            val result = resolver.select(Columns.ALL, ReadStrategy.NetworkFirst()) {}
+
+            // Then: it is served as the device's copy, with the queued row laid over the rows the
+            // cache wrote and named as the queued write's
+            assertEquals(2, networkCalls)
+            assertTrue(result.isFromCache)
+            assertEquals(
+                """[{"id":"project-1"},{"id":"project-2"},{"id":"project-3"},{"id":"project-9"}]""",
+                result.data,
+            )
+            assertTrue(result.hasPendingMutations)
+            assertEquals(setOf(projectKey("project-9")), result.pendingRowKeys)
+        }
+
+    @Test
+    fun a_rebased_one_shot_answer_names_the_rows_a_queued_write_changed() =
+        runTest(UnconfinedTestDispatcher()) {
+            // Given: a queued insert of project-9, and a server whose answer holds project-2,
+            // which another user deletes after the server read it and before it arrives
+            val postgrest = testPostgrest()
+            var networkCalls = 0
+            val store = buildStore()
+            store.mutationQueue.enqueueInsert(table = "projects", body = projectRows("project-9"))
+            val remoteTable =
+                FakeRemoteTable(
+                    table = "projects",
+                    postgrest = postgrest,
+                    onSelect = {
+                        networkCalls++
+                        store.cachePatcher.patchServerChanges(
+                            table = "projects",
+                            keyColumns = listOf("id"),
+                            changes = listOf(serverDeleteOf("project-2")),
+                        )
+                        postgrestResultOf(projectsThrough(2), postgrest)
+                    },
+                )
+            val resolver = buildResolver(remoteTable, backgroundScope, store = store)
+
+            // When: a one-shot network-first read asks
+            val result = resolver.select(Columns.ALL, ReadStrategy.NetworkFirst()) {}
+
+            // Then: it is served the server's rows with the delete laid over them, fresh, and the
+            // queued row over those, named as the queued write's
+            assertEquals(1, networkCalls)
+            assertFalse(result.isFromCache)
+            assertEquals("""[{"id":"project-1"},{"id":"project-9"}]""", result.data)
+            assertTrue(result.hasPendingMutations)
+            assertEquals(setOf(projectKey("project-9")), result.pendingRowKeys)
+        }
+
     // ── helpers ─────────────────────────────────────────────────────────────
 
     private fun buildResolver(
@@ -1671,6 +1753,14 @@ class QueryReaderRecoveryTest {
         serverDeleteOf(id).let { delete ->
             ServerRowChange(delete.record, delete.keyFilterJson, deleted = false)
         }
+
+    /** A body of the projects [ids], as a write sends it. */
+    private fun projectRows(vararg ids: String) = buildJsonArray {
+        ids.forEach { id -> add(projectKey(id)) }
+    }
+
+    /** The key of the project [id]. */
+    private fun projectKey(id: String) = buildJsonObject { put("id", id) }
 
     /** The rows `project-1` through `project-[count]`, as the server answers them. */
     private fun projectsThrough(count: Int): String =
