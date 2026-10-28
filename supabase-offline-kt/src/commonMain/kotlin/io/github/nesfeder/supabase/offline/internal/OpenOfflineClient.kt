@@ -211,7 +211,7 @@ internal fun Offline.Config.toQueryCacheLimits(): QueryCacheLimits =
             else maxOf(cacheSizeBytes, MIN_CACHE_SIZE_BYTES),
         // A pass drains 50 MB below the bound, or to the bound when it is 50 MB or less, so the
         // next writes do not start another at once.
-        evictionHeadroomBytes = 50L * 1024L * 1024L,
+        evictionHeadroomBytes = EngineLimits.EVICTION_HEADROOM_BYTES,
     )
 
 /**
