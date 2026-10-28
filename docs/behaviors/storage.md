@@ -165,8 +165,12 @@ upload, its response wrapped in `Applied`.
   `MutationNotQueueableException` with the connectivity failure as its cause.
 - **Replay**: it is a write of the user's queue, sent with that user's token and never another's,
   through the same order and the same stops as a row ([Replaying the queue](sync.md#what-happens-to-each-write)).
-  An upload whose earlier send's answer was lost first asks Storage whether the object is there,
-  and is not sent twice; one with `upsert` is sent again.
+  An upload whose earlier send's answer was lost is sent again. When Storage refuses that send, as
+  it refuses a duplicate of an upload that may not overwrite, the upload counts as sent only when
+  the object at its path is verifiably its bytes: the same size, and the same MD5 by Storage's
+  ETag or, when the ETag is not an MD5 one, the same bytes downloaded. Any other object there
+  leaves the refusal standing, on the rejected list, and its cached copy is never the device's
+  bytes.
 - **Refusals**: an upload Storage refuses for good moves to the rejected list with its bytes, as
   `storage.rejectedUploads()` lists it, with Storage's status, error name (`code`) and message;
   `retryRejectedMutation(id)` queues it again at the end of the queue, and

@@ -10,18 +10,22 @@ import io.github.nesfeder.supabase.offline.RejectedUpload
 import io.github.nesfeder.supabase.offline.ServerError
 import io.github.nesfeder.supabase.offline.internal.EngineJson
 import io.github.nesfeder.supabase.offline.internal.db.MutationRow
+import io.github.nesfeder.supabase.offline.internal.isNetworkOrConnectivityFailure
+import io.github.nesfeder.supabase.offline.internal.isStorageRefusal
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueue
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueuedUploadSends
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.STORAGE_NOT_INSTALLED_REASON
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.StoredRejection
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.UploadSend
+import io.github.nesfeder.supabase.offline.internal.storageStatusOrNull
 import io.ktor.http.ContentType
 import kotlin.time.Instant
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
+import okio.ByteString.Companion.toByteString
 
 /** Why a queued upload whose body no longer reads is refused. */
 internal const val UNREADABLE_UPLOAD_REASON: String = "The queued upload can no longer be read"
@@ -64,13 +68,69 @@ internal class QueuedUploads(
             files.read(stored.file, stored.size)
                 ?: return UploadSend.Refused("has lost its file", MISSING_UPLOAD_FILE_REASON)
         return UploadSend.Ready {
-            // A lost answer may have stored it: an upload that may not overwrite asks first, as a
-            // second send would be refused as a duplicate. One that may is sent again
-            val alreadyStored =
-                earlierSendUnconfirmed && !stored.upsert && bucket.exists(stored.path)
-            if (!alreadyStored) bucket.upload(stored.path, bytes) { applyStoredOptions(stored) }
+            try {
+                bucket.upload(stored.path, bytes) { applyStoredOptions(stored) }
+            } catch (refusal: Exception) {
+                // A lost answer may have stored it, and Storage then refuses a second send of an
+                // upload that may not overwrite as a duplicate. Any object at the path is not
+                // proof: it counts as stored only when it is verifiably these bytes
+                val mayHaveLanded =
+                    earlierSendUnconfirmed && !stored.upsert && refusal.isStorageRefusal()
+                if (!mayHaveLanded || !holdsTheseBytes(bucket, stored.path, bytes)) throw refusal
+                dropCachedCopies(stored.bucket, stored.path)
+                return@Ready true
+            }
             becomeCachedCopy(stored.bucket, stored.path, bytes)
-            alreadyStored
+            false
+        }
+    }
+
+    /**
+     * Whether the object at [path] in [bucket] is verifiably [bytes]: its size is theirs, and its
+     * ETag is their MD5 when it is an MD5 one; when it is not (a multipart upload's) or there is
+     * none, the object is downloaded and compared. One that cannot be read (gone, or a policy
+     * refuses it, or an answer that does not decode) is not. A failure that may pass on a later
+     * send is thrown, so the upload stays queued and is asked about again.
+     */
+    private suspend fun holdsTheseBytes(
+        bucket: BucketApi,
+        path: String,
+        bytes: ByteArray,
+    ): Boolean =
+        try {
+            val info = bucket.info(path)
+            val md5 = info.etag?.md5HexOrNull()
+            when {
+                info.size != bytes.size.toLong() -> false
+                md5 != null -> md5 == bytes.toByteString().md5().hex()
+                else -> bucket.downloadAuthenticated(path).contentEquals(bytes)
+            }
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (failure: Exception) {
+            val mayPassLater =
+                failure.isNetworkOrConnectivityFailure() ||
+                    failure.storageStatusOrNull() != null && !failure.isStorageRefusal()
+            if (mayPassLater) throw failure
+            engineLogger.debug {
+                "Could not read the object a queued upload may have stored " +
+                    "(${failure::class.simpleName}); its refusal stands"
+            }
+            false
+        }
+
+    /**
+     * Drops the cached copies of the object at [path] in [bucketId], which Storage holds but whose
+     * bytes this device has not seen: it is downloaded when next asked for. Best effort, as
+     * [becomeCachedCopy] is.
+     */
+    private suspend fun dropCachedCopies(bucketId: String, path: String) {
+        try {
+            withContext(NonCancellable) { fileCache.invalidateObject(bucketId, path) }
+        } catch (failure: Exception) {
+            engineLogger.warning {
+                "Could not drop a stored file's cached copy (${failure::class.simpleName})"
+            }
         }
     }
 
@@ -229,6 +289,19 @@ internal class QueuedUploads(
         return stored != null && files.sizeOf(stored.file) == stored.size
     }
 }
+
+/**
+ * The MD5 this ETag carries as lowercase hex, quotes and a weak mark aside, or `null` when it is
+ * not one: S3 gives a multipart upload's ETag a part count, and it is then no MD5 of the bytes.
+ */
+internal fun String.md5HexOrNull(): String? {
+    val value = trim().removePrefix("W/").trim('"').lowercase()
+    return value.takeIf {
+        it.length == MD5_HEX_LENGTH && it.all { c -> c in '0'..'9' || c in 'a'..'f' }
+    }
+}
+
+private const val MD5_HEX_LENGTH = 32
 
 /** Sets the options [stored] was queued with on this builder, as the app's own upload set them. */
 internal fun UploadOptionBuilder.applyStoredOptions(stored: StoredUpload) {

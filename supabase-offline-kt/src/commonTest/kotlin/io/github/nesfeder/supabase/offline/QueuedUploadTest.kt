@@ -48,9 +48,9 @@ import okio.Path.Companion.toPath
 /**
  * An upload made under `QueueIfOffline` is a write of the one queue: kept on the device with its
  * bytes when it cannot be sent, sent by the replay in the order it was made among the row writes
- * around it, kept across a restart, never sent twice when an answer was lost, refused onto the
- * rejected list with its bytes kept, cleared with local data, and never sent under another user's
- * session. While it waits, `cachedFile` answers its bytes on the device.
+ * around it, kept across a restart, counted stored after a lost answer only when Storage holds its
+ * bytes, refused onto the rejected list with its bytes kept, cleared with local data, and never
+ * sent under another user's session. While it waits, `cachedFile` answers its bytes on the device.
  */
 class QueuedUploadTest {
 
@@ -219,24 +219,27 @@ class QueuedUploadTest {
     }
 
     @Test
-    fun an_upload_whose_answer_was_lost_is_not_sent_twice() = runTest {
+    fun an_upload_whose_answer_was_lost_counts_as_stored_once_storage_holds_its_bytes() = runTest {
         // Given — sent at once, stored by Storage, and its answer lost on the way back
         val client = openClient()
         server.uploadAnswer = { UploadAnswer.LoseAnswer }
         val outcome = client.storage.from(BUCKET).upload(PATH, BYTES, QueueIfOffline)
         server.uploadAnswer = null
 
-        // When — the queue is sent
+        // When — the queue is sent, and Storage refuses the second send as a duplicate
         val report = client.syncPendingMutations()
 
-        // Then — it stayed queued, then counted as already stored, without a second upload
+        // Then — it stayed queued, then counted as already stored: the object is its bytes
         assertIs<UploadOutcome.Queued>(outcome)
-        assertEquals(1, server.uploads().count { it.method == "POST" })
-        assertEquals(1, server.requests.count { it.target == "exists/$BUCKET/$PATH" })
+        assertEquals(2, server.uploads().count { it.method == "POST" })
+        assertEquals(1, server.requests.count { it.target == "info/$BUCKET/$PATH" })
         assertEquals(1, report.syncedCount)
         assertEquals(1, report.alreadyOnServerCount)
+        assertEquals(emptyList(), client.storage.rejectedUploadList())
         assertEquals(emptyList(), client.storage.pendingUploads().first())
         assertEquals(emptyList(), queuedFiles())
+        // Only dropped from the cache: downloaded when next asked for, never written from here
+        assertNull(client.storage.from(BUCKET).cachedFile(PATH))
     }
 
     @Test
@@ -252,7 +255,7 @@ class QueuedUploadTest {
 
         // Then — no question asked: sending it again overwrites with the same bytes
         assertEquals(2, server.uploads().count { it.method == "POST" })
-        assertEquals(0, server.requests.count { it.target.startsWith("exists/") })
+        assertEquals(0, server.requests.count { it.target.startsWith("info/") })
         assertEquals(1, report.syncedCount)
         assertEquals(0, report.alreadyOnServerCount)
     }

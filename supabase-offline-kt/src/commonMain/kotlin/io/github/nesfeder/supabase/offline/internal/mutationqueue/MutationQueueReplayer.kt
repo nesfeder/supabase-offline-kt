@@ -1813,9 +1813,6 @@ internal class MutationQueueReplayer(
     }
 
     /**
-     * The server's refusal as data: PostgREST's fields, or the bare status of another HTTP failure.
-     */
-    /**
      * What Storage answered with [this] refusal, as the rejected list keeps it: the HTTP status,
      * Storage's error name as the code when supabase-kt kept it apart from the message, and the
      * message. supabase-kt's Storage throws a `RestException` for every error answer.
@@ -1838,6 +1835,9 @@ internal class MutationQueueReplayer(
         return null
     }
 
+    /**
+     * The server's refusal as data: PostgREST's fields, or the bare status of another HTTP failure.
+     */
     private fun serverErrorOf(failure: Throwable): StoredServerError? {
         var current: Throwable? = failure
         while (current != null) {

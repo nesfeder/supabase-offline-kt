@@ -18,6 +18,10 @@ import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueueR
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentity
 import io.github.nesfeder.supabase.offline.internal.uploadMayPassWhenSentAgain
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonObject
 import okio.IOException
 
@@ -87,18 +91,21 @@ internal class QueuedUploadWriter(
             }
         val enqueued =
             try {
-                mutationQueue.enqueueOwnedBy(identity.storedValue, startedAtTick) {
-                    enqueueUpload(
-                        StoredUpload(
-                            bucket = bucketId,
-                            path = path,
-                            file = file,
-                            size = data.size.toLong(),
-                            upsert = options.upsert,
-                            contentType = options.contentType,
-                            userMetadata = options.userMetadata,
+                // Not canceled part way: once its row commits it names the file, which must stay
+                withContext(NonCancellable) {
+                    mutationQueue.enqueueOwnedBy(identity.storedValue, startedAtTick) {
+                        enqueueUpload(
+                            StoredUpload(
+                                bucket = bucketId,
+                                path = path,
+                                file = file,
+                                size = data.size.toLong(),
+                                upsert = options.upsert,
+                                contentType = options.contentType,
+                                userMetadata = options.userMetadata,
+                            )
                         )
-                    )
+                    }
                 }
             } catch (failure: Throwable) {
                 uploads.files.delete(file)
@@ -130,6 +137,8 @@ internal class QueuedUploadWriter(
     ): UploadOutcome {
         val sent =
             try {
+                // A caller canceled while the upload was queued leaves it queued, for a pass
+                currentCoroutineContext().ensureActive()
                 headSender.sendAtHead(
                     queued.id,
                     identity,
@@ -139,8 +148,8 @@ internal class QueuedUploadWriter(
                     uploads.becomeCachedCopy(bucketId, path, data)
                 }
             } catch (cancellation: CancellationException) {
-                // Canceled on the wire: whether Storage got it is not known, so it stays queued,
-                // and a pass sends it
+                // Canceled before it left, or on the wire, where whether Storage got it is not
+                // known: it stays queued, and a pass sends it
                 requestSync()
                 throw cancellation
             }

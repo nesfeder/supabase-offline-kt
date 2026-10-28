@@ -30,18 +30,13 @@ class BridgeQueuedUploadTest {
 
     private val server = RecordingServer { request ->
         when {
-            // `exists`: an object Storage does not hold is "not found", which hosted Storage
-            // answers with a 400. The library asks it before sending an upload again whose earlier
-            // send may have reached Storage, as the offline attempt here may have
-            request.method == "HEAD" && request.path.startsWith("/storage/v1/object/") ->
-                if (request.path in stored.load()) {
-                    ScriptedAnswer.json(200, "")
-                } else {
-                    ScriptedAnswer.json(
-                        400,
-                        """{"statusCode":"404","error":"not_found","message":"Object not found"}""",
-                    )
-                }
+            // `info`, which the library reads when Storage refuses an upload whose earlier send may
+            // have stored it: no test here refuses an upload Storage holds, so it is never there
+            request.method == "GET" && request.path.startsWith("/storage/v1/object/info/") ->
+                ScriptedAnswer.json(
+                    400,
+                    """{"statusCode":"404","error":"not_found","message":"Object not found"}""",
+                )
             request.method == "POST" && request.path.startsWith("/storage/v1/object/") ->
                 if (refusing) {
                     ScriptedAnswer.json(

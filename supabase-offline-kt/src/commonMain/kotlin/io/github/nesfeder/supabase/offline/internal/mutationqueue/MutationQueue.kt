@@ -1198,8 +1198,9 @@ internal class MutationQueue(
      * Records, before its request goes out, that the send of mutation [id] has started — when it is
      * an INSERT whose rows all carry the table's primary key, or a queued upload: the kinds whose
      * replay can tolerate finding what they write already on the server. The INSERT then replays as
-     * an upsert that ignores duplicates, and the upload first asks Storage whether the object is
-     * there, until [clearUnconfirmedSend] or its removal clears the record.
+     * an upsert that ignores duplicates, and a refusal of the upload counts as stored when the
+     * object at its path is verifiably its bytes, until [clearUnconfirmedSend] or its removal
+     * clears the record.
      *
      * @return `true` when this call added the record; `false` when there was one already, or none
      *   is kept for this mutation.

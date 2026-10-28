@@ -135,10 +135,12 @@ sends that token whoever is signed in, so the owner check of
 A queued upload meets Storage's answers the same way, with two differences. A refused upload (a
 `4xx` other than `401`, `408` and `429`, and other than Storage refusing the token as invalid or
 expired, which hosted Storage answers with a `400`) keeps its bytes on the device, for a retry. And
-an upload whose earlier send's answer was lost first asks Storage whether the object is there: when
-it is, the upload is counted sent and already on the server, and is not sent again; one that may
-overwrite is simply sent again. Once Storage has it, its bytes become the object's cached copy and
-its file on the device goes.
+an upload whose earlier send's answer was lost is sent again, and when Storage refuses that send (a
+duplicate, for one that may not overwrite) it counts as sent and already on the server only when
+the object at its path is verifiably its bytes: the same size, and the same MD5 by Storage's ETag
+or, without an MD5 ETag, the same bytes downloaded. Any other object there leaves the refusal
+standing. Once this send stores it, its bytes become the object's cached copy; one Storage already
+held is downloaded when next asked for. Either way its file on the device goes.
 
 ## What a sync returns
 
@@ -148,7 +150,7 @@ its file on the device goes.
 | `rejected` | The `RejectedMutation`s refused during this call, now on `rejectedMutations()` |
 | `rejectedUploads` | The `RejectedUpload`s Storage refused during this call, now on `storage.rejectedUploads()` |
 | `remainingCount` | The writes still queued when the call returned, queued uploads included |
-| `alreadyOnServerCount` | Of `syncedCount`, the inserts whose rows the server already held, because an earlier send whose answer was lost had reached it, and the uploads Storage already held for the same reason; and on a table with a version column, the updates whose row already held their values and the guarded deletes whose row was already gone |
+| `alreadyOnServerCount` | Of `syncedCount`, the inserts whose rows the server already held, because an earlier send whose answer was lost had reached it, and the uploads Storage already held for the same reason, verifiably their bytes; and on a table with a version column, the updates whose row already held their values and the guarded deletes whose row was already gone |
 | `heldBehindOtherTablesCount` | Of `remainingCount`, the writes a call for one table held back behind an earlier write to another table; `0` for a call over every table |
 | `conflictsResolvedCount` | Of `syncedCount`, the conflicts settled with `KeepLocal` or `Apply`, by the resolver or the default, and sent |
 | `conflictsKeptServerCount` | The writes dropped for the server's row, with `KeepServer`: by default, an update whose row is gone |
