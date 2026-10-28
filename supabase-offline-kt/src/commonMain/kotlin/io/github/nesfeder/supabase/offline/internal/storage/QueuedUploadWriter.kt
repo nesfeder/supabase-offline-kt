@@ -144,6 +144,8 @@ internal class QueuedUploadWriter(
                     identity,
                     send,
                     staysQueuedOnAnswer = { failure -> failure.uploadMayPassWhenSentAgain() },
+                    // Its file goes before another sender can find the queue without it
+                    onLeftQueue = { uploads.release(queued) },
                 ) { _ ->
                     uploads.becomeCachedCopy(bucketId, path, data)
                 }
@@ -160,7 +162,6 @@ internal class QueuedUploadWriter(
                 UploadOutcome.Queued(pendingUploadOf(queued))
             }
             is HeadSendOutcome.Sent -> {
-                uploads.release(queued)
                 if (!requestPassIfPending(identity)) queueEmptied()
                 UploadOutcome.Applied(sent.result)
             }

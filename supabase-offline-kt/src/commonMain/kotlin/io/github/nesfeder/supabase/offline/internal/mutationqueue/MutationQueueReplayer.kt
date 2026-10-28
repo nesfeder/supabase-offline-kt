@@ -351,13 +351,16 @@ internal class MutationQueueReplayer(
      * Sends queued mutation [mutationId] now if it is at the head of [identity]'s queue, nobody
      * else is sending it, and the session is still [identity]. On success [onAccepted] runs before
      * the mutation leaves the queue; a failure of [onAccepted] is logged, since the server has the
-     * write. A caller canceled while the request is on the wire leaves the mutation queued.
+     * write. [onLeftQueue] runs once it has left the queue, in the same hold of the send lock, so
+     * no other sender meets it gone before [onLeftQueue] has run. A caller canceled while the
+     * request is on the wire leaves the mutation queued.
      */
     suspend fun <T> sendAtHead(
         mutationId: Long,
         identity: QueueIdentity,
         send: suspend () -> T,
         staysQueuedOnAnswer: (Exception) -> Boolean = Throwable::mayPassWhenSentAgain,
+        onLeftQueue: suspend () -> Unit = {},
         onAccepted: suspend (T) -> Unit,
     ): HeadSendOutcome<T> {
         // Nothing leaves the device while network access is off: it waits, queued
@@ -411,7 +414,11 @@ internal class MutationQueueReplayer(
             } finally {
                 // The server has the write: it leaves the queue whatever happened here, or a pass
                 // would send it again.
-                withContext(NonCancellable) { completeAcceptedMutation(mutationId) }
+                // Under the send lock, as a pass records a sent write: a pass that starts meanwhile
+                // reads the queue only once [onLeftQueue] has run
+                withContext(NonCancellable) {
+                    sendLock.withLock { if (completeAcceptedMutation(mutationId)) onLeftQueue() }
+                }
             }
             return HeadSendOutcome.Sent(result)
         } finally {
@@ -512,16 +519,21 @@ internal class MutationQueueReplayer(
         return misses >= SCHEMA_CACHE_MISS_BOUND
     }
 
-    /** Removes an accepted mutation, logging rather than failing a write the server applied. */
-    private suspend fun completeAcceptedMutation(mutationId: Long) {
+    /**
+     * Removes an accepted mutation, logging rather than failing a write the server applied.
+     *
+     * @return whether it left the queue.
+     */
+    private suspend fun completeAcceptedMutation(mutationId: Long): Boolean =
         try {
             mutationQueue.completeSentMutation(mutationId)
+            true
         } catch (failure: Exception) {
             engineLogger.error {
                 "Could not remove an accepted mutation from the queue; it may be sent again (${failure::class.simpleName})"
             }
+            false
         }
-    }
 
     /**
      * Discards the pending mutation [id] of [identity] unsent. A mutation being sent cannot be.
@@ -737,8 +749,6 @@ internal class MutationQueueReplayer(
                 progress.syncedCount++
                 if (outcome.rowsWereOnServer) progress.alreadyOnServerCount++
                 if (outcome.conflictResolved) progress.conflictsResolvedCount++
-                // Its row is gone: the bytes it kept on the device go too
-                if (mutation.isQueuedUpload) uploadSends?.sent(mutation)
             }
             if (outcome == ReplayOutcome.KeptServer && recorded == null)
                 progress.conflictsKeptServerCount++
@@ -775,8 +785,11 @@ internal class MutationQueueReplayer(
     ): SyncStop? =
         when (outcome) {
             is ReplayOutcome.Synced if mutation.isQueuedUpload -> {
-                // Nothing overlays a sent upload: it leaves the queue, rather than stay synced
+                // Nothing overlays a sent upload: it leaves the queue, rather than stay synced.
+                // The bytes it kept on the device go in the same hold of the send lock, so a pass
+                // that finds the queue empty never finds the file still there
                 mutationQueue.completeSentMutation(mutation.id)
+                uploadSends?.sent(mutation)
                 engineLogger.debug { "Synced a queued upload" }
                 null
             }

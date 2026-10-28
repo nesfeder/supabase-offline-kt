@@ -22,7 +22,10 @@ internal interface QueuedUploadSends {
      */
     suspend fun prepare(upload: MutationRow, earlierSendUnconfirmed: Boolean): UploadSend
 
-    /** Called once the sent upload [upload] has left the queue: its file goes. */
+    /**
+     * Called once the sent upload [upload] has left the queue, under the send lock: its file goes
+     * before another pass can find the queue without it.
+     */
     suspend fun sent(upload: MutationRow)
 }
 
