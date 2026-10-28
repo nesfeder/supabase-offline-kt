@@ -4,7 +4,6 @@
 
 package io.github.nesfeder.supabase.offline.internal.mutationqueue
 
-import io.github.nesfeder.supabase.offline.internal.cache.LocalData
 import io.github.nesfeder.supabase.offline.internal.db.CachedQueryRow
 import io.github.nesfeder.supabase.offline.internal.db.MutationRow
 import io.github.nesfeder.supabase.offline.internal.db.QueryCacheDao
@@ -12,11 +11,6 @@ import io.github.nesfeder.supabase.offline.internal.db.REJECTED_MUTATIONS_CACHE_
 import io.github.nesfeder.supabase.offline.internal.db.RESERVED_TABLE_NAME
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.emitAll
-import kotlinx.coroutines.flow.filterNotNull
-import kotlinx.coroutines.flow.flow
-import kotlinx.coroutines.flow.map
 import kotlinx.serialization.EncodeDefault
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.KSerializer
@@ -84,9 +78,9 @@ internal data class StoredServerError(
  */
 @Serializable
 internal data class StoredRejection(
-    val id: Long,
-    val table: String,
-    val operation: String,
+    override val id: Long,
+    override val table: String,
+    override val operation: String,
     val bodyJson: String,
     val filterJson: String? = null,
     val createdAtMs: Long,
@@ -100,7 +94,7 @@ internal data class StoredRejection(
     val message: String,
     val serverError: StoredServerError? = null,
     val bodyOmittedChars: Int? = null,
-) {
+) : ReservedListEntry {
     /**
      * The row this rejection re-queues as, at the tail: its stored fields, its base included, id
      * `0` for the queue to assign, a new creation time and [owner]. With its base, a guarded write
@@ -138,59 +132,35 @@ internal data class StoredRejection(
 @Serializable
 internal data class StoredRejectionList(
     @EncodeDefault val version: Int = REJECTED_MUTATION_LIST_FORMAT_VERSION,
-    val entries: List<StoredRejection> = emptyList(),
-    val droppedCount: Long = 0,
-)
+    override val entries: List<StoredRejection> = emptyList(),
+    override val droppedCount: Long = 0,
+) : StoredReservedList<StoredRejection>
 
-/**
- * The rejected list as held in memory: the persisted [list] and, beside each entry, how many
- * characters it takes in the row, measured once when it was added or loaded. The list's bounds are
- * checked from these sizes, so a rejection encodes its own entry once and the row once, never every
- * entry again.
- *
- * @property list The list as persisted.
- * @property entrySizes Each entry's encoded length, one per entry of [list], in its order.
- */
-internal data class MeasuredRejectionList(
-    val list: StoredRejectionList,
-    val entrySizes: List<Int>,
-) {
-
-    init {
-        require(entrySizes.size == list.entries.size) { "One size per rejected entry" }
-    }
-
-    /** [StoredRejectionList.entries]. */
-    val entries: List<StoredRejection>
-        get() = list.entries
-
-    /** [StoredRejectionList.droppedCount]. */
-    val droppedCount: Long
-        get() = list.droppedCount
-}
+/** The rejected list as held in memory, each entry's size beside it. */
+internal typealias MeasuredRejectionList = MeasuredList<StoredRejection, StoredRejectionList>
 
 /**
  * The mutation queue's rejected list, kept in a reserved `object_cache` row (see
- * [RESERVED_TABLE_NAME]): one bounded value read and written whole, rarely. It is cached in memory
- * after the first read, with each entry's size beside it ([MeasuredRejectionList]).
- *
- * Callers hold the queue lock ([MutationQueue.holdingQueueLock]), and build the row here before
- * opening a transaction, so no transaction waits on a coroutine lock. An unreadable row is kept
- * aside, logged, and started afresh.
- *
- * @param entrySerializer How an entry is encoded to measure it; a test counts the encodings.
+ * [RESERVED_TABLE_NAME]) as [BoundedReservedList] keeps it. A rejected entry keeps the server's
+ * texts and its body and base row within their own bounds.
  */
 internal class RejectedMutationList(
-    private val queryCacheDao: QueryCacheDao,
-    private val json: Json,
-    private val nowMillis: () -> Long,
-    private val logger: EngineLogger,
-    private val entrySerializer: KSerializer<StoredRejection> = StoredRejection.serializer(),
-) {
-
-    private val rejectedCache = MutableStateFlow<MeasuredRejectionList?>(null)
-
-    /* ─────────────────────────── Rejected list ─────────────────────────── */
+    queryCacheDao: QueryCacheDao,
+    json: Json,
+    nowMillis: () -> Long,
+    logger: EngineLogger,
+    entrySerializer: KSerializer<StoredRejection> = StoredRejection.serializer(),
+) :
+    BoundedReservedList<StoredRejection, StoredRejectionList>(
+        queryCacheDao = queryCacheDao,
+        json = json,
+        nowMillis = nowMillis,
+        logger = logger,
+        cacheKey = REJECTED_MUTATIONS_CACHE_KEY,
+        listSerializer = StoredRejectionList.serializer(),
+        entrySerializer = entrySerializer,
+        kind = "rejected",
+    ) {
 
     /**
      * Every rejected mutation, oldest first.
@@ -198,32 +168,14 @@ internal class RejectedMutationList(
      * @return The list; empty when nothing was ever rejected. An unreadable persisted list is moved
      *   aside and reads as a fresh, empty list.
      */
-    suspend fun rejections(): List<StoredRejection> = rejectedList().entries
+    suspend fun rejections(): List<StoredRejection> = entries()
 
     /**
      * [rejections], re-emitted whenever the list changes.
      *
      * @return A flow of the list, oldest first.
      */
-    fun rejectionsFlow(): Flow<List<StoredRejection>> = flow {
-        rejectedList()
-        emitAll(rejectedCache.filterNotNull().map { list -> list.entries })
-    }
-
-    /**
-     * How many entries left the list to stay within its bounds since [resetDroppedCount].
-     *
-     * @return The count.
-     */
-    suspend fun droppedCount(): Long = rejectedList().droppedCount
-
-    /** Resets [droppedCount] to zero. Caller holds the queue lock. */
-    suspend fun resetDroppedCount() {
-        val current = rejectedList()
-        writeRejected(
-            MeasuredRejectionList(current.list.copy(droppedCount = 0), current.entrySizes)
-        )
-    }
+    fun rejectionsFlow(): Flow<List<StoredRejection>> = entriesFlow()
 
     /**
      * Removes the rejection with [id], if present, and writes the list.
@@ -231,13 +183,7 @@ internal class RejectedMutationList(
      * @param id The rejected mutation's id.
      * @return The removed entry, or `null` when the list has no entry with [id].
      */
-    suspend fun removeRejection(id: Long): StoredRejection? {
-        val removed = rejectedList().entries.firstOrNull { entry -> entry.id == id } ?: return null
-        val (row, list) = rejectedRowWith(removeId = id)
-        queryCacheDao.upsert(row)
-        rejectedWritten(list)
-        return removed
-    }
+    suspend fun removeRejection(id: Long): StoredRejection? = removeEntry(id)
 
     /**
      * Whether the list holds an entry with [id]. Answered from memory once the list is loaded.
@@ -245,61 +191,20 @@ internal class RejectedMutationList(
      * @param id A mutation id.
      * @return `true` when it is on the list.
      */
-    suspend fun hasRejection(id: Long): Boolean =
-        rejectedList().entries.any { entry -> entry.id == id }
+    suspend fun hasRejection(id: Long): Boolean = hasEntry(id)
 
     /**
-     * The rejected-list row with [add] added as the newest entry (replacing an earlier entry with
-     * the same id) and the entry with [removeId] removed, bounded to [MAX_REJECTED_MUTATIONS]
-     * entries and [MAX_REJECTED_LIST_CHARS] characters. Oversized bodies and server texts are
-     * trimmed first; each entry that has to go is logged and counted. Only [add] is encoded to
-     * measure it: every other entry's size is kept beside it. Write the row in the caller's
-     * transaction, then commit it with [rejectedWritten]. Caller holds the store's mutation-queue
-     * lock.
+     * The rejected-list row with [add] added and the entries with [removeId] and [removeIds]
+     * removed, bounded; see [BoundedReservedList.rowWith]. Write the row in the caller's
+     * transaction, then commit it with [rejectedWritten]. Caller holds the queue lock.
      *
-     * @param add An entry to add, or `null`.
-     * @param removeId An entry to remove, or `null`.
      * @return The row and the new list, measured.
      */
     suspend fun rejectedRowWith(
         add: StoredRejection? = null,
         removeId: Long? = null,
         removeIds: Set<Long> = emptySet(),
-    ): Pair<CachedQueryRow, MeasuredRejectionList> {
-        val current = rejectedList()
-        val entries = ArrayList<StoredRejection>(current.entries.size + 1)
-        val sizes = ArrayList<Int>(current.entries.size + 1)
-        current.entries.forEachIndexed { index, entry ->
-            if (entry.id == removeId || entry.id in removeIds || entry.id == add?.id)
-                return@forEachIndexed
-            entries += entry
-            sizes += current.entrySizes[index]
-        }
-        if (add != null) {
-            val entry = bounded(add)
-            entries += entry
-            sizes += charactersOf(entry)
-        }
-        // The oldest leave while the list is over either bound
-        var total = sizes.sum()
-        var first = 0
-        var droppedCount = current.droppedCount
-        while (entries.size - first > MAX_REJECTED_MUTATIONS || total > MAX_REJECTED_LIST_CHARS) {
-            val dropped = entries[first]
-            logger.warning {
-                "Rejected list full: dropped rejected ${dropped.operation} ${dropped.id} on ${dropped.table}"
-            }
-            total -= sizes[first]
-            first++
-            droppedCount++
-        }
-        val list =
-            MeasuredRejectionList(
-                StoredRejectionList(entries = entries.drop(first), droppedCount = droppedCount),
-                sizes.drop(first),
-            )
-        return rejectedRow(list.list) to list
-    }
+    ): Pair<CachedQueryRow, MeasuredRejectionList> = rowWith(add, removeId, removeIds)
 
     /**
      * Records that [list] was written.
@@ -307,76 +212,22 @@ internal class RejectedMutationList(
      * @param list The list the committed row holds, as [rejectedRowWith] measured it.
      */
     fun rejectedWritten(list: MeasuredRejectionList) {
-        rejectedCache.value = list
+        written(list)
     }
+
+    override fun listOf(entries: List<StoredRejection>, droppedCount: Long): StoredRejectionList =
+        StoredRejectionList(entries = entries, droppedCount = droppedCount)
+
+    override fun withDroppedCount(
+        list: StoredRejectionList,
+        droppedCount: Long,
+    ): StoredRejectionList = list.copy(droppedCount = droppedCount)
 
     /**
-     * Records that every row is gone and the queue empty; called once [LocalData.clearLocalData]
-     * has deleted them. The records then read empty without a row, so no reader writes one back.
+     * [entry] within the per-entry bounds: the message and the server's texts trimmed, and a base
+     * row or a body too long to keep dropped, each with a warning.
      */
-    fun resetCaches() {
-        rejectedCache.value = MeasuredRejectionList(StoredRejectionList(), emptyList())
-    }
-
-    private suspend fun rejectedList(): MeasuredRejectionList {
-        rejectedCache.value?.let {
-            return it
-        }
-        val payload = queryCacheDao.get(RESERVED_TABLE_NAME, REJECTED_MUTATIONS_CACHE_KEY)?.payload
-        val loaded =
-            if (payload == null) {
-                StoredRejectionList()
-            } else {
-                decodeOrNull(StoredRejectionList.serializer(), payload)
-                    ?: moveAsideUnreadable(payload)
-            }
-        // Each entry is measured once, here or when it is added
-        val measured = MeasuredRejectionList(loaded, loaded.entries.map(::charactersOf))
-        rejectedCache.compareAndSet(null, measured)
-        return rejectedCache.value ?: measured
-    }
-
-    /** Keeps an unreadable rejected-list payload aside and starts a new list. */
-    private suspend fun moveAsideUnreadable(payload: String): StoredRejectionList {
-        val fresh = StoredRejectionList()
-        keepAsideUnreadable(REJECTED_MUTATIONS_CACHE_KEY, payload)
-        queryCacheDao.upsert(rejectedRow(fresh))
-        return fresh
-    }
-
-    /**
-     * Keeps an unreadable reserved payload under `<cacheKey>.unreadable.<ms>` and logs it at ERROR.
-     */
-    private suspend fun keepAsideUnreadable(cacheKey: String, payload: String) {
-        val asideCacheKey = "$cacheKey.unreadable.${nowMillis()}"
-        queryCacheDao.upsert(reservedRow(asideCacheKey, payload))
-        logger.error {
-            "The mutation queue's $cacheKey record could not be read; kept it aside as $asideCacheKey and started a new one"
-        }
-    }
-
-    private fun reservedRow(cacheKey: String, payload: String): CachedQueryRow =
-        CachedQueryRow(
-            table = RESERVED_TABLE_NAME,
-            cacheKey = cacheKey,
-            payload = payload,
-            updatedAt = nowMillis(),
-        )
-
-    private suspend fun writeRejected(list: MeasuredRejectionList) {
-        queryCacheDao.upsert(rejectedRow(list.list))
-        rejectedWritten(list)
-    }
-
-    private fun rejectedRow(list: StoredRejectionList): CachedQueryRow =
-        CachedQueryRow(
-            table = RESERVED_TABLE_NAME,
-            cacheKey = REJECTED_MUTATIONS_CACHE_KEY,
-            payload = json.encodeToString(StoredRejectionList.serializer(), list),
-            updatedAt = nowMillis(),
-        )
-
-    private fun bounded(entry: StoredRejection): StoredRejection {
+    override fun bounded(entry: StoredRejection): StoredRejection {
         var bounded =
             entry.copy(
                 message = entry.message.take(MAX_REJECTED_TEXT_CHARS),
@@ -408,16 +259,4 @@ internal class RejectedMutationList(
         }
         return bounded
     }
-
-    /** How many characters [entry] takes in the persisted list. */
-    private fun charactersOf(entry: StoredRejection): Int =
-        json.encodeToString(entrySerializer, entry).length
-
-    private fun <T> decodeOrNull(serializer: KSerializer<T>, payload: String): T? =
-        try {
-            json.decodeFromString(serializer, payload)
-        } catch (_: IllegalArgumentException) {
-            // SerializationException is an IllegalArgumentException. The payload is never logged.
-            null
-        }
 }
