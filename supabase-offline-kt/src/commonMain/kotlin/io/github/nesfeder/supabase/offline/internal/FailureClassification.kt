@@ -56,6 +56,19 @@ internal fun Throwable.postgrestCodeOrNull(): String? {
 internal val MAY_PASS_LATER_STATUSES: Set<Int> = setOf(408, 429, 502, 503, 504, 520, 522, 524)
 
 /**
+ * PostgREST's `503` codes for a request it answered without reaching the database (PGRST000) or
+ * before its schema cache loaded (PGRST002). Not PGRST001: the database connection broke during the
+ * request, which may have committed.
+ */
+internal val POSTGREST_DID_NOT_RUN_CODES: Set<String> = setOf("PGRST000", "PGRST002")
+
+/**
+ * PostgREST's codes for a table (PGRST205) or column (PGRST204) its schema cache does not know: the
+ * statement never ran, and the cache may not have caught up with a migration.
+ */
+internal val SCHEMA_CACHE_MISS_CODES: Set<String> = setOf("PGRST204", "PGRST205")
+
+/**
  * PostgREST's codes for an access token it refused before running anything: one it could not decode
  * or verify (`PGRST301`), or one whose claims it rejected, an expiry already past by the server's
  * clock among them (`PGRST303`). supabase-kt refreshes by the device's clock, so a device whose
