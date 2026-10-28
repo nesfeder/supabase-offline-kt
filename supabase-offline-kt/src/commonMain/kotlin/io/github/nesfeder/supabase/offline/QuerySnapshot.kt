@@ -4,6 +4,7 @@ package io.github.nesfeder.supabase.offline
 
 import io.github.jan.supabase.postgrest.result.PostgrestResult
 import kotlin.time.Instant
+import kotlinx.serialization.json.JsonObject
 
 /**
  * One emission of a reactive read ([OfflinePostgrestQueryBuilder.selectAsFlow]): the rows as they
@@ -25,6 +26,14 @@ import kotlin.time.Instant
  * @property hasPendingMutations whether a write that waits in the mutation queue changed one of the
  *   rows shown: a row it added, changed or removed.
  * @property refresh how the refresh behind the read stands; see [RefreshState].
+ * @property pendingRowKeys which rows such a write added, changed or removed: the primary key of
+ *   each, as an object of the table's key columns ([Offline.Config.primaryKeys]) with the values
+ *   the row holds. A row a write removed from [QuerySnapshot.result], deleted or changed so the
+ *   query no longer admits it, keeps its key here, as it last showed it. A row without its whole
+ *   key (a select that leaves a key column out, a key column holding `null`) adds none, so the set
+ *   can be empty while [QuerySnapshot.hasPendingMutations] is `true`, and is always empty while it
+ *   is `false`. Both are worked out in the pass that laid the writes over the rows, so the set
+ *   always describes the rows of this emission, never an earlier or later one.
  */
 @ConsistentCopyVisibility
 public data class QuerySnapshot
@@ -34,4 +43,5 @@ internal constructor(
     public val fetchedAt: Instant?,
     public val hasPendingMutations: Boolean,
     public val refresh: RefreshState,
+    public val pendingRowKeys: Set<JsonObject>,
 )

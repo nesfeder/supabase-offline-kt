@@ -4,14 +4,18 @@ What a read returns is the cached rows with the user's writes that have not reac
 on top, oldest first. So a write shows in every list at once, online or offline, and a list never
 loses it between the moment it is sent and the moment the list is fetched again.
 `hasPendingMutations` on a result or a snapshot says whether a queued write changed the rows, and
-each `PendingMutation`'s `rowKeys` say which rows it touches, as the sample's cloud marks use them:
+`pendingRowKeys` says which: the primary key of each row a queued write added, changed or removed.
+Both come from the pass that laid the writes over the rows, so they always describe the rows they
+come with. Each `PendingMutation`'s `rowKeys` say which rows a write touches in any list, but the
+queue's flow emits on its own, so a mark read from it can show an emission early or late. The
+Android sample's cloud marks read `pendingRowKeys`; the iOS sample's still follow the queue:
 
-From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/OfflineTaskRepository.kt) · [TasksModel.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Tasks/TasksModel.swift)
+From the samples: [LibraryMappings.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/LibraryMappings.kt) · [TasksModel.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Tasks/TasksModel.swift)
 
 === "Android"
 
     ```kotlin
-    --8<-- "data/supabase/OfflineTaskRepository.kt:pending-marks"
+    --8<-- "data/supabase/LibraryMappings.kt:pending-marks"
     ```
 
 === "iOS"
@@ -36,6 +40,19 @@ nothing cached gets a list of the written rows it admits. A write whose effect t
 work out (an UPDATE or DELETE filtered by something it cannot evaluate, an upsert without keys, a
 write to another schema) marks the lists it may reach stale, and their live readers fetch again.
 An `OnlineOnly` write is not patched in: the list changes when it is fetched again.
+
+## Which rows are named
+
+| Row | In `pendingRowKeys` |
+| --- | --- |
+| Added or changed by a queued write | Its key, with the values the row shows |
+| Removed by a queued write: deleted, or changed so the query no longer admits it | Its key as the row last showed it, though the rows no longer hold it |
+| Shown without its whole key: a select that leaves a key column out, or a key column holding `null` | None. `hasPendingMutations` still counts it, so the set can be empty while the flag is `true` |
+| Changed by a write a sync pass already sent | None, even while the list still shows the write until it is fetched again |
+
+A key is an object of the table's key columns, `id` unless you set another with `primaryKey`, so
+`{"id": 42}` names the row whose `id` is 42. The set is empty whenever `hasPendingMutations` is
+`false`.
 
 ## How rows are matched
 

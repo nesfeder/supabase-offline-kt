@@ -2,13 +2,21 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.cache
 
+import kotlinx.serialization.json.JsonObject
+
 /**
  * A payload with the current identity's mutations overlaid, as a read serves it.
  *
  * @property payload the rows, encoded.
  * @property hasPendingMutations whether a mutation not yet sent changed one of them.
+ * @property pendingRowKeys the primary keys of the rows such a mutation added, changed or removed,
+ *   found in the same pass as [ServedOverlay.payload]; a row without its whole key adds none.
  */
-internal data class ServedOverlay(val payload: String, val hasPendingMutations: Boolean)
+internal data class ServedOverlay(
+    val payload: String,
+    val hasPendingMutations: Boolean,
+    val pendingRowKeys: Set<JsonObject> = emptySet(),
+)
 
 /**
  * A cached query's payload as a live reader is served it, with what the reader reports of it.
@@ -18,12 +26,15 @@ internal data class ServedOverlay(val payload: String, val hasPendingMutations: 
  *   `null` when nothing is cached and the rows are the overlay alone.
  * @property isStale whether the cached payload is stale (to be fetched again), or absent.
  * @property hasPendingMutations whether a mutation not yet sent changed one of the rows.
+ * @property pendingRowKeys the keys of the rows such a mutation changed; see
+ *   [ServedOverlay.pendingRowKeys].
  */
 internal data class ServedPayload(
     val payload: String,
     val fetchedAtMillis: Long?,
     val isStale: Boolean,
     val hasPendingMutations: Boolean,
+    val pendingRowKeys: Set<JsonObject>,
 )
 
 /**
