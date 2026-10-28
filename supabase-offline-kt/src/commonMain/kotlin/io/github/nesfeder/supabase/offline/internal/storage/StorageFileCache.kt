@@ -546,8 +546,8 @@ internal class StorageFileCache(
     }
 
     /**
-     * Opens a temporary file for a download of [entry], in the directory of the file it is to
-     * become: the entry's own, or its hashed file when that place is taken.
+     * Opens a temporary file for a download of [entry]: beside the entry's own file when its
+     * folders can be there, or in the hashed directory. [commit] picks the place it goes.
      *
      * Runs under the lock, so a [clear] never finds a file appearing in a directory it is deleting.
      * A caller canceled while the file is being created still gets it back, to [discard].
@@ -565,7 +565,10 @@ internal class StorageFileCache(
     private suspend fun createTemporaryDownload(entry: FileCacheEntry): TemporaryDownload? =
         lock.withLock {
             sweepTemporaryFilesOnce()
-            val directory = destinationOfLocked(entry).parent ?: return@withLock null
+            // Beside the own file whenever its folders can be there, taking a file there for the
+            // entry's own; the commit picks the place, with the row
+            val directory =
+                destinationOfLocked(entry, recorded = entry.file).parent ?: return@withLock null
             val temporary =
                 directory /
                     "$TEMPORARY_FILE_PREFIX${Random.nextLong().toULong().toString(16)}$TEMPORARY_FILE_SUFFIX"
@@ -616,9 +619,10 @@ internal class StorageFileCache(
 
     /**
      * Writes the file through to the disk, records [temporary]'s entry, renames the file into the
-     * entry's place — its own file, or its hashed one when that place is taken now — then enforces
-     * the size bound. The row goes first, so a database that refuses it leaves the previous copy in
-     * place; a previous copy in the entry's other place is deleted once the new one is in.
+     * entry's place — where its row has it, or else its own file, or its hashed one when another
+     * name takes that place — then enforces the size bound. The row goes first, so a database that
+     * refuses it leaves the previous copy in place; a hashed file left beside a copy in the own
+     * file is deleted once the new one is in.
      *
      * @param start the download's [beginDownload].
      * @return what happened, even to a caller canceled meanwhile; on anything but
@@ -678,9 +682,18 @@ internal class StorageFileCache(
                 }
                 return@withLock CommitOutcome.SUPERSEDED
             }
-            // Looked at again: an object or a folder of the same name may have come or gone since
-            // the temporary file was opened
-            val destination = destinationOfLocked(entry)
+            val previous =
+                try {
+                    rowOf(entry.bucketId, entry.rowPath)
+                } catch (failure: Exception) {
+                    engineLogger.warning {
+                        "Storage cache could not read a download's record (${failure::class.simpleName}); not caching"
+                    }
+                    return@withLock CommitOutcome.FAILED
+                }
+            // Looked at again, now with the row: an object or a folder of the same name may have
+            // come or gone since the temporary file was opened
+            val destination = destinationOfLocked(entry, previous?.recordedFileOf(entry))
             val directory = destination.parent
             if (directory == null || !resolvesInsideDataDirectory(directory)) {
                 engineLogger.warning {
@@ -689,22 +702,19 @@ internal class StorageFileCache(
                 return@withLock CommitOutcome.FAILED
             }
             val size = fileSystem.metadataOrNull(temporary.path)?.size
-            val previous =
-                try {
-                    rowOf(entry.bucketId, entry.rowPath).also {
-                        recordRow(
-                            bucketId = entry.bucketId,
-                            path = entry.rowPath,
-                            file = destination,
-                            size = size,
-                        )
-                    }
-                } catch (failure: Exception) {
-                    engineLogger.warning {
-                        "Storage cache could not record a download (${failure::class.simpleName}); not caching"
-                    }
-                    return@withLock CommitOutcome.FAILED
+            try {
+                recordRow(
+                    bucketId = entry.bucketId,
+                    path = entry.rowPath,
+                    file = destination,
+                    size = size,
+                )
+            } catch (failure: Exception) {
+                engineLogger.warning {
+                    "Storage cache could not record a download (${failure::class.simpleName}); not caching"
                 }
+                return@withLock CommitOutcome.FAILED
+            }
             trackedBytes = trackedBytes?.plus((size ?: 0L) - (previous?.sizeBytes ?: 0L))
             try {
                 // The directory is missing when the temporary file was opened for the other place
@@ -719,8 +729,10 @@ internal class StorageFileCache(
                 return@withLock CommitOutcome.FAILED
             }
             openTemporaryFiles -= temporary.path
-            // The copy it replaced, when that one was in the entry's other place
-            previous?.recordedFileOf(entry)?.takeIf { it != destination }?.let(::deleteCopy)
+            // The hashed file is the entry's alone: one there beside a copy in its own file is
+            // what a crash left
+            val hashed = hashedFileOf(entry)
+            if (destination != hashed && lookUp(hashed) != null) deleteContained(hashed)
             markUsed(destination, nowMillis())
             CommitOutcome.COMMITTED
         }
@@ -883,30 +895,32 @@ internal class StorageFileCache(
         else objectHashedFilePath(dataDirectory, entry.bucketId, entry.objectPath)
 
     /**
-     * Where a download of [entry] is stored now: its own file, or its hashed file when that place
-     * is taken. An object and a folder of the same name, `a` and `a/b`, map onto one place, a file
-     * and a directory; whichever is cached second takes its hashed file.
+     * Where a download of [entry] is stored now. Its hashed file when its row records that one
+     * ([recorded]), so a path already handed out keeps working; otherwise its own file, unless
+     * another name takes that place; otherwise its hashed file.
+     *
+     * Another name takes the place when a directory stands where the file goes (`a` while `a/b` is
+     * cached), a regular file where one of its folders goes (`a/b` while `a` is cached), or a
+     * regular file where the file goes that [recorded] is not: on a case-insensitive volume (the
+     * iOS simulator, a Mac) `photo`'s file is `PHOTO`'s too. Only the deepest part of the place
+     * that exists below the bucket's directory is looked at. Anything else in the way, such as a
+     * file where the bucket's directory goes or a symlink, is left to fail the write or the
+     * containment checks.
      */
-    private fun destinationOfLocked(entry: FileCacheEntry): Path =
-        if (isTakenByAnotherName(entry)) hashedFileOf(entry) else entry.file
-
-    /**
-     * Whether [entry]'s own place is taken by another name of its bucket: a directory stands where
-     * its file goes, or a regular file where one of the folders of its path goes. Only the deepest
-     * part of the place that exists is looked at. Anything else in the way, such as a file where
-     * the bucket's directory goes or a symlink, is left to fail the write or the containment
-     * checks, as before.
-     */
-    private fun isTakenByAnotherName(entry: FileCacheEntry): Boolean {
+    private fun destinationOfLocked(entry: FileCacheEntry, recorded: Path?): Path {
         val file = entry.file
+        val hashed = hashedFileOf(entry)
         // Only a place under the object's own name can be taken
-        if (!file.isStrictlyInside(storageDirectory)) return false
+        if (recorded == hashed || !file.isStrictlyInside(storageDirectory)) return hashed
         val bucketDirectory = storageDirectory / entry.bucketId
         val (deepest, metadata) =
             generateSequence(file) { it.parent }
                 .takeWhile { it.isStrictlyInside(bucketDirectory) }
-                .firstNotNullOfOrNull { path -> lookUp(path)?.let { path to it } } ?: return false
-        return if (deepest == file) metadata.isDirectory else metadata.isRegularFile
+                .firstNotNullOfOrNull { path -> lookUp(path)?.let { path to it } } ?: return file
+        val taken =
+            if (deepest != file) metadata.isRegularFile
+            else metadata.isDirectory || (metadata.isRegularFile && recorded != file)
+        return if (taken) hashed else file
     }
 
     // A function whose name ends in Locked runs under [lock].
@@ -933,12 +947,12 @@ internal class StorageFileCache(
         rows.forEach { row ->
             removeRowLocked(row)
             val entry = entryForRow(row) ?: return@forEach
-            deleteCopies(entry)
+            deleteCopies(entry, row)
             if (row.recordsOutdatedPath(entry))
                 deleteOrphanedOutdatedFileLocked(row.localPath.toPath().normalized())
         }
-        // The object's files even without a row: an outdated row may have recorded another path.
-        entryFor(bucketId, objectPath)?.let(::deleteCopies)
+        // The object's hashed file even without a row: a crash may have left one
+        entryFor(bucketId, objectPath)?.let { entry -> deleteCopies(entry, row = null) }
     }
 
     /**
@@ -952,25 +966,28 @@ internal class StorageFileCache(
         }
         // Its commit is refused now; a caller arriving after the drop starts afresh
         downloadsInFlight.forget(entry.key)
-        rowOf(entry.bucketId, entry.rowPath)?.let { row ->
+        val row = rowOf(entry.bucketId, entry.rowPath)
+        if (row != null) {
             removeRowLocked(row)
             if (row.recordsOutdatedPath(entry))
                 deleteOrphanedOutdatedFileLocked(row.localPath.toPath().normalized())
         }
-        // Even without a row: an outdated row may have recorded another path
-        deleteCopies(entry)
+        // The hashed file even without a row: a crash may have left one
+        deleteCopies(entry, row)
     }
 
-    /** Deletes [entry]'s copy from both its places: its own file and its hashed file. */
-    private fun deleteCopies(entry: FileCacheEntry) {
-        deleteCopy(entry.file)
+    /**
+     * Deletes [entry]'s copies: its hashed file, which is its alone, and its own file when [row]
+     * recorded that one. Without that, the own file may be another name's: a folder, or on a
+     * case-insensitive volume the copy of a name that differs only in case.
+     */
+    private fun deleteCopies(entry: FileCacheEntry, row: CachedFileRow?) {
+        val own = entry.file
+        if (row?.recordedFileOf(entry) == own && lookUp(own)?.isDirectory != true) {
+            deleteContained(own)
+        }
         val hashed = hashedFileOf(entry)
-        if (hashed != entry.file) deleteContained(hashed)
-    }
-
-    /** Deletes [file], a copy, unless a directory stands there: the folder of another name. */
-    private fun deleteCopy(file: Path) {
-        if (lookUp(file)?.isDirectory != true) deleteContained(file)
+        if (hashed != own) deleteContained(hashed)
     }
 
     /**
@@ -1021,7 +1038,7 @@ internal class StorageFileCache(
      */
     private suspend fun dropTruncatedFileLocked(entry: FileCacheEntry, file: Path): Boolean {
         val row = rowOf(entry.bucketId, entry.rowPath) ?: return true
-        val size = fileSystem.metadataOrNull(file)?.takeIf { it.isRegularFile }?.size
+        val size = lookUp(file)?.takeIf { it.isRegularFile }?.size
         if (row.sizeBytes == null || size == null || row.sizeBytes == size) return false
         engineLogger.warning {
             "Storage cache dropped a file from ${entry.bucketId} whose size is not the one recorded"
@@ -1107,12 +1124,11 @@ internal class StorageFileCache(
         destination: FileCacheEntry,
         sourceRow: CachedFileRow,
     ) {
-        val target = destinationOfLocked(destination)
+        val target = destinationOfLocked(destination, recorded = null)
         val directory = target.parent ?: return
         if (!resolvesInsideDataDirectory(sourceFile) || !resolvesInsideDataDirectory(directory))
             return
-        val size =
-            fileSystem.metadataOrNull(sourceFile)?.takeIf { it.isRegularFile }?.size ?: return
+        val size = lookUp(sourceFile)?.takeIf { it.isRegularFile }?.size ?: return
         try {
             fileSystem.createDirectories(directory)
             recordRow(
@@ -1224,10 +1240,10 @@ internal class StorageFileCache(
 
     /**
      * The file [row]'s entry is cached in, for the eviction pass: the place the row recorded, or
-     * the entry's own file when the row recorded another path mapping's.
+     * `null` when it recorded another path mapping's, whose file is not the entry's to delete.
      */
     private fun fileOfRow(row: CachedFileRow): Path? =
-        entryForRow(row)?.let { entry -> row.recordedFileOf(entry) ?: entry.file }
+        entryForRow(row)?.let { entry -> row.recordedFileOf(entry) }
 
     /**
      * When a file with [metadata] was last used: the later of the time on it, when the platform

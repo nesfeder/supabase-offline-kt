@@ -34,7 +34,8 @@ is stored under `storage-hashed/`, in a file named by a hash of its key. So is a
 segment that starts with a letter and a colon, like `u:42`, which a path library would read as a
 Windows drive. So is an object whose place another object of its bucket takes: `album` and
 `album/cover.png` would need one name to be both a file and a folder, so the one downloaded second
-goes to its file under `storage-hashed/`, and its row records that. A download is written to a
+goes to its file under `storage-hashed/`, and its row records that. The same holds for `photo`
+and `PHOTO` on a case-insensitive volume, such as the iOS simulator's. A download is written to a
 temporary file first, written through to the disk, and
 moved into place whole; a temporary file a crash left behind is deleted once it is more than a day
 old. The row records the file's size. A file whose size differs from its row, which a power loss

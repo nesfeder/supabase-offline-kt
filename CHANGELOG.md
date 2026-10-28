@@ -54,11 +54,14 @@ All notable changes to this project are recorded in this file. The format follow
 
 ### Changed
 
-- When an object and a folder of the same name are both cached in one bucket, the one downloaded
-  second is stored under `storage-hashed/`, in the file named by a hash of its key, and its row's
-  `localPath` records that file. Files and rows already on a device stay as they are and are read as
-  before. An earlier build that finds such a row drops it and downloads the object again, and leaves
-  its file until the file cache or local data is cleared.
+- When an object and a folder of the same name are both cached in one bucket, or two objects whose
+  names differ only in case on a case-insensitive volume, the one downloaded second is stored under
+  `storage-hashed/`, in the file named by a hash of its key, and its row's `localPath` records that
+  file. Files and rows already on a device stay as they are and are read as before. An earlier build
+  that finds such a row drops it when the object is next read, downloads the object again, and
+  leaves the file until the file cache or local data is cleared. Until that read, an earlier build
+  on iOS stops at such a row in every eviction pass, so its size bound evicts nothing while a row
+  like `album/cover.png` beside the file `album` is there.
 - The query cache's eviction pass runs in the background after a response is written, where it ran
   before the read returned, and starts when a running count of the cached lists' length passes the
   bound, where every response of 4 KiB or more, and every 32nd response, summed every cached list
@@ -149,6 +152,9 @@ All notable changes to this project are recorded in this file. The format follow
   both be cached now. On disk they would need one name to be both a file and a folder, so the one
   downloaded second was never cached: `ensureCachedFile` threw for it every time, a channel download
   of it could fetch it twice, and it was not served offline.
+- On a case-insensitive volume, such as the iOS simulator's or a Mac's, two objects whose names
+  differ only in case, such as `photo` and `PHOTO`, shared one cached file, so the one downloaded
+  second replaced the other's bytes. The second is now stored apart, and each object serves its own.
 - In the Swift package, a call that failed for a reason of its own while the client closed threw
   `clientClosed`: any `IllegalStateException` or cancellation met during the close read as the
   closed client, such as the failure of a download whose local data was cleared. It now keeps its

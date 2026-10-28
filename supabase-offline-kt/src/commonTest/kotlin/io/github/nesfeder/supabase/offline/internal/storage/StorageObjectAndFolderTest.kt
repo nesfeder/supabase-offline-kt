@@ -24,7 +24,9 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlinx.coroutines.test.runTest
 import kotlinx.io.readByteArray
+import okio.FileMetadata
 import okio.FileSystem
+import okio.ForwardingFileSystem
 import okio.IOException
 import okio.Path
 import okio.Path.Companion.toPath
@@ -34,7 +36,9 @@ import okio.SYSTEM
  * An object and a folder of the same name, `album` and `album/cover.png`, map onto one place on
  * disk: a file and a directory of the same name. Whichever is cached second is stored under its
  * hashed file instead, its row records that, and both are served, kept apart and dropped as any
- * other cached object is. On the real file system, which is where the two names collide.
+ * other cached object is. On the real file system, which is where the two names collide, looked at
+ * as okio on iOS looks at it ([NativeLikeFileSystem]), so the JVM suite sees what the iOS one does.
+ * Names that differ only in case collide the same way on a case-insensitive volume.
  */
 class StorageObjectAndFolderTest {
 
@@ -60,7 +64,16 @@ class StorageObjectAndFolderTest {
     }
 
     private fun bucket(directory: Path = dataDirectory) =
-        newTestBucketApi(delegate = delegate, baseDirectory = directory, store = store)
+        bucketOn(NativeLikeFileSystem(FileSystem.SYSTEM), directory)
+
+    private fun bucketOn(fileSystem: FileSystem, directory: Path = dataDirectory) =
+        newTestBucketApi(
+            delegate = delegate,
+            baseDirectory = directory,
+            store = store,
+            cache =
+                newTestFileCache(baseDirectory = directory, store = store, fileSystem = fileSystem),
+        )
 
     private fun goOnline() {
         delegate.onDownload = { path -> assertNotNull(CONTENTS[path], path).encodeToByteArray() }
@@ -272,6 +285,7 @@ class StorageObjectAndFolderTest {
                 store = store,
                 maxSizeBytes = 10,
                 nowMillis = { now },
+                fileSystem = NativeLikeFileSystem(FileSystem.SYSTEM),
             )
         val bucket =
             newTestBucketApi(
@@ -314,6 +328,7 @@ class StorageObjectAndFolderTest {
                 supabase = server.supabaseClient(),
                 cachedFileDao = cachedFileDao,
                 baseDirectoryProvider = { dataDirectory },
+                fileSystem = NativeLikeFileSystem(FileSystem.SYSTEM),
             )
         client.storage.from(BUCKET).ensureCachedFile(ALBUM)
         val cover = client.storage.from(BUCKET).ensureCachedFile(COVER)
@@ -336,21 +351,81 @@ class StorageObjectAndFolderTest {
     }
 
     @Test
-    fun a_hashed_copy_downloaded_again_once_its_name_is_free_moves_to_its_own_file() = runTest {
-        // Given — cover.png went to its hashed file, then album, in its way, was evicted
+    fun a_hashed_copy_downloaded_again_stays_where_its_path_was_handed_out() = runTest {
+        // Given — cover.png went to its hashed file, whose path was handed out; then album, in the
+        // way of its own file, was evicted
         bucket().ensureCachedFile(ALBUM)
-        bucket().ensureCachedFile(COVER)
+        val handedOut = bucket().ensureCachedFile(COVER).path
         bucket().evictCachedFile(ALBUM)
 
         // When — downloaded again
         bucket().downloadAuthenticated(COVER) {}
 
-        // Then — stored under its own name, and the hashed file it replaced is gone
-        assertEquals(plainFile(COVER).toString(), recordedPath(COVER))
-        assertFalse(FileSystem.SYSTEM.exists(hashedFile(COVER)))
+        // Then — still in the hashed file, so the path handed out reads the new copy
+        assertEquals(hashedFile(COVER).toString(), handedOut)
+        assertEquals(handedOut, recordedPath(COVER))
+        assertEquals(CONTENTS[COVER], FileSystem.SYSTEM.read(handedOut.toPath()) { readUtf8() })
+        assertFalse(FileSystem.SYSTEM.exists(plainFile(COVER)))
         goOffline()
-        assertServedOffline(COVER, plainFile(COVER))
+        assertServedOffline(COVER, hashedFile(COVER))
     }
+
+    @Test
+    fun a_download_into_the_own_file_deletes_a_hashed_file_a_crash_left() = runTest {
+        // Given — album's row and file in its own place, and a hashed file of album's beside them
+        val file = plainFile(ALBUM)
+        FileSystem.SYSTEM.createDirectories(file.parent!!)
+        FileSystem.SYSTEM.write(file) { writeUtf8("OLD!!") }
+        store.addStorage(BUCKET, ALBUM, file, 5, null)
+        FileSystem.SYSTEM.createDirectories(hashedFile(ALBUM).parent!!)
+        FileSystem.SYSTEM.write(hashedFile(ALBUM)) { writeUtf8("STALE") }
+
+        // When
+        bucket().downloadAuthenticated(ALBUM) {}
+
+        // Then — the new copy is in the own file, and the hashed one is gone
+        assertEquals(file.toString(), recordedPath(ALBUM))
+        assertFalse(FileSystem.SYSTEM.exists(hashedFile(ALBUM)))
+        goOffline()
+        assertServedOffline(ALBUM, file)
+    }
+
+    @Test
+    fun a_bytes_download_under_a_cached_objects_name_returns_its_bytes_and_keeps_them() = runTest {
+        // Given
+        bucket().ensureCachedFile(ALBUM)
+
+        // When
+        val bytes = bucket().downloadAuthenticated(COVER) {}
+
+        // Then
+        assertEquals(CONTENTS[COVER], bytes.decodeToString())
+        assertEquals(hashedFile(COVER).toString(), recordedPath(COVER))
+    }
+
+    @Test
+    fun names_that_differ_only_in_case_keep_their_own_bytes_on_a_case_insensitive_volume() =
+        runTest {
+            // Given — a volume where photo and PHOTO are one file, as on the iOS simulator or a Mac
+            val bucket =
+                bucketOn(
+                    NativeLikeFileSystem(
+                        CaseInsensitiveFileSystem(FileSystem.SYSTEM, dataDirectory)
+                    )
+                )
+            bucket.ensureCachedFile(LOWER)
+
+            // When
+            val upper = bucket.ensureCachedFile(UPPER)
+
+            // Then — the second went to its hashed file; each keeps its own bytes, and evicting it
+            // leaves the first's file
+            assertEquals(hashedFile(UPPER).toString(), upper.path)
+            assertEquals(CONTENTS[UPPER], read(upper))
+            assertEquals(CONTENTS[LOWER], read(assertNotNull(bucket.cachedFile(LOWER))))
+            bucket.evictCachedFile(UPPER)
+            assertEquals(CONTENTS[LOWER], read(assertNotNull(bucket.cachedFile(LOWER))))
+        }
 
     @Test
     fun a_row_an_earlier_build_wrote_at_the_plain_path_still_serves_its_file() = runTest {
@@ -465,6 +540,43 @@ class StorageObjectAndFolderTest {
         assertEquals(album.path, recordedPath(ALBUM))
     }
 
+    /**
+     * The file system with okio's Kotlin/Native lookup: a path under a regular file fails with "Not
+     * a directory" (`ENOTDIR`), where okio on the JVM reports nothing there.
+     */
+    private class NativeLikeFileSystem(delegate: FileSystem) : ForwardingFileSystem(delegate) {
+        override fun metadataOrNull(path: Path): FileMetadata? {
+            var parent = path.parent
+            while (parent != null) {
+                if (delegate.metadataOrNull(parent)?.isRegularFile == true) {
+                    throw IOException("Not a directory: $path")
+                }
+                parent = parent.parent
+            }
+            return delegate.metadataOrNull(path)
+        }
+    }
+
+    /**
+     * A case-insensitive volume on any host: every path below [root] reaches the file its lowercase
+     * form names.
+     */
+    private class CaseInsensitiveFileSystem(delegate: FileSystem, root: Path) :
+        ForwardingFileSystem(delegate) {
+        private val root = root.normalized()
+
+        override fun onPathParameter(
+            path: Path,
+            functionName: String,
+            parameterName: String,
+        ): Path =
+            if (path.normalized().isStrictlyInside(root)) {
+                root / path.normalized().relativeTo(root).toString().lowercase()
+            } else {
+                path
+            }
+    }
+
     private companion object {
         const val BUCKET = "media"
         const val ALBUM = "album"
@@ -472,6 +584,8 @@ class StorageObjectAndFolderTest {
         const val NESTED = "album/2024/cover.png"
         const val OTHER = "other.png"
         const val MOVED = "single.png"
+        const val LOWER = "photo"
+        const val UPPER = "PHOTO"
         const val MINUTE = 60_000L
 
         val CONTENTS =
@@ -481,6 +595,8 @@ class StorageObjectAndFolderTest {
                 NESTED to "NESTED",
                 OTHER to "OTHER",
                 MOVED to "SINGLE",
+                LOWER to "lower",
+                UPPER to "UPPER",
             )
     }
 }
