@@ -1222,9 +1222,10 @@ rejected list, the conflicted list, the cache owner, each query's shape) are JSO
 rows of `object_cache`, under a table name 94 bytes long: Postgres truncates identifiers at 63
 bytes, so no table can be named that, and `from()` refuses it. A reserved row is never evicted,
 counted, read as a query or overlaid. `localPath` records where a file was written, but a file's
-place is always derived from its bucket and path; the recorded one is read only to clean up a file
-an older mapping left. Every schema change after 0.1.0, version 2 included, is a new version with a
-migration that keeps `mutation_cache`'s rows.
+place is always derived from its bucket and path: its own file, or its hashed file when another name
+takes that place. The recorded path only says which of the two holds the file, or names a file an
+older mapping left, to clean up. Every schema change after 0.1.0, version 2 included, is a new
+version with a migration that keeps `mutation_cache`'s rows.
 
 Every payload, overlay and stored filter is read and written with one `Json` instance,
 `EngineJson`, so the serializer cache is shared and the settings cannot drift between call sites.
