@@ -30,13 +30,22 @@ internal class ScriptedRealtimeWebsocket : RealtimeWebsocket {
 
     private val incoming = Channel<RealtimeMessage>(Channel.UNLIMITED)
 
+    /** How many messages [answer] has delivered. */
+    private val answered = MutableStateFlow(0)
+
+    /** How many times supabase-kt has asked for the next message. */
+    private val receives = MutableStateFlow(0)
+
     /** Completed once supabase-kt disconnected this socket. */
     val disconnected: CompletableDeferred<Unit> = CompletableDeferred()
 
     override val hasIncomingMessages: Boolean
         get() = !incoming.isClosedForReceive
 
-    override suspend fun receive(): RealtimeMessage = incoming.receive()
+    override suspend fun receive(): RealtimeMessage {
+        receives.update { count -> count + 1 }
+        return incoming.receive()
+    }
 
     override suspend fun send(message: RealtimeMessage) {
         sent.send(message)
@@ -54,7 +63,18 @@ internal class ScriptedRealtimeWebsocket : RealtimeWebsocket {
 
     /** Delivers [message] to supabase-kt, as the server would. */
     fun answer(message: RealtimeMessage) {
+        answered.update { count -> count + 1 }
         incoming.trySend(message)
+    }
+
+    /**
+     * Waits up to [timeout] for supabase-kt to have handled every message answered so far. Its read
+     * loop handles one message at a time and asks for the next only once done, so it has handled
+     * them all once it asks for the one after them.
+     */
+    suspend fun awaitHandled(timeout: Duration = 10.seconds) {
+        val count = answered.value
+        withTimeout(timeout) { receives.first { asked -> asked > count } }
     }
 
     /** The next message supabase-kt sends with [event], skipping others, within [timeout]. */

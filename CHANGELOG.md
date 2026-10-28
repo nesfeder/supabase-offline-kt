@@ -199,6 +199,11 @@ All notable changes to this project are recorded in this file. The format follow
 
 ### Fixed
 
+- A change the server sent to a named table as soon as its Realtime channel was joined could be
+  dropped: supabase-kt starts listening for a table's changes only once the coroutine behind it
+  runs, which could be after the join was taken, and it drops a change nothing listens for. Each
+  table now listens before its join goes out. The read of the table on every join usually made up
+  for the loss.
 - An object and a folder of the same name in one bucket, such as `album` and `album/cover.png`, can
   both be cached now. On disk they would need one name to be both a file and a folder, so the one
   downloaded second was never cached: `ensureCachedFile` threw for it every time, a channel download

@@ -1,6 +1,6 @@
 // Copyright (c) 2026 nesfeder
 // SPDX-License-Identifier: MIT
-@file:OptIn(SupabaseInternal::class)
+@file:OptIn(SupabaseInternal::class, ExperimentalAtomicApi::class)
 
 package io.github.nesfeder.supabase.offline.internal.realtime
 
@@ -15,6 +15,11 @@ import io.github.nesfeder.supabase.offline.testdoubles.RecordingLogSink
 import io.github.nesfeder.supabase.offline.testdoubles.ScriptedRealtimeWebsocket
 import io.github.nesfeder.supabase.offline.testdoubles.ScriptedRealtimeWebsocketFactory
 import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
+import kotlin.concurrent.atomics.AtomicBoolean
+import kotlin.concurrent.atomics.AtomicInt
+import kotlin.concurrent.atomics.ExperimentalAtomicApi
+import kotlin.concurrent.atomics.incrementAndFetch
+import kotlin.coroutines.CoroutineContext
 import kotlin.io.encoding.Base64
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -27,9 +32,12 @@ import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.Runnable
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.ClosedReceiveChannelException
@@ -173,6 +181,102 @@ class SupabaseRealtimeFeedTest {
                 collecting.cancelAndJoin()
 
                 // Then — the channel is left, and the socket closed once nothing is subscribed
+                val leave = socket.awaitSent("phx_leave")
+                socket.answer(
+                    RealtimeMessage(
+                        leave.topic,
+                        "phx_reply",
+                        buildJsonObject { put("status", "ok") },
+                        leave.ref,
+                    )
+                )
+                socket.awaitDisconnected()
+            }
+            supabase.close()
+        }
+
+    @Test
+    fun a_change_sent_as_soon_as_the_join_is_taken_reaches_its_table() =
+        runTest(timeout = 2.minutes) {
+            withContext(Dispatchers.Default) {
+                // Given — following a table from a collector whose dispatcher starts the feed and
+                // then runs nothing until released, as a busy one may: nothing the feed hands it
+                // runs before the server has answered
+                val dispatcher = HoldAfterFirstDispatcher()
+                val events = Channel<ServerChangeEvent>(Channel.UNLIMITED)
+                val collecting =
+                    launch(dispatcher, start = CoroutineStart.UNDISPATCHED) {
+                        feed.follow(listOf(WatchedTable("tasks")), "public").collect { event ->
+                            events.send(event)
+                        }
+                    }
+                val socket = sockets.awaitSocket(0)
+                val join = socket.awaitSent("phx_join")
+
+                // When — the server takes the join and sends a change at once, and supabase-kt has
+                // handled both before the collector's dispatcher runs anything more
+                val row = buildJsonObject {
+                    put("id", "t1")
+                    put("title", "Milk")
+                }
+                socket.answer(joinTaken(join, join.bindings()))
+                socket.answer(change(join.topic, ids = listOf(1), data = insert(row)))
+                socket.awaitHandled()
+                dispatcher.release()
+
+                // Then — the change reached the table: its callback was in place before the join
+                assertEquals(
+                    setOf(
+                        ServerChangeEvent.Joined,
+                        ServerChangeEvent.Saved("tasks", "public", row),
+                    ),
+                    setOf(events.receiveWithin(), events.receiveWithin()),
+                )
+                collecting.cancelAndJoin()
+                val leave = socket.awaitSent("phx_leave")
+                socket.answer(
+                    RealtimeMessage(
+                        leave.topic,
+                        "phx_reply",
+                        buildJsonObject { put("status", "ok") },
+                        leave.ref,
+                    )
+                )
+                socket.awaitDisconnected()
+            }
+            supabase.close()
+        }
+
+    @Test
+    fun a_feed_collected_unconfined_registers_its_table_before_the_join_too() =
+        runTest(timeout = 2.minutes) {
+            withContext(Dispatchers.Default) {
+                // Given — following a table from an unconfined collector, where the table's
+                // producer waits in the thread's queue behind the feed's own until it yields
+                val events = Channel<ServerChangeEvent>(Channel.UNLIMITED)
+                val collecting =
+                    launch(Dispatchers.Unconfined) {
+                        feed.follow(listOf(WatchedTable("tasks")), "public").collect { event ->
+                            events.send(event)
+                        }
+                    }
+                val socket = sockets.awaitSocket(0)
+                val join = socket.awaitSent("phx_join")
+
+                // When — the server takes the join and sends a change at once
+                val row = buildJsonObject { put("id", "t1") }
+                socket.answer(joinTaken(join, join.bindings()))
+                socket.answer(change(join.topic, ids = listOf(1), data = insert(row)))
+
+                // Then — both arrive
+                assertEquals(
+                    setOf(
+                        ServerChangeEvent.Joined,
+                        ServerChangeEvent.Saved("tasks", "public", row),
+                    ),
+                    setOf(events.receiveWithin(), events.receiveWithin()),
+                )
+                collecting.cancelAndJoin()
                 val leave = socket.awaitSent("phx_leave")
                 socket.answer(
                     RealtimeMessage(
@@ -755,5 +859,33 @@ class SupabaseRealtimeFeedTest {
     private companion object {
         /** How many changes one statement over a few hundred visible rows sends. */
         const val BURST = 500
+    }
+}
+
+/**
+ * Hands its first dispatch to [Dispatchers.Default] and holds every later one until [release], then
+ * hands every dispatch on: a collector's dispatcher that is busy from the moment the feed starts.
+ */
+private class HoldAfterFirstDispatcher : CoroutineDispatcher() {
+    private val dispatches = AtomicInt(0)
+    private val released = AtomicBoolean(false)
+    private val held = Channel<Pair<CoroutineContext, Runnable>>(Channel.UNLIMITED)
+
+    override fun dispatch(context: CoroutineContext, block: Runnable) {
+        val holds = dispatches.incrementAndFetch() > 1 && !released.load()
+        // A dispatch that races the release finds the queue closed and goes on at once
+        if (!holds || !held.trySend(context to block).isSuccess) {
+            Dispatchers.Default.dispatch(context, block)
+        }
+    }
+
+    /** Hands on every dispatch held so far, in order, and every later one at once. */
+    fun release() {
+        released.store(true)
+        held.close()
+        while (true) {
+            val (context, block) = held.tryReceive().getOrNull() ?: break
+            Dispatchers.Default.dispatch(context, block)
+        }
     }
 }
