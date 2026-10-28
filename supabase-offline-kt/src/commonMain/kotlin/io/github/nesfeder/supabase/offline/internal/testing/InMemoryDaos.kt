@@ -356,9 +356,9 @@ internal open class InMemoryCachedFileDao : CachedFileDao {
                 (it.path == path || (it.path >= variantPrefix && it.path < variantBound))
         }
 
-    override suspend fun samePathIgnoringCase(bucketId: String, path: String): List<CachedFileRow> =
+    override suspend fun sameNameIgnoringCase(bucketId: String, path: String): List<CachedFileRow> =
         rows.value.values.filter {
-            it.bucketId == bucketId && it.path.equalsIgnoringAsciiCase(path)
+            it.bucketId.equalsIgnoringAsciiCase(bucketId) && it.path.equalsIgnoringAsciiCase(path)
         }
 
     override suspend fun all(): List<CachedFileRow> = rows.value.values.toList()

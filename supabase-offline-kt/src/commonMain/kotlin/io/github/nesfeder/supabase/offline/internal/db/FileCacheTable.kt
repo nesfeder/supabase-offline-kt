@@ -65,18 +65,19 @@ internal interface CachedFileDao {
     ): List<CachedFileRow>
 
     /**
-     * The rows of [bucketId] whose path is [path] ignoring ASCII case, [path]'s own included. On a
-     * case-insensitive volume their files under their own names are one file. The `(bucketId,
-     * path)` index serves the bucket alone, so call it only when a file stands in the way.
+     * The rows whose bucket and path are [bucketId] and [path] ignoring ASCII case, the object's
+     * own included. On a case-insensitive volume their files under their own names are one file. No
+     * index serves a `NOCASE` comparison, so call it only when a file stands in the way.
      *
-     * @param bucketId the bucket.
+     * @param bucketId the bucket, a plain (ASCII) name.
      * @param path the object path, a plain (ASCII) name.
      * @return the matching rows.
      */
     @Query(
-        "SELECT * FROM storage_objects WHERE bucketId = :bucketId AND path = :path COLLATE NOCASE"
+        "SELECT * FROM storage_objects WHERE bucketId = :bucketId COLLATE NOCASE " +
+            "AND path = :path COLLATE NOCASE"
     )
-    suspend fun samePathIgnoringCase(bucketId: String, path: String): List<CachedFileRow>
+    suspend fun sameNameIgnoringCase(bucketId: String, path: String): List<CachedFileRow>
 
     /** Every cached storage-object row, for the size bound's least-recently-used pass. */
     @Query("SELECT * FROM storage_objects") suspend fun all(): List<CachedFileRow>

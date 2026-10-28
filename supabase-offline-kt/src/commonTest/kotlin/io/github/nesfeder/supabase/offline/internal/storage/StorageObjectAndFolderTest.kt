@@ -66,9 +66,13 @@ class StorageObjectAndFolderTest {
     private fun bucket(directory: Path = dataDirectory) =
         bucketOn(NativeLikeFileSystem(FileSystem.SYSTEM), directory)
 
-    private fun bucketOn(fileSystem: FileSystem, directory: Path = dataDirectory) =
+    private fun bucketOn(
+        fileSystem: FileSystem,
+        directory: Path = dataDirectory,
+        bucket: FakeBucketApi = delegate,
+    ) =
         newTestBucketApi(
-            delegate = delegate,
+            delegate = bucket,
             baseDirectory = directory,
             store = store,
             cache =
@@ -656,6 +660,35 @@ class StorageObjectAndFolderTest {
             }
     }
 
+    @Test
+    fun buckets_that_differ_only_in_case_keep_their_own_bytes_on_a_case_insensitive_volume() =
+        runTest {
+            // Given — Media/photo cached, on a volume where Media and media are one directory
+            val volume =
+                NativeLikeFileSystem(CaseInsensitiveFileSystem(FileSystem.SYSTEM, dataDirectory))
+            val upperBucket =
+                FakeBucketApi(bucketId = UPPER_BUCKET).apply {
+                    onDownload = { "UPPER".encodeToByteArray() }
+                }
+            val upper = bucketOn(volume, bucket = upperBucket)
+            upper.ensureCachedFile(LOWER)
+            val lower = bucketOn(volume)
+
+            // When — media/photo is downloaded
+            val lowerCopy = lower.ensureCachedFile(LOWER)
+
+            // Then — it went to its hashed file; each keeps its own bytes, and a write to
+            // media/photo leaves Media's copy
+            assertEquals(hashedFile(LOWER).toString(), lowerCopy.path)
+            assertEquals(CONTENTS[LOWER], read(lowerCopy))
+            val upperCopy = assertNotNull(upper.cachedFile(LOWER))
+            assertEquals("UPPER", volume.read(upperCopy.path.toPath()) { readUtf8() })
+            lower.update(LOWER, "NEW".encodeToByteArray()) {}
+            assertNull(lower.cachedFile(LOWER))
+            assertEquals(upperCopy, upper.cachedFile(LOWER))
+            assertEquals("UPPER", volume.read(upperCopy.path.toPath()) { readUtf8() })
+        }
+
     private companion object {
         const val BUCKET = "media"
         const val ALBUM = "album"
@@ -666,6 +699,7 @@ class StorageObjectAndFolderTest {
         const val LOWER = "photo"
         const val UPPER = "PHOTO"
         const val HASHED_NAME = "caf\u00E9.png"
+        const val UPPER_BUCKET = "Media"
         const val MINUTE = 60_000L
 
         val CONTENTS =

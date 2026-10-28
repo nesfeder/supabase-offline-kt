@@ -928,13 +928,13 @@ internal class StorageFileCache(
     }
 
     /**
-     * Whether the regular file at [entry]'s own place is another name's: another row of its bucket,
-     * whose path differs from the entry's only in case, records its own file there. Plain names are
+     * Whether the regular file at [entry]'s own place is another name's: another row, whose bucket
+     * and path differ from the entry's only in case, records its own file there. Plain names are
      * ASCII, all a `NOCASE` comparison folds. A file no row records is one a crash left, the
      * entry's to replace or delete.
      */
     private suspend fun isAnotherNamesFileLocked(entry: FileCacheEntry): Boolean =
-        cachedFileDao.samePathIgnoringCase(entry.bucketId, entry.objectPath).any { row ->
+        cachedFileDao.sameNameIgnoringCase(entry.bucketId, entry.objectPath).any { row ->
             val other = entryFor(row.bucketId, row.path)
             row.key != entry.key && other != null && row.recordedFileOf(other) == other.file
         }
