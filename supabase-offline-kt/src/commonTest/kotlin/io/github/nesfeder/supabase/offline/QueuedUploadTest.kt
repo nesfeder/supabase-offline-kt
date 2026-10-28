@@ -346,6 +346,9 @@ class QueuedUploadTest {
         server.online = false
         client.storage.from(BUCKET).upload(PATH, BYTES, QueueIfOffline)
         client.from(PHOTOS).insert(row("photo"))
+        // Storage refuses before the server is back, so a pass the queued insert asked for, which
+        // may run as soon as the server is online, never finds the default answer that stores it
+        server.uploadAnswer = { UploadAnswer.Refuse(503, 503, "Unavailable") }
         server.online = true
 
         for ((status, error) in listOf(503 to "Unavailable", 401 to "Unauthorized", 500 to "x")) {
