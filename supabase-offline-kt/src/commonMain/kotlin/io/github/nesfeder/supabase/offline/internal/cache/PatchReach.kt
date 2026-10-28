@@ -10,6 +10,7 @@ import io.github.nesfeder.supabase.offline.internal.postgrest.QueryAdmission
 import io.github.nesfeder.supabase.offline.internal.postgrest.QueryShape
 import io.github.nesfeder.supabase.offline.internal.postgrest.RowFilter
 import io.github.nesfeder.supabase.offline.internal.postgrest.RowMatch
+import io.github.nesfeder.supabase.offline.internal.postgrest.RowWindow
 import io.github.nesfeder.supabase.offline.internal.postgrest.decodeFilterOrNull
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -46,7 +47,8 @@ internal class PatchTarget(
  *   [RowMatch.UNKNOWN] for the row), in the query, or, for an UPDATE, one that may join it;
  * - an UPDATE brings in a row read with another [Projection], which may lack this list's columns or
  *   hold other embedded rows;
- * - an UPSERT row has no key to place it by, or its key is a row read with another projection.
+ * - an UPSERT row has no key to place it by, the query holds a row without it, or its key is a row
+ *   read with another projection.
  *
  * @param conflictColumnsOf the columns an UPSERT matches rows on.
  * @param keyed UPDATEs known to reach exactly the rows with one key each, and no row whose reach is
@@ -143,8 +145,14 @@ private fun upsertMayLeaveWrong(
             else -> emptyList()
         }
     val admission = target.admission
+    // A row the query holds without the conflict columns may be the one an UPSERT row replaces:
+    // nothing tells, so the row may show twice, or stay where it no longer belongs
+    val holdsKeylessRow = lazy {
+        target.rows.any { row -> row is JsonObject && keyOf(row, keyColumns) == null }
+    }
     return body.any { row ->
         if (primaryKeyOf(row, keyColumns) == null) return@any admission.admits(row)
+        if (holdsKeylessRow.value) return@any true
         val elsewhere =
             target.otherSelectRows.firstOrNull { other ->
                 indexOfKey(listOf(other), row, keyColumns) != null
@@ -154,6 +162,35 @@ private fun upsertMayLeaveWrong(
             indexOfKey(target.sameSelectRows, row, keyColumns) == null &&
             admission.admits(JsonObject(elsewhere + row))
     }
+}
+
+/**
+ * Whether [patched], server changes laid over [answer] that [patchMayLeaveWrong] passed, may still
+ * differ from what the server would answer now: it shows a row [answer] does not hold, which the
+ * server may no longer show this user or would place elsewhere in its order; or, by [window], a row
+ * a change kept stands elsewhere in the server's order, or a row it removed would let another into
+ * the window. Rows are matched by [keyColumns], the key server changes place rows by.
+ */
+internal fun rebaseOnlyApproximates(
+    answer: List<JsonElement>,
+    patched: List<JsonElement>,
+    keyColumns: List<String>,
+    window: RowWindow,
+): Boolean {
+    val held = HashMap<List<String>, JsonObject>()
+    for (element in answer) {
+        val row = element as? JsonObject ?: continue
+        keyOf(row, keyColumns)?.let { key -> held[key] = row }
+    }
+    for (element in patched) {
+        // A row without the key is one the answer held, untouched: a change finds rows by their key
+        val row = element as? JsonObject ?: continue
+        val key = keyOf(row, keyColumns) ?: continue
+        val before = held[key] ?: return true
+        if (before != row && window.mayMove(before, row)) return true
+    }
+    // Nothing was added, so fewer rows means a change took one out
+    return window.isWindowed && patched.size < answer.size
 }
 
 /**

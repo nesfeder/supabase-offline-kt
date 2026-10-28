@@ -17,6 +17,7 @@ import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 import io.github.nesfeder.supabase.offline.internal.postgrest.QueryShape
 import io.github.nesfeder.supabase.offline.internal.postgrest.RowFilter
 import io.github.nesfeder.supabase.offline.internal.postgrest.RowMatch
+import io.github.nesfeder.supabase.offline.internal.postgrest.RowWindow
 import io.github.nesfeder.supabase.offline.internal.postgrest.encodeFilter
 import kotlin.concurrent.atomics.AtomicLong
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
@@ -299,17 +300,20 @@ internal class CachePatcher(
     /**
      * Lays [writes], server changes logged since a response's request left, over [answer], the
      * response's rows, with the overlay and the reading of the rows other queries hold that
-     * patching them in uses, as if the response had landed first. Caller holds [table]'s write
-     * lock.
+     * patching them in uses, as if the response had landed first. When they may leave the query
+     * wrong ([patchMayLeaveWrong]), the answer stays as it came; when they only approximate it
+     * ([rebaseOnlyApproximates]), it has them laid over it. Neither is exact. Caller holds
+     * [table]'s write lock.
      */
     override suspend fun rebase(
         table: String,
         cacheKey: String,
         shape: QueryShape?,
+        window: RowWindow,
         answer: ParsedPayload,
         writes: List<MutationRow>,
-    ): ParsedPayload? {
-        val rows = answer.rows ?: return null
+    ): Rebased {
+        val rows = answer.rows ?: return Rebased(answer, isExact = false)
         // A delete reads no other query's rows: the table's payloads are read only for an upsert
         val cached =
             if (writes.all { write -> write.knownOperation == MutationOperation.DELETE })
@@ -318,9 +322,13 @@ internal class CachePatcher(
         val pass = patchPassOver(table, writes, cached)
         val patched = pass.patch(cacheKey, shape ?: pass.shapes[cacheKey], rows)
         return when {
-            patched.wrong -> null
-            patched.rows == rows -> answer
-            else -> ParsedPayload(patched.encode(), patched.rows)
+            patched.wrong -> Rebased(answer, isExact = false)
+            patched.rows == rows -> Rebased(answer, isExact = true)
+            else ->
+                Rebased(
+                    ParsedPayload(patched.encode(), patched.rows),
+                    isExact = !rebaseOnlyApproximates(rows, patched.rows, pass.keyColumns, window),
+                )
         }
     }
 

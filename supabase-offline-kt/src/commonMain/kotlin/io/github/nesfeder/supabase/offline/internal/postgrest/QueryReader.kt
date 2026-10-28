@@ -676,6 +676,7 @@ internal class QueryReader(
                 requestStartedAtTick = requestStartedAtTick,
                 isTrusted = trustPolicy.mayCache(sessionBefore, sessionAfter, isEmpty = false),
                 shape = slot.shape,
+                window = slot.window,
             )
         when (outcome) {
             // The tick goes along, so a replay that landed after this request left still blocks it
@@ -1191,6 +1192,10 @@ internal class QueryReader(
                             (isEmpty ||
                                 trustPolicy.mayCache(sessionBefore, sessionAfter, isEmpty = false)),
                     shape = slot.shape,
+                    window = slot.window,
+                    // The one more ask is the last: an answer it gets is written, stale when the
+                    // server changes during it cannot be laid over it exactly
+                    lastAsk = refetchBudget == 0,
                 )
             val outcome = written.outcome
             when (outcome) {

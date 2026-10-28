@@ -18,12 +18,14 @@ import io.github.jan.supabase.postgrest.query.request.SelectRequestBuilder
  * @property shape the query's columns and filters, captured from its request.
  * @property allowsRetries whether the request lets supabase-kt retry it: it did not call
  *   `noRetry()`.
+ * @property window how the request orders its rows and whether it reads a window of them.
  */
 internal data class CacheSlot(
     val table: String,
     val cacheKey: String,
     val shape: QueryShape,
     val allowsRetries: Boolean = true,
+    val window: RowWindow = RowWindow.UNORDERED,
 )
 
 /**
@@ -57,6 +59,7 @@ internal fun cacheSlotOf(
         cacheKey = keyOf(cachedTable, columns, builder),
         shape = queryShapeOf(columns, builder),
         allowsRetries = builder.retry,
+        window = rowWindowOf(builder),
     )
 }
 

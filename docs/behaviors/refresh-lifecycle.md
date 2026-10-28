@@ -24,7 +24,7 @@ From the samples: [LibraryMappings.kt](https://github.com/nesfeder/supabase-offl
 | State | Meaning | What to show |
 | --- | --- | --- |
 | `Idle` | No refresh is running or waiting: the last one succeeded, or the read does not refresh | Nothing |
-| `Refreshing` | A refresh is running, is about to be tried again soon after a failure, waits for a session that is still settling, or asks again because its answer predated a local write, or a server change the cache could not lay over it | A quiet progress mark, if anything |
+| `Refreshing` | A refresh is running, is about to be tried again soon after a failure, waits for a session that is still settling, or asks again because its answer predated a local write | A quiet progress mark, if anything |
 | `Paused` | The refresh waits for the network, which the library knows to be unavailable. Nothing is failing | "Offline": the rows are the device's |
 | `Stalled(cause)` | The refresh keeps failing while the network is believed to be up. It is still tried, at most a minute apart | "Can't reach the server": the rows are the device's |
 
@@ -83,11 +83,22 @@ and counts as a failed attempt: the refresh asks again on its schedule, and read
 cause after the fourth in a row.
 
 A server record or Realtime event applied to the table moves no mark. The library keeps the
-table's last 256 such changes, and when an answer lands, lays the ones applied after its request
-left over it, as they were laid over the cache: a row another user deleted is not brought back, and
-a row they changed shows the change. The answer is written and the read settles, so a table that
-changes at least once per round trip still has its refreshes land. A one-shot read returns the rows
-as written; when a change altered them, without the server's headers, a `count` among them, which
-describe the rows it sent. An answer is refused as above when a change newer than its request is no
-longer among the 256 kept, or when the cache cannot lay a change over it exactly, such as a delete
-over rows read without their key.
+table's last 256 such changes, fewer when their rows are long (65,536 characters of JSON in all),
+and when an answer lands, lays the ones applied after its request left over it, as they were laid
+over the cache: a row another user deleted is not brought back, and a row they changed shows the
+change. The answer is written and the read settles, so a table that changes at least once per round
+trip still has its refreshes land. A one-shot read returns the rows as written; when a change
+altered them, without the server's headers, such as `Content-Range`, which describe the rows it
+sent. An answer is refused as above when a change newer than its request is no longer among those
+kept.
+
+Some changes cannot be laid over an answer exactly: a row the answer does not hold (an insert, which
+the server places by its order, or a row the server no longer shows this user), a change to a column
+the query is ordered by, a row taken out of a `limit` or `range` window, which the server would fill
+with the next one, and a change the cache cannot place, such as one over rows read without their
+key. An answer with such a change is never written as the server's: the read asks once more, as for
+a local write. When the changes during that request cannot be laid over its answer exactly either,
+it is written with them anyway, marked stale, and the read takes it instead of asking again: a
+one-shot read returns it, a reactive read settles showing the rows as the device's copy
+(`isFromCache`), and the next read asks the server again. A change the cache cannot place is left
+off that answer, written as the server sent it.

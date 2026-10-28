@@ -42,7 +42,12 @@ internal fun belongsOnPayload(mutation: MutationRow, payloadSyncedThrough: Long)
  * @property writes the patch's writes, in order: whole-row upserts and deletes by key, which give
  *   the same rows however often they are laid over an answer.
  */
-internal class LoggedServerPatch(val tick: Long, val writes: List<MutationRow>)
+internal class LoggedServerPatch(val tick: Long, val writes: List<MutationRow>) {
+    /** The length of [writes]' JSON, bodies and filters: what keeping them costs. */
+    val length: Long = writes.sumOf { write ->
+        write.bodyJson.length.toLong() + write.filterJson.orEmpty().length
+    }
+}
 
 /**
  * The watermarks that say whether a response or a cache write is still current: each table's last
@@ -64,8 +69,9 @@ internal class CacheFreshness(private val monotonicTick: () -> Long) {
 
     /**
      * Table → the server changes patched into it since its watermark, oldest first, at most
-     * [MAX_LOGGED_SERVER_WRITES] writes; see [logServerPatch]. Changed under the table's write lock
-     * and the clear lock, read under the table's write lock.
+     * [MAX_LOGGED_SERVER_WRITES] writes of [MAX_LOGGED_SERVER_LENGTH] characters in all; see
+     * [logServerPatch]. Changed under the table's write lock and the clear lock, read under the
+     * table's write lock.
      */
     private val serverPatches = AtomicReference<Map<String, List<LoggedServerPatch>>>(emptyMap())
 
@@ -110,10 +116,11 @@ internal class CacheFreshness(private val monotonicTick: () -> Long) {
     /**
      * Logs [writes], server changes patched into [table] from [tick] on, in place of moving its
      * watermark: a response whose request started before [tick] is written with them laid over it
-     * ([serverWritesSince]) rather than refused. The log keeps the newest
-     * [MAX_LOGGED_SERVER_WRITES] writes of the table; a patch that leaves it moves the watermark to
-     * its tick, so a response that left before that patch is refused, as a local write's would be.
-     * Caller holds the table's write lock and the clear lock.
+     * ([serverWritesSince]) rather than refused. The log keeps the table's newest patches, at most
+     * [MAX_LOGGED_SERVER_WRITES] writes of [MAX_LOGGED_SERVER_LENGTH] characters in all, however
+     * long the table then stays quiet; a patch that leaves it moves the watermark to its tick, so a
+     * response that left before that patch is refused, as a local write's would be. Caller holds
+     * the table's write lock and the clear lock.
      */
     fun logServerPatch(table: String, tick: Long, writes: List<MutationRow>) {
         if (writes.isEmpty()) return
@@ -125,9 +132,11 @@ internal class CacheFreshness(private val monotonicTick: () -> Long) {
                 watermark == null || patch.tick > watermark
             } + LoggedServerPatch(tick, writes)
         var dropped = 0
-        var kept = logged.sumOf { patch -> patch.writes.size }
-        while (kept > MAX_LOGGED_SERVER_WRITES) {
-            kept -= logged[dropped].writes.size
+        var keptWrites = logged.sumOf { patch -> patch.writes.size }
+        var keptLength = logged.sumOf { patch -> patch.length }
+        while (keptWrites > MAX_LOGGED_SERVER_WRITES || keptLength > MAX_LOGGED_SERVER_LENGTH) {
+            keptWrites -= logged[dropped].writes.size
+            keptLength -= logged[dropped].length
             dropped++
         }
         if (dropped > 0) advanceLocalWriteWatermark(table, logged[dropped - 1].tick)
@@ -212,5 +221,12 @@ internal class CacheFreshness(private val monotonicTick: () -> Long) {
          * oldest patches go and a response that left before them is refused.
          */
         const val MAX_LOGGED_SERVER_WRITES = 256
+
+        /**
+         * The most characters of JSON, bodies and filters, [CacheFreshness.logServerPatch] keeps
+         * for one table: what bounds the log of a table with long rows, which keeps it while the
+         * process lives. Beyond it the oldest patches go, as beyond [MAX_LOGGED_SERVER_WRITES].
+         */
+        const val MAX_LOGGED_SERVER_LENGTH = 64L * 1024
     }
 }

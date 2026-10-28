@@ -3,11 +3,13 @@
 package io.github.nesfeder.supabase.offline.internal.db
 
 import io.github.jan.supabase.postgrest.query.Columns
+import io.github.jan.supabase.postgrest.query.Order
 import io.github.nesfeder.supabase.offline.MutationOperation
 import io.github.nesfeder.supabase.offline.internal.cache.CacheFreshness
 import io.github.nesfeder.supabase.offline.internal.cache.CacheWriteOutcome
 import io.github.nesfeder.supabase.offline.internal.cache.ServerRowChange
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
+import io.github.nesfeder.supabase.offline.internal.postgrest.RowWindow
 import io.github.nesfeder.supabase.offline.internal.postgrest.encodeFilter
 import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
 import io.github.nesfeder.supabase.offline.testdoubles.TestStore
@@ -29,9 +31,13 @@ import kotlinx.serialization.json.JsonPrimitive
  * round trip still has its refreshes land. The device's own writes still refuse an older answer,
  * since nothing replays them over it.
  *
+ * A change the cache cannot lay over an answer exactly (one that may leave the query wrong, shows a
+ * row the answer does not hold, or moves a row in an ordered list or a window) never makes the
+ * answer read as fresh: it is refused, and on the reader's last ask written stale-stamped.
+ *
  * Each test drives the store's tick by hand, so the order of request, change and answer is exact.
- * The last three pin the holes a first attempt opened (#223), where an answer in flight held a row
- * a change would have changed while the cache did not.
+ * The holes a first attempt opened (#223), where an answer in flight held a row a change would have
+ * changed while the cache did not, are pinned in their own section.
  */
 class ServerChangesOverAnswersTest {
 
@@ -414,7 +420,7 @@ class ServerChangesOverAnswersTest {
     }
 
     @Test
-    fun a_server_record_for_a_cold_live_list_is_laid_over_its_first_answer() = runTest {
+    fun a_cold_live_lists_first_answer_without_a_server_record_is_refused() = runTest {
         // Given — a live list with nothing cached, and its first refresh out at tick 10
         val queryCacheDao = FakeQueryCacheDao()
         var tick = 10L
@@ -424,10 +430,8 @@ class ServerChangesOverAnswersTest {
         // When — the server saves project-2 at tick 20, which gives the live list its rows
         tick = 20L
         store.applyServerChanges(saved("project-2"))
-        assertEquals(
-            """[{"id":"project-2"}]""",
-            queryCacheDao.getRow("projects", "sig-A")?.payload,
-        )
+        val created = """[{"id":"project-2"}]"""
+        assertEquals(created, queryCacheDao.getRow("projects", "sig-A")?.payload)
 
         // And — the first answer, read before project-2 was saved, lands
         tick = 30L
@@ -439,15 +443,16 @@ class ServerChangesOverAnswersTest {
                 requestStartedAtTick = requestStartedAtTick,
             )
 
-        // Then — it is written with project-2 laid over it, and is the server's answer: fresh
-        assertEquals(CacheWriteOutcome.WRITTEN, outcome)
+        // Then — it is refused: the record is a row it does not hold, which the server may not
+        // show this list. The list keeps the record, stale, and its next request holds it
+        assertEquals(CacheWriteOutcome.REFUSED_STALE, outcome)
         val row = queryCacheDao.getRow("projects", "sig-A")
-        assertEquals(bothProjects, row?.payload)
-        assertTrue(row != null && !isStaleStamp(row.updatedAt), "the answer is not stale")
+        assertEquals(created, row?.payload)
+        assertTrue(row != null && isStaleStamp(row.updatedAt), "the list is to be fetched again")
     }
 
     @Test
-    fun a_server_record_for_an_uncached_one_shot_query_is_laid_over_its_answer() = runTest {
+    fun a_server_record_an_answer_does_not_hold_refuses_it_until_the_last_ask() = runTest {
         // Given — nothing cached and no live query, and a one-shot read out at tick 10
         val queryCacheDao = FakeQueryCacheDao()
         var tick = 10L
@@ -458,7 +463,7 @@ class ServerChangesOverAnswersTest {
         tick = 20L
         store.applyServerChanges(saved("project-2"))
         tick = 30L
-        val outcome =
+        val first =
             store.queryCache.cacheResponse(
                 table = "projects",
                 cacheKey = "sig-A",
@@ -466,9 +471,275 @@ class ServerChangesOverAnswersTest {
                 requestStartedAtTick = requestStartedAtTick,
             )
 
-        // Then — the cache holds project-2 too, as a later cache-first read must
+        // Then — it is refused, and nothing is cached
+        assertEquals(CacheWriteOutcome.REFUSED_STALE, first)
+        assertNull(queryCacheDao.getRow("projects", "sig-A"))
+
+        // When — the one more ask goes out at tick 40, the server saves project-3 at tick 50, and
+        // the answer, which holds project-2, lands as the last ask
+        tick = 40L
+        val lastRequestStartedAtTick = store.freshness.tickNow()
+        tick = 50L
+        store.applyServerChanges(saved("project-3"))
+        tick = 60L
+        val last =
+            store.queryCache.cacheResponseReporting(
+                table = "projects",
+                cacheKey = "sig-A",
+                payload = bothProjects,
+                requestStartedAtTick = lastRequestStartedAtTick,
+                lastAsk = true,
+            )
+
+        // Then — it is written with project-3 laid over it, stale: the read settles, and the next
+        // one asks the server again
+        val withProjectThree = """[{"id":"project-1"},{"id":"project-2"},{"id":"project-3"}]"""
+        assertEquals(CacheWriteOutcome.WRITTEN, last.outcome)
+        assertEquals(withProjectThree, last.rebasedPayload)
+        val row = queryCacheDao.getRow("projects", "sig-A")
+        assertEquals(withProjectThree, row?.payload)
+        assertTrue(row != null && isStaleStamp(row.updatedAt), "the answer is not fresh")
+    }
+
+    // ── what is not laid over exactly ──────────────────────────────────────
+
+    @Test
+    fun an_older_server_record_does_not_put_back_a_row_the_answer_no_longer_holds() = runTest {
+        // Given — "my todos" cached with todo-1 and todo-2, and a refresh out at tick 10
+        val queryCacheDao = FakeQueryCacheDao()
+        val cachedRows = """[{"id":"todo-1","owner":"me"},{"id":"todo-2","owner":"me"}]"""
+        queryCacheDao.seedPayload("todos", "mine", cachedRows)
+        var tick = 10L
+        val store = buildStore(queryCacheDao) { tick }
+        store.recordQueryShape("todos", "mine") { filter { eq("owner", "me") } }
+        val requestStartedAtTick = store.freshness.tickNow()
+
+        // When — the server renames todo-2 (delivered at tick 20), then reassigns it to another
+        // user, which RLS or the channel's filter never delivers here; the answer, read after the
+        // reassignment, lacks todo-2
+        tick = 20L
+        store.applyServerChanges(
+            saved("todo-2", "owner" to "me", "title" to "Renamed"),
+            table = "todos",
+        )
+        val patched = queryCacheDao.getRow("todos", "mine")?.payload
+        tick = 30L
+        val outcome =
+            store.queryCache.cacheResponse(
+                table = "todos",
+                cacheKey = "mine",
+                payload = """[{"id":"todo-1","owner":"me"}]""",
+                requestStartedAtTick = requestStartedAtTick,
+            )
+
+        // Then — it is refused, not written fresh with todo-2 put back, which nothing would remove
+        // until a later refresh
+        assertEquals(CacheWriteOutcome.REFUSED_STALE, outcome)
+        assertEquals(patched, queryCacheDao.getRow("todos", "mine")?.payload)
+    }
+
+    @Test
+    fun a_server_insert_laid_over_an_ordered_page_is_not_written_as_fresh() = runTest {
+        // Given — the newest two messages cached, and a refresh out at tick 10
+        val queryCacheDao = FakeQueryCacheDao()
+        queryCacheDao.seedPayload("messages", "latest-2", """[{"id":"m3"},{"id":"m2"}]""")
+        var tick = 10L
+        val store = buildStore(queryCacheDao) { tick }
+        store.recordQueryShape("messages", "latest-2") {
+            order("id", Order.DESCENDING)
+            limit(2)
+        }
+        val requestStartedAtTick = store.freshness.tickNow()
+
+        // When — another user posts m4 after the server read the page; its insert arrives at tick
+        // 20, before the answer
+        tick = 20L
+        store.applyServerChanges(saved("m4"), table = "messages")
+        tick = 30L
+        val outcome =
+            store.queryCache.cacheResponse(
+                table = "messages",
+                cacheKey = "latest-2",
+                payload = """[{"id":"m3"},{"id":"m2"}]""",
+                requestStartedAtTick = requestStartedAtTick,
+                window = RowWindow(orderColumns = setOf("id"), isWindowed = true),
+            )
+
+        // Then — it is refused, not written as [m3, m2, m4]: past the limit and out of order. The
+        // next request returns [m4, m3]
+        assertEquals(CacheWriteOutcome.REFUSED_STALE, outcome)
+    }
+
+    @Test
+    fun a_server_record_laid_over_a_keyless_answer_does_not_duplicate_its_row() = runTest {
+        // Given — a list of titles alone (rows without their key), and a refresh out at tick 10
+        val queryCacheDao = FakeQueryCacheDao()
+        queryCacheDao.seedPayload("todos", "titles", """[{"title":"Milk"}]""")
+        var tick = 10L
+        val store = buildStore(queryCacheDao) { tick }
+        store.recordQueryShape("todos", "titles", columns = TITLES) {}
+        val requestStartedAtTick = store.freshness.tickNow()
+
+        // When — the server renames todo-1 at tick 20; the answer, read after it, holds it
+        tick = 20L
+        store.applyServerChanges(saved("todo-1", "title" to "Milk 2"), table = "todos")
+        tick = 30L
+        val outcome =
+            store.queryCache.cacheResponse(
+                table = "todos",
+                cacheKey = "titles",
+                payload = """[{"title":"Milk 2"}]""",
+                requestStartedAtTick = requestStartedAtTick,
+            )
+
+        // Then — it is refused, not written with a second copy of the row; nothing tells which
+        // row the record is, so the patch marked the list stale too
+        assertEquals(CacheWriteOutcome.REFUSED_STALE, outcome)
+        val row = queryCacheDao.getRow("todos", "titles")
+        assertTrue(row != null && isStaleStamp(row.updatedAt), "the list is to be fetched again")
+    }
+
+    @Test
+    fun a_server_delete_laid_over_a_window_is_not_written_as_fresh() = runTest {
+        // Given — a page of two projects, and its refresh out at tick 10
+        val queryCacheDao = FakeQueryCacheDao()
+        var tick = 10L
+        val store = buildStore(queryCacheDao) { tick }
+        val requestStartedAtTick = store.freshness.tickNow()
+
+        // When — the server deletes project-2 at tick 20, and the page from before lands
+        tick = 20L
+        store.applyServerChanges(deleted("project-2"))
+        tick = 30L
+        val outcome =
+            store.queryCache.cacheResponse(
+                table = "projects",
+                cacheKey = "page-1",
+                payload = bothProjects,
+                requestStartedAtTick = requestStartedAtTick,
+                window = RowWindow(isWindowed = true),
+            )
+
+        // Then — it is refused: the server's page would hold the next project in its place
+        assertEquals(CacheWriteOutcome.REFUSED_STALE, outcome)
+    }
+
+    @Test
+    fun a_server_change_to_the_column_a_list_is_ordered_by_is_not_written_as_fresh() = runTest {
+        // Given — a list ordered by rank, and its refresh out at tick 10
+        val queryCacheDao = FakeQueryCacheDao()
+        var tick = 10L
+        val store = buildStore(queryCacheDao) { tick }
+        val requestStartedAtTick = store.freshness.tickNow()
+
+        // When — the server moves project-1 down at tick 20, and the answer from before lands
+        tick = 20L
+        store.applyServerChanges(saved("project-1", "rank" to 3))
+        tick = 30L
+        val outcome =
+            store.queryCache.cacheResponse(
+                table = "projects",
+                cacheKey = "by-rank",
+                payload = """[{"id":"project-1","rank":"1"},{"id":"project-2","rank":"2"}]""",
+                requestStartedAtTick = requestStartedAtTick,
+                window = RowWindow(orderColumns = setOf("rank")),
+            )
+
+        // Then — it is refused: the server would place project-1 after project-2
+        assertEquals(CacheWriteOutcome.REFUSED_STALE, outcome)
+    }
+
+    @Test
+    fun a_server_change_to_another_column_of_an_ordered_list_is_laid_over_it() = runTest {
+        // Given — a list ordered by rank, and its refresh out at tick 10
+        val queryCacheDao = FakeQueryCacheDao()
+        var tick = 10L
+        val store = buildStore(queryCacheDao) { tick }
+        val requestStartedAtTick = store.freshness.tickNow()
+
+        // When — the server renames project-1 at tick 20, and the answer from before lands
+        tick = 20L
+        store.applyServerChanges(saved("project-1", "rank" to 1, "title" to "New"))
+        tick = 30L
+        val outcome =
+            store.queryCache.cacheResponse(
+                table = "projects",
+                cacheKey = "by-rank",
+                payload =
+                    """[{"id":"project-1","rank":"1","title":"Old"},{"id":"project-2","rank":"2"}]""",
+                requestStartedAtTick = requestStartedAtTick,
+                window = RowWindow(orderColumns = setOf("rank")),
+            )
+
+        // Then — it is written fresh, renamed in place: the order holds
         assertEquals(CacheWriteOutcome.WRITTEN, outcome)
-        assertEquals(bothProjects, queryCacheDao.getRow("projects", "sig-A")?.payload)
+        val row = queryCacheDao.getRow("projects", "by-rank")
+        assertEquals(
+            """[{"id":"project-1","rank":"1","title":"New"},{"id":"project-2","rank":"2"}]""",
+            row?.payload,
+        )
+        assertTrue(row != null && !isStaleStamp(row.updatedAt), "the answer is fresh")
+    }
+
+    @Test
+    fun on_the_last_ask_an_answer_a_change_may_leave_wrong_is_written_as_it_came_and_stale() =
+        runTest {
+            // Given — a list of titles alone, and the read's last ask out at tick 10
+            val queryCacheDao = FakeQueryCacheDao()
+            var tick = 10L
+            val store = buildStore(queryCacheDao) { tick }
+            store.recordQueryShape("todos", "titles", columns = TITLES) {}
+            val requestStartedAtTick = store.freshness.tickNow()
+
+            // When — the server deletes a todo at tick 20, which the cache cannot find among rows
+            // without their key, and the answer lands
+            tick = 20L
+            store.applyServerChanges(deleted("todo-2"), table = "todos")
+            tick = 30L
+            val answer = """[{"title":"Milk"},{"title":"Eggs"}]"""
+            val written =
+                store.queryCache.cacheResponseReporting(
+                    table = "todos",
+                    cacheKey = "titles",
+                    payload = answer,
+                    requestStartedAtTick = requestStartedAtTick,
+                    lastAsk = true,
+                )
+
+            // Then — it is written as the server sent it, stale: the read settles, and the next
+            // one asks again
+            assertEquals(CacheWriteOutcome.WRITTEN, written.outcome)
+            assertNull(written.rebasedPayload)
+            val row = queryCacheDao.getRow("todos", "titles")
+            assertEquals(answer, row?.payload)
+            assertTrue(row != null && isStaleStamp(row.updatedAt), "the answer is not fresh")
+        }
+
+    @Test
+    fun a_change_too_long_for_the_log_refuses_an_answer_that_left_before_it() = runTest {
+        // Given — a refresh out at tick 10
+        val queryCacheDao = FakeQueryCacheDao()
+        queryCacheDao.seedPayload("projects", "sig-A", oneProject)
+        var tick = 10L
+        val store = buildStore(queryCacheDao) { tick }
+        val requestStartedAtTick = store.freshness.tickNow()
+
+        // When — a record longer than the log keeps for a table arrives
+        tick = 20L
+        val long = "x".repeat(CacheFreshness.MAX_LOGGED_SERVER_LENGTH.toInt())
+        store.applyServerChanges(saved("project-2", "notes" to long))
+
+        // Then — the answer is refused, as it was before server changes were logged
+        tick = 30L
+        assertEquals(
+            CacheWriteOutcome.REFUSED_STALE,
+            store.queryCache.cacheResponse(
+                table = "projects",
+                cacheKey = "sig-A",
+                payload = oneProject,
+                requestStartedAtTick = requestStartedAtTick,
+            ),
+        )
     }
 
     // ── helpers ─────────────────────────────────────────────────────────────

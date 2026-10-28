@@ -850,12 +850,18 @@ reactive read's refresh once at once and then on its retry schedule until an ans
 one-shot read once more before it serves the cache. A server change (a Realtime record or delete,
 `applyServerRecord`, `applyServerDelete`) moves no watermark. `CacheFreshness` logs each patch of
 them with its tick, under the table's write lock and the clear lock, and keeps the newest 256
-writes per table; a patch that leaves the log moves the watermark to its tick. They are whole-row
-upserts and deletes by key, so laying them over again gives the same rows. A response whose
-request started before logged changes has them laid over it by `CachePatcher`, with a patch's own
-overlay, under the table's write lock before the guards run, and is written so: a one-shot read
-returns those rows, without the server's headers when the changes altered them. When they may leave
-the query wrong, as a patch would mark it stale, the response is refused as for a local write. One
+writes per table, of 65,536 characters of JSON at most, however long the table then stays quiet; a
+patch that leaves the log moves the watermark to its tick. They are whole-row upserts and deletes by
+key, so laying them over again gives the same rows. A response whose request started before logged
+changes has them laid over it by `CachePatcher`, with a patch's own overlay, under the table's write
+lock before the guards run. When that is exact (each change removes a row by its key or changes in
+place a row the response holds, and moves no row in the order or the window the request asked for,
+its `RowWindow`), the response is written so, fresh: a one-shot read returns those rows, without
+the server's headers when the changes altered them. When it is not (a change shows a row the
+response lacks, moves one, or may leave the query wrong, as a patch would mark it stale), the
+response is refused as for a local write, and the reader's one more ask is its last: that answer is
+written stale-stamped, with the changes laid over it, or as it came when they may leave it wrong,
+and the read settles instead of asking again. One
 whose request started before a clear is refused and not asked again, since it may carry the cleared
 session's token. One that started before the cache was dropped for a new owner is not written: a
 reactive read's refresh asks again, and a one-shot read asks again only when the session was
@@ -1328,7 +1334,7 @@ What the library promises, each with the tests that pin it:
 | A `RealtimeFilter` is made only with a shape the server evaluates: a non-empty list for `in`, one value for another operator. | `RealtimeConfigTest`, `UpstreamRealtimeFilterTest` |
 | Each emission of a live read is one view of the cache, the queue and its refresh: no write shows both patched into the cache and still queued, a replayed write never drops out of a list that holds it, and `Idle` comes with the rows its refresh fetched. | `LiveReadConsistencyTest`, `LiveReadSourceOrderTest`, `LiveReadConsistencyAndroidTest`, `LiveReadConsistencyIosTest` |
 | No error answer from Storage is cached as a file. | `ChannelDownloadStatusTest`, `DownloadToFileStatusAndroidTest` |
-| A response whose request started before a write of the device's own changed the cache, before a clear, or before a change of owner never lands in the cache; one that started before a server change lands only with that change laid over it. | `StaleRefreshWatermarkTest`, `ServerChangesOverAnswersTest`, `CacheOwnershipTest`, `ClearLocalDataDuringWritesTest`, `StorageClearDuringDownloadTest` |
+| A response whose request started before a write of the device's own changed the cache, before a clear, or before a change of owner never lands in the cache; one that started before a server change lands only with that change laid over it, and as fresh only when that is exact. | `StaleRefreshWatermarkTest`, `ServerChangesOverAnswersTest`, `CacheOwnershipTest`, `ClearLocalDataDuringWritesTest`, `StorageClearDuringDownloadTest` |
 | With Auth, one user's cached rows and files are never served to another. | `CacheBelongsToOneIdentityTest`, `CacheOwnershipTest` |
 | Only a JSON array of rows is written to the query cache: a `2xx` answer of another shape or media type is refused, a `NetworkFirst` or `CacheFirst` read with the query cached within its `maxAge` is served the cached rows, and a reactive read's refresh asks again, `Stalled` by that cause after its fast retries. | `EmptyResponseGuardTest`, `NonRowListRefreshTest` |
 | Two different queries never share one cache key, and a list's shape record never outlives its payload or passes for another format's. | `CacheKeyTest`, `CacheKeyFixtureTest`, `QueryShapeRecordsTest`, `PatchAfterEvictionTest`, `ClearLocalDataDuringReadTest` |

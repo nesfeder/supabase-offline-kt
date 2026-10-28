@@ -133,6 +133,9 @@ All notable changes to this project are recorded in this file. The format follow
   row, with the queued writes laid over it; no row or several fail as before. It was never cached,
   so a detail screen had nothing offline. `maybeSingle()` on supabase-kt 3.8 is cached the same
   way, and offline answers only its one row, never `null`.
+- A one-shot read whose answer had a server change laid over it, one that reached the table while
+  the request was out, returns those rows without the server's response headers, such as
+  `Content-Range`, which describe the rows the server sent.
 
 ### Deprecated
 
@@ -157,7 +160,12 @@ All notable changes to this project are recorded in this file. The format follow
   written with that change laid over it, so a refresh lands while other users keep changing a
   shared table. Before, every such change refused the answers in flight, and a list read
   `Refreshing` until the changes paused; a row deleted while a request was out is still not brought
-  back.
+  back. A change that cannot be laid over exactly (an insert, a move in an ordered list or a
+  window, a row read without its key) has the read ask once more, and if that answer has one too,
+  it is kept stale, to be read again, instead of as the server's answer.
+- An upsert, or a Realtime record, into a table whose cached list was read without its key column
+  was added to that list as a new row, beside the row it changed. The list is now marked stale and
+  read again.
 - A burst of changes on a followed table, as one statement over a few hundred visible rows sends,
   overflowed the two buffers between the Realtime plugin and the cache, the plugin's own and the
   library's, past about 130 waiting changes, and the newest were dropped without a log or a stale
