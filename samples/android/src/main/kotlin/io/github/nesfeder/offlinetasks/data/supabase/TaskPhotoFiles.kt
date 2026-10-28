@@ -4,16 +4,16 @@ package io.github.nesfeder.offlinetasks.data.supabase
 
 import io.github.jan.supabase.storage.FileObject
 import io.github.jan.supabase.storage.SortOrder
-import io.github.jan.supabase.storage.UploadStatus
-import io.github.jan.supabase.storage.uploadAsFlow
 import io.github.nesfeder.offlinetasks.data.BucketFile
 import io.github.nesfeder.offlinetasks.data.BucketFolder
 import io.github.nesfeder.offlinetasks.data.BucketListing
 import io.github.nesfeder.offlinetasks.data.PHOTOS_BUCKET
 import io.github.nesfeder.offlinetasks.data.PhotoDetails
 import io.github.nesfeder.offlinetasks.data.PhotoFile
+import io.github.nesfeder.supabase.offline.MutationStrategy
 import io.github.nesfeder.supabase.offline.Offline
 import io.github.nesfeder.supabase.offline.OfflineBucketApi
+import io.github.nesfeder.supabase.offline.UploadOutcome
 import io.github.nesfeder.supabase.offline.ensureLocalFile
 import io.github.nesfeder.supabase.offline.ensureLocalUri
 import io.github.nesfeder.supabase.offline.localUriIfCached
@@ -60,19 +60,21 @@ internal class TaskPhotoFiles(offline: Offline) {
     // --8<-- [end:bucket]
 
     // --8<-- [start:upload]
-    /** Uploads a JPEG to [path], handing [onProgress] the fraction sent so far. */
-    suspend fun upload(path: String, jpeg: ByteArray, onProgress: (Float) -> Unit) {
-        bucket
-            .uploadAsFlow(path, jpeg) {
-                upsert = false // a path is never reused, so an existing file is an error
-                contentType = ContentType.Image.JPEG // the only type the bucket takes
-            }
-            .collect { status ->
-                if (status is UploadStatus.Progress && status.contentLength > 0) {
-                    onProgress(status.totalBytesSend.toFloat() / status.contentLength)
-                }
-            }
-    }
+    /**
+     * The bucket a photo is added through: without the header, since a header set on a bucket is
+     * not kept with a queued upload, and an upload through one is sent at once instead of queued.
+     */
+    private val queueingBucket: OfflineBucketApi = offline.storage.from(PHOTOS_BUCKET)
+
+    /**
+     * Uploads a JPEG to [path], or keeps it on the device and queues it when it cannot be sent now:
+     * a later sync sends it before the writes made after it, its photo's row among them.
+     */
+    suspend fun upload(path: String, jpeg: ByteArray): UploadOutcome =
+        queueingBucket.upload(path, jpeg, MutationStrategy.QueueIfOffline) {
+            upsert = false // a path is never reused, so an existing file is an error
+            contentType = ContentType.Image.JPEG // the only type the bucket takes
+        }
 
     // --8<-- [end:upload]
 

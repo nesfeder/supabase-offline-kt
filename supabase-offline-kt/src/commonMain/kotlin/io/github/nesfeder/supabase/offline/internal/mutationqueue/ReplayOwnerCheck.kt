@@ -8,6 +8,7 @@ import io.github.jan.supabase.SupabaseClient
 import io.github.jan.supabase.annotations.SupabaseInternal
 import io.github.jan.supabase.auth.Auth
 import io.github.jan.supabase.postgrest.Postgrest
+import io.github.jan.supabase.storage.Storage
 import io.ktor.client.request.HttpRequestBuilder
 import io.ktor.client.request.HttpRequestPipeline
 import io.ktor.http.HttpHeaders
@@ -23,8 +24,8 @@ import kotlinx.coroutines.currentCoroutineContext
 /**
  * Carried in a coroutine context while a queued mutation is sent: the identity that owns it, and
  * the replay pass sending it. The phase [installReplayOwnerCheck] adds stops a request sent from
- * that coroutine once [sender] is canceled, or, for a PostgREST request, unless its token is
- * [owner]'s, and records here which it did.
+ * that coroutine once [sender] is canceled, or, for a PostgREST or Storage request, unless its
+ * token is [owner]'s, and records here which it did.
  *
  * @property sender the pass sending the mutation, which runs the request whatever cancels it; a
  *   request it has not sent yet is stopped instead. `null` for a send that cancellation stops.
@@ -78,8 +79,9 @@ private val ReplayOwnerCheckInstallation =
  * Installs, once per client, the phase that binds a queued mutation's send to its owner and its
  * pass. It runs just before the request is sent, after supabase-kt set the `Authorization` header,
  * and stops a request made under a [ReplayOwner] whose [ReplayOwner.sender] was canceled, or, when
- * the Auth plugin is installed or the owner reads identities from the access token, a PostgREST
- * request whose token names another identity. Otherwise the session never changes identity.
+ * the Auth plugin is installed or the owner reads identities from the access token, a PostgREST or
+ * Storage request (a queued upload's) whose token names another identity. Otherwise the session
+ * never changes identity.
  */
 @OptIn(SupabaseInternal::class)
 internal fun SupabaseClient.installReplayOwnerCheck() {
@@ -97,7 +99,7 @@ internal fun SupabaseClient.installReplayOwnerCheck() {
         }
         val identityOfToken =
             replay.identityOfToken ?: ::authIdentityOf.takeIf { checksAuthIdentity }
-        if (identityOfToken == null || !isPostgrestRequest(context)) return@intercept
+        if (identityOfToken == null || !isSessionTokenRequest(context)) return@intercept
         if (
             identityOfToken(bearerTokenOf(context.headers[HttpHeaders.Authorization])) !=
                 replay.owner
@@ -132,13 +134,17 @@ private fun bearerTokenOf(authorization: String?): String? =
 private const val BEARER_PREFIX = "Bearer "
 
 /**
- * Whether [request] goes to this client's PostgREST with the session's token: a PostgREST
+ * Whether [request] goes to this client's PostgREST or Storage with the session's token: a plugin
  * configured with its own `jwtToken` sends that token whoever is signed in.
  */
-private fun SupabaseClient.isPostgrestRequest(request: HttpRequestBuilder): Boolean {
-    val postgrest = pluginManager.getPluginOrNull(Postgrest) ?: return false
-    if (postgrest.config.jwtToken != null) return false
-    val base = postgrest.resolveUrl().trimEnd('/')
+private fun SupabaseClient.isSessionTokenRequest(request: HttpRequestBuilder): Boolean {
     val url = request.url.buildString()
-    return url == base || url.startsWith("$base/") || url.startsWith("$base?")
+    return listOfNotNull(
+            pluginManager.getPluginOrNull(Postgrest)?.takeIf { it.config.jwtToken == null },
+            pluginManager.getPluginOrNull(Storage)?.takeIf { it.config.jwtToken == null },
+        )
+        .any { plugin ->
+            val base = plugin.resolveUrl().trimEnd('/')
+            url == base || url.startsWith("$base/") || url.startsWith("$base?")
+        }
 }

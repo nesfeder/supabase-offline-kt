@@ -6,6 +6,7 @@ import io.github.nesfeder.supabase.offline.internal.db.OpenDatabaseRegistry
 import io.github.nesfeder.supabase.offline.internal.db.resolvedOrNormalized
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
 import io.github.nesfeder.supabase.offline.internal.storage.HASHED_DIRECTORY_NAME
+import io.github.nesfeder.supabase.offline.internal.storage.QUEUED_UPLOADS_DIRECTORY_NAME
 import io.github.nesfeder.supabase.offline.internal.storage.STORAGE_DIRECTORY_NAME
 import okio.FileSystem
 import okio.IOException
@@ -70,6 +71,12 @@ internal fun moveDefaultDatabaseIfUnclaimed(
                 from = defaultDatabase,
                 to = configuredDatabase,
                 fileSystem = fileSystem,
+                // The queue's own files: they move with the rows that name them, or neither moves
+                sideDirectories =
+                    listOf(
+                        default.dataDirectory / QUEUED_UPLOADS_DIRECTORY_NAME to
+                            configured.dataDirectory / QUEUED_UPLOADS_DIRECTORY_NAME
+                    ),
             )
         } catch (failure: IOException) {
             engineLogger.warning {
@@ -241,11 +248,28 @@ private fun moveFileCacheDirectory(
  * Moves the database at [from] to [to] with its side files, the database file last. Until it has
  * moved, [to] holds no database, so a failed move is tried again on the next start.
  *
+ * @param sideDirectories directories that move first, each from its first path to its second: the
+ *   queued uploads' files, which the database's rows name. A directory already at a target holds
+ *   nothing a database there names, since there is none, and is replaced.
  * @throws IOException when a file cannot be moved, after moving back the side files already moved.
  */
-private fun moveDatabaseFiles(from: Path, to: Path, fileSystem: FileSystem) {
+private fun moveDatabaseFiles(
+    from: Path,
+    to: Path,
+    fileSystem: FileSystem,
+    sideDirectories: List<Pair<Path, Path>> = emptyList(),
+) {
     val moved = mutableListOf<Pair<Path, Path>>()
     try {
+        sideDirectories.forEach { (source, target) ->
+            if (!fileSystem.exists(source)) return@forEach
+            if (source.resolvedOrNormalized(fileSystem) == target.resolvedOrNormalized(fileSystem))
+                return@forEach
+            fileSystem.deleteRecursively(target, mustExist = false)
+            target.parent?.let { directory -> fileSystem.createDirectories(directory) }
+            fileSystem.atomicMove(source, target)
+            moved += source to target
+        }
         DATABASE_SIDE_FILE_SUFFIXES.forEach { suffix ->
             val sideFile = "$from$suffix".toPath()
             if (fileSystem.exists(sideFile)) {

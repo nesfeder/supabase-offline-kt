@@ -54,13 +54,50 @@ All notable changes to this project are recorded in this file. The format follow
 - A bucket's `evictCachedFile(path)` deletes one object's cached copies, the untransformed one and
   every image transform, and `evictCachedFile(path) { … }` one transform's copy alone; nothing is
   sent. The Swift package has `evictCachedFile(path:)` and `evictCachedFile(path:transform:)`.
+- A bucket's `pinCachedFile(path)` keeps an object on the device: the cache never evicts its
+  copies, the untransformed one and every image transform's, across restarts, until
+  `unpinCachedFile(path)`, `evictCachedFile(path)`, a delete through the bucket, `clearFileCache()`,
+  `clearLocalData()` or a change of user. Pinning sends and downloads nothing, writes keep the pin,
+  and a move takes it along; `isCachedFilePinned(path)` says whether an object is pinned. The Swift
+  package has `pinCachedFile(path:)`, `unpinCachedFile(path:)` and `isCachedFilePinned(path:)`.
+- `ensureCachedFile(path) { progress -> … }` hands its lambda the download's progress: the bytes
+  received and the object's size, `null` when the server gave none, as a `DownloadProgress`. Every
+  call waiting for one object's shared download is handed it, in its own coroutine, and the last one
+  before it returns; a call without the lambda adds nothing to the download. The Swift package has
+  `ensureCachedFile(path:isPublic:onProgress:)` and `DownloadProgress`, and the testing artifacts a
+  `downloadProgress` factory.
 - `cachedFile(path) { … }` returns the cached copy of one image transform, the one a download with
   the same `transform { … }` keeps, so a cached thumbnail can be handed to an image loader as a
   file. `localUriIfCached(path) { … }` on Android and `localPathIfCached(path) { … }` on iOS give it
   in the platform's terms, and the Swift package has `cachedFile(path:transform:)`.
+- A Storage upload can wait in the mutation queue with the row writes around it:
+  `upload(path, data, MutationStrategy.QueueIfOffline)` on an offline bucket keeps the file's bytes
+  on the device and returns `UploadOutcome.Queued` when it cannot be sent at once, and a later pass
+  sends it in the order it was made, so a row written after it that names the file is sent after the
+  file. It survives a restart, belongs to the user who made it, is refused onto the rejected list
+  with its bytes kept for a retry, and goes with `clearLocalData()`; while it waits, `cachedFile`,
+  `ensureCachedFile` and the platform helpers return its bytes on the device, and once Storage has
+  it they become the cached copy. An upload whose answer was lost is sent again, and its refusal
+  counts as stored only when the object at its path is verifiably its bytes.
+  `offline.storage.pendingUploads()`, `rejectedUploads()` and `rejectedUploadList()` list them,
+  `SyncReport.rejectedUploads` reports a refusal, and `discardPendingMutation`,
+  `dismissRejectedMutation` and `retryRejectedMutation` take an upload's id. The Swift package has
+  the same calls, and both testing artifacts build the new values.
+- `RejectedUpload.localPath` is a refused upload's kept file on the device, for the app to show
+  what was refused: `cachedFile` and `ensureCachedFile` never answer a refused upload, since
+  Storage may hold other bytes at its path. The Swift package's `RejectedUpload` has it too, and
+  each testing artifact's `rejectedUpload` has an overload that takes it.
 
 ### Changed
 
+- When an object and a folder of the same name are both cached in one bucket, or two objects whose
+  names differ only in case on a case-insensitive volume, the one downloaded second is stored under
+  `storage-hashed/`, in the file named by a hash of its key, and its row's `localPath` records that
+  file. Files and rows already on a device stay as they are and are read as before. An earlier build
+  that finds such a row drops it when the object is next read, downloads the object again, and
+  leaves the file until the file cache or local data is cleared. Until that read, an earlier build
+  on iOS stops at such a row in every eviction pass, so its size bound evicts nothing while a row
+  like `album/cover.png` beside the file `album` is there.
 - The query cache's eviction pass runs in the background after a response is written, where it ran
   before the read returned, and starts when a running count of the cached lists' length passes the
   bound, where every response of 4 KiB or more, and every 32nd response, summed every cached list
@@ -115,6 +152,12 @@ All notable changes to this project are recorded in this file. The format follow
   whole object before. The Swift package's downloads do the same. Each cached file's row records
   the `ETag` it was sent under, in the `eTag` column, which was always empty; a file an earlier
   version cached has none, so its next download fetches it whole once and records it.
+- Each pinned Storage object is recorded in a row of its own among the library's records in the
+  database (`pinned_file` and the object's key), so pins outlive a restart. Nothing already on a
+  device changes. An earlier version of the library ignores those rows: 0.2.0 evicts pinned files
+  as any other, deletes the rows with `clearLocalData()`, and keeps them when another user signs
+  in, so after going back to 0.2.0, a switch of user and an upgrade again, the new user has the
+  earlier user's pins (their files are not kept).
 - The rejected list keeps a guarded write's base in each guarded entry, under two new keys
   (`baseVersion`, `baseJson`), so a retry replays guarded. A list an earlier build wrote reads back
   without them, and a retry of such an entry replays unguarded, as it did there.
@@ -146,6 +189,18 @@ All notable changes to this project are recorded in this file. The format follow
   row, with the queued writes laid over it; no row or several fail as before. It was never cached,
   so a detail screen had nothing offline. `maybeSingle()` on supabase-kt 3.8 is cached the same
   way, and offline answers only its one row, never `null`.
+- A one-shot read whose answer had a server change laid over it, one that reached the table while
+  the request was out, returns those rows without the server's response headers, such as
+  `Content-Range`, which describe the rows the server sent.
+- The mutation queue can hold a Storage upload: a row of a new kind beside the row writes, with
+  its bytes in a `storage-uploads` directory beside the file cache, excluded from iOS backups as the
+  database is and moved with the database into a configured `dataDirectory`. Data already on a
+  device is untouched: nothing moves, and no stored format changes. An earlier version that opens a
+  queue holding an upload refuses it onto its rejected list.
+- `SyncStatus.pendingMutationCount` and `rejectedMutationCount`, `pendingMutationCount()` with no
+  table, and a sync's `syncedCount`, `remainingCount` and `alreadyOnServerCount` count a queued
+  upload as a write; `pendingMutations()` and `rejectedMutations()` still list row writes only. An
+  app that queues no upload sees the counts it saw.
 
 ### Deprecated
 
@@ -153,6 +208,19 @@ All notable changes to this project are recorded in this file. The format follow
 
 ### Fixed
 
+- `syncStatus` could stop counting the queue, the rejected list and the conflicted list for good
+  when a read of the rejected or conflicted list failed while a count was being read, as a failing
+  disk under load can make happen: its counts stayed where they were for the life of the client,
+  and a background failure was logged. Such a failure is now logged as any other failed read, and
+  the counts follow the queue again after the usual wait.
+- An object and a folder of the same name in one bucket, such as `album` and `album/cover.png`, can
+  both be cached now. On disk they would need one name to be both a file and a folder, so the one
+  downloaded second was never cached: `ensureCachedFile` threw for it every time, a channel download
+  of it could fetch it twice, and it was not served offline.
+- On a case-insensitive volume, such as the iOS simulator's or a Mac's, two objects whose names
+  differ only in case, such as `photo` and `PHOTO`, or whose buckets' names do, shared one cached
+  file, so the one downloaded second replaced the other's bytes, and a write to one deleted the
+  other's copy. The second is now stored apart, and each object serves its own.
 - With Room 2.8.5 or later, which an app can resolve itself, `pendingMutations()` and
   `pendingMutationCountFlow()` called after `close()` threw Room's `IllegalStateException`
   from the call, where a `catch` on the flow could not see it. Each now returns a flow that
@@ -171,6 +239,17 @@ All notable changes to this project are recorded in this file. The format follow
   `NetworkFirstThenCache` read whose first fetch is refused that way stays `Refreshing` too. Before,
   the second refusal settled the read on the rows it had and reported `Idle`, so a busy table, or a
   reconnect with queued writes, could leave a list stale for good.
+- An answer whose request left before a Realtime event or a server record reached the table is
+  written with that change laid over it, so a refresh lands while other users keep changing a
+  shared table. Before, every such change refused the answers in flight, and a list read
+  `Refreshing` until the changes paused; a row deleted while a request was out is still not brought
+  back. A change that cannot be laid over exactly (an insert, a move in an ordered list or a
+  window, a row read without its key) has the read ask once more, and if that answer has one too,
+  it is kept stale and returned as the device's copy (`isFromCache`), to be read again, instead of
+  as the server's answer.
+- An upsert, or a Realtime record, into a table whose cached list was read without its key column
+  was added to that list as a new row, beside the row it changed. The list is now marked stale and
+  read again.
 - A burst of changes on a followed table, as one statement over a few hundred visible rows sends,
   overflowed the two buffers between the Realtime plugin and the cache, the plugin's own and the
   library's, past about 130 waiting changes, and the newest were dropped without a log or a stale
@@ -263,6 +342,11 @@ All notable changes to this project are recorded in this file. The format follow
   string shows in a cached list read through that filter, and a queued update or delete sends the
   list whole instead of without the empty value. A list of only the empty value still matches no
   row, as the server reads it.
+- `isNetworkOrConnectivityFailure()` is `false` for a failure with an HTTP status further down its
+  chain, as `httpStatusOrNull()` reads it, such as an I/O failure raised around a Storage error or a
+  `SyncFailedException`. Before, it looked only for PostgREST's errors and Ktor's response failures
+  there, so such a failure read as the network's while `httpStatusOrNull()` gave its status, and a
+  read could fall back to the cache on it.
 
 ## [0.2.0] - 2026-10-20
 

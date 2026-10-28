@@ -206,8 +206,8 @@ struct PhotoView: View {
 When your app hides the client behind a protocol of its own, its fakes return the package's values.
 Most of them have no public initializer, so the testing library builds them: `pendingMutation(…)`,
 `rejectedMutation(…)`, `serverError(…)`, `syncReport(…)`, `syncStatus(…)`, `querySnapshot(…)`,
-`offlineResponse(…)`, `cachedResponse(…)` for rows the cache answered with, `cachedFile(…)`, and
-the errors the client throws (`cacheMissError(…)`,
+`offlineResponse(…)`, `cachedResponse(…)` for rows the cache answered with, `cachedFile(…)`,
+`downloadProgress(…)`, and the errors the client throws (`cacheMissError(…)`,
 `syncFailedError(…)`, `offlineError(code:message:…)` and the rest).
 
 <!-- swift-listing: TestingYourAppListings.swift:factories -->

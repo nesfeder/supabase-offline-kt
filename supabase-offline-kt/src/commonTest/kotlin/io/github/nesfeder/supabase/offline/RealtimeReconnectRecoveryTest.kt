@@ -149,7 +149,7 @@ class RealtimeReconnectRecoveryTest {
         }
 
     @Test
-    fun a_joins_re_read_keeps_asking_while_other_users_deletes_arrive_and_lands_when_they_stop() =
+    fun a_joins_re_read_lands_while_other_users_deletes_keep_arriving() =
         runTest(timeout = 2.minutes) {
             onRealThreads {
                 // Given — a live list showing the server's row, a row only the server has, and a
@@ -161,8 +161,8 @@ class RealtimeReconnectRecoveryTest {
                 val readsBefore = server.readsOf(TABLE)
 
                 // When — the channel joins while other users' deletes arrive faster than the server
-                // answers (Realtime sends every delete to every subscriber), each a change to the
-                // table that an answer already in flight cannot describe
+                // answers (Realtime sends every delete to every subscriber), so one reaches the
+                // table while every answer is out
                 val follow = feed.awaitFollow(0)
                 val deletes = launch {
                     var n = 0
@@ -172,30 +172,21 @@ class RealtimeReconnectRecoveryTest {
                     }
                 }
                 follow.join()
-                delay(2_500)
 
-                // Then — every answer so far was refused, and the read kept asking instead of
-                // settling on the rows it had
-                val seenWhileDeleting = list.count
-                assertTrue(server.readsOf(TABLE) >= readsBefore + 3, "the re-read kept asking")
-
-                // When — the deletes stop
-                deletes.cancelAndJoin()
-
-                // Then — the next answer lands, and nothing settled before it
-                list.await { seen -> seen.titles == listOf("Milk", "Eggs") && !seen.isFromCache }
-                val seen = list.stop()
+                // Then — the join's re-read lands while they keep arriving, within a few round
+                // trips: each delete is laid over the answer in flight instead of refusing it
+                list.await { seen ->
+                    seen.titles == listOf("Milk", "Eggs") &&
+                        !seen.isFromCache &&
+                        seen.refresh == RefreshState.Idle
+                }
+                assertTrue(deletes.isActive, "the deletes were still arriving")
                 assertTrue(
-                    seen.take(seenWhileDeleting).none { it.titles?.contains("Eggs") == true },
-                    "no answer landed while the deletes kept arriving",
+                    server.readsOf(TABLE) <= readsBefore + 3,
+                    "it landed within a few round trips",
                 )
-                // A stale mark shows as the cache for a moment before the loop reports Refreshing,
-                // so what is pinned is where the read stood when the deletes stopped
-                assertEquals(
-                    RefreshState.Refreshing,
-                    seen[seenWhileDeleting - 1].refresh,
-                    "the read was still refreshing, not settled on the cache",
-                )
+                deletes.cancelAndJoin()
+                list.stop()
             }
             client.close()
         }

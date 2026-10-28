@@ -11,6 +11,7 @@ import io.github.jan.supabase.postgrest.Postgrest
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.jan.supabase.postgrest.query.request.RpcRequestBuilder
 import io.github.jan.supabase.postgrest.result.PostgrestResult
+import io.github.jan.supabase.storage.Storage
 import io.github.jan.supabase.storage.storage
 import io.github.nesfeder.supabase.offline.ConflictResolution
 import io.github.nesfeder.supabase.offline.ConflictedMutation
@@ -21,9 +22,11 @@ import io.github.nesfeder.supabase.offline.OfflineInternal
 import io.github.nesfeder.supabase.offline.OfflinePostgrestQueryBuilder
 import io.github.nesfeder.supabase.offline.OfflineStorage
 import io.github.nesfeder.supabase.offline.PendingMutation
+import io.github.nesfeder.supabase.offline.PendingUpload
 import io.github.nesfeder.supabase.offline.RealtimeStatus
 import io.github.nesfeder.supabase.offline.RealtimeTable
 import io.github.nesfeder.supabase.offline.RejectedMutation
+import io.github.nesfeder.supabase.offline.RejectedUpload
 import io.github.nesfeder.supabase.offline.ServerError
 import io.github.nesfeder.supabase.offline.SyncReport
 import io.github.nesfeder.supabase.offline.SyncStatus
@@ -100,8 +103,13 @@ import io.github.nesfeder.supabase.offline.internal.realtime.ServerChangeFeed
 import io.github.nesfeder.supabase.offline.internal.realtime.ServerChangeFollower
 import io.github.nesfeder.supabase.offline.internal.realtime.WatchedTable
 import io.github.nesfeder.supabase.offline.internal.storage.CachingBucketApi
+import io.github.nesfeder.supabase.offline.internal.storage.PinnedFileRecords
+import io.github.nesfeder.supabase.offline.internal.storage.QueuedUploadFiles
+import io.github.nesfeder.supabase.offline.internal.storage.QueuedUploadWriter
+import io.github.nesfeder.supabase.offline.internal.storage.QueuedUploads
 import io.github.nesfeder.supabase.offline.internal.storage.StorageFileCache
 import io.github.nesfeder.supabase.offline.internal.storage.installDownloadStatusCheck
+import io.github.nesfeder.supabase.offline.internal.storage.isQueuedUpload
 import io.github.nesfeder.supabase.offline.internal.storage.markFileUsed
 import io.github.nesfeder.supabase.offline.internal.storage.renderImagePathOf
 import io.github.nesfeder.supabase.offline.internal.storage.syncFileToDisk
@@ -120,6 +128,7 @@ import kotlinx.coroutines.IO
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -130,7 +139,6 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.merge
-import kotlinx.coroutines.flow.retryWhen
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.job
@@ -355,6 +363,16 @@ internal class OfflineClient(
             onBufferOverflow = BufferOverflow.DROP_OLDEST,
         )
 
+    /** The files holding queued uploads' bytes, beside the file cache's. */
+    private val queuedUploadFiles =
+        QueuedUploadFiles(
+            dataDirectoryProvider = baseDirectoryProvider,
+            engineLogger = engineLogger,
+            fileSystem = fileSystem,
+            syncFile = syncFile,
+            ioDispatcher = ioDispatcher,
+        )
+
     /** The cache and the mutation queue, built bottom up over the database's tables. */
     private val components =
         buildCacheComponents(
@@ -379,6 +397,7 @@ internal class OfflineClient(
             versionColumns = versionColumns,
             backgroundScope = clientScope,
             beforePayloadWriteHeard = beforePayloadWriteHeard,
+            queuedUploadFiles = queuedUploadFiles,
         )
 
     /*
@@ -436,6 +455,7 @@ internal class OfflineClient(
     private val fileCache =
         StorageFileCache(
             cachedFileDao = cachedFileDao,
+            pinRecords = PinnedFileRecords(components.queryCacheDao),
             ownership = cacheOwnership,
             fetchedAtMillis = rowClock,
             dataDirectoryProvider = baseDirectoryProvider,
@@ -446,6 +466,18 @@ internal class OfflineClient(
             markUsed = markFileUsed,
             syncFile = syncFile,
             ioDispatcher = ioDispatcher,
+        )
+
+    /** The queued uploads: how a pass sends one, and the copy `cachedFile` answers meanwhile. */
+    private val queuedUploads =
+        QueuedUploads(
+            files = queuedUploadFiles,
+            mutationQueue = mutationQueue,
+            fileCache = fileCache,
+            engineLogger = engineLogger,
+            bucketOf = { bucketId ->
+                supabaseClient.pluginManager.getPluginOrNull(Storage)?.from(bucketId)
+            },
         )
 
     private val mutationQueueReplayer =
@@ -465,6 +497,7 @@ internal class OfflineClient(
             currentIdentity = ::replayIdentityNow,
             isSessionSettledNow = ::isReplaySessionSettledNow,
             identityOfToken = tokenIdentity?.let { source -> source::identityOf },
+            uploadSends = queuedUploads,
         )
 
     /**
@@ -526,8 +559,24 @@ internal class OfflineClient(
     override val realtimeTableStatus: StateFlow<Map<RealtimeTable, RealtimeStatus>> =
         serverChangeFollower?.tableState ?: MutableStateFlow(emptyMap())
 
+    /** Queues and sends the uploads a bucket makes under `MutationStrategy.QueueIfOffline`. */
+    private val queuedUploadWriter =
+        QueuedUploadWriter(
+            uploads = queuedUploads,
+            mutationQueue = mutationQueue,
+            freshness = freshness,
+            headSender = mutationQueueReplayer,
+            queueIdentity = ::writeOwner,
+            requestSync = automaticReplay::requestPass,
+            queueEmptied = ::recordQueueEmptiedBySending,
+            engineLogger = engineLogger,
+        )
+
     init {
-        if (prepareFileCacheDirectories) fileCache.prepareDirectories()
+        if (prepareFileCacheDirectories) {
+            fileCache.prepareDirectories()
+            queuedUploadFiles.prepareDirectory()
+        }
         // Before the app sends anything through this client, so the hooks are on the pipeline once,
         // and not added while requests may be walking it.
         supabaseClient.installDryRunCheck()
@@ -917,7 +966,39 @@ internal class OfflineClient(
         tokenIdentity?.requestSession()
             ?: requestSessionFor(authPluginOrNull()?.sessionStatus?.value)
 
-    override val storage: OfflineStorage = OfflineStorage(::bucket, ::clearFileCache)
+    override val storage: OfflineStorage =
+        OfflineStorage(
+            bucketOf = ::bucket,
+            clearFiles = ::clearFileCache,
+            pendingUploadsOf = ::pendingUploads,
+            rejectedUploadsOf = ::rejectedUploads,
+            rejectedUploadListOf = ::rejectedUploadList,
+        )
+
+    /** The current user's queued uploads, as the queue changes; see `OfflineStorage`. */
+    private fun pendingUploads(): Flow<List<PendingUpload>> =
+        operationGate.callCollecting(
+            mutationQueue.shownPendingUploadsFlow().map { rows ->
+                rows.mapNotNull { row -> queuedUploads.pendingUploadOf(row) }
+            }
+        )
+
+    /** The current user's refused uploads, as the rejected list changes; see `OfflineStorage`. */
+    private fun rejectedUploads(): Flow<List<RejectedUpload>> =
+        operationGate.callCollecting(
+            mutationQueue.shownRejectionsFlow().map { entries -> rejectedUploadsOf(entries) }
+        )
+
+    /** [rejectedUploads], read once. */
+    private suspend fun rejectedUploadList(): List<RejectedUpload> = operationGate.call {
+        rejectedUploadsOf(mutationQueue.shownRejections())
+    }
+
+    /** The refused uploads among the rejected list's [entries], as the app sees them. */
+    private suspend fun rejectedUploadsOf(entries: List<StoredRejection>): List<RejectedUpload> =
+        entries
+            .filter { entry -> entry.isQueuedUpload }
+            .map { entry -> queuedUploads.rejectedUploadOf(entry) }
 
     /**
      * Empties the Storage file cache alone, under its own lock as [clearLocalData] does: the queue
@@ -940,6 +1021,7 @@ internal class OfflineClient(
             ioDispatcher = ioDispatcher,
             networkAccess = networkAccess,
             requestSession = ::requestSession,
+            queuedUploads = queuedUploadWriter,
         )
     }
 
@@ -970,7 +1052,10 @@ internal class OfflineClient(
      */
     override suspend fun discardPendingMutation(id: Long): Unit = operationGate.call {
         val identity = writeOwner() ?: return@call
+        // Read first: an upload's file goes once its row has
+        val upload = mutationQueue.pendingMutation(id)?.takeIf { row -> row.isQueuedUpload }
         if (!mutationQueueReplayer.discardPendingMutationOnceUnsent(id, identity)) return@call
+        upload?.let { row -> queuedUploads.release(row) }
         requestPassUnlessQueueEmpty(identity, onEdge = false)
     }
 
@@ -983,15 +1068,21 @@ internal class OfflineClient(
         rejectedMutationsOf(mutationQueue.shownRejections())
     }
 
-    /** The rejected list's [entries] as the app sees them. */
+    /** The refused row writes among the rejected list's [entries], as the app sees them. */
     private fun rejectedMutationsOf(entries: List<StoredRejection>): List<RejectedMutation> =
-        entries.map { entry ->
-            entry.toRejectedMutation(EngineJson, primaryKeys).shown()
-        }
+        entries
+            .filterNot { entry -> entry.isQueuedUpload }
+            .map { entry -> entry.toRejectedMutation(EngineJson, primaryKeys).shown() }
 
     override suspend fun dismissRejectedMutation(id: Long): Unit = operationGate.call {
         val identity = writeOwner() ?: return@call
-        mutationQueue.dismissRejectedMutationOf(id, identity.storedValue)
+        // Read first: a refused upload's file goes once its entry has
+        val upload =
+            mutationQueue.shownRejection(id, identity.storedValue)?.takeIf { entry ->
+                entry.isQueuedUpload
+            }
+        if (!mutationQueue.dismissRejectedMutationOf(id, identity.storedValue)) return@call
+        upload?.let { entry -> queuedUploads.release(entry) }
     }
 
     override suspend fun retryRejectedMutation(id: Long): Unit = operationGate.call {
@@ -1000,6 +1091,10 @@ internal class OfflineClient(
         require(entry.bodyOmittedChars == null) {
             "This rejected mutation cannot be retried: its body was too large to keep " +
                 "(RejectedMutation.isRetryable is false)"
+        }
+        require(!entry.isQueuedUpload || queuedUploads.isRetryable(entry)) {
+            "This rejected upload cannot be retried: its file is no longer on this device " +
+                "(RejectedUpload.isRetryable is false)"
         }
         mutationQueue.retryRejectedMutation(id, identity.storedValue) ?: return@call
         automaticReplay.requestPass()
@@ -1234,34 +1329,42 @@ internal class OfflineClient(
             }
         }
         clientScope.launch {
-            // The flows only say when to count; every count is read in one snapshot under the
-            // queue's lock, so a write moving between the queue and a list is counted once, and
-            // an older snapshot never lands after a newer one
-            merge(
-                    mutationQueue.queueChanges(),
-                    mutationQueue.shownRejectionsFlow().map {},
-                    mutationQueue.shownConflictsFlow().map {},
-                )
-                .conflate()
-                .retryWhen { failure, attempt ->
+            var doublings = 0
+            while (true) {
+                try {
+                    // The flows only say when to count; every count is read in one snapshot under
+                    // the queue's lock, so a write moving between the queue and a list is counted
+                    // once, and an older snapshot never lands after a newer one
+                    merge(
+                            mutationQueue.queueChanges(),
+                            mutationQueue.shownRejectionsFlow().map {},
+                            mutationQueue.shownConflictsFlow().map {},
+                        )
+                        .conflate()
+                        .collect {
+                            val counts = queueCountsOrNull() ?: return@collect
+                            publishStatus { status ->
+                                status.copy(
+                                    pendingMutationCount = counts.pending,
+                                    rejectedMutationCount = counts.rejected,
+                                    conflictedMutationCount = counts.conflicted,
+                                )
+                            }
+                        }
+                    return@launch
+                } catch (failure: Exception) {
+                    // Closing ends it. Any other failure is followed again, one that cut a count
+                    // short included: `retryWhen` rethrows a flow's failure that canceled the
+                    // count in progress, which ended the status's counts for good
+                    ensureActive()
                     engineLogger.warning {
                         "The sync status lost track of the queue (${failure::class.simpleName}); " +
                             "following it again"
                     }
-                    val doublings = attempt.coerceAtMost(STATUS_RETRY_DOUBLINGS.toLong()).toInt()
                     delay(STATUS_RETRY_WAIT * (1 shl doublings))
-                    true
+                    doublings = minOf(doublings + 1, STATUS_RETRY_DOUBLINGS)
                 }
-                .collect {
-                    val counts = queueCountsOrNull() ?: return@collect
-                    publishStatus { status ->
-                        status.copy(
-                            pendingMutationCount = counts.pending,
-                            rejectedMutationCount = counts.rejected,
-                            conflictedMutationCount = counts.conflicted,
-                        )
-                    }
-                }
+            }
         }
     }
 
@@ -1364,7 +1467,7 @@ internal class OfflineClient(
         )
 
     /** This engine report as the app sees it. */
-    private fun EngineSyncReport.shown(): SyncReport =
+    private suspend fun EngineSyncReport.shown(): SyncReport =
         SyncReport(
             syncedCount = syncedCount,
             rejected = rejected.map { rejection -> rejection.shown() },
@@ -1377,6 +1480,8 @@ internal class OfflineClient(
             conflicted =
                 conflicted.map { entry -> entry.toConflictedMutation(EngineJson, primaryKeys) },
             stopReason = stopReasonOf(stop),
+            rejectedUploads =
+                rejectedUploads.map { entry -> queuedUploads.rejectedUploadOf(entry) },
         )
 
     override suspend fun applyServerRecord(
@@ -1613,9 +1718,31 @@ internal class OfflineClient(
             }
     }
 
+    /**
+     * Deletes, once at open, the queued files no queued or rejected upload names: what a crash
+     * between a file and its row, or the rejected list's bound, left. A failure is logged; the next
+     * open tries again.
+     */
+    private fun sweepQueuedUploadFiles() {
+        clientScope.launch {
+            try {
+                operationGate.call { queuedUploads.sweepUnnamedFiles() }
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (failure: Exception) {
+                if (operationGate.isClosed) return@launch
+                engineLogger.warning {
+                    "Could not delete the queued upload files no upload names " +
+                        "(${failure::class.simpleName}); the next open tries again"
+                }
+            }
+        }
+    }
+
     // Last, once every part the work below reads is built
     init {
         trackStatus()
         replayWhatAnEarlierRunLeft()
+        sweepQueuedUploadFiles()
     }
 }

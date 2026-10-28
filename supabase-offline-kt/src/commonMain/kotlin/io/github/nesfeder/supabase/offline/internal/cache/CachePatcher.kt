@@ -17,6 +17,7 @@ import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 import io.github.nesfeder.supabase.offline.internal.postgrest.QueryShape
 import io.github.nesfeder.supabase.offline.internal.postgrest.RowFilter
 import io.github.nesfeder.supabase.offline.internal.postgrest.RowMatch
+import io.github.nesfeder.supabase.offline.internal.postgrest.RowWindow
 import io.github.nesfeder.supabase.offline.internal.postgrest.encodeFilter
 import kotlin.concurrent.atomics.AtomicLong
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
@@ -34,7 +35,8 @@ import kotlinx.serialization.json.jsonPrimitive
  * query the patch may leave wrong is marked stale and fetched again. Holds no lock of its own: it
  * writes under the table's write lock, every payload of one patch in one transaction under the
  * clear lock, and over the row it read, so a list eviction deleted meanwhile (eviction holds no
- * table lock) stays deleted.
+ * table lock) stays deleted. A server change is also logged ([CacheFreshness.logServerPatch]), and
+ * laid over a response its request left before ([rebase]).
  *
  * @param liveCacheKeysOf a table's queries with a live reader, which a patch may give a payload.
  * @param onQueriesMarkedStale told of the queries a write marked stale, so their live readers fetch
@@ -52,7 +54,7 @@ internal class CachePatcher(
     private val primaryKeys: PrimaryKeys,
     private val liveCacheKeysOf: (table: String) -> Set<String>,
     private val onQueriesMarkedStale: (table: String, cacheKeys: Set<String>) -> Unit,
-) {
+) : ResponseRebase {
 
     /** Ids for the writes a patch overlays, one per write, below any queued mutation's. */
     private val patchIds = AtomicLong(0L)
@@ -160,7 +162,9 @@ internal class CachePatcher(
      * [patchCachedQueries] does for each: a saved row as an UPSERT on [keyColumns] that places it
      * by its key, a deleted one as a DELETE by its key; all of [changes], in order, in one pass
      * over the table's payloads under one hold of its lock. A burst of changes costs one patch, and
-     * a row's last change is what the cache shows. The table's watermark moves as for any patch.
+     * a row's last change is what the cache shows. The table's watermark does not move: the changes
+     * are logged instead, whether or not they reach a cached query, and laid over every response
+     * whose request left before them ([rebase]).
      *
      * @param keyColumns the table's primary key, which every change's filter names.
      */
@@ -198,7 +202,7 @@ internal class CachePatcher(
                 )
             }
         }
-        patchWithWrites(table, writes, liveCacheKeys = null, guardTick, applies)
+        patchWithWrites(table, writes, liveCacheKeys = null, guardTick, fromServer = true, applies)
     }
 
     /**
@@ -210,74 +214,80 @@ internal class CachePatcher(
      * cache not the current identity's is left alone, and so is one a patch no longer [applies] to,
      * asked under the table's lock before anything is written: a server change from a channel left
      * for another user does not.
+     *
+     * A write of the device's own moves the table's watermark, so a response whose request left
+     * before it is refused: nothing replays an online write over it. A server change is logged
+     * instead, under the clear lock and unless a clear voided it, and laid over such a response.
+     *
+     * @param fromServer whether [writes] are server changes ([patchServerChanges]).
      */
     private suspend fun patchWithWrites(
         table: String,
         writes: List<MutationRow>,
         liveCacheKeys: Set<String>?,
         guardTick: Long,
+        fromServer: Boolean = false,
         applies: suspend () -> Boolean = { true },
     ) {
         if (!ownership.cacheServesCurrentIdentity()) return
         val toFetchAgain = mutableSetOf<String>()
         queryCache.tableWriteLock(table).withLock {
-            freshness.advanceLocalWriteWatermark(table)
+            // Read under the lock: a response whose request left before this tick may not hold
+            // the writes
+            val tick = freshness.tickNow()
+            if (!fromServer) freshness.advanceLocalWriteWatermark(table, tick)
+            if (!applies()) return@withLock
+            // Logged even when no cached query holds a row they change: an answer in flight may
+            if (
+                fromServer &&
+                    !freshness.writeUnlessCleared(guardTick) {
+                        freshness.logServerPatch(table, tick, writes)
+                    }
+            )
+                return@withLock
             val cached = queryCacheDao.allForTable(table)
             val uncachedLive =
                 (liveCacheKeys ?: liveCacheKeysOf(table)) -
                     cached.mapTo(mutableSetOf()) { row -> row.cacheKey }
             // Only a patch that may write claims an unowned cache for the current identity
             if (cached.isEmpty() && uncachedLive.isEmpty()) return@withLock
-            if (!applies()) return@withLock
             if (!ownership.cacheTakesWritesOfCurrentIdentity()) return@withLock
-            val parsed = cached.map { row -> row to queryCache.parsedPayloadOf(row) }
-            val shapes = queryCache.queryShapes.shapesOf(table)
-            val keyColumns = primaryKeys.of(table)
-            val batch = PatchWrites(json)
-            // UPDATEs naming one key each, over keys `eq` decides by content: each reaches exactly
-            // the rows with its key, found by it
-            val keyed = patchOverlays.keyedUpdatesOf(writes, keyColumns, parsed, batch)
-            val mayMatter =
-                (if (keyed != null) patchOverlays.keyedUpdatesReach(keyed)
-                else rowsThatMayMatter(table, writes, primaryKeys, json, unknownMatters = true))
-                    ?: { _, _ ->
-                        false
-                    }
-            // Indexed only for a query that may draw on the rows other queries hold
-            val known = lazy { KnownRows(parsed, shapes, keyColumns, mayMatter) }
+            val pass = patchPassOver(table, writes, cached)
             val patches = mutableListOf<PayloadPatch>()
-            for ((row, payload) in parsed) {
+            for ((row, payload) in pass.parsed) {
                 val rows = payload.rows ?: continue
-                val shape = shapes[row.cacheKey]
-                val target =
-                    if (writes.any { write -> mayJoinKnownRows(write, shape, batch) }) {
-                        known.value.targetFor(
-                            row.cacheKey,
-                            shape,
-                            rows,
-                            rowKeys = payload.keysFor(keyColumns),
-                        )
-                    } else {
-                        PatchTarget(rows, shape, emptyList(), emptyList(), keyColumns.toSet())
-                    }
-                val overlay = patchOverlays.overlayFor(target.admission, batch, keyed)
-                val patched = overlay.overlayRows(rows, writes, knownRows = target.sameSelectRows)
-                val wrong = patchMayLeaveWrong(writes, target, json, keyed, ::conflictColumnsOf)
-                if (patched.visible == rows && (!wrong || isStaleStamp(row.updatedAt))) continue
+                val patched =
+                    pass.patch(
+                        row.cacheKey,
+                        pass.shapes[row.cacheKey],
+                        rows,
+                        payload.keysFor(pass.keyColumns),
+                    )
+                if (patched.rows == rows && (!patched.wrong || isStaleStamp(row.updatedAt)))
+                    continue
                 // The payload stays as old as what the server last said: a local write is not fresh
                 // data, and one it may leave wrong is stale
-                val stamp = if (wrong) staleStampOf(row.updatedAt) else row.updatedAt
-                val text = overlay.encode(patched.visible)
+                val stamp = if (patched.wrong) staleStampOf(row.updatedAt) else row.updatedAt
+                val text = patched.encode()
                 patches +=
                     PayloadPatch(
                         row = row.copy(payload = text, updatedAt = stamp),
                         replacedLength = row.payload.length,
                         // What the next patch reads, kept as parsed here so it parses nothing
-                        parsed = ParsedPayload(text, patched.visible),
-                        wrong = wrong,
+                        parsed = ParsedPayload(text, patched.rows),
+                        wrong = patched.wrong,
                     )
             }
-            val created = livePayloadsFor(table, uncachedLive, shapes, writes, known, batch, keyed)
+            val created =
+                livePayloadsFor(
+                    table,
+                    uncachedLive,
+                    pass.shapes,
+                    writes,
+                    pass.known,
+                    pass.batch,
+                    pass.keyed,
+                )
             val changed = writePatches(guardTick, patches, created.payloads) ?: return@withLock
             // Once the patch landed: a clear that voided it has its live readers fetch anyway
             toFetchAgain += created.toFetchAgain
@@ -288,6 +298,157 @@ internal class CachePatcher(
             }
         }
         if (toFetchAgain.isNotEmpty()) onQueriesMarkedStale(table, toFetchAgain)
+    }
+
+    /**
+     * Lays [writes], server changes logged since a response's request left, over [answer], the
+     * response's rows, with the overlay and the reading of the rows other queries hold that
+     * patching them in uses, as if the response had landed first. When they may leave the query
+     * wrong ([patchMayLeaveWrong]), the answer stays as it came but for the rows they took out;
+     * when they only approximate it ([rebaseOnlyApproximates]), it has them laid over it. Neither
+     * is exact. Caller holds [table]'s write lock.
+     */
+    override suspend fun rebase(
+        table: String,
+        cacheKey: String,
+        shape: QueryShape?,
+        window: RowWindow,
+        answer: ParsedPayload,
+        writes: List<MutationRow>,
+    ): Rebased {
+        val rows = answer.rows ?: return Rebased(answer, isExact = false)
+        // A delete reads no other query's rows: the table's payloads are read only for an upsert
+        val cached =
+            if (writes.all { write -> write.knownOperation == MutationOperation.DELETE })
+                emptyList()
+            else queryCacheDao.allForTable(table)
+        val pass = patchPassOver(table, writes, cached)
+        val patched = pass.patch(cacheKey, shape ?: pass.shapes[cacheKey], rows)
+        return when {
+            patched.wrong ->
+                Rebased(
+                    withoutRowsTakenOut(answer, rows, patched, pass.keyColumns),
+                    isExact = false,
+                )
+            patched.rows == rows -> Rebased(answer, isExact = true)
+            else ->
+                Rebased(
+                    ParsedPayload(patched.encode(), patched.rows),
+                    isExact = !rebaseOnlyApproximates(rows, patched.rows, pass.keyColumns, window),
+                )
+        }
+    }
+
+    /**
+     * [answer], whose [rows] the changes laid over as [patched] may leave wrong, without the rows
+     * they took out, found by [keyColumns]: a delete takes out only a row its filter provably
+     * matches, and a saved row leaves a query only when its own values no longer meet the filters,
+     * so those removals stand where the rows the changes place may not. A row deleted while the
+     * request was out is never brought back. A row without its key stays: nothing tells whether one
+     * took it out.
+     */
+    private fun withoutRowsTakenOut(
+        answer: ParsedPayload,
+        rows: List<JsonElement>,
+        patched: PatchedRows,
+        keyColumns: List<String>,
+    ): ParsedPayload {
+        val left =
+            patched.rows.mapNotNullTo(HashSet()) { element ->
+                (element as? JsonObject)?.let { row -> keyOf(row, keyColumns) }
+            }
+        val kept = rows.filter { element ->
+            val key = (element as? JsonObject)?.let { row -> keyOf(row, keyColumns) }
+            key == null || key in left
+        }
+        return if (kept.size == rows.size) answer else ParsedPayload(patched.encode(kept), kept)
+    }
+
+    /**
+     * [writes], a patch of [table], read once for every query of [cached], the table's payloads:
+     * their bodies and filters, the UPDATEs that name one key each, and the rows other queries
+     * hold, indexed on first use.
+     */
+    private suspend fun patchPassOver(
+        table: String,
+        writes: List<MutationRow>,
+        cached: List<CachedQueryRow>,
+    ): PatchPass {
+        val parsed = cached.map { row -> row to queryCache.parsedPayloadOf(row) }
+        val shapes = queryCache.queryShapes.shapesOf(table)
+        val keyColumns = primaryKeys.of(table)
+        val batch = PatchWrites(json)
+        // UPDATEs naming one key each, over keys `eq` decides by content: each reaches exactly
+        // the rows with its key, found by it
+        val keyed = patchOverlays.keyedUpdatesOf(writes, keyColumns, parsed, batch)
+        val mayMatter =
+            (if (keyed != null) patchOverlays.keyedUpdatesReach(keyed)
+            else rowsThatMayMatter(table, writes, primaryKeys, json, unknownMatters = true))
+                ?: { _, _ ->
+                    false
+                }
+        // Indexed only for a query that may draw on the rows other queries hold
+        val known = lazy { KnownRows(parsed, shapes, keyColumns, mayMatter) }
+        return PatchPass(writes, parsed, shapes, keyColumns, batch, keyed, known)
+    }
+
+    /**
+     * One patch's [writes] over a table's [parsed] payloads, read once; see [patchPassOver].
+     *
+     * @property shapes the table's known query shapes, by cache key.
+     * @property keyColumns the table's key columns.
+     * @property batch the writes' bodies and filters, read once.
+     * @property keyed see [patchMayLeaveWrong].
+     * @property known the rows the table's queries hold, indexed on first use.
+     */
+    private inner class PatchPass(
+        val writes: List<MutationRow>,
+        val parsed: List<Pair<CachedQueryRow, ParsedPayload>>,
+        val shapes: Map<String, QueryShape?>,
+        val keyColumns: List<String>,
+        val batch: PatchWrites,
+        val keyed: KeyedUpdates?,
+        val known: Lazy<KnownRows>,
+    ) {
+
+        /**
+         * [writes] laid over [rows], what the query cached under [cacheKey] shows, and whether they
+         * may leave it wrong ([patchMayLeaveWrong]).
+         *
+         * @param rowKeys [rows]' keys when already read; see [ParsedPayload.keysFor].
+         */
+        fun patch(
+            cacheKey: String,
+            shape: QueryShape?,
+            rows: List<JsonElement>,
+            rowKeys: List<List<String>?>? = null,
+        ): PatchedRows {
+            val target =
+                if (writes.any { write -> mayJoinKnownRows(write, shape, batch) }) {
+                    known.value.targetFor(cacheKey, shape, rows, rowKeys)
+                } else {
+                    PatchTarget(rows, shape, emptyList(), emptyList(), keyColumns.toSet())
+                }
+            val overlay = patchOverlays.overlayFor(target.admission, batch, keyed)
+            val patched = overlay.overlayRows(rows, writes, knownRows = target.sameSelectRows)
+            val wrong = patchMayLeaveWrong(writes, target, json, keyed, ::conflictColumnsOf)
+            return PatchedRows(patched.visible, wrong, overlay)
+        }
+    }
+
+    /**
+     * What [PatchPass.patch] made of one query's rows.
+     *
+     * @property rows the rows the query shows once the writes are laid over them.
+     * @property wrong whether the writes may leave the query wrong.
+     */
+    private class PatchedRows(
+        val rows: List<JsonElement>,
+        val wrong: Boolean,
+        private val overlay: MutationOverlay,
+    ) {
+        /** [rows], or [others] of the same query, as a payload. */
+        fun encode(others: List<JsonElement> = rows): String = overlay.encode(others)
     }
 
     /**

@@ -127,17 +127,20 @@ the second writer is your project's Table Editor
 ### Attach a photo
 
 Open a task and tap **Add photo**, or add photos as you create a task with **New task**'s **Add
-photo**, several at once. A photo shows at once, from the device, marked while it waits or
-uploads, with the upload's progress. Once it is uploaded the library's file cache keeps it, so it
-still shows offline: the Photos tab marks it available offline.
+photo**, several at once. A photo shows at once, from the device: online marked while it uploads,
+offline marked while it waits. Once it is uploaded the library's file cache keeps the bytes it
+sent, so it still shows offline: the Photos tab marks it available offline.
 
 ![New task with a title, notes and two photos picked, each with a button to take it off, before Add](../assets/samples/android/new-task-photos.png){ width="270" loading=lazy }
 ![The new task's detail with Simulate offline on: "Saved on this device — will sync when online", and its two photos marked "Waiting to upload"](../assets/samples/android/photo-waiting.png){ width="270" loading=lazy }
 
-The library never queues a Storage write, so the app keeps its own queue: a photo added offline
-(Simulate offline on, say) waits on the device, marked "Waiting to upload", and uploads when the
-network comes back, its row written only once Storage has the file. One that fails says why, with
-**Retry**, and **Remove** to give it up. Until it is uploaded, the viewer offers Share and Remove
+A photo goes through the library's [queued upload](../behaviors/storage.md#queued-uploads): one
+added offline (Simulate offline on, say) waits on the device, marked "Waiting to upload", and
+uploads when the network comes back, its row queued behind the file. One Storage refuses says why,
+with **Retry**, and **Remove** to give it up; it is drawn from the file the rejected list keeps for
+it (`RejectedUpload.localPath`), since `cachedFile` never answers a refused upload. One whose
+upload fails as it is sent online (a `500`, say) is kept by the app, marked failed in the same way,
+since the library keeps nothing of an upload it throws. Until it is uploaded, the viewer offers Share and Remove
 for it but not Details, Share link, Replace, Move or Duplicate. Those, and Delete for an uploaded
 photo, need the network: offline they are switched off.
 
@@ -184,10 +187,9 @@ the open tasks on the server. Each says which call it made and what happened.
 
 ### Start over
 
-**Start over**, under **Local data**, holds photo uploads (waiting for one in progress), clears the
-device, deletes this user's photos, photo rows and tasks from your project, with any file a waiting
-photo already stored, deletes the photos waiting to upload, and signs in as a new anonymous user
-with an empty list. It needs the network: an anonymous user cannot sign back in to reach what it
+**Start over**, under **Local data**, gives up the photos waiting to upload (waiting for one on its
+way), clears the device, deletes this user's photos, photo rows and tasks from your project, a file
+a waiting photo stored meanwhile too, and signs in as a new anonymous user with an empty list. It needs the network: an anonymous user cannot sign back in to reach what it
 left behind, so offline it refuses and deletes nothing.
 **Clear local cache** deletes what the device holds, the queue and the photos waiting to upload
 included, then reads both lists again from your project.
@@ -201,11 +203,9 @@ included, then reads both lists again from your project.
   activity ([If the project pauses](supabase-setup.md#if-the-project-pauses)). The app tries
   again each time the network comes back; until then the list says it is not signed in yet.
 - **A photo will not upload.** Check that the `task-photos` bucket exists, private, as
-  [Set up Supabase](supabase-setup.md) creates it. The photo is marked "Upload failed" with the
-  app's sentence for Storage's answer. A missing bucket reads as "This photo's file is missing" and
-  is tried again once the bucket exists, on **Retry** or when the network next comes back. A photo
-  Storage's policies refused stays failed with Retry switched off: remove it, fix the policy, and
-  add it again.
+  [Set up Supabase](supabase-setup.md) creates it, and that its policies let the user upload. The
+  photo is marked "Upload failed" with Storage's answer, its bytes kept on the device: fix the
+  bucket or the policy, then **Retry** sends it again, or **Remove** gives it up.
 - **Mark all done or the Server section fails, or Replace and Move photo are refused.** The second
   migration file is not applied: run it as [Set up Supabase](supabase-setup.md#apply-the-schema)
   says.

@@ -2,13 +2,11 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.offlinetasks.ui.photos
 
-import androidx.core.net.toUri
 import io.github.nesfeder.offlinetasks.data.NetworkUnavailableException
 import io.github.nesfeder.offlinetasks.data.PhotoNotFoundException
 import io.github.nesfeder.offlinetasks.data.ServerUnreachableException
 import io.github.nesfeder.offlinetasks.data.TaskPhoto
 import io.github.nesfeder.offlinetasks.data.TaskRepository
-import java.io.File
 import kotlin.coroutines.cancellation.CancellationException
 
 /** Whether a photo can be drawn, and from where. */
@@ -36,9 +34,8 @@ sealed interface PhotoFileState {
  */
 suspend fun TaskRepository.loadPhotoFile(photo: TaskPhoto): PhotoFileState =
     try {
-        val pending = photo.pendingUpload
-        if (pending != null) PhotoFileState.OnDevice(File(pending.localPath).toUri().toString())
-        else PhotoFileState.OnDevice(photoUriIfCached(photo) ?: photoUri(photo))
+        // A photo waiting to upload is answered from its file in the library's queue
+        PhotoFileState.OnDevice(photoUriIfCached(photo) ?: photoUri(photo))
     } catch (cancellation: CancellationException) {
         throw cancellation
     } catch (offline: NetworkUnavailableException) {

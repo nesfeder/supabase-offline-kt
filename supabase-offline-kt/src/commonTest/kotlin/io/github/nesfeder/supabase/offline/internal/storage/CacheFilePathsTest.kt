@@ -131,6 +131,26 @@ class CacheFilePathsTest {
     }
 
     @Test
+    fun an_object_whose_place_is_taken_is_stored_in_the_hashed_file_of_its_key() {
+        // Given — "album" in a bucket that also caches "album/cover.png": its file and that folder
+        // share one name, so the one cached second goes to its hashed file
+
+        // When
+        val file = objectHashedFilePath(baseDir, "media", "album")
+
+        // Then — the SHA-256 of the key's UTF-16 code units, as for a name that is not plain
+        assertEquals(
+            "/base/storage-hashed/749f096d6ffa725be0cd099b5e03938a43160203a9b39179dec62a26e94682a1",
+            file.toString(),
+        )
+        assertEquals(hashedFilePath(baseDir, "media::album"), file)
+        assertEquals(
+            objectHashedFilePath(baseDir, "media", "caf\u00E9.png"),
+            objectFilePathOrNull(baseDir, "media", "caf\u00E9.png"),
+        )
+    }
+
+    @Test
     fun containment_is_judged_after_normalizing() {
         // Given / When / Then
         assertTrue("/base/storage/b/x".toPath().isStrictlyInside("/base/storage".toPath()))

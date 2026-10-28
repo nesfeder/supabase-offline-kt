@@ -6,6 +6,7 @@ package io.github.nesfeder.supabase.offline.internal.storage
 
 import io.github.jan.supabase.exceptions.NotFoundRestException
 import io.github.jan.supabase.exceptions.RestException
+import io.github.jan.supabase.network.HttpRequestOverride
 import io.github.jan.supabase.storage.BucketApi
 import io.github.jan.supabase.storage.DownloadOptionBuilder
 import io.github.jan.supabase.storage.FileObject
@@ -20,9 +21,13 @@ import io.github.jan.supabase.storage.UploadData
 import io.github.jan.supabase.storage.UploadOptionBuilder
 import io.github.jan.supabase.storage.UploadSignedUrl
 import io.github.jan.supabase.storage.resumable.ResumableClient
+import io.github.jan.supabase.storage.storage
 import io.github.nesfeder.supabase.offline.CachedFile
+import io.github.nesfeder.supabase.offline.DownloadProgress
+import io.github.nesfeder.supabase.offline.MutationStrategy
 import io.github.nesfeder.supabase.offline.OfflineBucketApi
 import io.github.nesfeder.supabase.offline.OfflineInternal
+import io.github.nesfeder.supabase.offline.UploadOutcome
 import io.github.nesfeder.supabase.offline.internal.ClientOperationGate
 import io.github.nesfeder.supabase.offline.internal.httpStatusOrNull
 import io.github.nesfeder.supabase.offline.internal.isNetworkOrConnectivityFailure
@@ -91,6 +96,10 @@ internal class CachingBucketApi(
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
     private val networkAccess: NetworkAccess = NetworkAccess(),
     private val requestSession: () -> RequestSession = { RequestSession.WithoutAuth },
+    /** The client's queued uploads; `null` keeps none, and a queueable upload is sent at once. */
+    private val queuedUploads: QueuedUploadWriter? = null,
+    /** Whether [setHeader] set a header here, which a queued upload could not keep. */
+    private val setsHeaders: Boolean = false,
 ) : OfflineBucketApi, BucketApi by delegate {
 
     override fun setHeader(name: String, value: String): OfflineBucketApi =
@@ -104,6 +113,8 @@ internal class CachingBucketApi(
             ioDispatcher,
             networkAccess,
             requestSession,
+            queuedUploads,
+            setsHeaders = true,
         )
 
     override val resumable: ResumableClient by lazy {
@@ -118,6 +129,10 @@ internal class CachingBucketApi(
 
     override suspend fun cachedFile(path: String): CachedFile? = operationGate.call {
         if (!cachesDownloadsOf(path)) return@call null
+        // An upload of it still queued is newer than any copy Storage sent
+        queuedUploads?.uploads?.queuedCopyOf(bucketId, path)?.let { queued ->
+            return@call queued
+        }
         cache.entryFor(bucketId, path)?.let { entry -> cache.useCachedCopy(entry) }
     }
 
@@ -129,17 +144,33 @@ internal class CachingBucketApi(
         entryOf(path, transform)?.let { entry -> cache.useCachedCopy(entry) }
     }
 
-    // Any path, as a write drops it: one that cannot be cached has no copy, and loses nothing
+    // Any path, as a write drops it: one that cannot be cached has no copy or pin, and loses
+    // nothing
     override suspend fun evictCachedFile(path: String): Unit = operationGate.call {
-        cache.invalidateObject(bucketId, path)
+        cache.forgetObject(bucketId, path)
     }
 
+    // One transform's copy alone: the object's pin stays
     override suspend fun evictCachedFile(
         path: String,
         transform: ImageTransformation.() -> Unit,
     ): Unit = operationGate.call {
         if (!cachesDownloadsOf(path)) return@call
         entryOf(path, transform)?.let { entry -> cache.invalidateEntry(entry) }
+    }
+
+    override suspend fun pinCachedFile(path: String): Unit = operationGate.call {
+        requireCacheableEntry(path)
+        cache.pinObject(bucketId, path)
+    }
+
+    // Any path, as evictCachedFile: one that cannot be cached has no pin
+    override suspend fun unpinCachedFile(path: String): Unit = operationGate.call {
+        cache.unpinObject(bucketId, path)
+    }
+
+    override suspend fun isCachedFilePinned(path: String): Boolean = operationGate.call {
+        cachesDownloadsOf(path) && cache.isObjectPinned(bucketId, path)
     }
 
     /**
@@ -155,24 +186,34 @@ internal class CachingBucketApi(
     }
 
     override suspend fun ensureCachedFile(path: String, isPublic: Boolean): CachedFile =
-        operationGate.cancellableCall(backgroundScope) { ensureCachedFileNow(path, isPublic) }
+        operationGate.cancellableCall(backgroundScope) {
+            ensureCachedFileNow(path, isPublic, onProgress = null)
+        }
 
-    /** [ensureCachedFile]'s body, run while the call holds the client's gate. */
-    private suspend fun ensureCachedFileNow(path: String, isPublic: Boolean): CachedFile {
-        require(isRequestedByItsOwnName(path)) {
-            "This object path cannot be cached on the device: it holds '%', '?' or '#', which go " +
-                "into the request's URL unencoded, so its request can reach another object"
+    // Run on the caller's dispatcher, so onProgress is called there
+    override suspend fun ensureCachedFile(
+        path: String,
+        isPublic: Boolean,
+        onProgress: (DownloadProgress) -> Unit,
+    ): CachedFile =
+        operationGate.cancellableCall(backgroundScope) {
+            ensureCachedFileNow(path, isPublic, onProgress)
         }
-        require(isCacheableObjectPath(path)) {
-            "This object path cannot be cached on the device: it has a leading '/', an empty, '.' " +
-                "or '..' segment, a '\\' or a control character"
+
+    /**
+     * [ensureCachedFile]'s body, run while the call holds the client's gate, handing [onProgress]
+     * the progress of each download it runs or joins.
+     */
+    private suspend fun ensureCachedFileNow(
+        path: String,
+        isPublic: Boolean,
+        onProgress: ((DownloadProgress) -> Unit)?,
+    ): CachedFile {
+        val entry = requireCacheableEntry(path)
+        // Storage does not hold a queued upload yet: its copy on the device is the one to return
+        queuedUploads?.uploads?.queuedCopyOf(bucketId, path)?.let { queued ->
+            return queued
         }
-        val entry =
-            cache.entryFor(bucketId, path)
-                ?: throw IllegalArgumentException(
-                    "This object cannot be cached on the device: its bucket id or its path cannot " +
-                        "be mapped onto a file"
-                )
         var supersededBefore = false
         var retriedAfterJoinedFailure = false
         while (true) {
@@ -183,9 +224,10 @@ internal class CachingBucketApi(
             // looks at the cache first, so a call that missed just before a commit downloads
             // nothing.
             val shared =
-                cache.downloadsInFlight.joinOrStart(entry.key, backgroundScope) { ensureWanted ->
+                cache.downloadsInFlight.joinOrStart(entry.key, backgroundScope, onProgress) {
+                    ensureWanted ->
                     if (cache.useCachedCopy(entry) != null) CommitOutcome.COMMITTED
-                    else downloadIntoCache(entry, path, isPublic, ensureWanted)
+                    else downloadIntoCache(entry, path, isPublic, progress = this, ensureWanted)
                 }
             val outcome =
                 when (shared) {
@@ -233,6 +275,8 @@ internal class CachingBucketApi(
      * [ensureCachedFile] of [path] shares. A request that fetched only part of the object, by a
      * header set on this bucket, is refused: the fragment cannot be the cached copy.
      *
+     * @param progress where each chunk written is reported, with the object's size once the answer
+     *   gives it.
      * @param ensureWanted throws a cancellation when every caller waiting for this download has
      *   been canceled; called just before the commit, so a download they all gave up leaves no
      *   file.
@@ -242,17 +286,23 @@ internal class CachingBucketApi(
         entry: FileCacheEntry,
         path: String,
         isPublic: Boolean,
+        progress: DownloadProgressRelay,
         ensureWanted: () -> Unit,
     ): CommitOutcome {
         val sentUnsettled = isSessionUnsettled()
         val file = OwnedTemporaryFile()
         val start = cache.beginDownload()
+        val checked = CheckedDownload()
         try {
             val download =
                 try {
-                    downloadToTemporaryFile(file, entryProvider = { entry }) { target ->
+                    downloadToTemporaryFile(
+                        file,
+                        entryProvider = { entry },
+                        onWritten = { bytes -> progress.report(bytes, checked.expectedLength) },
+                    ) { target ->
                         networkAccess.ensureEnabled()
-                        checkingDownloadStatus {
+                        checkingDownloadStatus(checked) {
                             if (isPublic) delegate.downloadPublic(path, target) {}
                             else delegate.downloadAuthenticated(path, target) {}
                         }
@@ -548,7 +598,7 @@ internal class CachingBucketApi(
         ): T? {
             val copy = notModified.exchange(null) ?: return null
             val served =
-                cache.withPinned(copy.entry) {
+                cache.holdingForRead(copy.entry) {
                     if (cache.confirmCopy(copy.entry, copy.eTag, start)) read(copy.entry) else null
                 }
             if (served != null) {
@@ -824,11 +874,15 @@ internal class CachingBucketApi(
      * names none, a request for part of the object, straight into [passThrough] when there is one.
      * A failed or canceled download leaves the file to [file]'s owner; a disk that refuses it
      * deletes it at once, cancels the download and reports [StreamedDownload.CacheRefused].
+     *
+     * @param onWritten told how many bytes the file holds after each chunk written to it, and once
+     *   that it holds none when the object is empty.
      */
     private suspend fun downloadToTemporaryFile(
         file: OwnedTemporaryFile,
         entryProvider: () -> FileCacheEntry?,
         passThrough: ByteWriteChannel? = null,
+        onWritten: ((bytesWritten: Long) -> Unit)? = null,
         fetch: suspend (ByteWriteChannel) -> CheckedDownload,
     ): StreamedDownload = coroutineScope {
         val pipe = ByteChannel()
@@ -841,6 +895,7 @@ internal class CachingBucketApi(
             }
         }
         val buffer = ByteArray(DOWNLOAD_BUFFER_BYTES)
+        var written = 0L
         while (true) {
             val read = readOrRethrow(pipe, buffer) { producer.await() }
             if (read < 0) break
@@ -869,8 +924,12 @@ internal class CachingBucketApi(
                     uncacheable = false,
                 )
             }
+            written += read
+            onWritten?.invoke(written)
         }
         val checked = producer.await()
+        // An empty object wrote no chunk: its one progress is that it is whole
+        if (written == 0L) onWritten?.invoke(0L)
         val target =
             file.temporary
                 ?: file.open(entryProvider())
@@ -974,8 +1033,52 @@ internal class CachingBucketApi(
             throw failure
         }
 
-    // Writes are never queued: each drops or moves the cached copies it may change, and close()
-    // stops it.
+    override suspend fun upload(
+        path: String,
+        data: ByteArray,
+        mutationStrategy: MutationStrategy,
+        options: UploadOptionBuilder.() -> Unit,
+    ): UploadOutcome = operationGate.call {
+        require(data.isNotEmpty()) { "The data to upload should not be empty" }
+        requireUrlFor(path)
+        if (mutationStrategy == MutationStrategy.OnlineOnly) {
+            return@call UploadOutcome.Applied(upload(path, data, options))
+        }
+        // Read on a builder of our own, whose overrides list says whether the app added one
+        val overrides = mutableListOf<HttpRequestOverride>()
+        val built =
+            UploadOptionBuilder(
+                    delegate.supabaseClient.storage.serializer,
+                    httpRequestOverrides = overrides,
+                )
+                .apply(options)
+        val sendDirectly: suspend () -> FileUploadResponse = { upload(path, data, options) }
+        val writer = queuedUploads ?: return@call UploadOutcome.Applied(sendDirectly())
+        writer.upload(
+            bucketId = bucketId,
+            path = path,
+            data = data,
+            options =
+                QueuedUploadOptions(
+                    upsert = built.upsert,
+                    contentType = built.contentType?.toString(),
+                    userMetadata = built.userMetadata,
+                ),
+            notQueueableBecause =
+                when {
+                    setsHeaders ->
+                        "its bucket sends headers set with setHeader, which are not kept on the device"
+                    overrides.isNotEmpty() ->
+                        "its options add an httpOverride, which is not kept on the device"
+                    else -> null
+                },
+            send = { delegate.upload(path, data, options) },
+            sendDirectly = sendDirectly,
+        )
+    }
+
+    // Writes are never queued but by the upload above: each drops or moves the cached copies it may
+    // change, and close() stops it.
 
     override suspend fun upload(
         path: String,
@@ -1017,10 +1120,11 @@ internal class CachingBucketApi(
     ): FileUploadResponse =
         invalidatingAfter(path) { delegate.uploadToSignedUrl(path, token, data, options) }
 
+    // A pin goes with the object; kept while the object may still be there
     override suspend fun delete(paths: Collection<String>): Unit =
         storageWrite(
             write = { delegate.delete(paths) },
-            applied = { paths.forEach { path -> cache.invalidateObject(bucketId, path) } },
+            applied = { paths.forEach { path -> cache.forgetObject(bucketId, path) } },
             uncertain = { paths.forEach { path -> cache.invalidateObject(bucketId, path) } },
         )
 
@@ -1040,8 +1144,12 @@ internal class CachingBucketApi(
                 )
             },
             uncertain = {
-                cache.invalidateObject(bucketId, from)
-                cache.invalidateObject(destinationBucket ?: bucketId, to)
+                cache.invalidateMove(
+                    fromBucket = bucketId,
+                    from = from,
+                    toBucket = destinationBucket ?: bucketId,
+                    to = to,
+                )
             },
         )
 
@@ -1118,6 +1226,28 @@ internal class CachingBucketApi(
             networkAccess.ensureEnabled()
             delegate.changePublicStatusTo(public)
         }
+
+    /**
+     * The cache entry of the untransformed object at [path], refusing a path whose downloads are
+     * never cached ([cachesDownloadsOf]) with the reason.
+     *
+     * @throws IllegalArgumentException when [path] cannot be cached.
+     */
+    private fun requireCacheableEntry(path: String): FileCacheEntry {
+        require(isRequestedByItsOwnName(path)) {
+            "This object path cannot be cached on the device: it holds '%', '?' or '#', which go " +
+                "into the request's URL unencoded, so its request can reach another object"
+        }
+        require(isCacheableObjectPath(path)) {
+            "This object path cannot be cached on the device: it has a leading '/', an empty, '.' " +
+                "or '..' segment, a '\\' or a control character"
+        }
+        return cache.entryFor(bucketId, path)
+            ?: throw IllegalArgumentException(
+                "This object cannot be cached on the device: its bucket id or its path cannot be " +
+                    "mapped onto a file"
+            )
+    }
 
     /**
      * Whether a download of [path] in this bucket is cached: both map onto a file, and the pinned
