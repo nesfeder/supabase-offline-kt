@@ -246,6 +246,23 @@ class StorageObjectAndFolderTest {
     }
 
     @Test
+    fun an_object_two_folders_under_a_cached_object_is_cached_and_evicted() = runTest {
+        // Given — album is a file where album/2024/ needs two directories
+        bucket().ensureCachedFile(ALBUM)
+        val nested = bucket().ensureCachedFile(NESTED)
+        assertEquals(hashedFile(NESTED).toString(), nested.path)
+
+        // When
+        bucket().evictCachedFile(NESTED)
+
+        // Then — the hashed file and its row are gone; album is served still
+        assertFalse(FileSystem.SYSTEM.exists(hashedFile(NESTED)))
+        assertNull(recordedPath(NESTED))
+        goOffline()
+        assertServedOffline(ALBUM, plainFile(ALBUM))
+    }
+
+    @Test
     fun the_size_bound_evicts_a_hashed_copy_with_its_row() = runTest {
         // Given — album, hashed, is the least recently used of three files over a 10-byte bound
         var now = 0L
@@ -452,6 +469,7 @@ class StorageObjectAndFolderTest {
         const val BUCKET = "media"
         const val ALBUM = "album"
         const val COVER = "album/cover.png"
+        const val NESTED = "album/2024/cover.png"
         const val OTHER = "other.png"
         const val MOVED = "single.png"
         const val MINUTE = 60_000L
@@ -460,6 +478,7 @@ class StorageObjectAndFolderTest {
             mapOf(
                 ALBUM to "ALBUM",
                 COVER to "COVER",
+                NESTED to "NESTED",
                 OTHER to "OTHER",
                 MOVED to "SINGLE",
             )

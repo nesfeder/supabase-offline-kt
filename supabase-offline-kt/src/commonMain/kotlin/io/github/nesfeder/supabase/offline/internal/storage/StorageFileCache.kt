@@ -427,9 +427,7 @@ internal class StorageFileCache(
                 return@withContext null
             }
             if (!resolvesInsideDataDirectory(file)) return@withContext null
-            val metadata =
-                fileSystem.metadataOrNull(file)?.takeIf { it.isRegularFile }
-                    ?: return@withContext null
+            val metadata = lookUp(file)?.takeIf { it.isRegularFile } ?: return@withContext null
             val size = metadata.size ?: return@withContext null
             if (row.sizeBytes != null && row.sizeBytes != size) {
                 val dropped =
@@ -907,9 +905,7 @@ internal class StorageFileCache(
         val (deepest, metadata) =
             generateSequence(file) { it.parent }
                 .takeWhile { it.isStrictlyInside(bucketDirectory) }
-                .firstNotNullOfOrNull { path ->
-                    fileSystem.metadataOrNull(path)?.let { path to it }
-                } ?: return false
+                .firstNotNullOfOrNull { path -> lookUp(path)?.let { path to it } } ?: return false
         return if (deepest == file) metadata.isDirectory else metadata.isRegularFile
     }
 
@@ -974,8 +970,20 @@ internal class StorageFileCache(
 
     /** Deletes [file], a copy, unless a directory stands there: the folder of another name. */
     private fun deleteCopy(file: Path) {
-        if (fileSystem.metadataOrNull(file)?.isDirectory != true) deleteContained(file)
+        if (lookUp(file)?.isDirectory != true) deleteContained(file)
     }
+
+    /**
+     * What is at [path], or `null` when nothing is there or it cannot be looked at, as okio reports
+     * it on the JVM. On iOS a lookup under a regular file (`a/b` while `a` is a file) fails with
+     * `ENOTDIR` instead; an object stored under another's name is looked up that way.
+     */
+    private fun lookUp(path: Path): FileMetadata? =
+        try {
+            fileSystem.metadataOrNull(path)
+        } catch (_: IOException) {
+            null
+        }
 
     /** Deletes [row] and takes its recorded size off [trackedBytes]. */
     private suspend fun removeRowLocked(row: CachedFileRow) {
@@ -1296,7 +1304,7 @@ internal class StorageFileCache(
                 }
         var existing = path
         val missing = mutableListOf<String>()
-        while (fileSystem.metadataOrNull(existing) == null) {
+        while (lookUp(existing) == null) {
             missing += existing.name
             existing = existing.parent ?: return false
         }
