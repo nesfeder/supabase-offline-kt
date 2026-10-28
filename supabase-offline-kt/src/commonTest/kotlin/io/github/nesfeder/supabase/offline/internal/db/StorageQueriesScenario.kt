@@ -12,12 +12,18 @@ import io.github.nesfeder.supabase.offline.internal.storage.VARIANT_SEPARATOR
  *
  * @property rowsForObject keys of `forObject("avatars", "u-1/me.png", …)`, sorted.
  * @property rowsForPercentObject keys of `forObject("avatars", "a%b.png", …)`, sorted.
+ * @property rowsSamePathIgnoringCase keys of `samePathIgnoringCase("avatars", "u-1/me.png")`,
+ *   sorted.
+ * @property rowsSamePercentPathIgnoringCase keys of `samePathIgnoringCase("avatars", "A%B.PNG")`,
+ *   sorted.
  * @property allKeys keys of every row, sorted.
  * @property totalSizeBytes the summed recorded size.
  */
 internal data class StorageQueryResults(
     val rowsForObject: List<String>,
     val rowsForPercentObject: List<String>,
+    val rowsSamePathIgnoringCase: List<String>,
+    val rowsSamePercentPathIgnoringCase: List<String>,
     val allKeys: List<String>,
     val totalSizeBytes: Long,
 )
@@ -36,17 +42,23 @@ private fun row(bucketId: String, path: String, size: Long?) =
 /**
  * Writes an object, one of its transformed variants, a neighbor whose path merely starts the same,
  * one whose path is exactly the bound of the object's variants (its path and a space), the same
- * path in another bucket, a name with SQL wildcard characters, one holding the key's `::` and a row
- * with no recorded size, then runs every query the file cache uses.
+ * path in another bucket, the same path in other case, a name with SQL wildcard characters, one
+ * holding the key's `::` and a row with no recorded size, then runs every query the file cache
+ * uses.
  */
-internal suspend fun OfflineDatabase.runStorageQueries(): StorageQueryResults {
-    val dao = cachedFileDao()
+internal suspend fun OfflineDatabase.runStorageQueries(): StorageQueryResults =
+    cachedFileDao().runStorageQueries()
+
+/** [OfflineDatabase.runStorageQueries] on a DAO alone, so the in-memory one runs it too. */
+internal suspend fun CachedFileDao.runStorageQueries(): StorageQueryResults {
+    val dao = this
     listOf(
             row("avatars", "u-1/me.png", 10),
             row("avatars", "u-1/me.png${VARIANT_SEPARATOR}height=64&width=64", 3),
             row("avatars", "u-1/me.png.bak", 5),
             row("avatars", "u-1/me.png ", 4),
             row("photos", "u-1/me.png", 7),
+            row("avatars", "U-1/Me.png", 8),
             row("avatars", "a%b.png", 1),
             row("avatars", "aXb.png", 2),
             row("avatars", "a::b.png", 6),
@@ -72,6 +84,10 @@ internal suspend fun OfflineDatabase.runStorageQueries(): StorageQueryResults {
                 )
                 .map { it.key }
                 .sorted(),
+        rowsSamePathIgnoringCase =
+            dao.samePathIgnoringCase("avatars", "u-1/me.png").map { it.key }.sorted(),
+        rowsSamePercentPathIgnoringCase =
+            dao.samePathIgnoringCase("avatars", "A%B.PNG").map { it.key }.sorted(),
         allKeys = dao.all().map { it.key }.sorted(),
         totalSizeBytes = dao.totalSizeBytes(),
     )
@@ -86,8 +102,11 @@ internal val EXPECTED_STORAGE_QUERY_RESULTS: StorageQueryResults =
                 "avatars::u-1/me.png${VARIANT_SEPARATOR}height=64&width=64",
             ),
         rowsForPercentObject = listOf("avatars::a%b.png"),
+        rowsSamePathIgnoringCase = listOf("avatars::U-1/Me.png", "avatars::u-1/me.png"),
+        rowsSamePercentPathIgnoringCase = listOf("avatars::a%b.png"),
         allKeys =
             listOf(
+                "avatars::U-1/Me.png",
                 "avatars::a%b.png",
                 "avatars::a::b.png",
                 "avatars::aXb.png",
@@ -98,5 +117,5 @@ internal val EXPECTED_STORAGE_QUERY_RESULTS: StorageQueryResults =
                 "avatars::unsized.png",
                 "photos::u-1/me.png",
             ),
-        totalSizeBytes = 38,
+        totalSizeBytes = 46,
     )

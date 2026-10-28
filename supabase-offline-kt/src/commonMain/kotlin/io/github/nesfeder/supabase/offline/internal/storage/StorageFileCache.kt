@@ -682,18 +682,18 @@ internal class StorageFileCache(
                 }
                 return@withLock CommitOutcome.SUPERSEDED
             }
-            val previous =
+            // Looked at again, now with the row: an object or a folder of the same name may have
+            // come or gone since the temporary file was opened
+            val (previous, destination) =
                 try {
-                    rowOf(entry.bucketId, entry.rowPath)
+                    val row = rowOf(entry.bucketId, entry.rowPath)
+                    row to destinationOfLocked(entry, row?.recordedFileOf(entry))
                 } catch (failure: Exception) {
                     engineLogger.warning {
                         "Storage cache could not read a download's record (${failure::class.simpleName}); not caching"
                     }
                     return@withLock CommitOutcome.FAILED
                 }
-            // Looked at again, now with the row: an object or a folder of the same name may have
-            // come or gone since the temporary file was opened
-            val destination = destinationOfLocked(entry, previous?.recordedFileOf(entry))
             val directory = destination.parent
             if (directory == null || !resolvesInsideDataDirectory(directory)) {
                 engineLogger.warning {
@@ -900,14 +900,14 @@ internal class StorageFileCache(
      * another name takes that place; otherwise its hashed file.
      *
      * Another name takes the place when a directory stands where the file goes (`a` while `a/b` is
-     * cached), a regular file where one of its folders goes (`a/b` while `a` is cached), or a
-     * regular file where the file goes that [recorded] is not: on a case-insensitive volume (the
-     * iOS simulator, a Mac) `photo`'s file is `PHOTO`'s too. Only the deepest part of the place
-     * that exists below the bucket's directory is looked at. Anything else in the way, such as a
-     * file where the bucket's directory goes or a symlink, is left to fail the write or the
-     * containment checks.
+     * cached), a regular file where one of its folders goes (`a/b` while `a` is cached), or, where
+     * the file goes, a regular file another row records ([isAnotherNamesFileLocked]): on a
+     * case-insensitive volume (the iOS simulator, a Mac) `photo`'s file is `PHOTO`'s too. Only the
+     * deepest part of the place that exists below the bucket's directory is looked at. Anything
+     * else in the way, such as a file where the bucket's directory goes or a symlink, is left to
+     * fail the write or the containment checks.
      */
-    private fun destinationOfLocked(entry: FileCacheEntry, recorded: Path?): Path {
+    private suspend fun destinationOfLocked(entry: FileCacheEntry, recorded: Path?): Path {
         val file = entry.file
         val hashed = hashedFileOf(entry)
         // Only a place under the object's own name can be taken
@@ -918,10 +918,26 @@ internal class StorageFileCache(
                 .takeWhile { it.isStrictlyInside(bucketDirectory) }
                 .firstNotNullOfOrNull { path -> lookUp(path)?.let { path to it } } ?: return file
         val taken =
-            if (deepest != file) metadata.isRegularFile
-            else metadata.isDirectory || (metadata.isRegularFile && recorded != file)
+            when {
+                deepest != file -> metadata.isRegularFile
+                metadata.isDirectory -> true
+                metadata.isRegularFile && recorded != file -> isAnotherNamesFileLocked(entry)
+                else -> false
+            }
         return if (taken) hashed else file
     }
+
+    /**
+     * Whether the regular file at [entry]'s own place is another name's: another row of its bucket,
+     * whose path differs from the entry's only in case, records its own file there. Plain names are
+     * ASCII, all a `NOCASE` comparison folds. A file no row records is one a crash left, the
+     * entry's to replace or delete.
+     */
+    private suspend fun isAnotherNamesFileLocked(entry: FileCacheEntry): Boolean =
+        cachedFileDao.samePathIgnoringCase(entry.bucketId, entry.objectPath).any { row ->
+            val other = entryFor(row.bucketId, row.path)
+            row.key != entry.key && other != null && row.recordedFileOf(other) == other.file
+        }
 
     // A function whose name ends in Locked runs under [lock].
 
@@ -947,12 +963,12 @@ internal class StorageFileCache(
         rows.forEach { row ->
             removeRowLocked(row)
             val entry = entryForRow(row) ?: return@forEach
-            deleteCopies(entry, row)
+            deleteCopiesLocked(entry, row)
             if (row.recordsOutdatedPath(entry))
                 deleteOrphanedOutdatedFileLocked(row.localPath.toPath().normalized())
         }
-        // The object's hashed file even without a row: a crash may have left one
-        entryFor(bucketId, objectPath)?.let { entry -> deleteCopies(entry, row = null) }
+        // The object's files even without a row: a crash may have left them
+        entryFor(bucketId, objectPath)?.let { entry -> deleteCopiesLocked(entry, row = null) }
     }
 
     /**
@@ -972,22 +988,25 @@ internal class StorageFileCache(
             if (row.recordsOutdatedPath(entry))
                 deleteOrphanedOutdatedFileLocked(row.localPath.toPath().normalized())
         }
-        // The hashed file even without a row: a crash may have left one
-        deleteCopies(entry, row)
+        // The files even without a row: a crash may have left them
+        deleteCopiesLocked(entry, row)
     }
 
     /**
-     * Deletes [entry]'s copies: its hashed file, which is its alone, and its own file when [row]
-     * recorded that one. Without that, the own file may be another name's: a folder, or on a
-     * case-insensitive volume the copy of a name that differs only in case.
+     * Deletes [entry]'s copies: its hashed file, which is its alone, and its own file unless that
+     * is another name's, a folder or a file another row records ([isAnotherNamesFileLocked]). A
+     * file there that [row] recorded, or that no row records, is the entry's.
      */
-    private fun deleteCopies(entry: FileCacheEntry, row: CachedFileRow?) {
+    private suspend fun deleteCopiesLocked(entry: FileCacheEntry, row: CachedFileRow?) {
         val own = entry.file
-        if (row?.recordedFileOf(entry) == own && lookUp(own)?.isDirectory != true) {
+        val hashed = hashedFileOf(entry)
+        deleteContained(hashed)
+        if (own == hashed) return
+        val metadata = lookUp(own) ?: return
+        if (metadata.isDirectory) return
+        if (row?.recordedFileOf(entry) == own || !isAnotherNamesFileLocked(entry)) {
             deleteContained(own)
         }
-        val hashed = hashedFileOf(entry)
-        if (hashed != own) deleteContained(hashed)
     }
 
     /**
@@ -999,6 +1018,24 @@ internal class StorageFileCache(
         try {
             fileSystem.metadataOrNull(path)
         } catch (_: IOException) {
+            null
+        }
+
+    /**
+     * What is at [path], for the eviction pass: nothing when a regular file stands on its way, as
+     * [lookUp] has it; any other failure is thrown, so the pass leaves a file the system refuses to
+     * look at to one that can.
+     */
+    private fun lookUpToEvict(path: Path): FileMetadata? =
+        try {
+            fileSystem.metadataOrNull(path)
+        } catch (failure: IOException) {
+            if (
+                generateSequence(path.parent) { it.parent }
+                    .none { lookUp(it)?.isRegularFile == true }
+            ) {
+                throw failure
+            }
             null
         }
 
@@ -1196,7 +1233,7 @@ internal class StorageFileCache(
                     // scan
                     val row = cachedFileDao.getByKey(scanned.key) ?: continue
                     val file = fileOfRow(row)
-                    val metadata = file?.let { fileSystem.metadataOrNull(it) }
+                    val metadata = file?.let(::lookUpToEvict)
                     val contained = file != null && directoryContains(file)
                     // The read side's lock only for the pin, the use in memory and the unlink: a
                     // read that pins after this finds the file gone, never half gone
@@ -1235,7 +1272,7 @@ internal class StorageFileCache(
      */
     private fun lastUsedMillis(row: CachedFileRow, uses: Map<String, Long>): Long {
         val file = fileOfRow(row) ?: return Long.MIN_VALUE
-        return lastUsedMillis(fileSystem.metadataOrNull(file), uses[row.key])
+        return lastUsedMillis(lookUpToEvict(file), uses[row.key])
     }
 
     /**

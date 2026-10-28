@@ -391,6 +391,85 @@ class StorageObjectAndFolderTest {
     }
 
     @Test
+    fun a_file_no_row_records_in_the_own_place_is_replaced_by_the_download() = runTest {
+        // Given — a file a crash left in album's place, with no row
+        val file = plainFile(ALBUM)
+        FileSystem.SYSTEM.createDirectories(file.parent!!)
+        FileSystem.SYSTEM.write(file) { writeUtf8("stale") }
+
+        // When
+        bucket().downloadAuthenticated(ALBUM) {}
+
+        // Then — the download took the place, and nothing went to the hashed file
+        assertEquals(file.toString(), recordedPath(ALBUM))
+        assertFalse(FileSystem.SYSTEM.exists(hashedFile(ALBUM)))
+        goOffline()
+        assertServedOffline(ALBUM, file)
+    }
+
+    @Test
+    fun a_write_deletes_a_file_no_row_records_in_the_own_place() = runTest {
+        // Given
+        val file = plainFile(ALBUM)
+        FileSystem.SYSTEM.createDirectories(file.parent!!)
+        FileSystem.SYSTEM.write(file) { writeUtf8("stale") }
+
+        // When
+        bucket().update(ALBUM, "NEW".encodeToByteArray()) {}
+
+        // Then
+        assertFalse(FileSystem.SYSTEM.exists(file))
+    }
+
+    @Test
+    fun a_write_deletes_a_hashed_file_no_row_records() = runTest {
+        // Given — a file a crash left for a name that is always hashed
+        val file = hashedFile(HASHED_NAME)
+        FileSystem.SYSTEM.createDirectories(file.parent!!)
+        FileSystem.SYSTEM.write(file) { writeUtf8("stale") }
+
+        // When
+        bucket().update(HASHED_NAME, "NEW".encodeToByteArray()) {}
+
+        // Then
+        assertFalse(FileSystem.SYSTEM.exists(file))
+    }
+
+    @Test
+    fun the_size_bound_drops_a_row_whose_file_a_regular_file_stands_in_the_way_of() = runTest {
+        // Given — album cached, and a row for album/cover.png in its own file, which cannot exist
+        // under the file album, in a cache bound to 10 bytes
+        var now = 0L
+        val bucket =
+            newTestBucketApi(
+                delegate = delegate,
+                baseDirectory = dataDirectory,
+                store = store,
+                cache =
+                    newTestFileCache(
+                        baseDirectory = dataDirectory,
+                        store = store,
+                        maxSizeBytes = 10,
+                        nowMillis = { now },
+                        fileSystem = NativeLikeFileSystem(FileSystem.SYSTEM),
+                    ),
+            )
+        store.addStorage(BUCKET, COVER, plainFile(COVER), 4, null)
+        delegate.onDownload = { ByteArray(4) { 7 } }
+        now = 1 * MINUTE
+        bucket.downloadAuthenticated(ALBUM) {}
+
+        // When — a download takes the cache past the bound
+        now = 2 * MINUTE
+        bucket.downloadAuthenticated(OTHER) {}
+
+        // Then — the pass ran: the row with no file went, and the others stayed
+        assertNull(recordedPath(COVER))
+        assertNotNull(bucket.cachedFile(ALBUM))
+        assertNotNull(bucket.cachedFile(OTHER))
+    }
+
+    @Test
     fun a_bytes_download_under_a_cached_objects_name_returns_its_bytes_and_keeps_them() = runTest {
         // Given
         bucket().ensureCachedFile(ALBUM)
@@ -586,6 +665,7 @@ class StorageObjectAndFolderTest {
         const val MOVED = "single.png"
         const val LOWER = "photo"
         const val UPPER = "PHOTO"
+        const val HASHED_NAME = "caf\u00E9.png"
         const val MINUTE = 60_000L
 
         val CONTENTS =

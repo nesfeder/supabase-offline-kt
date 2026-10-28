@@ -356,6 +356,11 @@ internal open class InMemoryCachedFileDao : CachedFileDao {
                 (it.path == path || (it.path >= variantPrefix && it.path < variantBound))
         }
 
+    override suspend fun samePathIgnoringCase(bucketId: String, path: String): List<CachedFileRow> =
+        rows.value.values.filter {
+            it.bucketId == bucketId && it.path.equalsIgnoringAsciiCase(path)
+        }
+
     override suspend fun all(): List<CachedFileRow> = rows.value.values.toList()
 
     override suspend fun totalSizeBytes(): Long = rows.value.values.sumOf { it.sizeBytes ?: 0L }
@@ -365,6 +370,13 @@ internal open class InMemoryCachedFileDao : CachedFileDao {
         writeLock.withLock { rows.update(change) }
     }
 }
+
+/** Whether this equals [other] when ASCII letters are folded, as SQLite's `NOCASE` compares. */
+private fun String.equalsIgnoringAsciiCase(other: String): Boolean =
+    length == other.length &&
+        indices.all { i -> this[i].asciiLowercase() == other[i].asciiLowercase() }
+
+private fun Char.asciiLowercase(): Char = if (this in 'A'..'Z') this + ('a' - 'A') else this
 
 /**
  * In-memory [MutationDao] mirroring Room's `AUTOINCREMENT` id (never reused, even after a delete)
