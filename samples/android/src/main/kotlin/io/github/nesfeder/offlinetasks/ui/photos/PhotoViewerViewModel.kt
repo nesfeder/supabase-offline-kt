@@ -8,7 +8,6 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import io.github.nesfeder.offlinetasks.data.AppNetworkStatus
-import io.github.nesfeder.offlinetasks.data.PendingPhotoState
 import io.github.nesfeder.offlinetasks.data.PhotoDetails
 import io.github.nesfeder.offlinetasks.data.PhotoEncoder
 import io.github.nesfeder.offlinetasks.data.Task
@@ -53,18 +52,16 @@ sealed interface PhotoViewerUiState {
         val otherTasks: List<Task> = emptyList(),
         val version: Int = 0,
     ) : PhotoViewerUiState {
-        /** True while the photo waits in the app's pending-photo queue, not yet in the bucket. */
+        /** True while Storage does not have the photo's file: its upload waits, or was refused. */
         val isPending: Boolean
             get() = photo.pendingUpload != null
 
         /**
          * Deleting needs the server, for the file; a pending photo is only on this device, and is
-         * removed whenever it is not on its way up.
+         * removed at any time.
          */
         val canDelete: Boolean
-            get() =
-                if (isPending) photo.pendingUpload?.state != PendingPhotoState.Uploading
-                else canChange
+            get() = isPending || canChange
     }
 }
 
@@ -149,14 +146,13 @@ class PhotoViewerViewModel(
     }
 
     /**
-     * Hands the photo itself to the share sheet: a pending photo's own file, or the cached copy,
-     * downloaded first if needed.
+     * Hands the photo itself to the share sheet: the library's copy on the device (a pending
+     * photo's queued file, or the cached copy, downloaded first if needed).
      */
     fun share() {
         val showing = uiState.value as? PhotoViewerUiState.Showing ?: return
         viewModelScope.launchReporting(failures) {
-            val path =
-                showing.photo.pendingUpload?.localPath ?: repository.photoFileToShare(showing.photo)
+            val path = repository.photoFileToShare(showing.photo)
             messageChannel.send(PhotoViewerMessage.SharePhoto(path))
         }
     }

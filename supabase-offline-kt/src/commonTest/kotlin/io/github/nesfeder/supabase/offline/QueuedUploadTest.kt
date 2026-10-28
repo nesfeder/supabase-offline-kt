@@ -442,6 +442,32 @@ class QueuedUploadTest {
         }
 
     @Test
+    fun a_refused_uploads_kept_file_is_what_cachedFile_answers_until_it_is_dismissed() = runTest {
+        // Given — an upload queued offline, then refused
+        val client = openClient()
+        val bucket = client.storage.from(BUCKET)
+        server.online = false
+        bucket.upload(PATH, BYTES, QueueIfOffline)
+        server.online = true
+        server.uploadAnswer = { UploadAnswer.Refuse(400, 403, "Unauthorized") }
+        client.syncPendingMutations()
+        val refused = client.storage.rejectedUploadList().single()
+
+        // Then — the app can show what was refused, offline too
+        val kept = assertNotNull(bucket.cachedFile(PATH))
+        assertTrue(QUEUED_UPLOADS_DIRECTORY_NAME in kept.path, kept.path)
+        assertContentEquals(BYTES, readFile(kept.path))
+        server.online = false
+        assertEquals(kept, bucket.ensureCachedFile(PATH))
+
+        // When — dismissed
+        client.dismissRejectedMutation(refused.id)
+
+        // Then
+        assertNull(bucket.cachedFile(PATH))
+    }
+
+    @Test
     fun the_newest_queued_upload_of_a_path_is_the_one_cachedFile_answers() = runTest {
         // Given — the same path uploaded twice offline
         val client = openClient()

@@ -11,9 +11,8 @@ import kotlinx.coroutines.flow.StateFlow
  *
  * Reads are live: each returns a flow of [RowsSnapshot]s served from the device first and refreshed
  * from the server when it can be reached. Writes change the device's copy at once and wait in the
- * mutation queue until the server has them, so they work offline. The library never queues a
- * Storage write, so a photo added offline waits in the app's own queue instead ([addPhoto]); every
- * other Storage call needs the network.
+ * mutation queue until the server has them, so they work offline. A photo's upload waits in the
+ * same queue, ahead of its row ([addPhoto]); every other Storage call needs the network.
  *
  * **What throws.** Every implementation throws in the same places, so the screens handle one
  * contract:
@@ -26,7 +25,8 @@ import kotlinx.coroutines.flow.StateFlow
  *   [ServerUnreachableException] when the server does not answer.
  * - Photo downloads, deletes and the other Storage calls throw Storage's refusals as
  *   [PhotoStorageException], and fail at once with [NetworkUnavailableException] while the network
- *   is off. An upload never throws: a pending photo's failure is kept on its record.
+ *   is off. A photo's upload throws only when it was sent at once and Storage refused it; one
+ *   refused on replay marks its photo failed, with Retry.
  * - A read whose rows cannot be read (a row the app cannot decode, a server that answers wrong)
  *   fails its flow; it never turns into an empty list.
  *
@@ -41,8 +41,8 @@ import kotlinx.coroutines.flow.StateFlow
  *
  * **Cancellation.** A call that has started a write finishes it even if its caller is canceled: a
  * screen that closes mid-delete cannot leave a photo's file deleted and its row in place. The
- * caller only stops waiting for the result. Pending photos upload in the repository's own scope,
- * whatever screen is open; one whose row the server refuses at once has its file deleted too.
+ * caller only stops waiting for the result. Photos waiting to upload are sent by the library's own
+ * syncs, whatever screen is open.
  */
 interface TaskRepository {
     /**
@@ -137,8 +137,8 @@ interface TaskRepository {
     suspend fun setTaskDone(id: String, isDone: Boolean): TaskMutationOutcome
 
     /**
-     * Deletes a task: its photo files (only when online; offline they stay in the bucket), then its
-     * pending photos on this device, its photo rows, and the task.
+     * Deletes a task: its photo files (only when online; offline they stay in the bucket), then the
+     * uploads of its photos still waiting or refused, its photo rows, and the task.
      *
      * @throws PhotoStorageException when Storage refuses to delete the files; nothing is deleted.
      * @throws TaskWriteRefusedException when it was sent at once and the server refused it.
@@ -146,19 +146,21 @@ interface TaskRepository {
     suspend fun deleteTask(id: String): TaskMutationOutcome
 
     /**
-     * Files [photo] for the task [taskId] in the app's pending-photo queue on this device, and
-     * returns: the photo is in [photos] at once, and uploads when the network allows, its row
-     * written only once Storage has its file. Online or offline alike; it throws only when the
-     * device cannot save the file.
+     * Adds [photo] to the task [taskId]: its file uploaded, or kept on the device and queued when
+     * it cannot be sent now, then its row, queued behind the file. The photo is in [photos] at
+     * once, online or offline; a waiting upload goes when the network allows, before its row.
+     *
+     * @throws PhotoStorageException when the upload was sent at once and Storage refused it;
+     *   nothing is kept.
      */
     suspend fun addPhoto(taskId: String, photo: EncodedPhoto)
 
-    /** Uploads the failed pending photo [photoId] again, as soon as the network allows. */
+    /** Queues the refused upload of photo [photoId] again, sent as soon as the network allows. */
     suspend fun retryPendingPhoto(photoId: String)
 
     /**
-     * Deletes the pending photo [photoId] from this device; false when there is none, because it
-     * finished uploading while this waited for it.
+     * Gives up the photo [photoId] before Storage has its file: its waiting or refused upload, and
+     * its row. False when there is none, because it finished uploading meanwhile.
      */
     suspend fun removePendingPhoto(photoId: String): Boolean
 

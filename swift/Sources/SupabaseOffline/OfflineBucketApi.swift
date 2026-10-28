@@ -336,8 +336,9 @@ public struct OfflineBucketApi: Sendable {
     /// or a queued upload Storage has stored caches the copy this returns; a transformed download's
     /// copy is found with ``cachedFile(path:transform:)``. While the current user has an upload of
     /// the object waiting in the mutation queue, it returns that upload's bytes on the device
-    /// instead, the newest when there are several: its ``CachedFile/fetchedAt`` is when the upload
-    /// was queued, and the file goes once the upload is sent, discarded or cleared.
+    /// instead, the newest when there are several, and while a refused one waits on the rejected
+    /// list for a retry, its bytes: its ``CachedFile/fetchedAt`` is when the upload was queued, and
+    /// the file goes once the upload is sent, discarded, dismissed or cleared.
     ///
     /// - Throws: ``OfflineError``: `clientClosed` once the client is closed.
     public func cachedFile(path: String) async throws -> CachedFile? {

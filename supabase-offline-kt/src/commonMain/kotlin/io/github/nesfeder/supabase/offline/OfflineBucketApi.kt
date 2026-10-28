@@ -120,9 +120,10 @@ public interface OfflineBucketApi : BucketApi {
      * stored caches the copy this returns; a transformed download's copy is found with a transform.
      *
      * While the current user has an upload of the object waiting in the mutation queue, it returns
-     * that upload's bytes on the device instead, the newest when there are several: its
-     * [CachedFile.fetchedAt] is when the upload was queued. The file is deleted once the upload is
-     * sent, discarded or cleared.
+     * that upload's bytes on the device instead, the newest when there are several; and while a
+     * refused one waits on the rejected list for a retry, its bytes, so the app can show what was
+     * refused. Its [CachedFile.fetchedAt] is when the upload was queued. The file is deleted once
+     * the upload is sent, discarded, dismissed or cleared.
      *
      * @param path the object path within this bucket.
      * @return the cached file, or `null`.
@@ -152,10 +153,11 @@ public interface OfflineBucketApi : BucketApi {
      * The cached copy of the object at [path], downloading it into the cache first when none is
      * cached. The download streams to disk, and concurrent calls for one object share it. A cached
      * copy is returned as it is, however old; check [CachedFile.fetchedAt] against your own
-     * freshness rule. An upload of the object still queued for the current user is returned as
-     * [cachedFile] returns it, with no request. Canceled mid-download, it returns once its partial
-     * file is deleted (see [OfflineBucketApi] on how long that can take), unless another call is
-     * still waiting for the download, which then goes on for that call.
+     * freshness rule. An upload of the object still queued for the current user, or refused and
+     * waiting for a retry, is returned as [cachedFile] returns it, with no request. Canceled
+     * mid-download, it returns once its partial file is deleted (see [OfflineBucketApi] on how long
+     * that can take), unless another call is still waiting for the download, which then goes on for
+     * that call.
      *
      * @param path the object path within this bucket.
      * @param isPublic whether to download through the public URL rather than the authenticated one.

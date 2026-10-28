@@ -190,7 +190,7 @@ upload**, then **Uploading** (with no progress bar).
 The app keeps a queue of its own for photos, written before the library could queue an upload
 ([Queued uploads](../behaviors/storage.md#queued-uploads)): a folder in its
 Application Support, one JPEG and one small record per photo (`Data/PendingPhotoQueue.swift`; the
-[recipe](../behaviors/storage.md#photos-picked-offline-the-apps-own-queue) says how it works). While
+[recipe](../behaviors/storage.md#ios-the-apps-own-queue) says how it works). While
 the network is up the app uploads the waiting photos one at a time, oldest first, and writes a
 photo's row, through the mutation queue like any other change, only once its file is stored, so a
 photo added with a task offline is sent behind the task. The library's file cache then downloads the

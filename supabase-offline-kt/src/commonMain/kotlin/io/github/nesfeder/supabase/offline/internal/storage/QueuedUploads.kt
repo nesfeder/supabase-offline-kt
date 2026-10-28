@@ -126,22 +126,33 @@ internal class QueuedUploads(
     /**
      * The queued copy of the object at [path] in [bucketId]: the file of the newest upload of it
      * still queued for the identity the overlay shows writes of (every identity's while that cannot
-     * be told, as the overlay shows a write to its maker), or `null` when there is none, or its
-     * file is no longer whole.
+     * be told, as the overlay shows a write to its maker), or else of the newest refused one the
+     * app is shown on the rejected list, whose file waits there for a retry. `null` when there is
+     * none, or its file is no longer whole.
      */
     suspend fun queuedCopyOf(bucketId: String, path: String): CachedFile? {
-        val (row, stored) =
-            mutationQueue.visiblePendingUploads().asReversed().firstNotNullOfOrNull { row ->
-                storedUploadOf(row.bodyJson, json)
+        val pending =
+            mutationQueue.visiblePendingUploads().map { row ->
+                row.createdAtMs to row.bodyJson
+            }
+        val refused =
+            mutationQueue
+                .shownRejections()
+                .filter { entry -> entry.isQueuedUpload }
+                .map { entry -> entry.createdAtMs to entry.bodyJson }
+        val (createdAtMs, stored) =
+            (pending.asReversed() + refused.asReversed()).firstNotNullOfOrNull { (createdAt, body)
+                ->
+                storedUploadOf(body, json)
                     ?.takeIf { stored ->
                         stored.bucket == bucketId && stored.path == path && stored.hasQueuedFileName
                     }
-                    ?.let { stored -> row to stored }
+                    ?.let { stored -> createdAt to stored }
             } ?: return null
         val size = files.sizeOf(stored.file)?.takeIf { size -> size == stored.size } ?: return null
         return CachedFile(
             path = files.fileOf(stored.file).toString(),
-            fetchedAt = Instant.fromEpochMilliseconds(row.createdAtMs),
+            fetchedAt = Instant.fromEpochMilliseconds(createdAtMs),
             sizeBytes = size,
         )
     }

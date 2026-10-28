@@ -83,6 +83,12 @@ class FakeSupabaseServer {
     /** While true, every upload to the bucket answers HTTP 500, as a failing Storage does. */
     var isUploadFailing: Boolean = false
 
+    /**
+     * While true, every upload to the bucket is refused as hosted Storage refuses one a policy
+     * forbids: HTTP 400, with Storage's own `403` in the body.
+     */
+    var isUploadRefused: Boolean = false
+
     /** While true, every delete from the bucket answers HTTP 403, as a refusing policy would. */
     var isDeleteRefused: Boolean = false
 
@@ -316,6 +322,13 @@ class FakeSupabaseServer {
                 val objectPath = segments.drop(2).joinToString("/")
                 json("", if (objectPath in files) HttpStatusCode.OK else HttpStatusCode.BadRequest)
             }
+            request.method == HttpMethod.Post &&
+                segments.take(2) == listOf("object", BUCKET) &&
+                isUploadRefused ->
+                json(
+                    """{"statusCode":"403","error":"Unauthorized","message":"new row violates row-level security policy"}""",
+                    HttpStatusCode.BadRequest,
+                )
             request.method == HttpMethod.Post &&
                 segments.take(2) == listOf("object", BUCKET) &&
                 isUploadFailing ->
