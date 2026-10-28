@@ -142,6 +142,7 @@ class LiveQueriesTest {
                                                 fetchedAt = null,
                                                 hasPendingMutations = false,
                                                 refresh = RefreshState.Refreshing,
+                                                pendingRowKeys = emptySet(),
                                             )
                                         )
                                         emit(
@@ -151,6 +152,7 @@ class LiveQueriesTest {
                                                 fetchedAt = null,
                                                 hasPendingMutations = false,
                                                 refresh = RefreshState.Idle,
+                                                pendingRowKeys = emptySet(),
                                             )
                                         )
                                         throw IOException(MALFORMED)
@@ -333,6 +335,7 @@ class LiveQueriesTest {
                 fetchedAt = null,
                 hasPendingMutations = false,
                 refresh = RefreshState.Idle,
+                pendingRowKeys = emptySet(),
             )
         const val FAILURE_ORDERINGS = 500
         const val MALFORMED = "database disk image is malformed"

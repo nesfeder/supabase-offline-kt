@@ -64,18 +64,21 @@ Each emission is a `QuerySnapshot`, and its fields are true together:
 | `fetchedAt` | When the server sent the rows, by the device's clock; never the time of a local change applied to them |
 | `hasPendingMutations` | Whether a queued write added, changed or removed a row shown |
 | `refresh` | How the refresh behind the read stands; see [Refresh lifecycle](refresh-lifecycle.md) |
+| `pendingRowKeys` | The primary key of each row a queued write added, changed or removed, worked out with `result`; a removed row keeps its key, and a row without its whole key adds none ([Optimistic overlay](overlay.md#which-rows-are-named)) |
 
 `result == null` is a loading state; an empty body is an empty list. Next to rows already on
 screen, `refresh` says whether to show a note ([Refresh lifecycle](refresh-lifecycle.md) has the
-sample's mapping). To mark each row whose change has not reached the server yet, combine the read
-with `pendingMutations(table)` and its rows' keys:
+sample's mapping). To mark each row whose change has not reached the server yet, look its key up
+in `pendingRowKeys`, which comes in the same emission as the rows, so a mark never trails its row.
+The Android sample does; the iOS sample still combines the read with `pendingMutations(table:)` and
+each write's `rowKeys`, which emit on their own:
 
-From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/OfflineTaskRepository.kt) · [TasksModel.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Tasks/TasksModel.swift)
+From the samples: [LibraryMappings.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/LibraryMappings.kt) · [TasksModel.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Tasks/TasksModel.swift)
 
 === "Android"
 
     ```kotlin
-    --8<-- "data/supabase/OfflineTaskRepository.kt:pending-marks"
+    --8<-- "data/supabase/LibraryMappings.kt:pending-marks"
     ```
 
 === "iOS"
