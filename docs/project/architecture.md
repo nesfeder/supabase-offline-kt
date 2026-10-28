@@ -510,11 +510,15 @@ seconds, when the cache is dropped for a new owner, and when local data is clear
 **What is cached, and what is not.** Downloads (`downloadAuthenticated` and `downloadPublic`, to
 bytes or to a channel) go to the network first. A success is written to the cache; a "not found"
 from the server drops the copy and is rethrown, unless the session had not settled (restoring, or
-after a failed refresh), when the request went out on the anon key and the answer may only mean
-that key cannot read the object; any other failure, and that one, is answered from the cached copy
-when there is one. An error answer is a failure for a channel download too: supabase-kt's own
-channel download copies whatever the server answers into the channel, so the offline bucket checks
-the status first and throws what the bytes download throws, and nothing of the answer is cached or
+after a failed refresh), when the request went out on the anon key and the answer may only mean that
+key cannot read the object; any other failure, and that one, is answered from the cached copy when
+there is one. A copy is kept with the `ETag` its answer carried, and the next download of it asks
+about it with `If-None-Match`: a 304 answers the download from the copy, once the cache confirms it
+is still the copy asked about (nothing written or evicted since the download started, the same
+`ETag`, the file whole), and moves its `fetchedAt` to now; otherwise the download asks again without
+the condition. An error answer is a failure for a channel download too: supabase-kt's own channel
+download copies whatever the server answers into the channel, so the offline bucket checks the
+status first and throws what the bytes download throws, and nothing of the answer is cached or
 handed on. One difference remains: with Ktor's `allowHttpsDowngrade` on, the bytes download follows
 a redirect from https to plain http, while `ensureCachedFile` and a channel download refuse it and
 throw. A download with an image transform is cached per transform, apart from the original, and a
@@ -527,8 +531,8 @@ cache, so the next read downloads them. Signed URLs, listings, `info`, `exists` 
 status always ask the server. An object path that cannot be mapped safely onto a file (a leading
 `/`, an empty, `.` or `..` segment, a `\`, a control character) still downloads and writes,
 uncached. So does one holding `%`, `?` or `#` while the pin is below 3.8: supabase-kt before 3.8
-puts the name in the URL as written, so its request can fetch or overwrite a different object. A
-`%` there that does not begin a percent-escape leaves a URL the HTTP client cannot build, which it
+puts the name in the URL as written, so its request can fetch or overwrite a different object. A `%`
+there that does not begin a percent-escape leaves a URL the HTTP client cannot build, which it
 reports as a network failure, so every call that puts such a name in its URL throws
 `IllegalArgumentException` first.
 
@@ -1319,6 +1323,7 @@ What the library promises, each with the tests that pin it:
 | A `RealtimeFilter` is made only with a shape the server evaluates: a non-empty list for `in`, one value for another operator. | `RealtimeConfigTest`, `UpstreamRealtimeFilterTest` |
 | Each emission of a live read is one view of the cache, the queue and its refresh: no write shows both patched into the cache and still queued, a replayed write never drops out of a list that holds it, and `Idle` comes with the rows its refresh fetched. | `LiveReadConsistencyTest`, `LiveReadSourceOrderTest`, `LiveReadConsistencyAndroidTest`, `LiveReadConsistencyIosTest` |
 | No error answer from Storage is cached as a file. | `ChannelDownloadStatusTest`, `DownloadToFileStatusAndroidTest` |
+| A 304 answers a download only from the copy its request asked about, while that copy is still cached under the `ETag` asked about, whole on disk, and was not dropped since the download started; a request for part of an object asks about no copy. | `StorageETagRevalidationTest`, `FileCacheConfirmCopyTest` |
 | A response whose request started before a write changed the cache, before a clear, or before a change of owner never lands in the cache. | `StaleRefreshWatermarkTest`, `CacheOwnershipTest`, `ClearLocalDataDuringWritesTest`, `StorageClearDuringDownloadTest` |
 | With Auth, one user's cached rows and files are never served to another. | `CacheBelongsToOneIdentityTest`, `CacheOwnershipTest` |
 | Only a JSON array of rows is written to the query cache: a `2xx` answer of another shape or media type is refused, a `NetworkFirst` or `CacheFirst` read with the query cached within its `maxAge` is served the cached rows, and a reactive read's refresh asks again, `Stalled` by that cause after its fast retries. | `EmptyResponseGuardTest`, `NonRowListRefreshTest` |

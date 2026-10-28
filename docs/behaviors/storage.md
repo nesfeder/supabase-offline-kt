@@ -1,9 +1,10 @@
 # Storage caching
 
 A download through the offline bucket goes to the network first and is kept on disk; when the
-network fails, the kept copy is served instead. Writes (uploads, updates, deletes, moves and
-copies) are online only and never queued, and one that reaches the server drops the cached copies
-it made stale.
+network fails, the kept copy is served instead, and when the server says the kept copy is still
+current, it is served without the object being sent again. Writes (uploads, updates, deletes,
+moves and copies) are online only and never queued, and one that reaches the server drops the
+cached copies it made stale.
 
 From the samples: [TaskPhotoFiles.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/TaskPhotoFiles.kt) · [TaskRepository+Photos.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository+Photos.swift)
 
@@ -42,6 +43,16 @@ never cached, and offline it is not answered from the whole copy. A download sti
 when a write of the same object lands through the offline bucket is handed to its caller but never
 becomes the cached copy.
 
+A copy is kept with the `ETag` the server sent it under, and a download of an object whose copy has
+one asks the server about it with `If-None-Match`. A "not modified" (HTTP 304) answers the download
+from that copy, sends no body and moves its `fetchedAt` to now; any other answer is handled as
+above, so a changed object replaces the copy and its `ETag`. The answer is served only while the
+copy is still the one the request asked about: when the object was written or its copies evicted
+through the offline bucket after the download started, or the copy was replaced or is gone from the
+disk, the download asks once more without `If-None-Match` and gets the whole object. A download
+whose own `httpOverride` sets `If-None-Match` or `If-Modified-Since` sends that alone, and one that
+asks for part of the object asks about no copy.
+
 ## Cached files
 
 From the samples: [TaskPhotoFiles.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/TaskPhotoFiles.kt) · [LibraryMappings.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/LibraryMappings.kt) · [TaskRepository+Photos.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository+Photos.swift)
@@ -74,8 +85,10 @@ passes its bound and the file has not been used for 30 seconds, when the cache p
 user, when it is evicted or the file cache cleared ([below](#evicting-and-clearing)), and when
 local data is cleared. A file whose size on disk is not the one recorded for it, which a power loss
 right after a download can leave, is deleted too, and the object is downloaded again when next
-asked for. Open it soon, or copy it if it must outlive those. **Nothing revalidates a cached
-file**: compare `fetchedAt` with your own rule, and download again when it is too old.
+asked for. Open it soon, or copy it if it must outlive those. `cachedFile` and `ensureCachedFile`
+never ask the server whether the copy is current: compare `fetchedAt` with your own rule, and
+download the object when the copy is too old. That download sends the body only when the object
+changed ([Downloads](#downloads)), and either way leaves `fetchedAt` at the time of its answer.
 
 On Android, four helpers give the cached copy in the platform's terms: `ensureLocalUri` and
 `ensureLocalFile` are `ensureCachedFile` as a `Uri` or a `File`, throwing what it throws, and
@@ -374,7 +387,7 @@ signed-URL uploads.
 
 | Condition | `downloadAuthenticated` / `downloadPublic` | `ensureCachedFile` | `cachedFile` | Writes |
 |---|---|---|---|---|
-| **Online** | The server's bytes, written to the cache whole or not at all. Not found: the cached copy is dropped and the error thrown. | The cached file; if there is none, the object is downloaded to disk once. | The cached file or `null`; never a request. | Sent; the cached copy of what they change is dropped. A write the server rejected keeps it. |
+| **Online** | The server's bytes, written to the cache whole or not at all; a "not modified" about the cached copy, the cached bytes, with `fetchedAt` moved to now. Not found: the cached copy is dropped and the error thrown. | The cached file; if there is none, the object is downloaded to disk once. | The cached file or `null`; never a request. | Sent; the cached copy of what they change is dropped. A write the server rejected keeps it. |
 | **Offline, warm** | The cached bytes. | The cached file, no request. | The cached file. | Throw the connectivity failure; the cache is left as it was. |
 | **Offline, cold** | Throws the failure. | Throws the failure. | `null`. | As offline, warm. |
 | **Session restoring** | Not held for the session (nor after its refresh failed): sent at once on the anon key, and its answer cached. A `401` or `403` keeps the cached copy; cold, the refusal is thrown. Storage answers an object the anon key may not read as "not found", which keeps the cached copy too and is answered from it; cold, it is thrown: download private objects after `supabase.auth.awaitInitialization()`. | As a download. | Unchanged: never a request. | Sent at once on the anon key; a refusal keeps the cached copy. |

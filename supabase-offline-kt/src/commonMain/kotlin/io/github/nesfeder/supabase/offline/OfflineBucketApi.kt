@@ -21,11 +21,15 @@ import io.github.jan.supabase.storage.ImageTransformation
  * **Downloads** go to the network first. A successful download is written to the cache (a failure
  * to write the copy is logged and never fails the download); when the network fails, the cached
  * copy is served instead, and when the server says the object no longer exists, the cached copy is
- * dropped and the error is rethrown. A download with an image transform is cached separately from
- * the original, per transform. Channel downloads stream through a file on disk and are never held
- * in memory whole. A download canceled while it creates, commits or opens that file returns once
- * the file operation is done and the file is deleted: behind a clear or an eviction holding the
- * cache, that can take as long as they do. No partial file is left behind.
+ * dropped and the error is rethrown. A copy is kept with the `ETag` the server sent it under, and
+ * the next download of the object asks whether it changed (`If-None-Match`): a "not modified"
+ * answers the download from the copy and moves its [CachedFile.fetchedAt] to now, unless the copy
+ * was written over, evicted or lost since the download started, when the object is fetched whole. A
+ * download with an image transform is cached separately from the original, per transform. Channel
+ * downloads stream through a file on disk and are never held in memory whole. A download canceled
+ * while it creates, commits or opens that file returns once the file operation is done and the file
+ * is deleted: behind a clear or an eviction holding the cache, that can take as long as they do. No
+ * partial file is left behind.
  *
  * **Writes** — uploads, updates, deletes, moves and copies — are online-only and never queued. They
  * are tried whatever the connectivity monitor says, and offline fail with supabase-kt's own
@@ -94,8 +98,9 @@ public interface OfflineBucketApi : BucketApi {
     /**
      * The cached copy of the object at [path], downloading it into the cache first when none is
      * cached. The download streams to disk, and concurrent calls for one object share it. A cached
-     * copy is returned as it is, however old; check [CachedFile.fetchedAt] against your own
-     * freshness rule. Canceled mid-download, it returns once its partial file is deleted (see
+     * copy is returned as it is, however old, without asking the server; check
+     * [CachedFile.fetchedAt] against your own freshness rule, and download the object to refresh
+     * it. Canceled mid-download, it returns once its partial file is deleted (see
      * [OfflineBucketApi] on how long that can take), unless another call is still waiting for the
      * download, which then goes on for that call.
      *

@@ -23,6 +23,7 @@ import io.ktor.http.isSuccess
 import io.ktor.http.takeFrom
 import io.ktor.util.AttributeKey
 import kotlin.concurrent.atomics.AtomicBoolean
+import kotlin.concurrent.atomics.AtomicReference
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.coroutines.AbstractCoroutineContextElement
 import kotlin.coroutines.CoroutineContext
@@ -31,12 +32,19 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.withContext
 
 /**
- * Carried in a coroutine context, it has the download status check stop a download sent from that
- * coroutine whose response is not a success, and records whether the request, as it was finally
- * sent, or its answer covered only part of the object; see [installDownloadStatusCheck].
+ * Carried in a coroutine context, it records what the download status check saw of a download sent
+ * from that coroutine: whether the request, as it was finally sent, or its answer covered only part
+ * of the object, the ETag of a whole-object answer, and an HTTP 304; see
+ * [installDownloadStatusCheck].
+ *
+ * @param refusesErrors whether the check also stops the download when its answer is not a success,
+ *   as a channel download needs; a bytes download, which supabase-kt checks itself, passes `false`.
  */
-internal class CheckedDownload : AbstractCoroutineContextElement(CheckedDownloadKey) {
+internal class CheckedDownload(val refusesErrors: Boolean = true) :
+    AbstractCoroutineContextElement(CheckedDownloadKey) {
     private val partial = AtomicBoolean(false)
+    private val notModified = AtomicBoolean(false)
+    private val tag = AtomicReference<String?>(null)
 
     /**
      * Whether the download fetched part of the object, or none of it: its request, with every
@@ -46,9 +54,30 @@ internal class CheckedDownload : AbstractCoroutineContextElement(CheckedDownload
     val fetchedPart: Boolean
         get() = partial.load()
 
+    /**
+     * Whether the server answered HTTP 304 to a `GET` of the whole object: the copy the request's
+     * `If-None-Match` named is current.
+     */
+    val answeredNotModified: Boolean
+        get() = notModified.load()
+
+    /** The `ETag` of a success that holds the whole object, or `null` when it carried none. */
+    val eTag: String?
+        get() = tag.load()
+
     /** Records that the download fetched part of the object. */
     fun markPartial() {
         partial.store(true)
+    }
+
+    /** Records that the server answered HTTP 304 to a `GET` of the whole object. */
+    fun markNotModified() {
+        notModified.store(true)
+    }
+
+    /** Records the `ETag` of a success that holds the whole object. */
+    fun recordETag(eTag: String?) {
+        tag.store(eTag)
     }
 }
 
@@ -62,10 +91,14 @@ private object CheckedDownloadKey : CoroutineContext.Key<CheckedDownload>
  * Storage's error body into the channel as the object. Needs the check on the client
  * ([installDownloadStatusCheck]).
  *
- * @return what the check saw of the download: whether it fetched only part of the object.
+ * @param checked where the check records what it saw; pass one to read it after a failure too.
+ * @return what the check saw of the download: whether it fetched only part of the object, and the
+ *   answer's ETag.
  */
-internal suspend fun checkingDownloadStatus(download: suspend () -> Unit): CheckedDownload {
-    val checked = CheckedDownload()
+internal suspend fun checkingDownloadStatus(
+    checked: CheckedDownload = CheckedDownload(),
+    download: suspend () -> Unit,
+): CheckedDownload {
     withContext(checked) { download() }
     return checked
 }
@@ -108,7 +141,9 @@ private val DownloadStatusCheckInstallation =
  * ends; one from https to plain http is refused, even with Ktor's `allowHttpsDowngrade` on, where
  * the bytes download follows it. An app's retry or bearer-refresh plugin sees the failure thrown. A
  * success that covers only part of the object, by the request as the bucket's headers left it or by
- * its status, is marked on the download, which then never caches it.
+ * its status, is marked on the download, which then never caches it. The `ETag` of a success that
+ * holds the whole object is recorded on the download, and so is an HTTP 304 to a `GET` of the whole
+ * object, before it is refused as any other answer that is not a success.
  */
 @OptIn(SupabaseInternal::class)
 internal fun SupabaseClient.installDownloadStatusCheck() {
@@ -122,10 +157,15 @@ internal fun SupabaseClient.installDownloadStatusCheck() {
         val call = execute(request)
         val checked = currentCoroutineContext()[CheckedDownloadKey] ?: return@intercept call
         val status = call.response.status
+        val fetchesPart = call.request.fetchesPart(status)
         if (status.isSuccess()) {
-            if (call.request.fetchesPart(status)) checked.markPartial()
+            if (fetchesPart) checked.markPartial()
+            else checked.recordETag(call.response.headers[HttpHeaders.ETag])
             return@intercept call
         }
+        if (status == HttpStatusCode.NotModified && !fetchesPart) checked.markNotModified()
+        // supabase-kt's bytes download refuses it itself, and its own way
+        if (!checked.refusesErrors) return@intercept call
         // Not the answer: HttpRedirect, further from the engine, asks again, back through here. It
         // does not follow one that leaves https, so that one is the answer, and refused
         val location = call.response.headers[HttpHeaders.Location]
