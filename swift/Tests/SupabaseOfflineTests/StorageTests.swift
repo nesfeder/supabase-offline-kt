@@ -854,6 +854,7 @@ struct StorageTests {
         let entry = try #require(refused.first)
         #expect(refused.count == 1)
         #expect(entry.path == "a.png")
+        #expect(entry.localPath != nil)
         #expect(entry.serverError?.status == 400)
         #expect(entry.isRetryable)
         #expect(rows.isEmpty)

@@ -517,7 +517,54 @@ public func rejectedUpload(
         serverError: serverError,
         message: message,
         rejectedAt: rejectedAt,
-        isRetryable: isRetryable
+        isRetryable: isRetryable,
+        localPath: nil
+    )
+}
+
+/// A queued upload Storage refused for good, with its bytes on the device at `localPath`, as
+/// `OfflineStorage.rejectedUploads()` lists one whose file is still whole.
+///
+/// - Parameters:
+///   - id: Its id in the queue.
+///   - bucketId: The bucket the file was going to.
+///   - path: The object path within the bucket.
+///   - createdAt: When it was queued.
+///   - sizeBytes: The file's size in bytes.
+///   - contentType: The content type it was sent with; `nil` for none.
+///   - upsert: Whether it overwrites an object already at the path.
+///   - serverError: What Storage answered; `nil` when the client refused it itself.
+///   - message: Why it was refused.
+///   - rejectedAt: When it was refused.
+///   - isRetryable: Whether it can be queued again.
+///   - localPath: The file-system path of its bytes on the device; `nil` when they are gone.
+public func rejectedUpload(
+    id: Int64,
+    bucketId: String,
+    path: String,
+    createdAt: Date,
+    sizeBytes: Int,
+    contentType: String? = nil,
+    upsert: Bool = false,
+    serverError: OfflineError.ServerError? = nil,
+    message: String,
+    rejectedAt: Date,
+    isRetryable: Bool = true,
+    localPath: String?
+) -> RejectedUpload {
+    RejectedUpload(
+        id: id,
+        bucketId: bucketId,
+        path: path,
+        createdAt: createdAt,
+        sizeBytes: sizeBytes,
+        contentType: contentType,
+        upsert: upsert,
+        serverError: serverError,
+        message: message,
+        rejectedAt: rejectedAt,
+        isRetryable: isRetryable,
+        localPath: localPath
     )
 }
 

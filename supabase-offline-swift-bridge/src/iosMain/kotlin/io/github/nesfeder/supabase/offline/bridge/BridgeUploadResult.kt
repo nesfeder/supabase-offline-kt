@@ -58,6 +58,8 @@ internal constructor(
  * @property rejectedAtEpochMillis when it was refused, in milliseconds since 1970.
  * @property isRetryable whether [BridgeClient.retryRejectedMutation] can queue it again: whether
  *   its file is still on the device.
+ * @property localPath the refused bytes on the device, as a file-system path; `null` when the file
+ *   is no longer on the device, whole.
  */
 public class BridgeRejectedUpload
 internal constructor(
@@ -72,4 +74,5 @@ internal constructor(
     public val message: String,
     public val rejectedAtEpochMillis: Long,
     public val isRetryable: Boolean,
+    public val localPath: String?,
 )

@@ -390,6 +390,17 @@ class TestValuesTest {
                 rejectedAt = at,
                 isRetryable = false,
             )
+        val kept =
+            rejectedUpload(
+                id = 9,
+                bucketId = "photos",
+                path = "a/d.jpg",
+                createdAt = at,
+                sizeBytes = 5,
+                message = "no",
+                rejectedAt = at,
+                localPath = "/data/storage-uploads/d",
+            )
         val report = syncReport(syncedCount = 1, rejectedUploads = listOf(refused))
 
         // Then
@@ -406,6 +417,9 @@ class TestValuesTest {
         assertTrue(refused.upsert)
         assertEquals(400, refused.serverError?.status)
         assertFalse(refused.isRetryable)
+        assertEquals(null, refused.localPath)
+        assertEquals("/data/storage-uploads/d", kept.localPath)
+        assertTrue(kept.isRetryable)
         assertEquals(listOf(refused), report.rejectedUploads)
         assertEquals(SyncStopReason.Completed, report.stopReason)
         assertEquals(emptyList(), syncReport(stopReason = SyncStopReason.Completed).rejectedUploads)

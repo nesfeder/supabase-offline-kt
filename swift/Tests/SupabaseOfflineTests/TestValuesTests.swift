@@ -258,6 +258,16 @@ struct TestValuesTests {
             rejectedAt: Self.at.addingTimeInterval(60),
             isRetryable: false
         )
+        let kept = rejectedUpload(
+            id: 9,
+            bucketId: "photos",
+            path: "a/d.jpg",
+            createdAt: Self.at,
+            sizeBytes: 5,
+            message: "no",
+            rejectedAt: Self.at,
+            localPath: "/data/storage-uploads/d"
+        )
         let response = fileUploadResponse(id: "object-1", path: "a/b.jpg", key: "photos/a/b.jpg")
         let report = syncReport(syncedCount: 1, rejectedUploads: [refused])
 
@@ -273,6 +283,9 @@ struct TestValuesTests {
         #expect(refused.upsert)
         #expect(refused.serverError?.status == 400)
         #expect(refused.message == "no")
+        #expect(refused.localPath == nil)
+        #expect(kept.localPath == "/data/storage-uploads/d")
+        #expect(kept.isRetryable)
         #expect(refused.rejectedAt == Self.at.addingTimeInterval(60))
         #expect(!refused.isRetryable)
         #expect(UploadOutcome.applied(response: response).response == response)

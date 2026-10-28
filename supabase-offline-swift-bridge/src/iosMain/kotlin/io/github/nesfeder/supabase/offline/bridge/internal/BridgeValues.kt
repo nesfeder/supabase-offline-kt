@@ -132,6 +132,7 @@ internal fun RejectedUpload.toBridge(): BridgeRejectedUpload =
         message = message,
         rejectedAtEpochMillis = rejectedAt.toEpochMilliseconds(),
         isRetryable = isRetryable,
+        localPath = localPath,
     )
 
 /** A queued write. */

@@ -390,7 +390,7 @@ public object ValueConstructors {
         upsert: Boolean,
     ): PendingUpload = PendingUpload(id, bucketId, path, createdAt, sizeBytes, contentType, upsert)
 
-    /** A [RejectedUpload] with the given fields. */
+    /** A [RejectedUpload] with the given fields and no file on the device. */
     public fun rejectedUpload(
         id: Long,
         bucketId: String,
@@ -404,6 +404,36 @@ public object ValueConstructors {
         rejectedAt: Instant,
         isRetryable: Boolean,
     ): RejectedUpload =
+        rejectedUpload(
+            id,
+            bucketId,
+            path,
+            createdAt,
+            sizeBytes,
+            contentType,
+            upsert,
+            serverError,
+            message,
+            rejectedAt,
+            isRetryable,
+            localPath = null,
+        )
+
+    /** A [RejectedUpload] with the given fields, its file on the device among them. */
+    public fun rejectedUpload(
+        id: Long,
+        bucketId: String,
+        path: String,
+        createdAt: Instant,
+        sizeBytes: Long,
+        contentType: String?,
+        upsert: Boolean,
+        serverError: ServerError?,
+        message: String,
+        rejectedAt: Instant,
+        isRetryable: Boolean,
+        localPath: String?,
+    ): RejectedUpload =
         RejectedUpload(
             id,
             bucketId,
@@ -416,6 +446,7 @@ public object ValueConstructors {
             message,
             rejectedAt,
             isRetryable,
+            localPath,
         )
 
     /** A [ServerError] with the given fields. */

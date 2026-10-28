@@ -335,6 +335,7 @@ class QueuedUploadTest {
 
         // Then
         assertFalse(client.storage.rejectedUploadList().single().isRetryable)
+        assertNull(client.storage.rejectedUploadList().single().localPath)
         assertFailsWith<IllegalArgumentException> { client.retryRejectedMutation(refused.id) }
     }
 
@@ -445,7 +446,7 @@ class QueuedUploadTest {
         }
 
     @Test
-    fun a_refused_uploads_kept_file_is_what_cachedFile_answers_until_it_is_dismissed() = runTest {
+    fun a_refused_uploads_kept_file_is_named_by_its_entry_never_answered_by_cachedFile() = runTest {
         // Given — an upload queued offline, then refused
         val client = openClient()
         val bucket = client.storage.from(BUCKET)
@@ -456,18 +457,43 @@ class QueuedUploadTest {
         client.syncPendingMutations()
         val refused = client.storage.rejectedUploadList().single()
 
-        // Then — the app can show what was refused, offline too
-        val kept = assertNotNull(bucket.cachedFile(PATH))
-        assertTrue(QUEUED_UPLOADS_DIRECTORY_NAME in kept.path, kept.path)
-        assertContentEquals(BYTES, readFile(kept.path))
-        server.online = false
-        assertEquals(kept, bucket.ensureCachedFile(PATH))
+        // Then — the app can show what was refused from its entry; the cache does not answer
+        // it, as Storage may hold other bytes at the path
+        val kept = assertNotNull(refused.localPath)
+        assertTrue(QUEUED_UPLOADS_DIRECTORY_NAME in kept, kept)
+        assertContentEquals(BYTES, readFile(kept))
+        assertNull(bucket.cachedFile(PATH))
 
         // When — dismissed
         client.dismissRejectedMutation(refused.id)
 
-        // Then
-        assertNull(bucket.cachedFile(PATH))
+        // Then — its file goes with it
+        assertFalse(fileSystem.exists(kept.toPath()))
+    }
+
+    @Test
+    fun a_refused_upload_does_not_shadow_the_servers_object_once_it_is_downloaded() = runTest {
+        // Given — another device already stored the object; this device's upload of the same path
+        // (upsert = false) is queued offline behind a row write, so it never went out, and is
+        // refused as a duplicate on replay
+        val client = openClient()
+        val bucket = client.storage.from(BUCKET)
+        server.objects.value = mapOf("$BUCKET/$PATH" to NEWER)
+        server.online = false
+        client.from(TASKS).insert(row("t"))
+        bucket.upload(PATH, BYTES, QueueIfOffline)
+        server.online = true
+        server.uploadAnswer = { UploadAnswer.Refuse(400, 409, "Duplicate") }
+        client.syncPendingMutations()
+        assertEquals(1, client.storage.rejectedUploadList().size)
+
+        // When — the app downloads the object Storage holds
+        assertContentEquals(NEWER, bucket.downloadAuthenticated(PATH))
+
+        // Then — the cache answers Storage's object, not the refused bytes
+        val cached = assertNotNull(bucket.cachedFile(PATH))
+        assertContentEquals(NEWER, readFile(cached.path), "cachedFile answers the refused bytes")
+        assertContentEquals(NEWER, readFile(bucket.ensureCachedFile(PATH).path))
     }
 
     @Test

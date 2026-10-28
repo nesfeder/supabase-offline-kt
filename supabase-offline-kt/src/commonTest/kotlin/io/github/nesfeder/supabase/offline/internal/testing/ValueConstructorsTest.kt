@@ -55,6 +55,21 @@ class ValueConstructorsTest {
                 at,
                 true,
             )
+        val kept =
+            ValueConstructors.rejectedUpload(
+                3,
+                "photos",
+                "c.jpg",
+                at,
+                5,
+                null,
+                false,
+                null,
+                "no",
+                at,
+                true,
+                "/data/storage-uploads/c",
+            )
         val report =
             ValueConstructors.syncReport(
                 1,
@@ -78,6 +93,8 @@ class ValueConstructorsTest {
         assertEquals(listOf("photos", "b.jpg"), listOf(refused.bucketId, refused.path))
         assertEquals(error, refused.serverError)
         assertTrue(refused.isRetryable)
+        assertEquals(null, refused.localPath)
+        assertEquals("/data/storage-uploads/c", kept.localPath)
         assertEquals(listOf(refused), report.rejectedUploads)
         assertEquals(
             emptyList(),

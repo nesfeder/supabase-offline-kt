@@ -1293,6 +1293,8 @@ __attribute__((swift_name("BridgeRejectedMutation")))
  * @property rejectedAtEpochMillis when it was refused, in milliseconds since 1970.
  * @property isRetryable whether [BridgeClient.retryRejectedMutation] can queue it again: whether
  *   its file is still on the device.
+ * @property localPath the refused bytes on the device, as a file-system path; `null` when the file
+ *   is no longer on the device, whole.
  */
 __attribute__((objc_subclassing_restricted))
 __attribute__((swift_name("BridgeRejectedUpload")))
@@ -1302,6 +1304,7 @@ __attribute__((swift_name("BridgeRejectedUpload")))
 @property (readonly) int64_t createdAtEpochMillis __attribute__((swift_name("createdAtEpochMillis")));
 @property (readonly) int64_t id __attribute__((swift_name("id")));
 @property (readonly) BOOL isRetryable __attribute__((swift_name("isRetryable")));
+@property (readonly) NSString * _Nullable localPath __attribute__((swift_name("localPath")));
 @property (readonly) NSString *message __attribute__((swift_name("message")));
 @property (readonly) NSString *path __attribute__((swift_name("path")));
 @property (readonly) int64_t rejectedAtEpochMillis __attribute__((swift_name("rejectedAtEpochMillis")));

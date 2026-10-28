@@ -578,6 +578,7 @@ public final class io/github/nesfeder/supabase/offline/RejectedUpload {
 	public final fun component1 ()J
 	public final fun component10 ()Lkotlin/time/Instant;
 	public final fun component11 ()Z
+	public final fun component12 ()Ljava/lang/String;
 	public final fun component2 ()Ljava/lang/String;
 	public final fun component3 ()Ljava/lang/String;
 	public final fun component4 ()Lkotlin/time/Instant;
@@ -591,6 +592,7 @@ public final class io/github/nesfeder/supabase/offline/RejectedUpload {
 	public final fun getContentType ()Ljava/lang/String;
 	public final fun getCreatedAt ()Lkotlin/time/Instant;
 	public final fun getId ()J
+	public final fun getLocalPath ()Ljava/lang/String;
 	public final fun getMessage ()Ljava/lang/String;
 	public final fun getPath ()Ljava/lang/String;
 	public final fun getRejectedAt ()Lkotlin/time/Instant;

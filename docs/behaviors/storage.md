@@ -153,10 +153,9 @@ upload, its response wrapped in `Applied`.
 - **While it waits**, `cachedFile(path)` and `ensureCachedFile(path)` return that file, with no
   request, and so do the platform helpers built on them, so a photo shows at once: the newest
   upload of the path wins over any cached copy, and its `fetchedAt` is when it was queued. A
-  refused upload's file answers the same way while it waits on the rejected list for a retry, so
-  the app can show what was refused. Once
-  Storage has the file its bytes become the object's cached copy, and the file under
-  `storage-uploads/` goes. A transform's copy is never answered from it, and a download still asks
+  refused upload's file is never answered there, since Storage may hold other bytes at the path:
+  its entry's `localPath` names it, for the app to show what was refused. Once Storage has the
+  file its bytes become the object's cached copy, and the file under `storage-uploads/` goes. A transform's copy is never answered from it, and a download still asks
   the server, which does not hold the file yet.
 - **Options**: `upsert`, `contentType` and `userMetadata` are kept with it. An upload whose options
   add an `httpOverride`, one through a bucket with a header set by `setHeader`, one whose user
@@ -172,7 +171,8 @@ upload, its response wrapped in `Applied`.
   leaves the refusal standing, on the rejected list, and its cached copy is never the device's
   bytes.
 - **Refusals**: an upload Storage refuses for good moves to the rejected list with its bytes, as
-  `storage.rejectedUploads()` lists it, with Storage's status, error name (`code`) and message;
+  `storage.rejectedUploads()` lists it, with Storage's status, error name (`code`) and message, and
+  the file's path on the device as `localPath` while it is whole;
   `retryRejectedMutation(id)` queues it again at the end of the queue, and
   `dismissRejectedMutation(id)` drops it with its file. A refused upload does not hold the writes
   behind it: a row that names its file is still sent, so show the refusal and let the user retry.
@@ -279,22 +279,29 @@ sample keeps a queue of its own, written before the library could queue an uploa
   app's `setHeader`, since a bucket with a header sends an upload at once instead of queuing it;
   then the `task_photos` row, a write queued behind the file. Offline both wait, and a later sync
   sends the task, the file and the row in that order. Online the file is sent at once and the row
-  after it; a refusal then is the app's error message, and nothing is kept.
+  after it, from the repository's scope rather than the screen's, and the photo shows meanwhile,
+  marked waiting; a refusal then is the app's error message, and nothing is kept. The mark has no
+  progress yet.
 - **Shown from the device at once.** The queued row is in the photo lists as any queued write is,
-  and its file is drawn from `cachedFile`, which answers the queued copy. The lists mark a photo
+  and its file is drawn from `cachedFile`, which answers the queued copy; a refused one is drawn
+  from its entry's `localPath`, which `cachedFile` never answers. The lists mark a photo
   "Waiting to upload" while `storage.pendingUploads()` holds its path, and "Upload failed", with
   Storage's message, while `storage.rejectedUploads()` does. A failed one offers **Retry**
   (`retryRejectedMutation`, switched off when its file is gone) and **Remove**, a waiting one
   **Remove**. The viewer hides Details, Share link, Replace, Move and Duplicate for either, which
   need the object in the bucket, with a line saying so.
-- **Failures.** A file whose answer was lost is not sent again: the library asks Storage whether
-  it is there first. One Storage refuses on replay keeps its file on the rejected list; its row,
+- **Failures.** A file whose answer was lost is sent again, and Storage's duplicate refusal counts
+  it stored once the object at its path is the photo's bytes. One Storage refuses on replay keeps its file on the rejected list; its row,
   queued behind it, is sent all the same, so the photo stays listed, marked failed, until Retry or
   Remove.
 - **Deletes and clears.** Remove discards a waiting upload, or dismisses a refused one, with the
   row's queued writes; then it deletes the row and, online, the file, wherever an upload that ended
-  meanwhile left them. Deleting a task drops its photos' uploads. Clear local cache and Start over
-  need nothing more than `clearLocalData()`, which drops the queued uploads with their files.
+  meanwhile left them. A photo still being added is removed once the add ends. Deleting a task
+  discards its photos' waiting uploads first, since a discard waits for one on the wire, then
+  deletes its files, one that landed meanwhile too, then dismisses its refused uploads. Start over
+  discards the waiting uploads the same way before `clearLocalData()`, which does not wait for an
+  upload on the wire, and its deletes. Clear local cache needs nothing more than
+  `clearLocalData()`, which drops the queued uploads with their files.
 
 From the samples: [TaskDetailViewModel.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/ui/detail/TaskDetailViewModel.kt) · [OfflineTaskRepository.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/OfflineTaskRepository.kt)
 

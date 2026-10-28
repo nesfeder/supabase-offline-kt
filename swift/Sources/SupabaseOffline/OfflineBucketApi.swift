@@ -336,9 +336,10 @@ public struct OfflineBucketApi: Sendable {
     /// or a queued upload Storage has stored caches the copy this returns; a transformed download's
     /// copy is found with ``cachedFile(path:transform:)``. While the current user has an upload of
     /// the object waiting in the mutation queue, it returns that upload's bytes on the device
-    /// instead, the newest when there are several, and while a refused one waits on the rejected
-    /// list for a retry, its bytes: its ``CachedFile/fetchedAt`` is when the upload was queued, and
-    /// the file goes once the upload is sent, discarded, dismissed or cleared.
+    /// instead, the newest when there are several: its ``CachedFile/fetchedAt`` is when the upload
+    /// was queued, and the file goes once the upload is sent, discarded or cleared. A refused
+    /// upload's bytes are never answered here, since Storage may hold other bytes at the path:
+    /// ``RejectedUpload/localPath`` names them.
     ///
     /// - Throws: ``OfflineError``: `clientClosed` once the client is closed.
     public func cachedFile(path: String) async throws -> CachedFile? {
@@ -410,7 +411,8 @@ public struct OfflineBucketApi: Sendable {
     /// none.
     ///
     /// A cached copy is returned however old it is, and an upload of the object still queued for the
-    /// current user is returned as ``cachedFile(path:)`` returns it, with no request. Throws
+    /// current user is returned as ``cachedFile(path:)`` returns it, with no request; a refused one
+    /// is not, and the object is downloaded as when nothing is cached. Throws
     /// ``OfflineError/Code/invalidRequest``
     /// for a name the cache cannot hold (see ``OfflineBucketApi``), sending nothing; one holding
     /// `%`, `?` or `#` is refused before the client is asked. Canceling the task throws
