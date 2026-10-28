@@ -49,9 +49,11 @@ from that copy, sends no body and moves its `fetchedAt` to now; any other answer
 above, so a changed object replaces the copy and its `ETag`. The answer is served only while the
 copy is still the one the request asked about: when the object was written or its copies evicted
 through the offline bucket after the download started, or the copy was replaced or is gone from the
-disk, the download asks once more without `If-None-Match` and gets the whole object. A download
-whose own `httpOverride` sets `If-None-Match` or `If-Modified-Since` sends that alone, and one that
-asks for part of the object asks about no copy.
+disk, the download asks once more without `If-None-Match`, gets the whole object and caches it. A
+download whose own `httpOverride`, or a header set on the bucket, sets `If-None-Match` or
+`If-Modified-Since` sends that alone, and one that asks for part of the object, by either, asks
+about no copy: it goes out as it would without the cache, so a 304 to it is never taken for one
+about the copy.
 
 ## Cached files
 

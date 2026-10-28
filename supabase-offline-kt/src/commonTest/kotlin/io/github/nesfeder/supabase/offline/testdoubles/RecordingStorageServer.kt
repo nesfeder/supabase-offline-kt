@@ -34,8 +34,9 @@ import kotlinx.io.IOException
  * (`"render?height=64&width=64:" + original`). A missing object answers HTTP 400 with a
  * `statusCode` of 404, which supabase-kt raises as a `NotFoundRestException`. A download with a
  * `Range` header answers that part of the object with HTTP 206, and a `HEAD` answers with no body,
- * as Storage does. With [answersETags] set, a whole download carries an `ETag`, and one whose
- * `If-None-Match` names it is answered HTTP 304.
+ * as Storage does. With [answersETags] set, a whole download carries an `ETag`, and a `GET` whose
+ * `If-None-Match` names it is answered HTTP 304, before any `Range` is looked at, as RFC 9110
+ * (13.2.2) orders the two.
  */
 internal class RecordingStorageServer {
 
@@ -45,7 +46,8 @@ internal class RecordingStorageServer {
      * @property method the HTTP method.
      * @property encodedPath the URL path exactly as sent, percent-encoding included.
      * @property query the decoded query parameters.
-     * @property ifNoneMatch the `If-None-Match` header, or `null` when the request carried none.
+     * @property ifNoneMatch the `If-None-Match` header's values, joined with `", "`, or `null` when
+     *   the request carried none.
      */
     data class RecordedRequest(
         val method: String,
@@ -65,8 +67,8 @@ internal class RecordingStorageServer {
 
     /**
      * When set, a download of the whole object or transform carries its [eTagOf] as its `ETag`, and
-     * a `GET` whose `If-None-Match` names the ETag of what it would answer is answered HTTP 304,
-     * with no body.
+     * a `GET` whose `If-None-Match` names the ETag of what it would answer, among any others, is
+     * answered HTTP 304, with no body, whatever `Range` it carries.
      */
     var answersETags: Boolean = false
 
@@ -129,7 +131,7 @@ internal class RecordingStorageServer {
                     request.url.parameters.names().associateWith { name ->
                         request.url.parameters[name].orEmpty()
                     },
-                ifNoneMatch = request.headers[HttpHeaders.IfNoneMatch],
+                ifNoneMatch = request.headers.getAll(HttpHeaders.IfNoneMatch)?.joinToString(", "),
             )
         requests += recorded
         requestArrived.complete(Unit)
@@ -293,6 +295,19 @@ internal class RecordingStorageServer {
                     headersOf(octetStream, HttpHeaders.ContentLength to listOf("${whole.size}")),
             )
         }
+        // RFC 9110 13.2.2: If-None-Match is evaluated before Range
+        val conditions =
+            request.headers.getAll(HttpHeaders.IfNoneMatch).orEmpty().flatMap { value ->
+                value.split(',').map { it.trim() }
+            }
+        if (eTag != null && eTag in conditions) {
+            notModifiedAnswers++
+            return respond(
+                content = ByteArray(0),
+                status = HttpStatusCode.NotModified,
+                headers = headersOf(HttpHeaders.ETag, eTag),
+            )
+        }
         val range = request.headers[HttpHeaders.Range]?.removePrefix("bytes=")?.split('-')
         if (range != null && range.size == 2) {
             val first = range[0].toInt()
@@ -305,14 +320,6 @@ internal class RecordingStorageServer {
                         octetStream,
                         HttpHeaders.ContentRange to listOf("bytes $first-$last/${whole.size}"),
                     ),
-            )
-        }
-        if (eTag != null && request.headers[HttpHeaders.IfNoneMatch] == eTag) {
-            notModifiedAnswers++
-            return respond(
-                content = ByteArray(0),
-                status = HttpStatusCode.NotModified,
-                headers = headersOf(HttpHeaders.ETag, eTag),
             )
         }
         val gate = bodyGate

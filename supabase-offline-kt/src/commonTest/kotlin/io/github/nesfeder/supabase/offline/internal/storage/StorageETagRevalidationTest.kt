@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.storage
 
+import io.github.nesfeder.supabase.offline.CachedFile
 import io.github.nesfeder.supabase.offline.internal.OfflineClient
 import io.github.nesfeder.supabase.offline.internal.testing.InMemoryCachedFileDao
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingStorageServer
@@ -70,6 +71,10 @@ class StorageETagRevalidationTest {
 
     private suspend fun storedETag(path: String = PATH): String? =
         cachedFileDao.getByKey(cachedFileKeyOf(BUCKET, path))?.eTag
+
+    /** The text of [cached]'s file. */
+    private fun readCached(cached: CachedFile?): String =
+        FileSystem.SYSTEM.read(assertNotNull(cached).path.toPath()) { readUtf8() }
 
     @Test
     fun a_download_records_the_etag_its_answer_carried() = runTest {
@@ -243,10 +248,35 @@ class StorageETagRevalidationTest {
         val bytes = download.await()
 
         // Then — the 304 about the dropped copy was not served: the download asked again, about
-        // nothing, and got the new bytes
+        // nothing, got the new bytes, and cached them
         assertEquals(1, server.notModifiedAnswers)
         assertEquals(listOf(null, contentETag, null), conditions())
         assertEquals(CHANGED, bytes.decodeToString())
+        assertEquals(CHANGED, readCached(bucket.cachedFile(PATH)))
+        client.close()
+    }
+
+    @Test
+    fun a_channel_download_whose_304_was_written_over_caches_what_it_fetches_again() = runTest {
+        // Given — as for a bytes download: a 304 decided, held, and the object written meanwhile
+        val client = newClient()
+        val bucket = client.storage.from(BUCKET)
+        bucket.downloadAuthenticated(PATH) {}
+        server.downloadGate = CompletableDeferred()
+        server.downloadHeld = CompletableDeferred()
+        val channel = ByteChannel()
+        val download = async { bucket.downloadAuthenticated(PATH, channel) {} }
+        server.downloadHeld.await()
+
+        // When
+        bucket.upload(PATH, CHANGED.encodeToByteArray()) { upsert = true }
+        server.downloadGate?.complete(Unit)
+        download.await()
+
+        // Then — the bytes fetched after the write are the cached copy
+        assertEquals(listOf(null, contentETag, null), conditions())
+        assertEquals(CHANGED, channel.toByteArray().decodeToString())
+        assertEquals(CHANGED, readCached(bucket.cachedFile(PATH)))
         client.close()
     }
 
@@ -295,6 +325,52 @@ class StorageETagRevalidationTest {
         // the server answered it whole
         assertEquals(listOf(null, contentETag, null, "\"the-callers-own\""), conditions())
         assertEquals(CONTENT, ownCondition.decodeToString())
+        client.close()
+    }
+
+    @Test
+    fun a_range_set_on_the_bucket_gets_its_range_from_a_channel_download() = runTest {
+        // Given — a cached copy with an ETag, and a bucket whose every request carries a Range,
+        // which supabase-kt adds to a channel download after the request's own options
+        val client = newClient()
+        client.storage.from(BUCKET).downloadAuthenticated(PATH) {}
+        val ranged = client.storage.from(BUCKET).setHeader(HttpHeaders.Range, "bytes=0-3")
+
+        // When
+        val channel = ByteChannel()
+        ranged.downloadAuthenticated(PATH, channel) {}
+
+        // Then — the ranged request asked about no copy, so the server (which looks at
+        // If-None-Match first) answered the range, not a 304 the whole copy would answer
+        assertEquals(CONTENT.take(4), channel.toByteArray().decodeToString())
+        assertEquals(listOf(null, null), conditions())
+        assertEquals(0, server.notModifiedAnswers)
+        client.close()
+    }
+
+    @Test
+    fun the_callers_own_condition_set_on_the_bucket_never_confirms_the_cached_copy() = runTest {
+        // Given — a cached copy, the object changed on the server since, and a bucket whose every
+        // request asks about the new version
+        val client = newClient()
+        client.storage.from(BUCKET).downloadAuthenticated(PATH) {}
+        server.objects["$BUCKET/$PATH"] = CHANGED.encodeToByteArray()
+        val newETag = server.eTagOf(CHANGED.encodeToByteArray())
+        val conditioned = client.storage.from(BUCKET).setHeader(HttpHeaders.IfNoneMatch, newETag)
+
+        // When — a channel download and a bytes download, both answered 304 for the caller's own
+        // condition
+        clock = 5_000L
+        conditioned.downloadAuthenticated(PATH, ByteChannel()) {}
+        conditioned.downloadAuthenticated(PATH) {}
+
+        // Then — each went out with the caller's condition alone, and the copy of the old version
+        // was not taken for current: its fetchedAt stays
+        assertEquals(listOf(null, newETag, newETag), conditions())
+        assertEquals(
+            1_000L,
+            cachedFileDao.getByKey(cachedFileKeyOf(BUCKET, PATH))?.lastFetchedEpochMs,
+        )
         client.close()
     }
 

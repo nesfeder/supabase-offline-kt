@@ -361,7 +361,7 @@ internal class CachingBucketApi(
         }
         val request = ProbedRequest(path)
         val probe = request.probe
-        val start = cache.beginDownload()
+        var start = cache.beginDownload()
         try {
             val sentUnsettled = isSessionUnsettled()
             // After the start, so a copy dropped since is never confirmed
@@ -385,6 +385,7 @@ internal class CachingBucketApi(
                     fetched
                         ?: request.serveFromDownloadInFlight { entry -> cache.readBytes(entry) }
                         ?: request.serveConfirmedCopy(start) { entry -> cache.readBytes(entry) }
+                if (bytes == null) start = request.beginsAnew(start)
             }
             if (!request.servedFromCache) {
                 probe.entryToStore(cache, bucketId, path)?.let { entry ->
@@ -438,6 +439,15 @@ internal class CachingBucketApi(
         /** The copy the server answered 304 about, until [serveConfirmedCopy] takes it. */
         private val notModified = AtomicReference<AskedCopy?>(null)
 
+        /** The record of the request being sent, which learns what it asks about; see [send]. */
+        private val sending = AtomicReference<CheckedDownload?>(null)
+
+        /**
+         * Whether a 304 about a copy could not be served since the download last began, so the
+         * request fetching the object whole is to begin anew; see [beginsAnew].
+         */
+        private val refetching = AtomicBoolean(false)
+
         /** The ETag the server sent the fetched object under; `null` when it sent none. */
         var eTag: String? = null
             private set
@@ -467,10 +477,13 @@ internal class CachingBucketApi(
         /**
          * Asks the server about [entry]'s cached copy, with `If-None-Match` and its ETag, when it
          * has one, the request fetches the whole of [entry], and the caller's options ask nothing
-         * of their own.
+         * of their own. The record of the request learns what it asks about, so the download status
+         * check takes the condition off again when a header the bucket adds later makes the request
+         * partial, or adds a condition of the caller's.
          */
         private fun askAboutCachedCopy(entry: FileCacheEntry?, headers: HeadersBuilder) {
             asked.store(null)
+            sending.load()?.askAbout(null)
             if (entry == null || !mayAsk.load()) return
             if (
                 headers.contains(HttpHeaders.IfNoneMatch) ||
@@ -480,6 +493,7 @@ internal class CachingBucketApi(
             val cachedETag = eTags.load()[entry.key] ?: return
             headers[HttpHeaders.IfNoneMatch] = cachedETag
             asked.store(AskedCopy(entry, cachedETag))
+            sending.load()?.askAbout(cachedETag)
         }
 
         /**
@@ -503,6 +517,7 @@ internal class CachingBucketApi(
             fetch: suspend (answer: CheckedDownload) -> T,
         ): T? {
             val answer = CheckedDownload(refusesErrors)
+            sending.store(answer)
             val fetched =
                 try {
                     withContext(answer) { fetch(answer) }
@@ -522,7 +537,8 @@ internal class CachingBucketApi(
          * cache confirms it is still the copy the request asked about, which moves its fetch time
          * to now ([StorageFileCache.confirmCopy]). One dropped, replaced or cut short since the
          * download began at [start], or that cannot be read, gives nothing, and no later request
-         * asks about a copy: the call fetches the whole object then.
+         * asks about a copy: the call fetches the whole object then, from a new start
+         * ([beginsAnew]).
          *
          * @return what [read] gave, or `null` when there is nothing to serve.
          */
@@ -543,11 +559,26 @@ internal class CachingBucketApi(
                 return served
             }
             mayAsk.store(false)
+            refetching.store(true)
             engineLogger.debug {
                 "Storage download $bucketId/$path not modified, but its cached copy changed; " +
                     "fetching it whole"
             }
             return null
+        }
+
+        /**
+         * Ends the download that began at [start] and begins it again when a 304 could not be
+         * served since ([serveConfirmedCopy]): whatever made the copy unusable, a write or a clear,
+         * happened before the whole object is fetched, so the fetch's bytes may be cached. Kept on
+         * [start], the commit would refuse them for it.
+         *
+         * @return the start the next request goes out under.
+         */
+        suspend fun beginsAnew(start: DownloadStart): DownloadStart {
+            if (!refetching.exchange(false)) return start
+            cache.endDownload(start)
+            return cache.beginDownload()
         }
 
         /** Whether the request was stopped to wait for a download in flight. */
@@ -630,7 +661,7 @@ internal class CachingBucketApi(
         val probe = request.probe
         val sentUnsettled = isSessionUnsettled()
         val file = OwnedTemporaryFile()
-        val start = cache.beginDownload()
+        var start = cache.beginDownload()
         try {
             // After the start, so a copy dropped since is never confirmed
             request.readETags()
@@ -671,6 +702,7 @@ internal class CachingBucketApi(
                     streamed
                         ?: request.serveFromDownloadInFlight(::serve)
                         ?: request.serveConfirmedCopy(start, ::serve)
+                if (download == null) start = request.beginsAnew(start)
             }
             when (download) {
                 is StreamedDownload.Written -> commitAndStream(file, download, start, channel)
