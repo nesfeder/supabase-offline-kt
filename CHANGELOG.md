@@ -140,6 +140,11 @@ All notable changes to this project are recorded in this file. The format follow
 
 ### Fixed
 
+- With Room 2.8.5 or later, which an app can resolve itself, `pendingMutations()` and
+  `pendingMutationCountFlow()` called after `close()` threw Room's `IllegalStateException`
+  from the call, where a `catch` on the flow could not see it. Each now returns a flow that
+  fails with `OfflineClientClosedException` when collected, as every flow made after `close()`
+  does, on every Room version.
 - In the Swift package, a call that failed for a reason of its own while the client closed threw
   `clientClosed`: any `IllegalStateException` or cancellation met during the close read as the
   closed client, such as the failure of a download whose local data was cleared. It now keeps its
