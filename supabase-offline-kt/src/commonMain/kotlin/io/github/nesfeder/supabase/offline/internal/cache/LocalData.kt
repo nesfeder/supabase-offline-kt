@@ -8,6 +8,7 @@ import io.github.nesfeder.supabase.offline.internal.db.PayloadWriteCountingDao
 import io.github.nesfeder.supabase.offline.internal.db.QUERY_SHAPE_CACHE_KEY_PREFIX
 import io.github.nesfeder.supabase.offline.internal.db.RESERVED_TABLE_NAME
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueue
+import io.github.nesfeder.supabase.offline.internal.storage.QueuedUploadFiles
 
 /**
  * Clears local data, or drops the caches for a new owner, in one transaction recording the owner.
@@ -26,12 +27,19 @@ internal class LocalData(
     private val mutationQueue: MutationQueue,
     private val queryCache: QueryCache,
     private val queryOverlay: QueryOverlay,
+    /**
+     * The queued uploads' files, which [clearLocalData] deletes with their rows; `null` for none.
+     */
+    private val queuedUploadFiles: QueuedUploadFiles? = null,
 ) {
 
     /**
      * Wipes every cached payload, storage-object row and mutation, the mutation queue's records
      * included, in one transaction, and moves the watermarks so that no response or cache patch
      * started before it lands afterward. For identity changes: sign-out, account switch, deletion.
+     * Once it has committed, the queued uploads' files go too, under the same locks, so an upload
+     * queued after it keeps its file; one being written for an upload on its way into the queue is
+     * spared, and its upload is refused by the clear's tick.
      *
      * @param owner the identity the emptied cache belongs to, recorded in the same transaction;
      *   `null` records none, and the next identity to use the cache claims it.
@@ -62,6 +70,7 @@ internal class LocalData(
                 queryCacheDao.countWriteToEveryTable()
                 queryOverlay.forgetKeyIndexes()
                 mutationQueue.forgetReadsOfClearedQueue()
+                queuedUploadFiles?.deleteAllExcept(emptySet())
             }
         }
     }

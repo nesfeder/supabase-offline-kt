@@ -4,12 +4,12 @@ package io.github.nesfeder.supabase.offline.internal.mutationqueue
 
 import io.github.jan.supabase.SupabaseClient
 import io.github.jan.supabase.auth.exception.TokenExpiredException
+import io.github.jan.supabase.exceptions.RestException
 import io.github.jan.supabase.postgrest.exception.PostgrestRestException
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.jan.supabase.postgrest.query.Columns
 import io.github.jan.supabase.postgrest.query.Count
 import io.github.jan.supabase.postgrest.query.PostgrestRequestBuilder
-import io.github.jan.supabase.postgrest.result.PostgrestResult
 import io.github.nesfeder.supabase.offline.MutationOperation
 import io.github.nesfeder.supabase.offline.NetworkDisabledException
 import io.github.nesfeder.supabase.offline.internal.EngineJson
@@ -21,6 +21,7 @@ import io.github.nesfeder.supabase.offline.internal.db.knownOperation
 import io.github.nesfeder.supabase.offline.internal.httpStatusOrNull
 import io.github.nesfeder.supabase.offline.internal.isNetworkOrConnectivityFailure
 import io.github.nesfeder.supabase.offline.internal.isPermanentMutationFailure
+import io.github.nesfeder.supabase.offline.internal.isStorageRefusal
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogLevel
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
 import io.github.nesfeder.supabase.offline.internal.mayPassWhenSentAgain
@@ -40,6 +41,8 @@ import io.github.nesfeder.supabase.offline.internal.postgrest.replaysFully
 import io.github.nesfeder.supabase.offline.internal.postgrest.rowMatch
 import io.github.nesfeder.supabase.offline.internal.postgrest.sendCapturingEngineFailure
 import io.github.nesfeder.supabase.offline.internal.postgrestCodeOrNull
+import io.github.nesfeder.supabase.offline.internal.storage.isQueuedUpload
+import io.github.nesfeder.supabase.offline.internal.storageStatusOrNull
 import io.ktor.client.plugins.ResponseException
 import kotlin.coroutines.EmptyCoroutineContext
 import kotlin.time.Duration
@@ -117,6 +120,8 @@ internal class MutationQueueReplayer(
     private val conflictPolicyTimeout: Duration = CONFLICT_POLICY_TIMEOUT,
     /** Where [conflictPolicy] runs; `null` runs it on the pass's own dispatcher. */
     private val conflictPolicyDispatcher: CoroutineDispatcher? = null,
+    /** Sends the queued Storage uploads; `null` refuses each one it meets to the rejected list. */
+    private val uploadSends: QueuedUploadSends? = null,
 ) {
 
     /**
@@ -311,17 +316,20 @@ internal class MutationQueueReplayer(
      */
     suspend fun <T> holdingSends(block: suspend () -> T): T = sendLock.withLock { block() }
 
-    /** What happened to a mutation offered for sending at the head of its queue. */
-    sealed interface HeadSendOutcome {
+    /**
+     * What happened to a mutation offered for sending at the head of its queue, whose request
+     * answers with a [T]: PostgREST's result for a row write, Storage's response for an upload.
+     */
+    sealed interface HeadSendOutcome<out T> {
 
         /**
          * It stays queued unsent: something is ahead of it, it is being sent, or the session moved
          * on.
          */
-        data object NotAtHead : HeadSendOutcome
+        data object NotAtHead : HeadSendOutcome<Nothing>
 
         /** The server accepted it and it left the queue. */
-        data class Sent(val result: PostgrestResult) : HeadSendOutcome
+        data class Sent<T>(val result: T) : HeadSendOutcome<T>
 
         /**
          * It may not have run on the server, or may pass when sent again, and stays queued: no
@@ -330,13 +338,13 @@ internal class MutationQueueReplayer(
          * or unreadable), a table or column PostgREST's schema cache does not know yet, or a
          * session token that could not be refreshed.
          */
-        data class StaysQueued(val cause: Exception) : HeadSendOutcome
+        data class StaysQueued(val cause: Exception) : HeadSendOutcome<Nothing>
 
         /** The server refused it, or answered with another failure; it left the queue. */
-        data class Refused(val cause: Exception) : HeadSendOutcome
+        data class Refused(val cause: Exception) : HeadSendOutcome<Nothing>
 
         /** Local data was cleared while it was on the wire; nothing about it was recorded. */
-        data class Cleared(val result: PostgrestResult?, val cause: Exception?) : HeadSendOutcome
+        data class Cleared<T>(val result: T?, val cause: Exception?) : HeadSendOutcome<T>
     }
 
     /**
@@ -345,12 +353,13 @@ internal class MutationQueueReplayer(
      * the mutation leaves the queue; a failure of [onAccepted] is logged, since the server has the
      * write. A caller canceled while the request is on the wire leaves the mutation queued.
      */
-    suspend fun sendAtHead(
+    suspend fun <T> sendAtHead(
         mutationId: Long,
         identity: QueueIdentity,
-        send: suspend () -> PostgrestResult,
-        onAccepted: suspend (PostgrestResult) -> Unit,
-    ): HeadSendOutcome {
+        send: suspend () -> T,
+        staysQueuedOnAnswer: (Exception) -> Boolean = Throwable::mayPassWhenSentAgain,
+        onAccepted: suspend (T) -> Unit,
+    ): HeadSendOutcome<T> {
         // Nothing leaves the device while network access is off: it waits, queued
         if (networkAccess.isDisabled)
             return HeadSendOutcome.StaysQueued(
@@ -379,7 +388,13 @@ internal class MutationQueueReplayer(
                                 stoppedForAnotherSession(mutationId, newlyUnconfirmed, identity)
                                 HeadSendOutcome.NotAtHead
                             } else {
-                                headFailureOutcome(mutationId, sent, newlyUnconfirmed, generation)
+                                headFailureOutcome(
+                                    mutationId,
+                                    sent,
+                                    newlyUnconfirmed,
+                                    generation,
+                                    staysQueuedOnAnswer,
+                                )
                             }
                         }
                 }
@@ -433,12 +448,13 @@ internal class MutationQueueReplayer(
     }
 
     /** Where a failed head send leaves its mutation. Caller holds [sendLock]. */
-    private suspend fun headFailureOutcome(
+    private suspend fun <T> headFailureOutcome(
         mutationId: Long,
         failure: SendOutcome.Failed,
         newlyUnconfirmed: Boolean,
         generation: Long,
-    ): HeadSendOutcome {
+        staysQueuedOnAnswer: (Exception) -> Boolean,
+    ): HeadSendOutcome<T> {
         val cause = failure.thrown
         return when {
             clearGeneration.value != generation ->
@@ -454,7 +470,7 @@ internal class MutationQueueReplayer(
                 HeadSendOutcome.StaysQueued(cause)
             }
             // No answer, or one a replay would keep queued too
-            cause.isNetworkOrConnectivityFailure() || cause.mayPassWhenSentAgain() -> {
+            cause.isNetworkOrConnectivityFailure() || staysQueuedOnAnswer(cause) -> {
                 if (newlyUnconfirmed && failure.provesWriteNotApplied())
                     mutationQueue.clearUnconfirmedSend(mutationId)
                 HeadSendOutcome.StaysQueued(cause)
@@ -603,7 +619,10 @@ internal class MutationQueueReplayer(
             SyncReport(
                 syncedCount = syncedCount,
                 rejected =
-                    rejected.map { entry -> entry.toRejectedMutation(EngineJson, primaryKeys) },
+                    rejected
+                        .filterNot { entry -> entry.isQueuedUpload }
+                        .map { entry -> entry.toRejectedMutation(EngineJson, primaryKeys) },
+                rejectedUploads = rejected.filter { entry -> entry.isQueuedUpload },
                 remainingCount = remainingCount,
                 stop = stop,
                 alreadyOnServerCount = alreadyOnServerCount,
@@ -674,10 +693,11 @@ internal class MutationQueueReplayer(
                     withContext(NonCancellable) {
                         val outcome =
                             try {
-                                val tableApi =
+                                val tableApi = {
                                     tableApis.getOrPut(mutation.table) {
                                         remoteTableFor(schema, mutation.table)
                                     }
+                                }
                                 replay(mutation, tableApi, identity, pass)
                             } catch (cancellation: CancellationException) {
                                 throw cancellation
@@ -717,6 +737,8 @@ internal class MutationQueueReplayer(
                 progress.syncedCount++
                 if (outcome.rowsWereOnServer) progress.alreadyOnServerCount++
                 if (outcome.conflictResolved) progress.conflictsResolvedCount++
+                // Its row is gone: the bytes it kept on the device go too
+                if (mutation.isQueuedUpload) uploadSends?.sent(mutation)
             }
             if (outcome == ReplayOutcome.KeptServer && recorded == null)
                 progress.conflictsKeptServerCount++
@@ -752,6 +774,13 @@ internal class MutationQueueReplayer(
         conflicted: MutableList<StoredConflict>,
     ): SyncStop? =
         when (outcome) {
+            is ReplayOutcome.Synced if mutation.isQueuedUpload -> {
+                // Nothing overlays a sent upload: it leaves the queue, rather than stay synced
+                mutationQueue.completeSentMutation(mutation.id)
+                engineLogger.debug { "Synced a queued upload" }
+                null
+            }
+
             is ReplayOutcome.Synced -> {
                 schemaCacheMissesCountedAt -= mutation.id
                 mutationQueue.recordReplayed(
@@ -872,13 +901,16 @@ internal class MutationQueueReplayer(
      */
     private suspend fun replay(
         mutation: MutationRow,
-        tableApi: RemoteTable,
+        tableApi: () -> RemoteTable,
         identity: QueueIdentity,
         pass: Job,
     ): ReplayOutcome {
         // Decided before this attempt is recorded: only an earlier attempt can have reached the
         // server.
         val earlierSendUnconfirmed = mutationQueue.hasUnconfirmedSend(mutation.id)
+        if (mutation.isQueuedUpload) {
+            return replayUpload(mutation, earlierSendUnconfirmed, identity, pass)
+        }
         return when (val prepared = requestFor(mutation, earlierSendUnconfirmed)) {
             is Prepared.Refused -> prepared.outcome
             is Prepared.Ready -> {
@@ -886,14 +918,48 @@ internal class MutationQueueReplayer(
                 when (
                     val sent =
                         attempt(mutation, identity, pass, newlyUnconfirmed) {
-                            prepared.request(tableApi)
+                            prepared.request(tableApi())
                         }
                 ) {
                     is Attempt.Done -> ReplayOutcome.Synced(rowsWereOnServer = sent.value)
                     is Attempt.Ended -> sent.outcome
                 }
             }
-            is Prepared.Guarded -> replayGuarded(mutation, prepared, tableApi, identity, pass)
+            is Prepared.Guarded -> replayGuarded(mutation, prepared, tableApi(), identity, pass)
+        }
+    }
+
+    /**
+     * Sends the queued upload [mutation] as [identity], the pass [pass] running it, as [replay]
+     * sends a row write: its send recorded as unconfirmed first, and stopped before it leaves the
+     * device when the session is no longer [identity]'s or [pass] was canceled.
+     */
+    private suspend fun replayUpload(
+        mutation: MutationRow,
+        earlierSendUnconfirmed: Boolean,
+        identity: QueueIdentity,
+        pass: Job,
+    ): ReplayOutcome {
+        val sends =
+            uploadSends
+                ?: return refuse(
+                        mutation,
+                        "cannot be sent: Storage is not installed",
+                        STORAGE_NOT_INSTALLED_REASON,
+                    )
+                    .outcome
+        return when (val prepared = sends.prepare(mutation, earlierSendUnconfirmed)) {
+            is UploadSend.Refused -> refuse(mutation, prepared.reason, prepared.message).outcome
+            is UploadSend.Ready -> {
+                val newlyUnconfirmed = mutationQueue.markSendUnconfirmed(mutation.id)
+                when (
+                    val sent =
+                        attempt(mutation, identity, pass, newlyUnconfirmed) { prepared.send() }
+                ) {
+                    is Attempt.Done -> ReplayOutcome.Synced(rowsWereOnServer = sent.value)
+                    is Attempt.Ended -> sent.outcome
+                }
+            }
         }
     }
 
@@ -1316,6 +1382,59 @@ internal class MutationQueueReplayer(
         failure: Exception,
         identity: QueueIdentity,
     ): ReplayOutcome =
+        if (mutation.isQueuedUpload) classifyUploadFailure(mutation, failure, identity)
+        else classifyRowWriteFailure(mutation, failure, identity)
+
+    /**
+     * Where a queued upload's failed send leaves it. A failure that may pass keeps it queued and
+     * stops the pass: no connection or no answer, a token Storage refused or that could not be
+     * refreshed, a status that says the request did not finish, and any `5xx`. A refusal (another
+     * `4xx`) while an earlier write of [identity] is still queued holds it: Storage's policy may
+     * read the row that write adds, and hosted Storage answers a policy refusal with a `400`. Any
+     * other refusal goes to the rejected list.
+     */
+    private suspend fun classifyUploadFailure(
+        mutation: MutationRow,
+        failure: Exception,
+        identity: QueueIdentity,
+    ): ReplayOutcome {
+        val status = failure.storageStatusOrNull()
+        return when {
+            failure.isNetworkOrConnectivityFailure() -> {
+                engineLogger.info { "Network unavailable, pausing sync at a queued upload" }
+                ReplayOutcome.Stopped(failure)
+            }
+            status == null || !failure.isStorageRefusal() -> {
+                engineLogger.warning {
+                    "A queued upload failed (${status ?: failure::class.simpleName}); " +
+                        "keeping it for a later sync"
+                }
+                ReplayOutcome.Stopped(failure)
+            }
+            mutationQueue.hasEarlierPendingMutation(mutation.id, identity.storedValue) -> {
+                engineLogger.warning {
+                    "Holding a queued upload ($status) behind an earlier pending mutation"
+                }
+                ReplayOutcome.Held(failure)
+            }
+            else -> {
+                val serverError = failure.storageServerErrorOrNull()
+                engineLogger.warning {
+                    "Storage refused a queued upload ($status); moved to the rejected list"
+                }
+                ReplayOutcome.Rejected(
+                    message = serverError?.message ?: "Storage refused the upload",
+                    serverError = serverError,
+                )
+            }
+        }
+    }
+
+    private suspend fun classifyRowWriteFailure(
+        mutation: MutationRow,
+        failure: Exception,
+        identity: QueueIdentity,
+    ): ReplayOutcome =
         when {
             failure.isNetworkOrConnectivityFailure() -> {
                 engineLogger.info { "Network unavailable, pausing sync for ${mutation.table}" }
@@ -1707,6 +1826,34 @@ internal class MutationQueueReplayer(
     /**
      * The server's refusal as data: PostgREST's fields, or the bare status of another HTTP failure.
      */
+    /**
+     * What Storage answered with [this] refusal, as the rejected list keeps it: the HTTP status,
+     * Storage's error name as the code when supabase-kt kept it apart from the message, and the
+     * message.
+     */
+    private fun Throwable.storageServerErrorOrNull(): StoredServerError? {
+        var current: Throwable? = this
+        while (current != null) {
+            when (current) {
+                is RestException ->
+                    return current.description?.let { description ->
+                        StoredServerError(
+                            status = current.statusCode,
+                            code = current.error,
+                            message = description,
+                        )
+                    } ?: StoredServerError(status = current.statusCode, message = current.error)
+                is ResponseException ->
+                    return StoredServerError(
+                        status = current.response.status.value,
+                        message = current.response.status.description,
+                    )
+            }
+            current = current.cause
+        }
+        return null
+    }
+
     private fun serverErrorOf(failure: Throwable): StoredServerError? {
         var current: Throwable? = failure
         while (current != null) {

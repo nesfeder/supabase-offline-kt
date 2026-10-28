@@ -4,6 +4,7 @@ package io.github.nesfeder.supabase.offline
 
 import io.github.jan.supabase.storage.BucketApi
 import io.github.jan.supabase.storage.ImageTransformation
+import io.github.jan.supabase.storage.UploadOptionBuilder
 
 /**
  * One Storage bucket seen through the offline client: every [BucketApi] operation, plus a file
@@ -27,13 +28,15 @@ import io.github.jan.supabase.storage.ImageTransformation
  * the file operation is done and the file is deleted: behind a clear or an eviction holding the
  * cache, that can take as long as they do. No partial file is left behind.
  *
- * **Writes** — uploads, updates, deletes, moves and copies — are online-only and never queued. They
- * are tried whatever the connectivity monitor says, and offline fail with supabase-kt's own
- * connectivity error; while network access is off ([Offline.disableNetwork]) they throw
- * [NetworkDisabledException] without being sent. A write that reaches the server drops any cached
- * copy it made stale, so a later read never serves the old bytes: a download of the object still on
- * the wire when the write lands is handed to its caller but never becomes the cached copy. A
- * resumable upload started or continued through [resumable] drops them once it finishes.
+ * **Writes** — uploads, updates, deletes, moves and copies — are online-only and never queued, but
+ * for the [upload] that takes a [MutationStrategy], which can wait in the mutation queue with the
+ * row writes around it. They are tried whatever the connectivity monitor says, and offline fail
+ * with supabase-kt's own connectivity error; while network access is off ([Offline.disableNetwork])
+ * they throw [NetworkDisabledException] without being sent. A write that reaches the server drops
+ * any cached copy it made stale, so a later read never serves the old bytes: a download of the
+ * object still on the wire when the write lands is handed to its caller but never becomes the
+ * cached copy. A resumable upload started or continued through [resumable] drops them once it
+ * finishes.
  *
  * **Object paths that cannot be cached** — a leading `/`, an empty or `.`/`..` segment, a `\`, a
  * control character, and with supabase-kt below 3.8 a `%`, `?` or `#`, which it puts in the URL
@@ -63,9 +66,63 @@ public interface OfflineBucketApi : BucketApi {
     override fun setHeader(name: String, value: String): OfflineBucketApi
 
     /**
+     * Uploads [data] to [path] as supabase-kt's `upload` does, under [mutationStrategy], as a row
+     * write is made: [MutationStrategy.QueueIfOffline] lets it wait in the mutation queue, in the
+     * order it was made among the current user's writes, so a row written after it that names the
+     * file is sent after the file.
+     *
+     * Under [MutationStrategy.QueueIfOffline] the bytes are first kept on the device, beside the
+     * file cache, and the upload queued; it is sent at once when nothing of the user is pending
+     * ahead of it, and the result is [UploadOutcome.Applied] with Storage's response. Otherwise it
+     * waits and the result is [UploadOutcome.Queued]: no connection or no answer, an answer that
+     * says the request did not finish (a `408`, `429`, `502`, `503`, `504`, `520`, `522` or `524`),
+     * a token Storage refused, earlier writes still pending, network access turned off, or a
+     * session still restoring. A later pass sends it, and a refusal is kept on the rejected list
+     * ([OfflineStorage.rejectedUploads]) with its bytes, instead of being thrown. Sent at once and
+     * refused, or failing with another `5xx`, it is thrown and does not stay queued. While it waits
+     * it is listed by [OfflineStorage.pendingUploads], [cachedFile] and [ensureCachedFile] return
+     * its bytes on the device, and [Offline.discardPendingMutation] drops it. Once Storage holds
+     * the file, its bytes become the object's cached copy.
+     *
+     * Some uploads cannot be queued faithfully and are sent at once instead, as with
+     * [MutationStrategy.OnlineOnly]: one whose [options] add an `httpOverride`, one on a bucket
+     * with a header set by [setHeader], one whose user cannot be read from the stored session, one
+     * whose bytes cannot be written to the device, and one that was on its way into the queue while
+     * local data was cleared. When one of them cannot be sent for want of a connection, it throws
+     * [MutationNotQueueableException] with that failure as its cause. A queued upload keeps its
+     * options' `upsert`, `contentType` and `userMetadata`.
+     *
+     * [MutationStrategy.OnlineOnly] is supabase-kt's `upload`, its response wrapped in
+     * [UploadOutcome.Applied]: sent now, thrown when it cannot be sent, and nothing kept.
+     *
+     * @param path the object path within this bucket.
+     * @param data the file's bytes; not empty.
+     * @param mutationStrategy whether the upload may wait in the mutation queue.
+     * @param options `upsert`, `contentType` and `userMetadata`, as for supabase-kt's `upload`.
+     * @return [UploadOutcome.Applied] with Storage's response, or [UploadOutcome.Queued].
+     * @throws IllegalArgumentException when [data] is empty, or [path] holds a `%` that does not
+     *   begin a percent-escape (see [OfflineBucketApi]); nothing is sent or kept.
+     * @throws MutationNotQueueableException when an upload the queue cannot hold cannot be sent for
+     *   want of a connection.
+     * @throws OfflineClientClosedException when the client is closed.
+     */
+    @Throws(Throwable::class)
+    public suspend fun upload(
+        path: String,
+        data: ByteArray,
+        mutationStrategy: MutationStrategy,
+        options: UploadOptionBuilder.() -> Unit = {},
+    ): UploadOutcome
+
+    /**
      * The cached copy of the object at [path], or `null` when none is cached. Never touches the
-     * network. Only an untransformed download or [ensureCachedFile] caches the copy this returns; a
-     * transformed download's copy is found with a transform.
+     * network. Only an untransformed download, [ensureCachedFile] or a queued [upload] Storage has
+     * stored caches the copy this returns; a transformed download's copy is found with a transform.
+     *
+     * While the current user has an upload of the object waiting in the mutation queue, it returns
+     * that upload's bytes on the device instead, the newest when there are several: its
+     * [CachedFile.fetchedAt] is when the upload was queued. The file is deleted once the upload is
+     * sent, discarded or cleared.
      *
      * @param path the object path within this bucket.
      * @return the cached file, or `null`.
@@ -95,9 +152,10 @@ public interface OfflineBucketApi : BucketApi {
      * The cached copy of the object at [path], downloading it into the cache first when none is
      * cached. The download streams to disk, and concurrent calls for one object share it. A cached
      * copy is returned as it is, however old; check [CachedFile.fetchedAt] against your own
-     * freshness rule. Canceled mid-download, it returns once its partial file is deleted (see
-     * [OfflineBucketApi] on how long that can take), unless another call is still waiting for the
-     * download, which then goes on for that call.
+     * freshness rule. An upload of the object still queued for the current user is returned as
+     * [cachedFile] returns it, with no request. Canceled mid-download, it returns once its partial
+     * file is deleted (see [OfflineBucketApi] on how long that can take), unless another call is
+     * still waiting for the download, which then goes on for that call.
      *
      * @param path the object path within this bucket.
      * @param isPublic whether to download through the public URL rather than the authenticated one.

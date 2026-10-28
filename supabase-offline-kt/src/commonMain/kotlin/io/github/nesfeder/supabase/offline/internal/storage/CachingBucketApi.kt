@@ -6,6 +6,7 @@ package io.github.nesfeder.supabase.offline.internal.storage
 
 import io.github.jan.supabase.exceptions.NotFoundRestException
 import io.github.jan.supabase.exceptions.RestException
+import io.github.jan.supabase.network.HttpRequestOverride
 import io.github.jan.supabase.storage.BucketApi
 import io.github.jan.supabase.storage.DownloadOptionBuilder
 import io.github.jan.supabase.storage.FileObject
@@ -20,9 +21,12 @@ import io.github.jan.supabase.storage.UploadData
 import io.github.jan.supabase.storage.UploadOptionBuilder
 import io.github.jan.supabase.storage.UploadSignedUrl
 import io.github.jan.supabase.storage.resumable.ResumableClient
+import io.github.jan.supabase.storage.storage
 import io.github.nesfeder.supabase.offline.CachedFile
+import io.github.nesfeder.supabase.offline.MutationStrategy
 import io.github.nesfeder.supabase.offline.OfflineBucketApi
 import io.github.nesfeder.supabase.offline.OfflineInternal
+import io.github.nesfeder.supabase.offline.UploadOutcome
 import io.github.nesfeder.supabase.offline.internal.ClientOperationGate
 import io.github.nesfeder.supabase.offline.internal.httpStatusOrNull
 import io.github.nesfeder.supabase.offline.internal.isNetworkOrConnectivityFailure
@@ -89,6 +93,10 @@ internal class CachingBucketApi(
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
     private val networkAccess: NetworkAccess = NetworkAccess(),
     private val requestSession: () -> RequestSession = { RequestSession.WithoutAuth },
+    /** The client's queued uploads; `null` keeps none, and a queueable upload is sent at once. */
+    private val queuedUploads: QueuedUploadWriter? = null,
+    /** Whether [setHeader] set a header here, which a queued upload could not keep. */
+    private val setsHeaders: Boolean = false,
 ) : OfflineBucketApi, BucketApi by delegate {
 
     override fun setHeader(name: String, value: String): OfflineBucketApi =
@@ -102,6 +110,8 @@ internal class CachingBucketApi(
             ioDispatcher,
             networkAccess,
             requestSession,
+            queuedUploads,
+            setsHeaders = true,
         )
 
     override val resumable: ResumableClient by lazy {
@@ -116,6 +126,10 @@ internal class CachingBucketApi(
 
     override suspend fun cachedFile(path: String): CachedFile? = operationGate.call {
         if (!cachesDownloadsOf(path)) return@call null
+        // An upload of it still queued is newer than any copy Storage sent
+        queuedUploads?.uploads?.queuedCopyOf(bucketId, path)?.let { queued ->
+            return@call queued
+        }
         cache.entryFor(bucketId, path)?.let { entry -> cache.useCachedCopy(entry) }
     }
 
@@ -171,6 +185,10 @@ internal class CachingBucketApi(
                     "This object cannot be cached on the device: its bucket id or its path cannot " +
                         "be mapped onto a file"
                 )
+        // Storage does not hold a queued upload yet: its copy on the device is the one to return
+        queuedUploads?.uploads?.queuedCopyOf(bucketId, path)?.let { queued ->
+            return queued
+        }
         var supersededBefore = false
         var retriedAfterJoinedFailure = false
         while (true) {
@@ -800,8 +818,52 @@ internal class CachingBucketApi(
             throw failure
         }
 
-    // Writes are never queued: each drops or moves the cached copies it may change, and close()
-    // stops it.
+    override suspend fun upload(
+        path: String,
+        data: ByteArray,
+        mutationStrategy: MutationStrategy,
+        options: UploadOptionBuilder.() -> Unit,
+    ): UploadOutcome = operationGate.call {
+        require(data.isNotEmpty()) { "The data to upload should not be empty" }
+        requireUrlFor(path)
+        if (mutationStrategy == MutationStrategy.OnlineOnly) {
+            return@call UploadOutcome.Applied(upload(path, data, options))
+        }
+        // Read on a builder of our own, whose overrides list says whether the app added one
+        val overrides = mutableListOf<HttpRequestOverride>()
+        val built =
+            UploadOptionBuilder(
+                    delegate.supabaseClient.storage.serializer,
+                    httpRequestOverrides = overrides,
+                )
+                .apply(options)
+        val sendDirectly: suspend () -> FileUploadResponse = { upload(path, data, options) }
+        val writer = queuedUploads ?: return@call UploadOutcome.Applied(sendDirectly())
+        writer.upload(
+            bucketId = bucketId,
+            path = path,
+            data = data,
+            options =
+                QueuedUploadOptions(
+                    upsert = built.upsert,
+                    contentType = built.contentType?.toString(),
+                    userMetadata = built.userMetadata,
+                ),
+            notQueueableBecause =
+                when {
+                    setsHeaders ->
+                        "its bucket sends headers set with setHeader, which are not kept on the device"
+                    overrides.isNotEmpty() ->
+                        "its options add an httpOverride, which is not kept on the device"
+                    else -> null
+                },
+            send = { delegate.upload(path, data, options) },
+            sendDirectly = sendDirectly,
+        )
+    }
+
+    // Writes are never queued but by the upload above: each drops or moves the cached copies it may
+    // change, and close() stops it.
 
     override suspend fun upload(
         path: String,

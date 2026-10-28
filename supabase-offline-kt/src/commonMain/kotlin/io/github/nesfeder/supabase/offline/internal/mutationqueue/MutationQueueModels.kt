@@ -72,6 +72,8 @@ internal data class RejectedMutation(
  * @property conflictsKeptServerCount Guarded writes dropped because the policy let the server's row
  *   stand.
  * @property conflicted Guarded writes parked in this pass, now on the conflicted list.
+ * @property rejectedUploads Queued uploads refused in this pass, now on the rejected list, as
+ *   stored; [rejected] holds the row writes only.
  */
 internal data class SyncReport(
     val syncedCount: Int,
@@ -82,6 +84,7 @@ internal data class SyncReport(
     val conflictsResolvedCount: Int = 0,
     val conflictsKeptServerCount: Int = 0,
     val conflicted: List<StoredConflict> = emptyList(),
+    val rejectedUploads: List<StoredRejection> = emptyList(),
 ) {
     /** This report and [later]'s, as one: counts summed, what remains and why from [later]. */
     fun followedBy(later: SyncReport): SyncReport =
@@ -94,6 +97,7 @@ internal data class SyncReport(
             conflictsResolvedCount = conflictsResolvedCount + later.conflictsResolvedCount,
             conflictsKeptServerCount = conflictsKeptServerCount + later.conflictsKeptServerCount,
             conflicted = conflicted + later.conflicted,
+            rejectedUploads = rejectedUploads + later.rejectedUploads,
         )
 }
 

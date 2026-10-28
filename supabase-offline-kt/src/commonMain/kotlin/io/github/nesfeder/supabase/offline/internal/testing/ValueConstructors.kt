@@ -6,6 +6,7 @@ package io.github.nesfeder.supabase.offline.internal.testing
 
 import io.github.jan.supabase.postgrest.Postgrest
 import io.github.jan.supabase.postgrest.result.PostgrestResult
+import io.github.jan.supabase.storage.FileUploadResponse
 import io.github.nesfeder.supabase.offline.CacheMissException
 import io.github.nesfeder.supabase.offline.CachedFile
 import io.github.nesfeder.supabase.offline.ConflictedMutation
@@ -18,15 +19,18 @@ import io.github.nesfeder.supabase.offline.NetworkStatus
 import io.github.nesfeder.supabase.offline.OfflineClientClosedException
 import io.github.nesfeder.supabase.offline.OfflineInternal
 import io.github.nesfeder.supabase.offline.PendingMutation
+import io.github.nesfeder.supabase.offline.PendingUpload
 import io.github.nesfeder.supabase.offline.QuerySnapshot
 import io.github.nesfeder.supabase.offline.RealtimeStatus
 import io.github.nesfeder.supabase.offline.RefreshState
 import io.github.nesfeder.supabase.offline.RejectedMutation
+import io.github.nesfeder.supabase.offline.RejectedUpload
 import io.github.nesfeder.supabase.offline.ServerError
 import io.github.nesfeder.supabase.offline.SyncFailedException
 import io.github.nesfeder.supabase.offline.SyncReport
 import io.github.nesfeder.supabase.offline.SyncStatus
 import io.github.nesfeder.supabase.offline.SyncStopReason
+import io.github.nesfeder.supabase.offline.UploadOutcome
 import io.github.nesfeder.supabase.offline.internal.postgrest.ResultProvenance
 import io.github.nesfeder.supabase.offline.internal.postgrest.provenancedResult
 import io.github.nesfeder.supabase.offline.isNetworkOrConnectivityFailure
@@ -187,7 +191,7 @@ public object ValueConstructors {
                 else SyncStopReason.Completed,
         )
 
-    /** A [SyncReport] with the given fields, the stop reason included. */
+    /** A [SyncReport] with the given fields, the stop reason included and no refused upload. */
     public fun syncReport(
         syncedCount: Int,
         rejected: List<RejectedMutation>,
@@ -199,6 +203,32 @@ public object ValueConstructors {
         conflicted: List<ConflictedMutation>,
         stopReason: SyncStopReason,
     ): SyncReport =
+        syncReport(
+            syncedCount,
+            rejected,
+            remainingCount,
+            alreadyOnServerCount,
+            heldBehindOtherTablesCount,
+            conflictsResolvedCount,
+            conflictsKeptServerCount,
+            conflicted,
+            stopReason,
+            rejectedUploads = emptyList(),
+        )
+
+    /** A [SyncReport] with the given fields, the refused uploads included. */
+    public fun syncReport(
+        syncedCount: Int,
+        rejected: List<RejectedMutation>,
+        remainingCount: Int,
+        alreadyOnServerCount: Int,
+        heldBehindOtherTablesCount: Int,
+        conflictsResolvedCount: Int,
+        conflictsKeptServerCount: Int,
+        conflicted: List<ConflictedMutation>,
+        stopReason: SyncStopReason,
+        rejectedUploads: List<RejectedUpload>,
+    ): SyncReport =
         SyncReport(
             syncedCount,
             rejected,
@@ -209,6 +239,7 @@ public object ValueConstructors {
             conflictsKeptServerCount,
             conflicted,
             stopReason,
+            rejectedUploads,
         )
 
     /** A [SyncStopReason.ServerFailure] carrying [error]. */
@@ -334,6 +365,53 @@ public object ValueConstructors {
             createdAt,
             rowKeys,
             body,
+            serverError,
+            message,
+            rejectedAt,
+            isRetryable,
+        )
+
+    /** An [UploadOutcome.Applied] carrying [response]. */
+    public fun appliedUpload(response: FileUploadResponse): UploadOutcome.Applied =
+        UploadOutcome.Applied(response)
+
+    /** An [UploadOutcome.Queued] carrying [pendingUpload]. */
+    public fun queuedUpload(pendingUpload: PendingUpload): UploadOutcome.Queued =
+        UploadOutcome.Queued(pendingUpload)
+
+    /** A [PendingUpload] with the given fields. */
+    public fun pendingUpload(
+        id: Long,
+        bucketId: String,
+        path: String,
+        createdAt: Instant,
+        sizeBytes: Long,
+        contentType: String?,
+        upsert: Boolean,
+    ): PendingUpload = PendingUpload(id, bucketId, path, createdAt, sizeBytes, contentType, upsert)
+
+    /** A [RejectedUpload] with the given fields. */
+    public fun rejectedUpload(
+        id: Long,
+        bucketId: String,
+        path: String,
+        createdAt: Instant,
+        sizeBytes: Long,
+        contentType: String?,
+        upsert: Boolean,
+        serverError: ServerError?,
+        message: String,
+        rejectedAt: Instant,
+        isRetryable: Boolean,
+    ): RejectedUpload =
+        RejectedUpload(
+            id,
+            bucketId,
+            path,
+            createdAt,
+            sizeBytes,
+            contentType,
+            upsert,
             serverError,
             message,
             rejectedAt,

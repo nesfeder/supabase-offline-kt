@@ -12,13 +12,15 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import okio.FileSystem
+import okio.IOException
 import okio.Path
 import okio.SYSTEM
 
 /**
  * An app that starts setting `dataDirectory` takes the default location's data along: the database
- * with its side files, then the file cache's two directories, which are deleted rather than left
- * behind, beyond a clear's reach, when they cannot move. No file moves when the database stays.
+ * with its side files and the queued uploads' files, which move with it or not at all, then the
+ * file cache's two directories, which are deleted rather than left behind, beyond a clear's reach,
+ * when they cannot move. No file moves when the database stays.
  */
 class ConfiguredDirectoryMoveTest {
 
@@ -72,6 +74,63 @@ class ConfiguredDirectoryMoveTest {
     }
 
     @Test
+    fun the_queued_uploads_files_move_with_the_database() {
+        // Given — an upload queued at the default location
+        leaveDataAtTheDefaultLocation()
+        write(default.dataDirectory / "storage-uploads" / QUEUED_FILE, "queued bytes")
+
+        // When
+        val opened = moveDefaultDatabaseIfUnclaimed(configured, default, engineLogger)
+
+        // Then — its bytes are beside the rows that name them
+        assertEquals(configured.databasePath, opened)
+        assertEquals(
+            "queued bytes",
+            read(configured.dataDirectory / "storage-uploads" / QUEUED_FILE),
+        )
+        assertFalse(exists(default.dataDirectory / "storage-uploads"))
+    }
+
+    @Test
+    fun the_queued_uploads_files_replace_a_directory_no_database_names() {
+        // Given — the configured directory has a queued uploads directory, but no database
+        leaveDataAtTheDefaultLocation()
+        write(default.dataDirectory / "storage-uploads" / QUEUED_FILE, "queued bytes")
+        write(configured.dataDirectory / "storage-uploads" / "stale", "nothing names this")
+
+        // When
+        moveDefaultDatabaseIfUnclaimed(configured, default, engineLogger)
+
+        // Then
+        assertEquals(
+            "queued bytes",
+            read(configured.dataDirectory / "storage-uploads" / QUEUED_FILE),
+        )
+        assertFalse(exists(configured.dataDirectory / "storage-uploads" / "stale"))
+    }
+
+    @Test
+    fun a_database_that_cannot_move_keeps_the_queued_uploads_files_with_it() {
+        // Given — a disk that refuses to move the database file itself, after the rest
+        leaveDataAtTheDefaultLocation()
+        write(default.dataDirectory / "storage-uploads" / QUEUED_FILE, "queued bytes")
+        val disk =
+            FakeFailingFileSystem().apply {
+                onMove = { source, _ ->
+                    if (source == default.databasePath) throw IOException("Operation not permitted")
+                }
+            }
+
+        // When
+        val opened = moveDefaultDatabaseIfUnclaimed(configured, default, engineLogger, disk)
+
+        // Then — both stay where they were, together
+        assertEquals(default.databasePath, opened)
+        assertEquals("queued bytes", read(default.dataDirectory / "storage-uploads" / QUEUED_FILE))
+        assertFalse(exists(configured.dataDirectory / "storage-uploads"))
+    }
+
+    @Test
     fun a_file_cache_directory_that_cannot_move_is_deleted_rather_than_left_behind() {
         // Given — the configured directory already has a file cache directory
         leaveDataAtTheDefaultLocation()
@@ -88,12 +147,16 @@ class ConfiguredDirectoryMoveTest {
 
     @Test
     fun a_file_cache_that_cannot_be_read_still_leaves_the_moved_database_in_use() {
-        // Given — a disk that refuses to look at the default file cache's directories
+        // Given — a disk that refuses to look at the default file cache's two directories
         leaveDataAtTheDefaultLocation()
+        val cacheDirectories =
+            listOf(default.dataDirectory / "storage", default.dataDirectory / "storage-hashed")
         val disk =
             FakeFailingFileSystem().apply {
                 failMetadataOf = { path ->
-                    path.toString().startsWith((default.dataDirectory / "storage").toString())
+                    cacheDirectories.any { directory ->
+                        path == directory || path.toString().startsWith("$directory/")
+                    }
                 }
             }
 
@@ -151,5 +214,9 @@ class ConfiguredDirectoryMoveTest {
         assertEquals(inside.databasePath, opened)
         assertEquals("database", read(inside.databasePath))
         assertEquals("file", read(default.dataDirectory / "storage" / "photos" / "a.jpg"))
+    }
+
+    private companion object {
+        const val QUEUED_FILE = "0123456789abcdef0123456789abcdef"
     }
 }
