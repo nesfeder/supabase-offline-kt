@@ -61,10 +61,13 @@ All notable changes to this project are recorded in this file. The format follow
   it they become the cached copy. An upload whose answer was lost is sent again, and its refusal
   counts as stored only when the object at its path is verifiably its bytes.
   `offline.storage.pendingUploads()`, `rejectedUploads()` and `rejectedUploadList()` list them,
-  `RejectedUpload.localPath` names a refused upload's kept bytes, which `cachedFile` never
-  answers, `SyncReport.rejectedUploads` reports a refusal, and `discardPendingMutation`,
+  `SyncReport.rejectedUploads` reports a refusal, and `discardPendingMutation`,
   `dismissRejectedMutation` and `retryRejectedMutation` take an upload's id. The Swift package has
   the same calls, and both testing artifacts build the new values.
+- `RejectedUpload.localPath` is a refused upload's kept file on the device, for the app to show
+  what was refused: `cachedFile` and `ensureCachedFile` never answer a refused upload, since
+  Storage may hold other bytes at its path. The Swift package's `RejectedUpload` has it too, and
+  each testing artifact's `rejectedUpload` has an overload that takes it.
 
 ### Changed
 
