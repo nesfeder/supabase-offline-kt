@@ -55,6 +55,11 @@ a download passes it, the least recently used files are deleted until the cache 
 the bound. A file being read, and a file used in the last 30 seconds, are kept; a file's last use
 is recorded on disk, to the minute, so it survives a restart. `CACHE_SIZE_UNLIMITED` turns this eviction off, and
 any other value below zero counts as zero. Temporary download files a crash left behind are
-deleted once they are more than a day old. An app can delete files itself too: one object's copies
-with a bucket's `evictCachedFile(path)`, and every file with `offline.storage.clearFileCache()`,
-which keeps the mutation queue. See [Storage caching](storage.md#evicting-and-clearing).
+deleted once they are more than a day old. The copies of an object pinned with a bucket's
+`pinCachedFile(path)` are never evicted; they count toward the bound. When pinned files alone take
+more than nine tenths of it, eviction stops at the bound itself rather than a tenth below; when they
+fill it, the cache stays over it and every other file goes once its 30 seconds have passed. See
+[Storage caching](storage.md#pinned-files). An app can delete files itself too, pinned or not: one
+object's copies with a bucket's `evictCachedFile(path)`, and every file with
+`offline.storage.clearFileCache()`, which keeps the mutation queue. See
+[Storage caching](storage.md#evicting-and-clearing).

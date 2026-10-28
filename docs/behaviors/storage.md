@@ -2,8 +2,10 @@
 
 A download through the offline bucket goes to the network first and is kept on disk; when the
 network fails, the kept copy is served instead, and when the server says the kept copy is still
-current, it is served without the object being sent again. Writes (uploads, updates, deletes,
-moves and copies) are online only and never queued, and one that reaches the server drops the
+current, it is served without the object being sent again. An upload made with a
+`MutationStrategy` can wait in the mutation queue with the row writes around it, its bytes on the
+device ([below](#queued-uploads)). Every other write (an upload without one, updates, deletes,
+moves and copies) is online only and never queued, and one that reaches the server drops the
 cached copies it made stale.
 
 From the samples: [TaskPhotoFiles.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/TaskPhotoFiles.kt) · [TaskRepository+Photos.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository+Photos.swift)
@@ -83,9 +85,9 @@ transform that sets nothing is the untransformed copy, as it is for a download. 
 copy keeps the `fetchedAt` of the download that made it. Read it or hand it to an image loader, but
 do not move or write it: the cache may delete it when the object is uploaded, updated, deleted,
 moved or copied over through the offline bucket, when the server reports it gone, when the cache
-passes its bound and the file has not been used for 30 seconds, when the cache passes to another
-user, when it is evicted or the file cache cleared ([below](#evicting-and-clearing)), and when
-local data is cleared. A file whose size on disk is not the one recorded for it, which a power loss
+passes its bound and the file has not been used for 30 seconds (unless the object is
+[pinned](#pinned-files)), when the cache passes to another user, when it is evicted or the file
+cache cleared ([below](#evicting-and-clearing)), and when local data is cleared. A file whose size on disk is not the one recorded for it, which a power loss
 right after a download can leave, is deleted too, and the object is downloaded again when next
 asked for. Open it soon, or copy it if it must outlive those. `cachedFile` and `ensureCachedFile`
 never ask the server whether the copy is current: compare `fetchedAt` with your own rule, and
@@ -125,11 +127,12 @@ From the samples: [TaskPhotoFiles.kt](https://github.com/nesfeder/supabase-offli
 
 Three calls delete cached files on the device and send nothing; the objects stay in their buckets,
 and the next download of each fetches it again. A bucket's `evictCachedFile(path)` deletes one
-object's copies, the untransformed one and every image transform, and no other object's;
-`evictCachedFile(path) { … }` deletes one transform's copy alone. `offline.storage.clearFileCache()`
-deletes every downloaded file in every bucket, with its record, and leaves the mutation queue, the
-cached query results and the rejected and conflicted lists: it frees the device's storage without
-dropping writes waiting to sync, so a "Free up space" button can call it. At sign-out, call
+object's copies, the untransformed one and every image transform, and its pin, and no other
+object's; `evictCachedFile(path) { … }` deletes one transform's copy alone and leaves the pin.
+`offline.storage.clearFileCache()` deletes every downloaded file in every bucket, with its record,
+and every pin, and leaves the mutation queue, the cached query results and the rejected and
+conflicted lists: it frees the device's storage without dropping writes waiting to sync, so a
+"Free up space" button can call it. At sign-out, call
 `clearLocalData()` instead ([Signing out and switching users](sign-out.md)): it deletes these
 files too, with the user's queued writes, and rewrites the database without what it deleted, which
 `clearFileCache()` does not.
@@ -141,19 +144,110 @@ but is not cached, as across `clearLocalData()`: an `ensureCachedFile` running m
 `IllegalStateException`. The Swift package has the same calls: `evictCachedFile(path:)`,
 `evictCachedFile(path:transform:)` and `storage.clearFileCache()`.
 
+## Pinned files
+
+```kotlin
+--8<-- "StorageExamples.kt:pin"
+```
+
+A bucket's `pinCachedFile(path)` keeps an object on the device: the cache never evicts its
+copies, the untransformed one and every image transform's, kept now or later, however long ago
+they were used. It sends nothing and downloads nothing, so pinning an object that is not cached
+records the pin alone, and its next download is kept; call `ensureCachedFile(path)` after it to
+have the object offline now. `unpinCachedFile(path)` removes the pin and leaves the copies, which
+the cache then evicts as it does any other file. `isCachedFilePinned(path)` says whether the
+object is pinned, cached or not. A path that cannot be cached ([below](#paths-that-are-never-cached))
+cannot be pinned: `pinCachedFile` throws `IllegalArgumentException` and sends nothing.
+
+The pin is stored in the database and outlives a restart. It stays through every write to the
+object: an upload or update drops its copies, as for any object, and the next download is kept
+pinned. A move through the bucket takes the pin to the new path, or drops it when the new path
+cannot be pinned; a delete through the bucket removes it, as do `evictCachedFile(path)`,
+`clearFileCache()`, `clearLocalData()` and the cache passing to another user. A move or delete that
+timed out leaves the pin where the object may be: on both ends of the move, and on the object that
+may not have been deleted. Pinned while the cache still belongs to the user before, until a sign-in
+settles, the pin is not kept, as a download then is not.
+
+Pinned copies count toward `fileCacheSizeBytes`. When they alone take more than nine tenths of it,
+eviction stops at the bound rather than a tenth below; when they fill it, the cache stays over its
+bound, and every other file is evicted once it has not been used for 30 seconds
+([Cache size and eviction](eviction.md#the-file-cache)). The Swift package has the same calls:
+`pinCachedFile(path:)`, `unpinCachedFile(path:)` and `isCachedFilePinned(path:)`.
+
+## Queued uploads
+
+```kotlin
+--8<-- "StorageExamples.kt:queued-upload"
+```
+
+`upload(path, data, mutationStrategy)` makes an upload as a row write is made
+([Writes and the offline queue](mutations.md#storage-uploads-in-the-queue)). Under
+`QueueIfOffline` the bytes are first written to the device and the upload queued, then it is sent
+at once when nothing of the user waits ahead of it: the result is `UploadOutcome.Applied` with
+Storage's response. Otherwise it waits and is `UploadOutcome.Queued`, with a `PendingUpload`: no
+connection or no answer, an answer that says the request did not finish (a `408`, `429`, `502`,
+`503`, `504`, `520`, `522` or `524`), a token Storage refused, earlier writes still pending, network
+access off, or a session still restoring. A later pass sends it in the order it was made among the
+user's writes, so a row written after it that names the file reaches the server after the file, and
+one written before it, a task the photo belongs to, say, before it. Sent at once and refused, or
+failing with another `5xx`, it throws Storage's error and is not kept. `OnlineOnly` is the plain
+upload, its response wrapped in `Applied`.
+
+- **Where the bytes wait**: a file of their own under `storage-uploads/` in the data directory
+  ([On-device data](../reference/on-device-data.md#the-files)), written through to the disk before
+  the upload is queued. The file cache's bound never evicts it and `clearFileCache()` leaves it.
+- **While it waits**, `cachedFile(path)` and `ensureCachedFile(path)` return that file, with no
+  request, and so do the platform helpers built on them, so a photo shows at once: the newest
+  upload of the path wins over any cached copy, and its `fetchedAt` is when it was queued. A
+  refused upload's file is never answered there, since Storage may hold other bytes at the path:
+  its entry's `localPath` names it, for the app to show what was refused. Once Storage has the
+  file its bytes become the object's cached copy, and the file under `storage-uploads/` goes. A transform's copy is never answered from it, and a download still asks
+  the server, which does not hold the file yet.
+- **Options**: `upsert`, `contentType` and `userMetadata` are kept with it. An upload whose options
+  add an `httpOverride`, one through a bucket with a header set by `setHeader`, one whose user
+  cannot be told, one whose bytes the device cannot write, and one on its way into the queue while
+  local data is cleared are sent at once instead; offline they throw
+  `MutationNotQueueableException` with the connectivity failure as its cause.
+- **Replay**: it is a write of the user's queue, sent with that user's token and never another's,
+  through the same order and the same stops as a row ([Replaying the queue](sync.md#what-happens-to-each-write)).
+  An upload whose earlier send's answer was lost is sent again. When Storage refuses that send, as
+  it refuses a duplicate of an upload that may not overwrite, the upload counts as sent only when
+  the object at its path is verifiably its bytes: the same size, and the same MD5 by Storage's
+  ETag or, when the ETag is not an MD5 one, the same bytes downloaded. Any other object there
+  leaves the refusal standing, on the rejected list, and its cached copy is never the device's
+  bytes.
+- **Refusals**: an upload Storage refuses for good moves to the rejected list with its bytes, as
+  `storage.rejectedUploads()` lists it, with Storage's status, error name (`code`) and message, and
+  the file's path on the device as `localPath` while it is whole;
+  `retryRejectedMutation(id)` queues it again at the end of the queue, and
+  `dismissRejectedMutation(id)` drops it with its file. A refused upload does not hold the writes
+  behind it: a row that names its file is still sent, so show the refusal and let the user retry.
+
+```kotlin
+--8<-- "StorageExamples.kt:queued-upload-lists"
+```
+
+`storage.pendingUploads()` lists the current user's uploads still to send, in queue order, each a
+`PendingUpload` with its `id`, `bucketId`, `path`, `createdAt`, `sizeBytes`, `contentType` and
+`upsert`; `discardPendingMutation(id)` drops one, with its file. They count as writes in
+`syncStatus` and in `pendingMutationCount()` with no table; `pendingMutations()` lists the row
+writes beside them. They stay with the user who made them across a sign-out, as queued rows do,
+and go with `clearLocalData()` ([Signing out and switching users](sign-out.md)). Resumable uploads,
+and every other write, are never queued.
+
 ## Writes
 
-Uploads, updates, deletes, moves and copies are online only, and nothing is queued. Offline, a
-write is tried whatever the connectivity monitor says and fails with supabase-kt's own
-connectivity error; with network access off, every Storage call but a download throws
+Uploads without a strategy, updates, deletes, moves and copies are online only, and nothing is
+queued. Offline, a write is tried whatever the connectivity monitor says and fails with
+supabase-kt's own connectivity error; with network access off, every Storage call but a download throws
 `NetworkDisabledException` and sends nothing, and a download is answered from the file cache (or
 throws `NetworkDisabledException` with nothing cached). A write that reaches the server drops the
-cached copies it made stale, a resumable upload once it finishes. An upload does not put its bytes
-in the cache, so a file uploaded just before the device goes offline is not available offline
-until it is downloaded. The sample uploads a photo with progress, from its own queue of photos
-waiting to upload ([below](#photos-picked-offline-the-apps-own-queue)), replaces a file in place,
-and moves or copies one to another task's folder, writing the photo's row too, since the schema
-ties a row to its path:
+cached copies it made stale, a resumable upload once it finishes. Such an upload does not put its
+bytes in the cache, so a file uploaded just before the device goes offline is not available offline
+until it is downloaded; a [queued upload](#queued-uploads) does. The Android sample adds a photo
+through the queued upload, the iOS sample from its own queue of photos waiting to upload
+([below](#photos-picked-offline)); both replace a file in place, and move or copy one to another
+task's folder, writing the photo's row too, since the schema ties a row to its path:
 
 From the samples: [TaskPhotoFiles.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/TaskPhotoFiles.kt) · [OfflineTaskRepository.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/OfflineTaskRepository.kt) · [TaskRepository+Photos.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository+Photos.swift)
 
@@ -217,148 +311,103 @@ From the samples: [TaskPhotoFiles.kt](https://github.com/nesfeder/supabase-offli
     --8<-- "Data/TaskRepository+Photos.swift:signed-upload"
     ```
 
-## Photos picked offline: the app's own queue
+## Photos picked offline
 
-The library never queues a Storage write, so an app that lets a user add a photo offline keeps the
-photo in a queue of its own until the upload lands, and then references the library's cached copy.
-Both samples do this; the queue is theirs, not the library's, and Storage writes still need a
-connection, as [Writes](#writes) says.
+The Android sample adds every photo through the queued upload ([above](#queued-uploads)); the iOS
+sample keeps a queue of its own, written before the library could queue an upload.
 
-- **A directory the app owns**, never the library's data directory or file cache: per photo, a JPEG
-  named by the photo's id (made on the device, encoded as every upload is) and, written after it, a
-  small JSON record with the task's id, the photo's id, its Storage path
-  (`<user id>/<task id>/<photo id>.jpg`), when it was picked, its state (waiting, uploading, or
-  failed with the app's sentence and the number of tries) and its content type.
+### Android: the queued upload
+
 - **Every photo goes through it**: New task's **Add photo**, several at once with their thumbnails,
-  files its photos as waiting once the task is added (a queued insert offline), and the task
-  detail's **Add photo** files one the same way; online it uploads at once.
+  adds its photos once the task is added (a queued insert offline), and the task detail's **Add
+  photo** adds one the same way. Each is `upload(path, jpeg, QueueIfOffline)` of the photo's file
+  at `<user id>/<task id>/<photo id>.jpg` (the ids made on the device), through a bucket without the
+  app's `setHeader`, since a bucket with a header sends an upload at once instead of queuing it;
+  then the `task_photos` row, a write queued behind the file. Offline both wait, and a later sync
+  sends the task, the file and the row in that order. Online the file is sent at once and the row
+  after it, from the repository's scope rather than the screen's, and the photo shows meanwhile,
+  marked waiting. The mark has no progress yet. When that send fails (Storage refuses it, or
+  answers a `500`), the library throws and keeps nothing, as for a row write sent at once, so the
+  app keeps the photo itself: its bytes and a record under `failed-photo-adds/` in its files, shown
+  marked failed with Storage's words, across restarts, until **Retry** adds it again or **Remove**
+  deletes it.
+- **Shown from the device at once.** The queued row is in the photo lists as any queued write is,
+  and its file is drawn from `cachedFile`, which answers the queued copy; a refused one is drawn
+  from its entry's `localPath`, which `cachedFile` never answers. The lists mark a photo
+  "Waiting to upload" while `storage.pendingUploads()` holds its path, and "Upload failed", with
+  Storage's message, while `storage.rejectedUploads()` does. A failed one offers **Retry**
+  (`retryRejectedMutation`, switched off when its file is gone) and **Remove**, a waiting one
+  **Remove**. The viewer hides Details, Share link, Replace, Move and Duplicate for either, which
+  need the object in the bucket, with a line saying so.
+- **Failures.** A file whose answer was lost is sent again, and Storage's duplicate refusal counts
+  it stored once the object at its path is the photo's bytes. One Storage refuses on replay keeps its file on the rejected list; its row,
+  queued behind it, is sent all the same, so the photo stays listed, marked failed, until Retry or
+  Remove.
+- **Deletes and clears.** Remove discards a waiting upload, or dismisses a refused one, with the
+  row's queued writes; then it deletes the row and, online, the file, wherever an upload that ended
+  meanwhile left them. A photo still being added is removed once the add ends. Deleting a task
+  discards its photos' waiting uploads first, since a discard waits for one on the wire, then
+  deletes its files, one that landed meanwhile too, then dismisses its refused uploads. Start over
+  discards the waiting uploads the same way before `clearLocalData()`, which does not wait for an
+  upload on the wire, and its deletes. Clear local cache needs nothing more than
+  `clearLocalData()`, which drops the queued uploads with their files.
+
+From the samples: [TaskDetailViewModel.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/ui/detail/TaskDetailViewModel.kt) · [OfflineTaskRepository.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/OfflineTaskRepository.kt)
+
+```kotlin
+--8<-- "ui/detail/TaskDetailViewModel.kt:pending-photo-add"
+
+--8<-- "data/supabase/OfflineTaskRepository.kt:pending-photo-add"
+
+--8<-- "data/supabase/OfflineTaskRepository.kt:pending-photo-merge"
+
+--8<-- "data/supabase/OfflineTaskRepository.kt:pending-photo-upload"
+
+--8<-- "data/supabase/OfflineTaskRepository.kt:pending-photo-clear"
+```
+
+### iOS: the app's own queue
+
+The iOS sample holds a photo in a queue of its own until the upload lands, and then references the
+library's cached copy. Its uploads are made without a strategy, so they need a connection, as
+[Writes](#writes) says.
+
+- **A directory the app owns**, in Application Support beside the library's data directory: per
+  photo, a JPEG named by the photo's id and, written after it, a small JSON record with the task's
+  id, the photo's id, its Storage path, when it was picked, its state (waiting, uploading, or
+  failed with the app's sentence and the number of tries) and its content type.
 - **Shown from the device at once.** The task's photos and the Photos tab merge the `task_photos`
-  rows with the records, each photo once; a pending photo shows from its own file, marked "Waiting
-  to upload", "Uploading" or "Upload failed". A failed one offers **Retry** (switched off when no
-  try can succeed) and **Remove**, a waiting one **Remove**, not while it uploads. The viewer opens
-  it from its file and hides Details, Share link, Replace, Move and Duplicate, which need the
-  object in the bucket, with a line saying so.
-- **One uploader** watches `syncStatus`. While the network is neither `OFFLINE` nor `DISABLED` (so
-  Simulate offline pauses it, as it pauses the mutation queue) and a user is signed in, it uploads
-  the waiting photos one at a time, oldest first: `upload` of the file; only once Storage has it,
-  the `task_photos` row through the library, a write the queue holds like any other, so it waits
-  behind its task's queued insert; then `ensureCachedFile` (if that fails the photo is stored all
-  the same, and downloaded when next shown); then the app's file and record are deleted. The server
-  never holds a row that names a missing object. Uploads run while the app runs.
-- **Failures.** A failure marks the photo failed and keeps its file, for the next online transition
-  or Retry; one for want of the network ends the pass. A refusal no try can change (Storage's
-  policies answering 403, say, or the row refused because its task is gone) stays failed until
-  Remove. A lost answer never stores anything twice: a retry first asks Storage whether an earlier
-  try stored the file, Storage's "already exists" counts as stored (the path names a photo id this
-  device made), and the row is an `upsert` that ignores a duplicate. Against hosted Storage the
-  `exists` check is what catches it: supabase-kt reports a duplicate there as HTTP 400, not 409.
+  rows with the records, each photo once, marked "Waiting to upload", "Uploading" or "Upload
+  failed", with **Retry** and **Remove**.
+- **One uploader** follows `syncStatus` and uploads the waiting photos one at a time, oldest
+  first: the file, then, only once Storage has it, the row through the library, then
+  `ensureCachedFile`, then the app's file and record are deleted. A retry first asks Storage
+  whether an earlier try stored the file, and the row is an `upsert` that ignores a duplicate.
+  Through the Swift package Storage's refusal keeps its own `Duplicate` code whatever the HTTP
+  status, so the upload's "already exists" counts as stored there too.
 - **Deletes and clears.** Deleting a task deletes its pending photos, and Remove deletes one. Clear
-  local cache and Start over delete the whole directory, which `clearLocalData()` never touches. A
-  photo removed any of these ways while its upload is on the wire gets no row: once the upload
-  returns, its file is deleted from the bucket. Start over first waits for an upload in progress and
-  holds new ones, so none lands after its deletes, and clears the directory with the sign-out step.
+  local cache and Start over delete the whole directory, which `clearLocalData()` never touches;
+  Start over first waits for an upload in progress.
 
-From the samples: [PendingPhoto.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/PendingPhoto.kt) · [OfflineTasksApplication.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/OfflineTasksApplication.kt) · [PendingPhotoQueue.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/PendingPhotoQueue.swift)
+From the samples: [PendingPhotoQueue.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/PendingPhotoQueue.swift) · [TaskDetailModel.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Detail/TaskDetailModel.swift) · [TaskRepository+PendingPhotos.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository+PendingPhotos.swift) · [TaskRepository+Photos.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository+Photos.swift) · [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift)
 
-=== "Android"
+```swift
+--8<-- "Data/PendingPhotoQueue.swift:pending-photo-record"
 
-    ```kotlin
-    --8<-- "data/PendingPhoto.kt:pending-photo-record"
+--8<-- "Detail/TaskDetailModel.swift:pending-photo-add"
 
-    --8<-- "OfflineTasksApplication.kt:pending-photo-record"
-    ```
+--8<-- "Data/TaskRepository+PendingPhotos.swift:pending-photo-add"
 
-=== "iOS"
+--8<-- "Data/TaskRepository+PendingPhotos.swift:pending-photo-upload"
 
-    ```swift
-    --8<-- "Data/PendingPhotoQueue.swift:pending-photo-record"
-    ```
+--8<-- "Data/TaskRepository+Photos.swift:upload"
 
-    The iOS sample keeps the directory in Application Support, beside the library's data directory.
+--8<-- "Data/TaskRepository+Photos.swift:pending-photo-upload"
 
-Picking a photo files it, and the uploader is told; nothing waits for the network:
+--8<-- "Data/TaskRepository+PendingPhotos.swift:pending-photo-merge"
 
-From the samples: [TaskDetailViewModel.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/ui/detail/TaskDetailViewModel.kt) · [OfflineTaskRepository.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/OfflineTaskRepository.kt) · [PendingPhotoDirectory.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/PendingPhotoDirectory.kt) · [TaskDetailModel.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Detail/TaskDetailModel.swift) · [TaskRepository+PendingPhotos.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository+PendingPhotos.swift)
-
-=== "Android"
-
-    ```kotlin
-    --8<-- "ui/detail/TaskDetailViewModel.kt:pending-photo-add"
-
-    --8<-- "data/supabase/OfflineTaskRepository.kt:pending-photo-add"
-
-    --8<-- "data/PendingPhotoDirectory.kt:pending-photo-add"
-    ```
-
-=== "iOS"
-
-    ```swift
-    --8<-- "Detail/TaskDetailModel.swift:pending-photo-add"
-
-    --8<-- "Data/TaskRepository+PendingPhotos.swift:pending-photo-add"
-    ```
-
-The uploader's one photo: the file, then the row, then the hand-over to the cache:
-
-From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/OfflineTaskRepository.kt) · [TaskRepository+PendingPhotos.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository+PendingPhotos.swift) · [TaskRepository+Photos.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository+Photos.swift)
-
-=== "Android"
-
-    ```kotlin
-    --8<-- "data/supabase/OfflineTaskRepository.kt:pending-photo-upload"
-    ```
-
-=== "iOS"
-
-    ```swift
-    --8<-- "Data/TaskRepository+PendingPhotos.swift:pending-photo-upload"
-
-    --8<-- "Data/TaskRepository+Photos.swift:upload"
-
-    --8<-- "Data/TaskRepository+Photos.swift:pending-photo-upload"
-    ```
-
-    Through the Swift package Storage's refusal keeps its own `Duplicate` code whatever the HTTP
-    status, so the upload's "already exists" counts as stored there too.
-
-`ensureCachedFile` downloads the photo the device has just sent.
-
-The rows and the records, merged for a task, or for every task on the Photos tab:
-
-From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/OfflineTaskRepository.kt) · [PendingPhoto.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/PendingPhoto.kt) · [TaskRepository+PendingPhotos.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository+PendingPhotos.swift)
-
-=== "Android"
-
-    ```kotlin
-    --8<-- "data/supabase/OfflineTaskRepository.kt:pending-photo-merge"
-
-    --8<-- "data/PendingPhoto.kt:pending-photo-merge"
-    ```
-
-=== "iOS"
-
-    ```swift
-    --8<-- "Data/TaskRepository+PendingPhotos.swift:pending-photo-merge"
-    ```
-
-What Clear local cache and Start over remove, the library's data and then the app's directory:
-
-From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/OfflineTaskRepository.kt) · [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift)
-
-=== "Android"
-
-    ```kotlin
-    --8<-- "data/supabase/OfflineTaskRepository.kt:pending-photo-clear"
-    ```
-
-=== "iOS"
-
-    ```swift
-    --8<-- "Data/TaskRepository.swift:pending-photo-clear"
-    ```
-
-    Start over clears the directory at its own clear step, right after the library's
-    `clearLocalData()`.
+--8<-- "Data/TaskRepository.swift:pending-photo-clear"
+```
 
 ## Paths that are never cached
 
@@ -376,7 +425,9 @@ segment that starts with a letter and a colon, like `u:42`, is cached, under a h
 
 With Auth installed, the file cache belongs to one user at a time, like the query cache, and
 `clearLocalData()` deletes every file ([Signing out and switching users](sign-out.md)); a download
-in flight keeps its temporary file until it ends, then deletes it. Its bound is
+in flight keeps its temporary file until it ends, then deletes it. A queued upload's file belongs to
+the user who made it, as the upload does: it stays when the file cache passes to another user, and
+goes with `clearLocalData()`. Its bound is
 `fileCacheSizeBytes` ([Cache size and eviction](eviction.md#the-file-cache)); where the files live
 is on [On-device data](../reference/on-device-data.md).
 
@@ -385,7 +436,9 @@ is on [On-device data](../reference/on-device-data.md).
 Facts about the engine; one row per condition, the conditions those of the
 [one-shot read matrix](read-strategies.md#behavior-matrix), with warm and cold saying whether the
 object is cached. Writes are `upload`, `update`, `delete`, `move`, `copy` and the resumable and
-signed-URL uploads.
+signed-URL uploads; an upload made with a strategy follows the queue instead
+([Queued uploads](#queued-uploads)), and while it waits `cachedFile` and `ensureCachedFile`
+answer its file under every condition.
 
 | Condition | `downloadAuthenticated` / `downloadPublic` | `ensureCachedFile` | `cachedFile` | Writes |
 |---|---|---|---|---|

@@ -101,7 +101,7 @@ class RejectionCrashWindowTest {
             )
 
         // Then
-        assertIs<MutationQueueReplayer.HeadSendOutcome.Sent>(outcome)
+        assertIs<MutationQueueReplayer.HeadSendOutcome.Sent<*>>(outcome)
         assertEquals(emptyList(), store.mutationQueue.rejectedList.rejections().map { it.id })
     }
 

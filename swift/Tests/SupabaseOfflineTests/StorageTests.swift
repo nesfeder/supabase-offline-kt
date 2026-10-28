@@ -94,10 +94,11 @@ struct StorageTests {
         try await client.close()
     }
 
-    /// The package refuses these names in `ensureCachedFile` and encodes them in
+    /// The package refuses these names in `ensureCachedFile` and `pinCachedFile` and encodes them in
     /// `escapingURLDelimiters` because the core refuses to cache them. When this test fails, the
     /// core caches names holding that character: remove the package's refusal in
-    /// `ensureCachedFile`, `escapingURLDelimiters` and `holdsURLDelimiters`, and the tests of them.
+    /// `refuseANameTheCacheCannotHold`, `escapingURLDelimiters` and `holdsURLDelimiters`, and the
+    /// tests of them.
     @Test(arguments: ["photo?v=1.png", "100%.png", "a#b.png"])
     func theCoreStillRefusesANameHoldingEachDelimiter(name: String) async throws {
         // Given
@@ -405,12 +406,56 @@ struct StorageTests {
         try await client.close()
     }
 
+    @Test func aPinHoldsUntilItIsUnpinnedOrTheObjectEvictedAndSendsNothing() async throws {
+        // Given
+        let storage = FakeStorageServer()
+        let client = Self.makeClient(storage)
+        let bucket = client.storage.from("avatars")
+
+        // When pinned before any download, unpinned, then pinned again and evicted
+        try await bucket.pinCachedFile(path: "a.png")
+        let pinnedBeforeADownload = try await bucket.isCachedFilePinned(path: "a.png")
+        let nothingSentByThePin = storage.requests.values.isEmpty
+        _ = try await bucket.download(path: "a.png")
+        try await bucket.unpinCachedFile(path: "a.png")
+        let pinnedAfterUnpinning = try await bucket.isCachedFilePinned(path: "a.png")
+        try await bucket.pinCachedFile(path: "a.png")
+        try await bucket.evictCachedFile(path: "a.png")
+
+        // Then the eviction took the copy and the pin
+        #expect(pinnedBeforeADownload)
+        #expect(nothingSentByThePin)
+        #expect(!pinnedAfterUnpinning)
+        #expect(try await bucket.isCachedFilePinned(path: "a.png") == false)
+        #expect(try await bucket.cachedFile(path: "a.png") == nil)
+        try await client.close()
+    }
+
+    @Test(arguments: [("photo?v=1.png", true), ("../a.png", false)])
+    func pinningANameTheCacheCannotHoldIsRefused(name: String, holdsADelimiter: Bool) async throws {
+        // Given
+        let storage = FakeStorageServer()
+        let client = Self.makeClient(storage)
+        let bucket = client.storage.from("avatars")
+
+        // When
+        let error = await #expect(throws: OfflineError.self) { try await bucket.pinCachedFile(path: name) }
+
+        // Then
+        #expect(error?.code == .invalidRequest)
+        #expect(error?.message.contains("keep those characters out of the names") == holdsADelimiter)
+        #expect(try await bucket.isCachedFilePinned(path: name) == false)
+        #expect(storage.requests.values.isEmpty)
+        try await client.close()
+    }
+
     @Test func clearingTheFileCacheDeletesEveryFileAndKeepsTheQueue() async throws {
-        // Given a cached file, and a write queued offline
+        // Given a cached file, pinned, and a write queued offline
         let storage = FakeStorageServer()
         let client = Self.makeClient(storage)
         let bucket = client.storage.from("avatars")
         _ = try await bucket.download(path: "a.png")
+        try await bucket.pinCachedFile(path: "a.png")
         storage.goOffline()
         _ = try await client.from("todos").insert(TodoRow(id: 3, title: "Tea", done: false)).execute()
         #expect(try await client.pendingMutationCount() == 1)
@@ -418,8 +463,9 @@ struct StorageTests {
         // When
         try await client.storage.clearFileCache()
 
-        // Then the file is gone, and the write still waits
+        // Then the file and its pin are gone, and the write still waits
         #expect(try await bucket.cachedFile(path: "a.png") == nil)
+        #expect(try await bucket.isCachedFilePinned(path: "a.png") == false)
         #expect(try await client.pendingMutationCount() == 1)
         try await client.close()
     }
@@ -768,6 +814,119 @@ struct StorageTests {
         try await client.close()
     }
 
+    // MARK: - Uploads made with a strategy
+
+    @Test func anUploadQueuedOfflineIsListedAnsweredFromTheDeviceAndSentLater() async throws {
+        // Given offline
+        let storage = FakeStorageServer()
+        let client = Self.makeClient(storage)
+        let bucket = client.storage.from("avatars")
+        storage.goOffline()
+
+        // When
+        let outcome = try await bucket.upload(
+            "folder/a.png",
+            data: FakeStorageServer.photo,
+            mutationStrategy: .queueIfOffline,
+            options: OfflineBucketApi.UploadOptions(contentType: "image/png")
+        )
+        let listed = try await client.storage.pendingUploads().first()
+        let cached = try #require(try await bucket.cachedFile(path: "folder/a.png"))
+        let ensured = try await bucket.ensureCachedFile(path: "folder/a.png")
+        let count = try await client.pendingMutationCount()
+
+        // Then it is queued, listed, counted, and its bytes on the device answer at once
+        guard case .queued(let pending) = outcome else {
+            Issue.record("expected a queued upload, got \(outcome)")
+            return
+        }
+        #expect(outcome.isQueued)
+        #expect(outcome.response == nil)
+        #expect(pending.bucketId == "avatars")
+        #expect(pending.path == "folder/a.png")
+        #expect(pending.sizeBytes == FakeStorageServer.photo.count)
+        #expect(pending.contentType == "image/png")
+        #expect(!pending.upsert)
+        #expect(listed == [pending])
+        #expect(cached.sizeBytes == FakeStorageServer.photo.count)
+        #expect(ensured == cached)
+        #expect(count == 1)
+
+        // When the network is back and the queue is sent
+        storage.goOnline()
+        let report = try await client.syncPendingMutations()
+
+        // Then Storage has it, and nothing waits
+        #expect(report.remainingCount == 0)
+        #expect(report.rejectedUploads.isEmpty)
+        #expect(try await client.storage.pendingUploads().first().isEmpty)
+        #expect(storage.requests.values.contains { $0.method == "POST" && $0.body == FakeStorageServer.photo })
+        try await client.close()
+    }
+
+    @Test func anUploadSentAtOnceAnswersWithStoragesResponse() async throws {
+        // Given
+        let storage = FakeStorageServer()
+        let client = Self.makeClient(storage)
+
+        // When
+        let outcome = try await client.storage.from("avatars").upload(
+            "folder/a.png",
+            data: FakeStorageServer.photo,
+            mutationStrategy: .queueIfOffline
+        )
+
+        // Then
+        #expect(!outcome.isQueued)
+        #expect(outcome.response == OfflineBucketApi.FileUploadResponse(id: "object-1", path: "folder/a.png", key: "avatars/a.png"))
+        #expect(try await client.storage.pendingUploads().first().isEmpty)
+        try await client.close()
+    }
+
+    @Test func aRefusedUploadIsListedWithStoragesAnswerAndDismissedById() async throws {
+        // Given an upload queued offline, then refused by Storage's policy
+        let storage = FakeStorageServer()
+        let client = Self.makeClient(storage)
+        storage.goOffline()
+        _ = try await client.storage.from("avatars").upload("a.png", data: FakeStorageServer.photo, mutationStrategy: .queueIfOffline)
+        storage.answer { _ in FakeStorageServer.refusal(ScriptedStorageRefusal(status: 400, code: "Unauthorized", message: "refused")) }
+
+        // When
+        _ = try await client.syncPendingMutations()
+        let refused = try await client.storage.rejectedUploadList()
+        let rows = try await client.rejectedMutationList()
+
+        // Then it is on the rejected list, apart from the row writes, and can be dismissed by id
+        let entry = try #require(refused.first)
+        #expect(refused.count == 1)
+        #expect(entry.path == "a.png")
+        #expect(entry.localPath != nil)
+        #expect(entry.serverError?.status == 400)
+        #expect(entry.isRetryable)
+        #expect(rows.isEmpty)
+        #expect(try await client.storage.rejectedUploads().first() == refused)
+        try await client.dismissRejectedMutation(id: entry.id)
+        #expect(try await client.storage.rejectedUploadList().isEmpty)
+        try await client.close()
+    }
+
+    @Test func emptyDataIsRefusedBeforeAnUploadIsQueued() async throws {
+        // Given
+        let storage = FakeStorageServer()
+        let client = Self.makeClient(storage)
+
+        // When
+        let error = await #expect(throws: OfflineError.self) {
+            try await client.storage.from("avatars").upload("a.png", data: Data(), mutationStrategy: .queueIfOffline)
+        }
+
+        // Then
+        #expect(error?.code == .invalidRequest)
+        #expect(storage.requests.values.isEmpty)
+        #expect(try await client.pendingMutationCount() == 0)
+        try await client.close()
+    }
+
     @Test func aBucketOfAClosedClientThrowsClientClosed() async throws {
         // Given
         let storage = FakeStorageServer()
@@ -782,6 +941,8 @@ struct StorageTests {
         let authenticatedURL = await #expect(throws: OfflineError.self) { try await bucket.authenticatedURL(path: "a.png") }
         let evicted = await #expect(throws: OfflineError.self) { try await bucket.evictCachedFile(path: "a.png") }
         let cleared = await #expect(throws: OfflineError.self) { try await client.storage.clearFileCache() }
+        let pinned = await #expect(throws: OfflineError.self) { try await bucket.pinCachedFile(path: "a.png") }
+        let pinAsked = await #expect(throws: OfflineError.self) { try await bucket.isCachedFilePinned(path: "a.png") }
 
         // Then the URL builders too, as they read the opened client
         #expect(download?.code == .clientClosed)
@@ -790,6 +951,8 @@ struct StorageTests {
         #expect(authenticatedURL?.code == .clientClosed)
         #expect(evicted?.code == .clientClosed)
         #expect(cleared?.code == .clientClosed)
+        #expect(pinned?.code == .clientClosed)
+        #expect(pinAsked?.code == .clientClosed)
         #expect(storage.requests.values.isEmpty)
     }
 }

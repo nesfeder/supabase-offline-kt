@@ -26,6 +26,7 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.http.decodeURLPart
 import io.ktor.http.headersOf
 import java.io.IOException
+import java.security.MessageDigest
 import kotlin.time.Clock
 import kotlin.time.Duration.Companion.microseconds
 import kotlin.time.Instant
@@ -82,6 +83,12 @@ class FakeSupabaseServer {
 
     /** While true, every upload to the bucket answers HTTP 500, as a failing Storage does. */
     var isUploadFailing: Boolean = false
+
+    /**
+     * While true, every upload to the bucket is refused as hosted Storage refuses one a policy
+     * forbids: HTTP 400, with Storage's own `403` in the body.
+     */
+    var isUploadRefused: Boolean = false
 
     /** While true, every delete from the bucket answers HTTP 403, as a refusing policy would. */
     var isDeleteRefused: Boolean = false
@@ -311,11 +318,40 @@ class FakeSupabaseServer {
                 prefixes.forEach { files.remove(it.jsonPrimitive.content) }
                 json("[]", HttpStatusCode.OK)
             }
+            request.method == HttpMethod.Get &&
+                segments.take(3) == listOf("object", "info", BUCKET) -> {
+                // What the library reads when Storage refuses an upload an earlier send may have
+                // stored: the object's size, and its MD5 as the ETag, as S3 gives a single part's
+                val objectPath = segments.drop(3).joinToString("/")
+                files[objectPath]?.let { bytes ->
+                    val md5 =
+                        MessageDigest.getInstance("MD5").digest(bytes).joinToString("") {
+                            "%02x".format(it)
+                        }
+                    json(
+                        """{"name":"$objectPath","id":"object","version":"v1",""" +
+                            """"created_at":"2026-10-27T00:00:00Z","size":${bytes.size},""" +
+                            """"content_type":"image/jpeg","etag":"\"$md5\""}""",
+                        HttpStatusCode.OK,
+                    )
+                }
+                    ?: json(
+                        """{"statusCode":"404","error":"not_found","message":"Object not found"}""",
+                        HttpStatusCode.BadRequest,
+                    )
+            }
             request.method == HttpMethod.Head && segments.take(2) == listOf("object", BUCKET) -> {
                 // Storage answers a missing object with HTTP 400, which `exists` reads as false.
                 val objectPath = segments.drop(2).joinToString("/")
                 json("", if (objectPath in files) HttpStatusCode.OK else HttpStatusCode.BadRequest)
             }
+            request.method == HttpMethod.Post &&
+                segments.take(2) == listOf("object", BUCKET) &&
+                isUploadRefused ->
+                json(
+                    """{"statusCode":"403","error":"Unauthorized","message":"new row violates row-level security policy"}""",
+                    HttpStatusCode.BadRequest,
+                )
             request.method == HttpMethod.Post &&
                 segments.take(2) == listOf("object", BUCKET) &&
                 isUploadFailing ->

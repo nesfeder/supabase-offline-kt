@@ -3,14 +3,15 @@
 import SupabaseOfflineCore
 
 /// What one call of ``SupabaseOfflineClient/syncPendingMutations(table:)`` did with the current
-/// user's queued writes.
+/// user's queued writes. An upload queued with the row writes is a write of the queue: the counts
+/// count it, and a refused one is in ``rejectedUploads``.
 public struct SyncReport: Sendable, Hashable {
 
     /// The writes this call sent and the server accepted.
     public let syncedCount: Int
 
-    /// The writes refused for good during this call, by the server or by the client itself; each is
-    /// now on the rejected list.
+    /// The row writes refused for good during this call, by the server or by the client itself;
+    /// each is now on the rejected list. A refused upload is in ``rejectedUploads``.
     public let rejected: [RejectedMutation]
 
     /// The writes still queued when the call returned, of the table synced or of every table: more
@@ -46,6 +47,10 @@ public struct SyncReport: Sendable, Hashable {
     /// own sending gives the reason its last pass ended for.
     public let stopReason: SyncStopReason
 
+    /// The queued uploads Storage refused for good during this call, now on
+    /// ``OfflineStorage/rejectedUploads()`` unless local data was cleared since.
+    public let rejectedUploads: [RejectedUpload]
+
     /// Built by the package, and by the testing product's factories; without a `stopReason`, the
     /// one the core gives a report with these counts.
     package init(
@@ -57,7 +62,8 @@ public struct SyncReport: Sendable, Hashable {
         conflictsResolvedCount: Int = 0,
         conflictsKeptServerCount: Int = 0,
         conflicted: [ConflictedMutation] = [],
-        stopReason: SyncStopReason? = nil
+        stopReason: SyncStopReason? = nil,
+        rejectedUploads: [RejectedUpload] = []
     ) {
         self.syncedCount = syncedCount
         self.rejected = rejected
@@ -69,6 +75,7 @@ public struct SyncReport: Sendable, Hashable {
         self.conflicted = conflicted
         self.stopReason =
             stopReason ?? .implied(heldBehindOtherTablesCount: heldBehindOtherTablesCount)
+        self.rejectedUploads = rejectedUploads
     }
 }
 
@@ -85,7 +92,8 @@ extension SyncReport {
             conflictsResolvedCount: Int(report.conflictsResolvedCount),
             conflictsKeptServerCount: Int(report.conflictsKeptServerCount),
             conflicted: try report.conflicted.map(ConflictedMutation.init(core:)),
-            stopReason: SyncStopReason(core: report.stopReason)
+            stopReason: SyncStopReason(core: report.stopReason),
+            rejectedUploads: report.rejectedUploads.map(RejectedUpload.init(core:))
         )
     }
 }

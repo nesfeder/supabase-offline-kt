@@ -783,7 +783,7 @@ class MutationQueueReplayerTest {
             runCurrent()
 
             // Then — the send landed; the sync waited for it, then sent the second write, once
-            assertIs<MutationQueueReplayer.HeadSendOutcome.Sent>(head.await())
+            assertIs<MutationQueueReplayer.HeadSendOutcome.Sent<*>>(head.await())
             assertFalse(returnedWhileHeld)
             val report = sync.await()
             assertEquals(1 to 0, report.syncedCount to report.remainingCount)

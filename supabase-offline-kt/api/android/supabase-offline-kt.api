@@ -290,8 +290,13 @@ public abstract interface class io/github/nesfeder/supabase/offline/OfflineBucke
 	public static synthetic fun ensureCachedFile$default (Lio/github/nesfeder/supabase/offline/OfflineBucketApi;Ljava/lang/String;ZLkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
 	public abstract fun evictCachedFile (Ljava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun evictCachedFile (Ljava/lang/String;Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public abstract fun isCachedFilePinned (Ljava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public abstract fun pinCachedFile (Ljava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public synthetic fun setHeader (Ljava/lang/String;Ljava/lang/String;)Lio/github/jan/supabase/storage/BucketApi;
 	public abstract fun setHeader (Ljava/lang/String;Ljava/lang/String;)Lio/github/nesfeder/supabase/offline/OfflineBucketApi;
+	public abstract fun unpinCachedFile (Ljava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public abstract fun upload (Ljava/lang/String;[BLio/github/nesfeder/supabase/offline/MutationStrategy;Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public static synthetic fun upload$default (Lio/github/nesfeder/supabase/offline/OfflineBucketApi;Ljava/lang/String;[BLio/github/nesfeder/supabase/offline/MutationStrategy;Lkotlin/jvm/functions/Function1;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
 }
 
 public final class io/github/nesfeder/supabase/offline/OfflineBucketApi_androidKt {
@@ -344,6 +349,9 @@ public final class io/github/nesfeder/supabase/offline/OfflineStorage {
 	public final fun clearFileCache (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public final fun from (Ljava/lang/String;)Lio/github/nesfeder/supabase/offline/OfflineBucketApi;
 	public final fun get (Ljava/lang/String;)Lio/github/nesfeder/supabase/offline/OfflineBucketApi;
+	public final fun pendingUploads ()Lkotlinx/coroutines/flow/Flow;
+	public final fun rejectedUploadList (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public final fun rejectedUploads ()Lkotlinx/coroutines/flow/Flow;
 }
 
 public final class io/github/nesfeder/supabase/offline/PendingMutation {
@@ -362,6 +370,26 @@ public final class io/github/nesfeder/supabase/offline/PendingMutation {
 	public final fun getOperation ()Lio/github/nesfeder/supabase/offline/MutationOperation;
 	public final fun getRowKeys ()Ljava/util/List;
 	public final fun getTable ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/github/nesfeder/supabase/offline/PendingUpload {
+	public final fun component1 ()J
+	public final fun component2 ()Ljava/lang/String;
+	public final fun component3 ()Ljava/lang/String;
+	public final fun component4 ()Lkotlin/time/Instant;
+	public final fun component5 ()J
+	public final fun component6 ()Ljava/lang/String;
+	public final fun component7 ()Z
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getBucketId ()Ljava/lang/String;
+	public final fun getContentType ()Ljava/lang/String;
+	public final fun getCreatedAt ()Lkotlin/time/Instant;
+	public final fun getId ()J
+	public final fun getPath ()Ljava/lang/String;
+	public final fun getSizeBytes ()J
+	public final fun getUpsert ()Z
 	public fun hashCode ()I
 	public fun toString ()Ljava/lang/String;
 }
@@ -552,6 +580,36 @@ public final class io/github/nesfeder/supabase/offline/RejectedMutation {
 	public fun toString ()Ljava/lang/String;
 }
 
+public final class io/github/nesfeder/supabase/offline/RejectedUpload {
+	public final fun component1 ()J
+	public final fun component10 ()Lkotlin/time/Instant;
+	public final fun component11 ()Z
+	public final fun component12 ()Ljava/lang/String;
+	public final fun component2 ()Ljava/lang/String;
+	public final fun component3 ()Ljava/lang/String;
+	public final fun component4 ()Lkotlin/time/Instant;
+	public final fun component5 ()J
+	public final fun component6 ()Ljava/lang/String;
+	public final fun component7 ()Z
+	public final fun component8 ()Lio/github/nesfeder/supabase/offline/ServerError;
+	public final fun component9 ()Ljava/lang/String;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getBucketId ()Ljava/lang/String;
+	public final fun getContentType ()Ljava/lang/String;
+	public final fun getCreatedAt ()Lkotlin/time/Instant;
+	public final fun getId ()J
+	public final fun getLocalPath ()Ljava/lang/String;
+	public final fun getMessage ()Ljava/lang/String;
+	public final fun getPath ()Ljava/lang/String;
+	public final fun getRejectedAt ()Lkotlin/time/Instant;
+	public final fun getServerError ()Lio/github/nesfeder/supabase/offline/ServerError;
+	public final fun getSizeBytes ()J
+	public final fun getUpsert ()Z
+	public fun hashCode ()I
+	public final fun isRetryable ()Z
+	public fun toString ()Ljava/lang/String;
+}
+
 public abstract interface class io/github/nesfeder/supabase/offline/ResponseTrust {
 }
 
@@ -592,6 +650,7 @@ public final class io/github/nesfeder/supabase/offline/SyncFailedException : io/
 
 public final class io/github/nesfeder/supabase/offline/SyncReport {
 	public final fun component1 ()I
+	public final fun component10 ()Ljava/util/List;
 	public final fun component2 ()Ljava/util/List;
 	public final fun component3 ()I
 	public final fun component4 ()I
@@ -607,6 +666,7 @@ public final class io/github/nesfeder/supabase/offline/SyncReport {
 	public final fun getConflictsResolvedCount ()I
 	public final fun getHeldBehindOtherTablesCount ()I
 	public final fun getRejected ()Ljava/util/List;
+	public final fun getRejectedUploads ()Ljava/util/List;
 	public final fun getRemainingCount ()I
 	public final fun getStopReason ()Lio/github/nesfeder/supabase/offline/SyncStopReason;
 	public final fun getSyncedCount ()I
@@ -698,6 +758,27 @@ public final class io/github/nesfeder/supabase/offline/SyncStopReason$SessionCha
 public final class io/github/nesfeder/supabase/offline/SyncStopReason$SessionNotReady : io/github/nesfeder/supabase/offline/SyncStopReason {
 	public static final field INSTANCE Lio/github/nesfeder/supabase/offline/SyncStopReason$SessionNotReady;
 	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public abstract interface class io/github/nesfeder/supabase/offline/UploadOutcome {
+	public fun isQueued ()Z
+	public fun responseOrNull ()Lio/github/jan/supabase/storage/FileUploadResponse;
+}
+
+public final class io/github/nesfeder/supabase/offline/UploadOutcome$Applied : io/github/nesfeder/supabase/offline/UploadOutcome {
+	public final fun component1 ()Lio/github/jan/supabase/storage/FileUploadResponse;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getResponse ()Lio/github/jan/supabase/storage/FileUploadResponse;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/github/nesfeder/supabase/offline/UploadOutcome$Queued : io/github/nesfeder/supabase/offline/UploadOutcome {
+	public final fun component1 ()Lio/github/nesfeder/supabase/offline/PendingUpload;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getPendingUpload ()Lio/github/nesfeder/supabase/offline/PendingUpload;
 	public fun hashCode ()I
 	public fun toString ()Ljava/lang/String;
 }

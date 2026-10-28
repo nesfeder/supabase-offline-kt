@@ -222,6 +222,49 @@ public func syncReport(
     )
 }
 
+/// What a call of `SupabaseOfflineClient.syncPendingMutations(table:)` did, with the queued uploads
+/// Storage refused; every field but `rejectedUploads`, which selects this overload, defaults to the
+/// value of a call that sent nothing and ran to the end.
+///
+/// - Parameters:
+///   - syncedCount: The writes sent and accepted, uploads included.
+///   - rejected: The row writes refused for good.
+///   - remainingCount: The writes still queued, uploads included.
+///   - alreadyOnServerCount: Of `syncedCount`, the writes the server already held.
+///   - heldBehindOtherTablesCount: Of `remainingCount`, the writes a sync of one table held back
+///     behind an earlier write to another table.
+///   - conflictsResolvedCount: Of `syncedCount`, the guarded writes sent once their conflict was
+///     settled.
+///   - conflictsKeptServerCount: The guarded writes dropped because the server's row stands.
+///   - conflicted: The guarded writes parked on the conflicted list.
+///   - stopReason: Why the call returned when it did; by default, completed.
+///   - rejectedUploads: The queued uploads Storage refused for good.
+public func syncReport(
+    syncedCount: Int = 0,
+    rejected: [RejectedMutation] = [],
+    remainingCount: Int = 0,
+    alreadyOnServerCount: Int = 0,
+    heldBehindOtherTablesCount: Int = 0,
+    conflictsResolvedCount: Int = 0,
+    conflictsKeptServerCount: Int = 0,
+    conflicted: [ConflictedMutation] = [],
+    stopReason: SyncStopReason = syncStopReason(kind: .completed),
+    rejectedUploads: [RejectedUpload]
+) -> SyncReport {
+    SyncReport(
+        syncedCount: syncedCount,
+        rejected: rejected,
+        remainingCount: remainingCount,
+        alreadyOnServerCount: alreadyOnServerCount,
+        heldBehindOtherTablesCount: heldBehindOtherTablesCount,
+        conflictsResolvedCount: conflictsResolvedCount,
+        conflictsKeptServerCount: conflictsKeptServerCount,
+        conflicted: conflicted,
+        stopReason: stopReason,
+        rejectedUploads: rejectedUploads
+    )
+}
+
 /// Why a call of `SupabaseOfflineClient.syncPendingMutations(table:)` returned when it did, as
 /// `SyncReport.stopReason` holds it.
 ///
@@ -432,6 +475,137 @@ public func querySnapshot<Value: Sendable>(
         refresh: refresh,
         pendingRowKeys: pendingRowKeys
     )
+}
+
+/// An upload waiting in the mutation queue, as `OfflineStorage.pendingUploads()` lists one; wrap it
+/// in `UploadOutcome.queued(pendingUpload:)` for an upload's outcome.
+///
+/// - Parameters:
+///   - id: Its id in the queue.
+///   - bucketId: The bucket the file goes to.
+///   - path: The object path within the bucket.
+///   - createdAt: When it was queued.
+///   - sizeBytes: The file's size in bytes.
+///   - contentType: The content type it is sent with; `nil` for none.
+///   - upsert: Whether it overwrites an object already at the path.
+public func pendingUpload(
+    id: Int64,
+    bucketId: String,
+    path: String,
+    createdAt: Date,
+    sizeBytes: Int,
+    contentType: String? = nil,
+    upsert: Bool = false
+) -> PendingUpload {
+    PendingUpload(
+        id: id,
+        bucketId: bucketId,
+        path: path,
+        createdAt: createdAt,
+        sizeBytes: sizeBytes,
+        contentType: contentType,
+        upsert: upsert
+    )
+}
+
+/// A queued upload Storage refused for good, as `OfflineStorage.rejectedUploads()` lists one.
+///
+/// - Parameters:
+///   - id: Its id in the queue.
+///   - bucketId: The bucket the file was going to.
+///   - path: The object path within the bucket.
+///   - createdAt: When it was queued.
+///   - sizeBytes: The file's size in bytes.
+///   - contentType: The content type it was sent with; `nil` for none.
+///   - upsert: Whether it overwrites an object already at the path.
+///   - serverError: What Storage answered; `nil` when the client refused it itself.
+///   - message: Why it was refused.
+///   - rejectedAt: When it was refused.
+///   - isRetryable: Whether it can be queued again.
+public func rejectedUpload(
+    id: Int64,
+    bucketId: String,
+    path: String,
+    createdAt: Date,
+    sizeBytes: Int,
+    contentType: String? = nil,
+    upsert: Bool = false,
+    serverError: OfflineError.ServerError? = nil,
+    message: String,
+    rejectedAt: Date,
+    isRetryable: Bool = true
+) -> RejectedUpload {
+    RejectedUpload(
+        id: id,
+        bucketId: bucketId,
+        path: path,
+        createdAt: createdAt,
+        sizeBytes: sizeBytes,
+        contentType: contentType,
+        upsert: upsert,
+        serverError: serverError,
+        message: message,
+        rejectedAt: rejectedAt,
+        isRetryable: isRetryable,
+        localPath: nil
+    )
+}
+
+/// A queued upload Storage refused for good, with its bytes on the device at `localPath`, as
+/// `OfflineStorage.rejectedUploads()` lists one whose file is still whole.
+///
+/// - Parameters:
+///   - id: Its id in the queue.
+///   - bucketId: The bucket the file was going to.
+///   - path: The object path within the bucket.
+///   - createdAt: When it was queued.
+///   - sizeBytes: The file's size in bytes.
+///   - contentType: The content type it was sent with; `nil` for none.
+///   - upsert: Whether it overwrites an object already at the path.
+///   - serverError: What Storage answered; `nil` when the client refused it itself.
+///   - message: Why it was refused.
+///   - rejectedAt: When it was refused.
+///   - isRetryable: Whether it can be queued again.
+///   - localPath: The file-system path of its bytes on the device; `nil` when they are gone.
+public func rejectedUpload(
+    id: Int64,
+    bucketId: String,
+    path: String,
+    createdAt: Date,
+    sizeBytes: Int,
+    contentType: String? = nil,
+    upsert: Bool = false,
+    serverError: OfflineError.ServerError? = nil,
+    message: String,
+    rejectedAt: Date,
+    isRetryable: Bool = true,
+    localPath: String?
+) -> RejectedUpload {
+    RejectedUpload(
+        id: id,
+        bucketId: bucketId,
+        path: path,
+        createdAt: createdAt,
+        sizeBytes: sizeBytes,
+        contentType: contentType,
+        upsert: upsert,
+        serverError: serverError,
+        message: message,
+        rejectedAt: rejectedAt,
+        isRetryable: isRetryable,
+        localPath: localPath
+    )
+}
+
+/// Where an upload stored its object, as a bucket's `upload(_:data:options:)` returns it; wrap it in
+/// `UploadOutcome.applied(response:)` for the outcome of an upload made with a strategy.
+///
+/// - Parameters:
+///   - id: The object's id.
+///   - path: The object's path in the bucket.
+///   - key: The object's key: the bucket and the path.
+public func fileUploadResponse(id: String?, path: String, key: String?) -> OfflineBucketApi.FileUploadResponse {
+    OfflineBucketApi.FileUploadResponse(id: id, path: path, key: key)
 }
 
 /// A Storage object's copy in the file cache, as a bucket's `cachedFile(path:)` or

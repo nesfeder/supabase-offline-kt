@@ -4,10 +4,12 @@ package io.github.nesfeder.supabase.offline.internal.cache
 
 import io.github.nesfeder.supabase.offline.internal.db.CachedFileDao
 import io.github.nesfeder.supabase.offline.internal.db.MutationDao
+import io.github.nesfeder.supabase.offline.internal.db.PINNED_FILE_CACHE_KEY_PREFIX
 import io.github.nesfeder.supabase.offline.internal.db.PayloadWriteCountingDao
 import io.github.nesfeder.supabase.offline.internal.db.QUERY_SHAPE_CACHE_KEY_PREFIX
 import io.github.nesfeder.supabase.offline.internal.db.RESERVED_TABLE_NAME
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueue
+import io.github.nesfeder.supabase.offline.internal.storage.QueuedUploadFiles
 
 /**
  * Clears local data, or drops the caches for a new owner, in one transaction recording the owner.
@@ -26,12 +28,19 @@ internal class LocalData(
     private val mutationQueue: MutationQueue,
     private val queryCache: QueryCache,
     private val queryOverlay: QueryOverlay,
+    /**
+     * The queued uploads' files, which [clearLocalData] deletes with their rows; `null` for none.
+     */
+    private val queuedUploadFiles: QueuedUploadFiles? = null,
 ) {
 
     /**
      * Wipes every cached payload, storage-object row and mutation, the mutation queue's records
      * included, in one transaction, and moves the watermarks so that no response or cache patch
      * started before it lands afterward. For identity changes: sign-out, account switch, deletion.
+     * Once it has committed, the queued uploads' files go too, under the same locks, so an upload
+     * queued after it keeps its file; one being written for an upload on its way into the queue is
+     * spared, and its upload is refused by the clear's tick.
      *
      * @param owner the identity the emptied cache belongs to, recorded in the same transaction;
      *   `null` records none, and the next identity to use the cache claims it.
@@ -62,15 +71,16 @@ internal class LocalData(
                 queryCacheDao.countWriteToEveryTable()
                 queryOverlay.forgetKeyIndexes()
                 mutationQueue.forgetReadsOfClearedQueue()
+                queuedUploadFiles?.deleteAllExcept(emptySet())
             }
         }
     }
 
     /**
      * Empties the cache for [owner], the identity it now belongs to: every cached query with its
-     * shape record, and every Storage row, go in one transaction that records [owner]. The mutation
-     * queue and its records stay. No response or cache patch started before it lands afterward; the
-     * files of the Storage cache are its caller's to delete.
+     * shape record, and every Storage row and pin, go in one transaction that records [owner]. The
+     * mutation queue and its records stay. No response or cache patch started before it lands
+     * afterward; the files of the Storage cache are its caller's to delete.
      */
     suspend fun dropCacheFor(owner: String) {
         // The locks and order of [clearLocalData], which this is but for the mutation queue
@@ -84,6 +94,10 @@ internal class LocalData(
                         queryCacheDao.deleteWithCacheKeyPrefix(
                             RESERVED_TABLE_NAME,
                             QUERY_SHAPE_CACHE_KEY_PREFIX,
+                        )
+                        queryCacheDao.deleteWithCacheKeyPrefix(
+                            RESERVED_TABLE_NAME,
+                            PINNED_FILE_CACHE_KEY_PREFIX,
                         )
                         queryCacheDao.upsert(ownership.record.rowOf(owner))
                     }

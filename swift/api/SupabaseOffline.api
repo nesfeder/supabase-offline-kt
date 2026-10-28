@@ -179,11 +179,15 @@ method OfflineBucketApi.evictCachedFile(path:) | func evictCachedFile(path: Stri
 method OfflineBucketApi.evictCachedFile(path:transform:) | func evictCachedFile(path: String, transform: OfflineBucketApi.ImageTransformation) async throws
 method OfflineBucketApi.exists(path:) | func exists(path: String) async throws -> Bool
 method OfflineBucketApi.info(path:) | func info(path: String) async throws -> OfflineBucketApi.FileObjectV2
+method OfflineBucketApi.isCachedFilePinned(path:) | func isCachedFilePinned(path: String) async throws -> Bool
 method OfflineBucketApi.list(path:options:) | func list(path: String? = nil, options: OfflineBucketApi.StorageListFilter? = nil) async throws -> [OfflineBucketApi.FileObject]
 method OfflineBucketApi.move(from:to:destinationBucket:) | func move(from source: String, to destination: String, destinationBucket: String? = nil) async throws
+method OfflineBucketApi.pinCachedFile(path:) | func pinCachedFile(path: String) async throws
 method OfflineBucketApi.publicURL(path:) | func publicURL(path: String) async throws -> URL
 method OfflineBucketApi.remove(paths:) | func remove(paths: [String]) async throws
+method OfflineBucketApi.unpinCachedFile(path:) | func unpinCachedFile(path: String) async throws
 method OfflineBucketApi.update(_:data:options:) | @discardableResult func update(_ path: String, data: Data, options: OfflineBucketApi.UploadOptions = UploadOptions()) async throws -> OfflineBucketApi.FileUploadResponse
+method OfflineBucketApi.upload(_:data:mutationStrategy:options:) | @discardableResult func upload(_ path: String, data: Data, mutationStrategy: MutationStrategy, options: OfflineBucketApi.UploadOptions = UploadOptions()) async throws -> UploadOutcome
 method OfflineBucketApi.upload(_:data:options:) | @discardableResult func upload(_ path: String, data: Data, options: OfflineBucketApi.UploadOptions = UploadOptions()) async throws -> OfflineBucketApi.FileUploadResponse
 method OfflineBucketApi.uploadToSignedURL(_:token:data:options:) | @discardableResult func uploadToSignedURL(_ path: String, token: String, data: Data, options: OfflineBucketApi.UploadOptions = UploadOptions()) async throws -> OfflineBucketApi.FileUploadResponse
 struct OfflineError | struct OfflineError
@@ -332,6 +336,9 @@ method OfflineSelectRequestBuilder.execute(_:) | func execute<Value>(_ type: Val
 struct OfflineStorage | struct OfflineStorage
 method OfflineStorage.clearFileCache() | func clearFileCache() async throws
 method OfflineStorage.from(_:) | func from(_ bucketId: String) -> OfflineBucketApi
+method OfflineStorage.pendingUploads() | func pendingUploads() -> PendingUploadSequence
+method OfflineStorage.rejectedUploadList() | func rejectedUploadList() async throws -> [RejectedUpload]
+method OfflineStorage.rejectedUploads() | func rejectedUploads() -> RejectedUploadSequence
 enum OfflineTextSearchType | enum OfflineTextSearchType
 init OfflineTextSearchType.init(rawValue:) | init?(rawValue: String)
 enum.case OfflineTextSearchType.phrase | case phrase
@@ -357,6 +364,20 @@ struct PendingMutationSequence.Iterator | struct Iterator
 method PendingMutationSequence.Iterator.next() | mutating func next() async throws -> PendingMutationSequence.Element?
 method PendingMutationSequence.first() | func first() async throws -> PendingMutationSequence.Element
 method PendingMutationSequence.makeAsyncIterator() | func makeAsyncIterator() -> PendingMutationSequence.Iterator
+struct PendingUpload | struct PendingUpload
+property PendingUpload.bucketId | let bucketId: String
+property PendingUpload.contentType | let contentType: String?
+property PendingUpload.createdAt | let createdAt: Date
+property PendingUpload.id | let id: Int64
+property PendingUpload.path | let path: String
+property PendingUpload.sizeBytes | let sizeBytes: Int
+property PendingUpload.upsert | let upsert: Bool
+struct PendingUploadSequence | struct PendingUploadSequence
+typealias PendingUploadSequence.Element | typealias Element = [PendingUpload]
+struct PendingUploadSequence.Iterator | struct Iterator
+method PendingUploadSequence.Iterator.next() | mutating func next() async throws -> PendingUploadSequence.Element?
+method PendingUploadSequence.first() | func first() async throws -> PendingUploadSequence.Element
+method PendingUploadSequence.makeAsyncIterator() | func makeAsyncIterator() -> PendingUploadSequence.Iterator
 struct QuerySnapshot | struct QuerySnapshot<Value> where Value : Sendable
 property QuerySnapshot.fetchedAt | let fetchedAt: Date?
 property QuerySnapshot.hasPendingMutations | let hasPendingMutations: Bool
@@ -430,6 +451,25 @@ struct RejectedMutationSequence.Iterator | struct Iterator
 method RejectedMutationSequence.Iterator.next() | mutating func next() async throws -> RejectedMutationSequence.Element?
 method RejectedMutationSequence.first() | func first() async throws -> RejectedMutationSequence.Element
 method RejectedMutationSequence.makeAsyncIterator() | func makeAsyncIterator() -> RejectedMutationSequence.Iterator
+struct RejectedUpload | struct RejectedUpload
+property RejectedUpload.bucketId | let bucketId: String
+property RejectedUpload.contentType | let contentType: String?
+property RejectedUpload.createdAt | let createdAt: Date
+property RejectedUpload.id | let id: Int64
+property RejectedUpload.isRetryable | let isRetryable: Bool
+property RejectedUpload.localPath | let localPath: String?
+property RejectedUpload.message | let message: String
+property RejectedUpload.path | let path: String
+property RejectedUpload.rejectedAt | let rejectedAt: Date
+property RejectedUpload.serverError | let serverError: OfflineError.ServerError?
+property RejectedUpload.sizeBytes | let sizeBytes: Int
+property RejectedUpload.upsert | let upsert: Bool
+struct RejectedUploadSequence | struct RejectedUploadSequence
+typealias RejectedUploadSequence.Element | typealias Element = [RejectedUpload]
+struct RejectedUploadSequence.Iterator | struct Iterator
+method RejectedUploadSequence.Iterator.next() | mutating func next() async throws -> RejectedUploadSequence.Element?
+method RejectedUploadSequence.first() | func first() async throws -> RejectedUploadSequence.Element
+method RejectedUploadSequence.makeAsyncIterator() | func makeAsyncIterator() -> RejectedUploadSequence.Iterator
 enum SequenceReadStrategy | enum SequenceReadStrategy
 enum.case SequenceReadStrategy.cacheFirstThenNetwork | case cacheFirstThenNetwork
 enum.case SequenceReadStrategy.cacheOnly | case cacheOnly
@@ -503,6 +543,7 @@ property SyncReport.conflictsKeptServerCount | let conflictsKeptServerCount: Int
 property SyncReport.conflictsResolvedCount | let conflictsResolvedCount: Int
 property SyncReport.heldBehindOtherTablesCount | let heldBehindOtherTablesCount: Int
 property SyncReport.rejected | let rejected: [RejectedMutation]
+property SyncReport.rejectedUploads | let rejectedUploads: [RejectedUpload]
 property SyncReport.remainingCount | let remainingCount: Int
 property SyncReport.stopReason | let stopReason: SyncStopReason
 property SyncReport.syncedCount | let syncedCount: Int
@@ -543,6 +584,11 @@ property UInt32.offlineFilterText | var offlineFilterText: String { get }
 property UInt64.offlineFilterText | var offlineFilterText: String { get }
 property UInt8.offlineFilterText | var offlineFilterText: String { get }
 property UUID.offlineFilterText | var offlineFilterText: String { get }
+enum UploadOutcome | enum UploadOutcome
+enum.case UploadOutcome.applied(response:) | case applied(response: OfflineBucketApi.FileUploadResponse)
+property UploadOutcome.isQueued | var isQueued: Bool { get }
+enum.case UploadOutcome.queued(pendingUpload:) | case queued(pendingUpload: PendingUpload)
+property UploadOutcome.response | var response: OfflineBucketApi.FileUploadResponse? { get }
 conformance CachedFile | Swift.Equatable
 conformance CachedFile | Swift.Hashable
 conformance CachedFile | Swift.Sendable
@@ -678,6 +724,13 @@ conformance PendingMutationCountSequence.Iterator | _Concurrency.AsyncIteratorPr
 conformance PendingMutationSequence | Swift.Sendable
 conformance PendingMutationSequence | _Concurrency.AsyncSequence
 conformance PendingMutationSequence.Iterator | _Concurrency.AsyncIteratorProtocol
+conformance PendingUpload | Swift.Equatable
+conformance PendingUpload | Swift.Hashable
+conformance PendingUpload | Swift.Identifiable
+conformance PendingUpload | Swift.Sendable
+conformance PendingUploadSequence | Swift.Sendable
+conformance PendingUploadSequence | _Concurrency.AsyncSequence
+conformance PendingUploadSequence.Iterator | _Concurrency.AsyncIteratorProtocol
 conformance QuerySnapshot | Swift.Equatable where Value: Equatable, Value: Sendable
 conformance QuerySnapshot | Swift.Sendable
 conformance QuerySnapshotSequence | OfflinePostgrestFilterBuilder
@@ -711,6 +764,13 @@ conformance RejectedMutation | Swift.Sendable
 conformance RejectedMutationSequence | Swift.Sendable
 conformance RejectedMutationSequence | _Concurrency.AsyncSequence
 conformance RejectedMutationSequence.Iterator | _Concurrency.AsyncIteratorProtocol
+conformance RejectedUpload | Swift.Equatable
+conformance RejectedUpload | Swift.Hashable
+conformance RejectedUpload | Swift.Identifiable
+conformance RejectedUpload | Swift.Sendable
+conformance RejectedUploadSequence | Swift.Sendable
+conformance RejectedUploadSequence | _Concurrency.AsyncSequence
+conformance RejectedUploadSequence.Iterator | _Concurrency.AsyncIteratorProtocol
 conformance SequenceReadStrategy | Swift.CaseIterable
 conformance SequenceReadStrategy | Swift.Equatable
 conformance SequenceReadStrategy | Swift.Hashable
@@ -755,3 +815,6 @@ conformance SyncStopReason.Kind | Swift.Equatable
 conformance SyncStopReason.Kind | Swift.Hashable
 conformance SyncStopReason.Kind | Swift.RawRepresentable
 conformance SyncStopReason.Kind | Swift.Sendable
+conformance UploadOutcome | Swift.Equatable
+conformance UploadOutcome | Swift.Hashable
+conformance UploadOutcome | Swift.Sendable

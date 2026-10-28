@@ -25,6 +25,8 @@ io.github.nesfeder.supabase.offline: fun OfflineBucketApi.setHeader(name: String
 io.github.nesfeder.supabase.offline: fun OfflinePostgrestQueryBuilder.selectAsFlow(columns: Columns = …, readStrategy: FlowReadStrategy = …, request: SelectRequestBuilder.() -> Unit = …)
 io.github.nesfeder.supabase.offline: fun OfflineStorage.from(bucketId: String)
 io.github.nesfeder.supabase.offline: fun OfflineStorage.get(bucketId: String)
+io.github.nesfeder.supabase.offline: fun OfflineStorage.pendingUploads()
+io.github.nesfeder.supabase.offline: fun OfflineStorage.rejectedUploads()
 io.github.nesfeder.supabase.offline: fun ReadStrategy.CacheFirst.equals(other: Any?)
 io.github.nesfeder.supabase.offline: fun ReadStrategy.CacheFirst.hashCode()
 io.github.nesfeder.supabase.offline: fun ReadStrategy.CacheFirst.toString()
@@ -41,6 +43,7 @@ io.github.nesfeder.supabase.offline: fun RealtimeTable.equals(other: Any?)
 io.github.nesfeder.supabase.offline: fun RealtimeTable.hashCode()
 io.github.nesfeder.supabase.offline: fun RealtimeTable.toString()
 io.github.nesfeder.supabase.offline: fun RealtimeTables.table(table: String, schema: String? = …, filter: RealtimeFilter? = …)
+io.github.nesfeder.supabase.offline: fun UploadOutcome.responseOrNull()
 io.github.nesfeder.supabase.offline: suspend fun (OfflineBucketApi).ensureLocalFile(path: String, isPublic: Boolean = …)  // androidMain
 io.github.nesfeder.supabase.offline: suspend fun (OfflineBucketApi).ensureLocalPath(path: String, isPublic: Boolean = …)  // iosMain
 io.github.nesfeder.supabase.offline: suspend fun (OfflineBucketApi).ensureLocalUri(path: String, isPublic: Boolean = …)  // androidMain
@@ -81,6 +84,10 @@ io.github.nesfeder.supabase.offline: suspend fun OfflineBucketApi.cachedFile(pat
 io.github.nesfeder.supabase.offline: suspend fun OfflineBucketApi.ensureCachedFile(path: String, isPublic: Boolean = …)
 io.github.nesfeder.supabase.offline: suspend fun OfflineBucketApi.evictCachedFile(path: String)
 io.github.nesfeder.supabase.offline: suspend fun OfflineBucketApi.evictCachedFile(path: String, transform: ImageTransformation.() -> Unit)
+io.github.nesfeder.supabase.offline: suspend fun OfflineBucketApi.isCachedFilePinned(path: String)
+io.github.nesfeder.supabase.offline: suspend fun OfflineBucketApi.pinCachedFile(path: String)
+io.github.nesfeder.supabase.offline: suspend fun OfflineBucketApi.unpinCachedFile(path: String)
+io.github.nesfeder.supabase.offline: suspend fun OfflineBucketApi.upload(path: String, data: ByteArray, mutationStrategy: MutationStrategy, options: UploadOptionBuilder.() -> Unit = …)
 io.github.nesfeder.supabase.offline: suspend fun OfflinePostgrestQueryBuilder.delete(mutationStrategy: MutationStrategy = …, request: PostgrestRequestBuilder.() -> Unit = …)
 io.github.nesfeder.supabase.offline: suspend fun OfflinePostgrestQueryBuilder.insert(body: JsonArray, mutationStrategy: MutationStrategy = …, request: InsertRequestBuilder.() -> Unit = …)
 io.github.nesfeder.supabase.offline: suspend fun OfflinePostgrestQueryBuilder.select(columns: Columns = …, readStrategy: ReadStrategy = …, request: SelectRequestBuilder.() -> Unit = …)
@@ -88,3 +95,4 @@ io.github.nesfeder.supabase.offline: suspend fun OfflinePostgrestQueryBuilder.up
 io.github.nesfeder.supabase.offline: suspend fun OfflinePostgrestQueryBuilder.update(update: PostgrestUpdate.() -> Unit = …, mutationStrategy: MutationStrategy = …, request: PostgrestRequestBuilder.() -> Unit = …)
 io.github.nesfeder.supabase.offline: suspend fun OfflinePostgrestQueryBuilder.upsert(body: JsonArray, mutationStrategy: MutationStrategy = …, request: UpsertRequestBuilder.() -> Unit = …)
 io.github.nesfeder.supabase.offline: suspend fun OfflineStorage.clearFileCache()
+io.github.nesfeder.supabase.offline: suspend fun OfflineStorage.rejectedUploadList()

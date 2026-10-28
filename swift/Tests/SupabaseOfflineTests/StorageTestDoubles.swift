@@ -44,6 +44,12 @@ final class FakeStorageServer: Sendable {
         answer { _ in .noConnection }
     }
 
+    /// Answers every later request as Storage would again, after ``goOffline()`` or a scripted
+    /// answer.
+    func goOnline() {
+        scripted.withLock { $0 = nil }
+    }
+
     /// The requests so far whose path, below `/storage/v1/`, starts with `prefix`.
     func requests(below prefix: String) -> [FakeServer.Request] {
         requests.values.filter { $0.storagePath.hasPrefix(prefix) }

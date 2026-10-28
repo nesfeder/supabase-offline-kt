@@ -3,6 +3,7 @@
 package io.github.nesfeder.supabase.offline.internal.db
 
 import io.github.nesfeder.supabase.offline.MutationOperation
+import io.github.nesfeder.supabase.offline.internal.mutationqueue.EnqueueOutcome
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.MAX_REJECTED_MUTATIONS
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentity
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.StoredConflict
@@ -11,6 +12,10 @@ import io.github.nesfeder.supabase.offline.internal.mutationqueue.StoredServerEr
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.VersionColumns
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 import io.github.nesfeder.supabase.offline.internal.postgrest.QueryShape
+import io.github.nesfeder.supabase.offline.internal.storage.PinnedFileRecords
+import io.github.nesfeder.supabase.offline.internal.storage.QUEUED_UPLOADS_DIRECTORY_NAME
+import io.github.nesfeder.supabase.offline.internal.storage.StoredUpload
+import io.github.nesfeder.supabase.offline.internal.storage.UPLOAD_OPERATION_NAME
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
 import io.github.nesfeder.supabase.offline.testdoubles.FakeQueryCacheDao
 import io.github.nesfeder.supabase.offline.testdoubles.enqueueInsert
@@ -19,11 +24,14 @@ import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 
 /**
  * Every name, key and stored value the mutation queue and the cache write to disk, as exact
@@ -121,6 +129,120 @@ class PersistedNamesTest {
                         "query_shape\u001Ftodos\u001Ftodos?shared",
                     )
                 )
+                .payload,
+        )
+    }
+
+    @Test
+    fun a_pinned_file_is_recorded_under_this_name_with_these_keys() = runTest {
+        // Given / When — an object pinned, by its bucket and path
+        PinnedFileRecords(queryCacheDao).pin("media", "photos/a b.png")
+
+        // Then
+        assertEquals("pinned_file", PINNED_FILE_CACHE_KEY_PREFIX_NAME)
+        assertEquals(
+            """{"version":1,"bucketId":"media","path":"photos/a b.png"}""",
+            assertNotNull(
+                    queryCacheDao.getRow(
+                        RESERVED_TABLE_NAME,
+                        "pinned_file\u001Fmedia::photos/a b.png",
+                    )
+                )
+                .payload,
+        )
+    }
+
+    @Test
+    fun a_queued_upload_is_written_under_these_names_with_these_keys() = runTest {
+        // Given / When — an upload queued with every option the queue keeps, and one with none
+        val full =
+            store.mutationQueue.enqueueOwnedBy("user:user-a") {
+                enqueueUpload(
+                    StoredUpload(
+                        bucket = "photos",
+                        path = "user-a/1.jpg",
+                        file = "0123456789abcdef0123456789abcdef",
+                        size = 5,
+                        upsert = true,
+                        contentType = "image/jpeg",
+                        userMetadata = JsonObject(mapOf("caption" to JsonPrimitive("a cat"))),
+                    )
+                )
+            }
+        val bare =
+            store.mutationQueue.enqueueOwnedBy("user:user-a") {
+                enqueueUpload(
+                    StoredUpload(
+                        bucket = "photos",
+                        path = "user-a/2.jpg",
+                        file = "fedcba9876543210fedcba9876543210",
+                        size = 7,
+                        upsert = false,
+                    )
+                )
+            }
+
+        // Then
+        val fullRow = assertNotNull(mutationDao.byId(assertIs<EnqueueOutcome.Queued>(full).id))
+        val bareRow = assertNotNull(mutationDao.byId(assertIs<EnqueueOutcome.Queued>(bare).id))
+        assertEquals(
+            "__supabase_offline_kt__.storage_uploads.this_name_is_longer_than_any_postgres_identifier",
+            STORAGE_UPLOADS_TABLE_NAME,
+        )
+        // Postgres truncates identifiers to NAMEDATALEN - 1 = 63 bytes, so no table has this name.
+        assertTrue(STORAGE_UPLOADS_TABLE_NAME.encodeToByteArray().size > 63)
+        assertEquals(STORAGE_UPLOADS_TABLE_NAME, fullRow.table)
+        assertEquals("UPLOAD", fullRow.operation)
+        assertEquals("UPLOAD", UPLOAD_OPERATION_NAME)
+        assertEquals("storage-uploads", QUEUED_UPLOADS_DIRECTORY_NAME)
+        assertEquals(
+            """{"version":1,"bucket":"photos","path":"user-a/1.jpg",""" +
+                """"file":"0123456789abcdef0123456789abcdef","size":5,"upsert":true,""" +
+                """"contentType":"image/jpeg","userMetadata":{"caption":"a cat"}}""",
+            fullRow.bodyJson,
+        )
+        assertEquals(
+            """{"version":1,"bucket":"photos","path":"user-a/2.jpg",""" +
+                """"file":"fedcba9876543210fedcba9876543210","size":7,"upsert":false}""",
+            bareRow.bodyJson,
+        )
+        assertEquals(null, fullRow.filterJson)
+        assertEquals("user:user-a", fullRow.owner)
+    }
+
+    @Test
+    fun a_refused_upload_is_kept_on_the_rejected_list_under_the_same_names() = runTest {
+        // Given — a queued upload
+        val queued =
+            store.mutationQueue.enqueueOwnedBy("user:user-a") {
+                enqueueUpload(
+                    StoredUpload(
+                        bucket = "photos",
+                        path = "user-a/1.jpg",
+                        file = "0123456789abcdef0123456789abcdef",
+                        size = 5,
+                        upsert = false,
+                    )
+                )
+            }
+        val row = assertIs<EnqueueOutcome.Queued>(queued).row
+
+        // When — Storage refuses it
+        store.mutationQueue.rejectMutation(
+            row,
+            "refused",
+            StoredServerError(status = 400, code = "Unauthorized", message = "refused"),
+        )
+
+        // Then — the entry keeps the row's table, operation and body: the list gains no key
+        assertEquals(
+            """{"version":1,"entries":[{"id":${row.id},"table":"$STORAGE_UPLOADS_TABLE_NAME",""" +
+                """"operation":"UPLOAD","bodyJson":"{\"version\":1,\"bucket\":\"photos\",""" +
+                """\"path\":\"user-a/1.jpg\",\"file\":\"0123456789abcdef0123456789abcdef\",""" +
+                """\"size\":5,\"upsert\":false}","createdAtMs":$NOW,"owner":"user:user-a",""" +
+                """"rejectedAtMs":$NOW,"message":"refused","serverError":{"status":400,""" +
+                """"code":"Unauthorized","message":"refused"}}]}""",
+            assertNotNull(queryCacheDao.getRow(RESERVED_TABLE_NAME, REJECTED_MUTATIONS_CACHE_KEY))
                 .payload,
         )
     }

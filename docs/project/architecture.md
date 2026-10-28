@@ -528,7 +528,13 @@ updates, deletes, moves and copies) are online-only and never queued: offline th
 supabase-kt's error (with network access off, `NetworkDisabledException`), and one that reaches the
 server drops the cached copies it made stale. A resumable upload drops them once it finishes, unless
 it finishes after `close()`, which leaves the stale copy. An upload does not put its bytes in the
-cache, so the next read downloads them. Signed URLs, listings, `info`, `exists` and the public
+cache, so the next read downloads them. The exception is `upload(path, data, mutationStrategy)`:
+under `QueueIfOffline` it is a row of the mutation queue (`table_name` a reserved name no
+Postgres table can have, `operation` `UPLOAD`, the body naming a file under `storage-uploads/`
+that holds its bytes), sent at its place among the user's row writes by the head send and the
+pass, through the same claim, owner check and send record as a row; once Storage has it, its
+bytes become the cached copy and its file goes. While it waits, `cachedFile` and `ensureCachedFile`
+answer its file. Signed URLs, listings, `info`, `exists` and the public
 status always ask the server. An object path that cannot be mapped safely onto a file (a leading
 `/`, an empty, `.` or `..` segment, a `\`, a control character) still downloads and writes,
 uncached. So does one holding `%`, `?` or `#` while the pin is below 3.8: supabase-kt before 3.8
@@ -1238,9 +1244,10 @@ rejected list, the conflicted list, the cache owner, each query's shape) are JSO
 rows of `object_cache`, under a table name 94 bytes long: Postgres truncates identifiers at 63
 bytes, so no table can be named that, and `from()` refuses it. A reserved row is never evicted,
 counted, read as a query or overlaid. `localPath` records where a file was written, but a file's
-place is always derived from its bucket and path; the recorded one is read only to clean up a file
-an older mapping left. Every schema change after 0.1.0, version 2 included, is a new version with a
-migration that keeps `mutation_cache`'s rows.
+place is always derived from its bucket and path: its own file, or its hashed file when another name
+takes that place. The recorded path only says which of the two holds the file, or names a file an
+older mapping left, to clean up. Every schema change after 0.1.0, version 2 included, is a new
+version with a migration that keeps `mutation_cache`'s rows.
 
 Every payload, overlay and stored filter is read and written with one `Json` instance,
 `EngineJson`, so the serializer cache is shared and the settings cannot drift between call sites.
@@ -1259,6 +1266,7 @@ The decisions that shaped the API and the engine, with the date each was settled
 | 2026-09-28 | The queue is per identity, with an owner recorded for each write. | One account's writes must never be sent under another's session, and a single owner for the whole queue made signed-out writes unsendable. |
 | 2026-09-28 | A failure that may pass, a server error included, stops the whole pass. | Skipping a failing write would send the writes behind it out of order; discarding it is the app's decision. |
 | 2026-09-28 | The immediate refusal throws: a write sent at once that the server refuses throws supabase-kt's error and is not kept. | An online caller keeps the synchronous error it always had from supabase-kt. |
+| 2026-10-27 | A Storage upload made with a `MutationStrategy` is a row of the existing mutation queue, its bytes in a file of `storage-uploads/` written before the row; it is listed apart (`PendingUpload`, `RejectedUpload`) and counted with the writes. | One autoincrement id then orders rows and files, and the head of line, the owner, the send record, discard, retry, the rejected list and the clear hold for it unchanged; a table of its own would need a sequence shared with the queue and a merge in every ordering query. `MutationOperation` is closed, so an upload cannot be a `PendingMutation`. After a lost answer the upload is sent again, and a refusal of that send counts as stored only when the object at the path is verifiably its bytes (size, then the ETag's MD5 or the downloaded bytes). Any object at the path was taken as stored at first, so another device's object hid a refused upload, which the device then cached its own bytes over. |
 | 2026-09-28 | PostgREST's `503` and `520` keep the write queued. | A `503` means the database could not be reached, so the write never ran; the send record decides how it replays if it did. |
 | 2026-09-28 | A replayed INSERT ignores duplicates only when an earlier send may have reached the server. | Ignoring duplicates on every replay swallowed a genuine duplicate id and lost the user's row. |
 | 2026-09-28 | A dry run is never queued. | The queue does not keep the header that makes a write a dry run, so a queued one would replay as a real write. |
@@ -1328,7 +1336,7 @@ What the library promises, each with the tests that pin it:
 
 | Promise | Pinned by |
 | --- | --- |
-| A user's queued writes are sent in the order they were made, across tables, and none overtakes an earlier one of the same user, in any pass: a pass for one table stops at a write with an earlier one queued in another table. `OnlineOnly` writes, writes the queue cannot hold, `rpc` and Storage writes are never queued, so they go around the queue. | `WriteAheadOrderTest`, `MutationQueueReplayOrderTest`, `OnlineWriteJoinsQueueTest`, `HeadSendTest`, `SyncReportTest` |
+| A user's queued writes are sent in the order they were made, across tables, and none overtakes an earlier one of the same user, in any pass: a pass for one table stops at a write with an earlier one queued in another table. `OnlineOnly` writes, writes the queue cannot hold, `rpc` and Storage writes are never queued, so they go around the queue, but for an upload made with `QueueIfOffline`, which is sent where its id falls. | `WriteAheadOrderTest`, `MutationQueueReplayOrderTest`, `OnlineWriteJoinsQueueTest`, `HeadSendTest`, `SyncReportTest`, `QueuedUploadTest` |
 | With Auth installed, a queued write is sent with its owner's token or not at all. A PostgREST configured with its own `jwtToken` is not checked. | `ReplayTokenBindingTest`, `ReplayOwnerCheckTest`, `PerIdentityQueueTest` |
 | No write leaves the queue silently. It leaves when the server accepts it; when the server refuses it for good on replay, or its schema-cache refusals reach the bound (it goes to the rejected list); when the library can no longer replay it exactly as it was made (the rejected list too); when, sent at once, it fails with a status that does not keep it queued, a refusal or a `500` from the database among them (the error is thrown to its caller); when a conflict is settled with `KeepServer` (counted in `conflictsKeptServerCount`) or parked (the conflicted list); or when the app discards it or clears local data. A failure that may pass leaves it queued. | `MutationQueueTransientFailureTest`, `SchemaCacheMissTest`, `HeadSendTest`, `DiscardPendingMutationTest`, `RejectedMutationListTest`, `GuardedReplayOutcomesTest`, `ConflictedListTest`, `UnknownOperationRowAndroidTest`, `UnknownOperationRowIosTest` |
 | On a table whose configured key matches a unique key on the server, a keyed INSERT whose send may have reached the server is never inserted twice. | `MutationQueueIdempotentReplayTest`, `UnconfirmedSendProofTest`, `UndeliveredRequestsAndroidTest`, `UndeliveredRequestsIosTest` |
@@ -1341,6 +1349,7 @@ What the library promises, each with the tests that pin it:
 | Each emission of a live read is one view of the cache, the queue and its refresh: no write shows both patched into the cache and still queued, a replayed write never drops out of a list that holds it, and `Idle` comes with the rows its refresh fetched. | `LiveReadConsistencyTest`, `LiveReadSourceOrderTest`, `LiveReadConsistencyAndroidTest`, `LiveReadConsistencyIosTest` |
 | No error answer from Storage is cached as a file. | `ChannelDownloadStatusTest`, `DownloadToFileStatusAndroidTest` |
 | A 304 answers a download only from the copy its request asked about, while that copy is still cached under the `ETag` asked about, whole on disk, and was not dropped since the download started; a request for part of an object, or carrying a condition of the caller's, by its options or a header set on the bucket, asks about no copy. | `StorageETagRevalidationTest`, `FileCacheConfirmCopyTest` |
+| No eviction pass takes a copy of an object pinned before the pass removes a file, across restarts; only an unpin, the object's eviction or delete, a clear and a change of owner remove the pin. | `StoragePinnedFileTest`, `PersistedNamesTest` |
 | A response whose request started before a write of the device's own changed the cache, before a clear, or before a change of owner never lands in the cache; one that started before a server change lands only with that change laid over it, and as fresh only when that is exact. | `StaleRefreshWatermarkTest`, `ServerChangesOverAnswersTest`, `CacheOwnershipTest`, `ClearLocalDataDuringWritesTest`, `StorageClearDuringDownloadTest` |
 | With Auth, one user's cached rows and files are never served to another. | `CacheBelongsToOneIdentityTest`, `CacheOwnershipTest` |
 | Only a JSON array of rows is written to the query cache: a `2xx` answer of another shape or media type is refused, a `NetworkFirst` or `CacheFirst` read with the query cached within its `maxAge` is served the cached rows, and a reactive read's refresh asks again, `Stalled` by that cause after its fast retries. | `EmptyResponseGuardTest`, `NonRowListRefreshTest` |
@@ -1361,7 +1370,7 @@ What it does not do yet, or does only so far:
 | Each request is cached on its own: offline, a read never answered online has nothing, even when another cached read of the table holds its rows. Read a detail from the list a screen already reads. | Not yet; additive later |
 | The refusal of two top-level filters on one column cannot see a second top-level `or` group, or a text search after a filter on its column, which replace what came before and leave one value. Put those conditions in one group. | No change planned |
 | On a hosted project a dry run commits, unless the project lets a request choose the rollback. | No change planned |
-| An upload does not seed the file cache, so a file uploaded just before going offline is not available offline: the bytes are the caller's, and caching them needs a size and ownership policy. | 0.2.0 |
+| An upload made without a `MutationStrategy` does not seed the file cache, so a file uploaded that way just before going offline is not available offline: the bytes are the caller's. One made with a strategy does, once Storage has it, and answers its queued copy until then. | Done for `upload(path, data, mutationStrategy)`; resumable uploads and the other writes are not queued |
 | An INSERT whose key the server makes is inserted twice when its response is lost and it replays, and shows twice in a read of its table answered while it is on the wire and, unless the INSERT asks for its rows back (`select()`), in that query's cached rows, across restarts, until they are fetched again. Give rows their ids on the device. | No change planned |
 | A replayed UPSERT, and an UPDATE or DELETE of a table without a version column (or one that pins no single cached row), overwrites a change another writer made between the lost response and the replay. A guarded UPDATE or DELETE does not: the change is found and settled. | No change planned |
 | A queued UPDATE or DELETE whose filter the engine cannot evaluate changes nothing on screen until it is sent and the list fetched again. | No change planned |

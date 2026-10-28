@@ -74,6 +74,15 @@ internal class InMemoryServer(initialTasks: List<Task> = emptyList()) {
                     }
                     ServerAnswer.Accepted(row = null)
                 }
+                is QueuedMutation.UploadPhoto ->
+                    if (mutation.objectPath in files) {
+                        ServerAnswer.Refused(
+                            TaskServerError(409, null, "The resource already exists", null, null)
+                        )
+                    } else {
+                        files[mutation.objectPath] = mutation.jpeg.copyOf()
+                        ServerAnswer.Accepted(row = null)
+                    }
                 is QueuedMutation.DeleteTaskPhotos -> {
                     photos = photos.filterValues {
                         !(it.taskId == mutation.taskId && it.userId == userId)

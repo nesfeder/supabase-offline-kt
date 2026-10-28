@@ -119,7 +119,7 @@ private fun String.readsAsAVolumeLetter(): Boolean =
 
 /**
  * The cache file of an untransformed object: `<data>/storage/<bucket>/<object path>` for a plain
- * name, or its [hashedFilePath] for any other. A verbatim path is checked to lie inside the
+ * name, or its [objectHashedFilePath] for any other. A verbatim path is checked to lie inside the
  * bucket's directory.
  *
  * @return the file, or `null` when the bucket or the path cannot be cached.
@@ -131,13 +131,27 @@ internal fun objectFilePathOrNull(
 ): Path? {
     if (!isCacheableBucketId(bucketId) || !isCacheableObjectPath(objectPath)) return null
     if (!isPlainName(bucketId) || !isPlainName(objectPath)) {
-        return hashedFilePath(dataDirectory, "$bucketId::$objectPath")
+        return objectHashedFilePath(dataDirectory, bucketId, objectPath)
     }
     val bucketDirectory = dataDirectory / STORAGE_DIRECTORY_NAME / bucketId
     val file =
         objectPath.split('/').fold(bucketDirectory) { directory, segment -> directory / segment }
     return file.takeIf { it.isStrictlyInside(bucketDirectory) }
 }
+
+/**
+ * The hashed file of an untransformed object, the [hashedFilePath] of its `<bucket>::<path>` key.
+ * It is where the object is stored when its name is not plain, and when the place its plain name
+ * maps to is taken by another name of its bucket: a file where one of its folders goes, or a folder
+ * where its file goes (`a` and `a/b`).
+ *
+ * @param dataDirectory the offline data directory.
+ * @param bucketId the bucket, already known to be cacheable.
+ * @param objectPath the object path, already known to be cacheable.
+ * @return the file.
+ */
+internal fun objectHashedFilePath(dataDirectory: Path, bucketId: String, objectPath: String): Path =
+    hashedFilePath(dataDirectory, "$bucketId::$objectPath")
 
 /**
  * The cache file stored under a hash of its key: `<data>/storage-hashed/<sha-256 of the key>`.

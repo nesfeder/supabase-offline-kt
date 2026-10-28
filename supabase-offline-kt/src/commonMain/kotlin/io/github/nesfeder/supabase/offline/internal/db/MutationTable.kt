@@ -18,6 +18,10 @@ import kotlinx.coroutines.flow.Flow
  * A queued mutation (INSERT / UPSERT / UPDATE / DELETE) for a given PostgREST table, with the
  * options of supabase-kt's request builders it replays with, the identity that made it, and where
  * its send and its replay stand. The overlay shows it on cached reads until it is retired.
+ *
+ * A queued Storage upload is a row too, so one id orders rows and files: its table is
+ * `STORAGE_UPLOADS_TABLE_NAME`, its operation `UPLOAD`, and its body a `StoredUpload` naming the
+ * file that holds its bytes. It leaves the table once sent, never kept as synced.
  */
 @Entity(
     tableName = "mutation_cache",
@@ -28,8 +32,9 @@ internal data class MutationRow(
     @ColumnInfo(name = "table_name") val table: String,
 
     /**
-     * What the write does, as the column holds it: a [MutationOperation]'s [storedName]. Read it
-     * through [knownOperation], which is `null` for a name this build does not write.
+     * What the write does, as the column holds it: a [MutationOperation]'s [storedName], or
+     * `UPLOAD` for a queued upload. Read it through [knownOperation], which is `null` for an upload
+     * and for a name this build does not write.
      */
     val operation: String,
 
@@ -82,10 +87,12 @@ internal data class MutationRow(
     @ColumnInfo(name = "schema_cache_misses", defaultValue = "0") val schemaCacheMisses: Int = 0,
 
     /**
-     * Whether a send of this INSERT started and its outcome is unknown. The server may then hold
-     * its rows, so it replays as an upsert that takes them as its own. Set only for an INSERT whose
-     * rows all carry the table's key, before its request goes out; cleared on proof that the write
-     * did not run, and when it replays.
+     * Whether a send of this INSERT, or this queued upload, started and its outcome is unknown. The
+     * server may then hold its rows, so it replays as an upsert that takes them as its own; or
+     * Storage may hold the file, so a refusal of the upload's next send counts as stored when the
+     * object at its path is verifiably the upload's bytes. Set only for an INSERT whose rows all
+     * carry the table's key and for an upload, before its request goes out; cleared on proof that
+     * the write did not run, and when it replays.
      */
     @ColumnInfo(name = "send_unconfirmed", defaultValue = "0") val sendUnconfirmed: Boolean = false,
 
