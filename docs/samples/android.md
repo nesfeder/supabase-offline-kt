@@ -138,7 +138,9 @@ A photo goes through the library's [queued upload](../behaviors/storage.md#queue
 added offline (Simulate offline on, say) waits on the device, marked "Waiting to upload", and
 uploads when the network comes back, its row queued behind the file. One Storage refuses says why,
 with **Retry**, and **Remove** to give it up; it is drawn from the file the rejected list keeps for
-it (`RejectedUpload.localPath`), since `cachedFile` never answers a refused upload. Until it is uploaded, the viewer offers Share and Remove
+it (`RejectedUpload.localPath`), since `cachedFile` never answers a refused upload. One whose
+upload fails as it is sent online (a `500`, say) is kept by the app, marked failed in the same way,
+since the library keeps nothing of an upload it throws. Until it is uploaded, the viewer offers Share and Remove
 for it but not Details, Share link, Replace, Move or Duplicate. Those, and Delete for an uploaded
 photo, need the network: offline they are switched off.
 
@@ -201,11 +203,9 @@ included, then reads both lists again from your project.
   activity ([If the project pauses](supabase-setup.md#if-the-project-pauses)). The app tries
   again each time the network comes back; until then the list says it is not signed in yet.
 - **A photo will not upload.** Check that the `task-photos` bucket exists, private, as
-  [Set up Supabase](supabase-setup.md) creates it. The photo is marked "Upload failed" with the
-  app's sentence for Storage's answer. A missing bucket reads as "This photo's file is missing" and
-  is tried again once the bucket exists, on **Retry** or when the network next comes back. A photo
-  Storage's policies refused stays failed with Retry switched off: remove it, fix the policy, and
-  add it again.
+  [Set up Supabase](supabase-setup.md) creates it, and that its policies let the user upload. The
+  photo is marked "Upload failed" with Storage's answer, its bytes kept on the device: fix the
+  bucket or the policy, then **Retry** sends it again, or **Remove** gives it up.
 - **Mark all done or the Server section fails, or Replace and Move photo are refused.** The second
   migration file is not applied: run it as [Set up Supabase](supabase-setup.md#apply-the-schema)
   says.

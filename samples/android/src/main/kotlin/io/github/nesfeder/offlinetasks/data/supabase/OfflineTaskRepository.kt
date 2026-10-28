@@ -138,11 +138,14 @@ private val STARTER_TITLES =
  * once, offline too.
  *
  * @param scope where work runs that must finish even when its caller goes away.
+ * @param failedPhotoDirectory where a photo whose upload failed when it was sent at once is kept,
+ *   with its bytes, for Retry or Remove: the library keeps nothing of an upload it threw.
  */
 class OfflineTaskRepository(
     private val supabase: SupabaseClient,
     private val session: UserSession,
     private val scope: CoroutineScope,
+    failedPhotoDirectory: File,
     private val clock: Clock = Clock.System,
     private val newId: () -> String = { Uuid.random().toString() },
 ) : TaskRepository {
@@ -153,6 +156,9 @@ class OfflineTaskRepository(
 
     /** The photos being added whose rows are not written yet, by photo id, with their sends. */
     private val photosBeingAdded = MutableStateFlow<Map<String, PhotoBeingAdded>>(emptyMap())
+
+    /** The photos whose upload failed when it was sent at once, kept here with their bytes. */
+    private val failedAdds = FailedPhotoAdds(failedPhotoDirectory, scope)
 
     override val settings: StateFlow<SyncSettings> = switches.asStateFlow()
 
@@ -277,17 +283,26 @@ class OfflineTaskRepository(
 
     /**
      * These photos with the ones [addPhoto] is adding that [belongs] takes and whose rows are not
-     * listed yet, marked waiting: online, the upload goes at once and the row after it, and the
-     * photo shows meanwhile, drawn from the library's copy of its file.
+     * listed yet, marked waiting (online, the upload goes at once and the row after it, and the
+     * photo shows meanwhile, drawn from the library's copy of its file), and the ones whose upload
+     * failed when it was sent at once, marked failed, drawn from the copy kept here.
      */
     private fun Flow<PhotoListSnapshot>.withPhotosBeingAdded(
         newestFirst: Boolean,
         belongs: (TaskPhoto) -> Boolean,
     ): Flow<PhotoListSnapshot> =
-        combine(this, photosBeingAdded) { snapshot, adding ->
+        combine(this, photosBeingAdded, failedAdds.adds, session.userId) {
+            snapshot,
+            adding,
+            failed,
+            userId ->
             val listed = snapshot.value ?: return@combine snapshot
             val ids = listed.mapTo(HashSet()) { it.id }
-            val extra = adding.values.map { it.photo }.filter { it.id !in ids && belongs(it) }
+            val extra =
+                (adding.values.map { it.photo } +
+                        failed.values.filter { it.userId == userId }.map { it.toTaskPhoto() })
+                    .distinctBy { it.id }
+                    .filter { it.id !in ids && belongs(it) }
             if (extra.isEmpty()) return@combine snapshot
             val photos = listed + extra
             snapshot.copy(
@@ -495,8 +510,10 @@ class OfflineTaskRepository(
                 ((photos?.map { it.objectPath } ?: photoPathsOnServer(TASK_ID, id)) + waiting)
                     .distinct()
             )
-        // Then its refused uploads, which nothing will show now; a failure above keeps them
+        // Then its refused uploads, and its photos that failed at once, which nothing will show
+        // now; a failure above keeps them
         dismissRefusedUploadsOf(folder)
+        failedAdds.forgetAll { it.taskId == id }
         // The server's cascade would delete the photo rows, but the cache never sees a cascade.
         if (photos == null || photos.isNotEmpty()) {
             write(Tables.TASK_PHOTOS, TaskMutationOperation.Delete, taskTitle = null) {
@@ -537,21 +554,94 @@ class OfflineTaskRepository(
                 hasPendingMutations = true,
                 pendingUpload = PendingUpload(PendingPhotoState.Waiting),
             )
-        val adding = detachedLater {
-            storage(path) { files.upload(path, photo.jpeg) }
-            insertPhotoRow(photoId, userId, taskId, path, photo.width, photo.height, createdAt)
-        }
-        photosBeingAdded.update { it + (photoId to PhotoBeingAdded(shown, adding)) }
-        adding.invokeOnCompletion { photosBeingAdded.update { it - photoId } }
+        send(shown, photo.jpeg)
+    }
+
+    /**
+     * Sends [shown]'s file and then writes its row, the photo shown waiting meanwhile. When the
+     * upload sent at once fails, the library has kept nothing of it, so the photo is kept here,
+     * failed, with Retry and Remove, and nothing is thrown: the photo says why.
+     */
+    private suspend fun send(shown: TaskPhoto, jpeg: ByteArray) {
+        val adding =
+            detachedLater<Unit> {
+                val failure =
+                    try {
+                        storage(shown.objectPath) { files.upload(shown.objectPath, jpeg) }
+                        null
+                    } catch (cancellation: CancellationException) {
+                        throw cancellation
+                    } catch (failure: Exception) {
+                        failure
+                    }
+                if (failure != null) {
+                    failedAdds.keep(shown.toFailedAdd(failure), jpeg)
+                    return@detachedLater
+                }
+                failedAdds.forget(shown.id)
+                insertPhotoRow(
+                    shown.id,
+                    shown.userId,
+                    shown.taskId,
+                    shown.objectPath,
+                    shown.width,
+                    shown.height,
+                    shown.createdAt,
+                )
+            }
+        photosBeingAdded.update { it + (shown.id to PhotoBeingAdded(shown, adding)) }
+        adding.invokeOnCompletion { photosBeingAdded.update { it - shown.id } }
         adding.start()
         adding.await().getOrThrow()
     }
 
+    /** This photo as a failed add, failed with [failure]. */
+    private fun TaskPhoto.toFailedAdd(failure: Exception) =
+        FailedPhotoAdd(
+            photoId = id,
+            userId = userId,
+            taskId = taskId,
+            objectPath = objectPath,
+            width = width,
+            height = height,
+            createdAt = createdAt.toString(),
+            failure = failure.message,
+        )
+
+    /** This failed add as the lists show it: failed, with Retry, drawn from its kept file. */
+    private fun FailedPhotoAdd.toTaskPhoto() =
+        TaskPhoto(
+            id = photoId,
+            userId = userId,
+            taskId = taskId,
+            objectPath = objectPath,
+            width = width,
+            height = height,
+            createdAt = Instant.parse(createdAt),
+            hasPendingMutations = true,
+            pendingUpload =
+                PendingUpload(
+                    PendingPhotoState.Failed,
+                    failure,
+                    retryable = true,
+                    keptFile = failedAdds.fileOf(photoId).path,
+                ),
+        )
+
     // --8<-- [end:pending-photo-add]
 
     // --8<-- [start:pending-photo-upload]
-    /** Queues the refused upload of [photoId]'s file again, at the end of the user's queue. */
+    /**
+     * Queues the refused upload of [photoId]'s file again, at the end of the user's queue; or, for
+     * a photo whose upload failed when it was sent at once, adds it again from its kept bytes.
+     */
     override suspend fun retryPendingPhoto(photoId: String) {
+        val failed = failedAdds.adds.value[photoId]
+        if (failed != null) {
+            val jpeg = failedAdds.bytesOf(photoId) ?: return failedAdds.forget(photoId)
+            val again = failed.toTaskPhoto()
+            return send(again.copy(pendingUpload = PendingUpload(PendingPhotoState.Waiting)), jpeg)
+        }
         val refused = refusedUploadOf(photoId) ?: return
         storage(refused.path) { offline.retryRejectedMutation(refused.id) }
     }
@@ -565,6 +655,11 @@ class OfflineTaskRepository(
         // Its file is sent or queued and its row written first, or the add would outlive this
         val beingAdded = photosBeingAdded.value[photoId]
         beingAdded?.adding?.join()
+        // One whose upload failed at once is only on this device
+        if (photoId in failedAdds.adds.value) {
+            failedAdds.forget(photoId)
+            return@detached true
+        }
         val waiting = waitingUploadOf(photoId)
         val refused = if (waiting == null) refusedUploadOf(photoId) else null
         val path =
@@ -648,22 +743,22 @@ class OfflineTaskRepository(
     override suspend fun downloadPhotoFile(photo: TaskPhoto): PhotoFile =
         storage(photo.objectPath) { files.ensureCachedFile(photo.objectPath) }
 
-    // A refused photo is drawn from the file its rejected entry names: the cache never answers it,
-    // since Storage may hold other bytes at its path
+    // A failed photo is drawn from the file kept for it: its rejected entry's, which the cache
+    // never answers since Storage may hold other bytes at its path, or the app's own
     override suspend fun photoUriIfCached(photo: TaskPhoto): String? =
-        photo.refusedFile()?.toURI()?.toString()
+        photo.keptFile()?.toURI()?.toString()
             ?: storage(photo.objectPath) { files.uriIfCached(photo.objectPath) }
 
     override suspend fun photoUri(photo: TaskPhoto): String =
-        photo.refusedFile()?.toURI()?.toString()
+        photo.keptFile()?.toURI()?.toString()
             ?: storage(photo.objectPath) { files.uri(photo.objectPath) }
 
     override suspend fun photoFileToShare(photo: TaskPhoto): String =
-        photo.refusedFile()?.path ?: storage(photo.objectPath) { files.file(photo.objectPath).path }
+        photo.keptFile()?.path ?: storage(photo.objectPath) { files.file(photo.objectPath).path }
 
-    /** The refused upload's file on the device this photo is drawn from, or null. */
-    private fun TaskPhoto.refusedFile(): File? =
-        pendingUpload?.takeIf { it.state == PendingPhotoState.Failed }?.refusedFile?.let(::File)
+    /** The failed upload's file on the device this photo is drawn from, or null. */
+    private fun TaskPhoto.keptFile(): File? =
+        pendingUpload?.takeIf { it.state == PendingPhotoState.Failed }?.keptFile?.let(::File)
 
     override suspend fun photoDetails(photo: TaskPhoto): PhotoDetails =
         storage(photo.objectPath) { files.details(photo.objectPath) }
@@ -976,6 +1071,7 @@ class OfflineTaskRepository(
      */
     override suspend fun clearLocalData() {
         offline.clearLocalData() // an open list fetches again by itself once the network allows
+        failedAdds.forgetAll()
     }
 
     // --8<-- [end:clear-local-data]
@@ -992,6 +1088,7 @@ class OfflineTaskRepository(
             val waiting = userId?.let { discardWaitingUploadsOf("$it/") }.orEmpty()
             // Stops a replay already running, and drops the rest of the queue, refused uploads too
             offline.clearLocalData()
+            failedAdds.forgetAll()
             userId?.let { deleteEverythingOf(it, alsoDelete = waiting) }
             session.signInAsNewUser()
         }

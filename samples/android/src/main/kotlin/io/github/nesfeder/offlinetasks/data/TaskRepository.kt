@@ -148,20 +148,22 @@ interface TaskRepository {
     /**
      * Adds [photo] to the task [taskId]: its file uploaded, or kept on the device and queued when
      * it cannot be sent now, then its row, queued behind the file. The photo is in [photos] at
-     * once, online or offline; a waiting upload goes when the network allows, before its row.
-     *
-     * @throws PhotoStorageException when the upload was sent at once and Storage refused it;
-     *   nothing is kept.
+     * once, online or offline; a waiting upload goes when the network allows, before its row. An
+     * upload sent at once that fails (Storage refuses it, or answers a `500`) is kept on the
+     * device, marked failed with Storage's words, for [retryPendingPhoto] or [removePendingPhoto].
      */
     suspend fun addPhoto(taskId: String, photo: EncodedPhoto)
 
-    /** Queues the refused upload of photo [photoId] again, sent as soon as the network allows. */
+    /**
+     * Queues the refused upload of photo [photoId] again, sent as soon as the network allows; one
+     * that failed when it was sent at once is added again.
+     */
     suspend fun retryPendingPhoto(photoId: String)
 
     /**
      * Gives up the photo [photoId] before Storage has its file: its waiting or refused upload, and
-     * its row. A photo still being added online is given up once the add ends, its file deleted
-     * if it landed. False when there is none, because a waiting upload finished meanwhile.
+     * its row. A photo still being added online is given up once the add ends, its file deleted if
+     * it landed. False when there is none, because a waiting upload finished meanwhile.
      */
     suspend fun removePendingPhoto(photoId: String): Boolean
 

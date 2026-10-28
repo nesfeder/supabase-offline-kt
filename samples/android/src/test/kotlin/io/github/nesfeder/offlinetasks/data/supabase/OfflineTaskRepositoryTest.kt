@@ -34,6 +34,7 @@ import io.github.nesfeder.offlinetasks.testing.FakeUserSession
 import io.github.nesfeder.offlinetasks.testing.addUploadedPhoto
 import io.github.nesfeder.supabase.offline.offline
 import java.io.File
+import kotlin.io.path.createTempDirectory
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
@@ -80,13 +81,18 @@ class OfflineTaskRepositoryTest {
     private val session = FakeUserSession()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
-    private val repository =
-        OfflineTaskRepository(supabase, session, scope, clock = FakeSteppingClock())
+    private val failedPhotos: File = createTempDirectory("failed-photo-adds").toFile()
+
+    private val repository = newRepository()
+
+    private fun newRepository() =
+        OfflineTaskRepository(supabase, session, scope, failedPhotos, clock = FakeSteppingClock())
 
     @AfterTest
     fun closeClient() {
         runBlocking { supabase.close() }
         scope.cancel()
+        failedPhotos.deleteRecursively()
     }
 
     @Test
@@ -500,7 +506,7 @@ class OfflineTaskRepositoryTest {
         assertTrue(upload.retryable)
         assertEquals("new row violates row-level security policy", upload.failure)
         // Drawn from the file its rejected entry names, never the cache's answer
-        val kept = assertNotNull(upload.refusedFile)
+        val kept = assertNotNull(upload.keptFile)
         assertEquals(File(kept).toURI().toString(), repository.photoUriIfCached(failed))
         assertEquals(kept, repository.photoFileToShare(failed))
         assertNull(repository.cachedPhotoFile(failed))
@@ -517,21 +523,83 @@ class OfflineTaskRepositoryTest {
     }
 
     @Test
-    fun an_upload_storage_fails_at_once_is_thrown_and_nothing_is_kept() = runTest {
+    fun an_upload_that_fails_at_once_keeps_the_photo_failed_and_retry_sends_it() = runTest {
         // Given — a task, and Storage failing
-        repository.addTask("Not kept", notes = null)
+        repository.addTask("Kept for a retry", notes = null)
         val task = repository.tasks().awaitValue { it.isNotEmpty() }.single()
         server.isUploadFailing = true
+        val jpeg = ByteArray(8) { it.toByte() }
 
-        // When — Storage answers a 500, which the app reads as a server out of reach
-        assertFailsWith<ServerUnreachableException> {
-            repository.addPhoto(task.id, EncodedPhoto(ByteArray(8), 4, 3))
-        }
+        // When — Storage answers a 500, which the library throws and keeps nothing of
+        repository.addPhoto(task.id, EncodedPhoto(jpeg, 4, 3))
 
-        // Then — no photo, no row, nothing waiting
-        assertTrue(repository.photos(task.id).awaitValue { true }.isEmpty())
+        // Then — the app keeps it, failed, with its bytes; no row, nothing queued
+        val failed = repository.photos(task.id).awaitValue { it.hasFailedUpload() }.single()
+        val upload = assertNotNull(failed.pendingUpload)
+        assertTrue(upload.retryable)
+        val kept = File(assertNotNull(upload.keptFile))
+        assertContentEquals(jpeg, kept.readBytes())
+        assertEquals(kept.toURI().toString(), repository.photoUriIfCached(failed))
         assertTrue(server.rows(Tables.TASK_PHOTOS).isEmpty())
         assertEquals(0, repository.pendingMutationCountNow())
+
+        // When — kept across a restart
+        val restarted = newRepository()
+
+        // Then
+        restarted.photos(task.id).awaitValue { it.hasFailedUpload() }
+
+        // When — Storage back, and Retry
+        server.isUploadFailing = false
+        repository.retryPendingPhoto(failed.id)
+
+        // Then — uploaded under the same id, its row written, its kept copy gone
+        val uploaded = repository.photos(task.id).awaitValue { it.isUploaded() }.single()
+        assertEquals(failed.id, uploaded.id)
+        assertContentEquals(jpeg, server.files.getValue(failed.objectPath))
+        assertEquals(1, server.rows(Tables.TASK_PHOTOS).size)
+        assertFalse(kept.exists())
+    }
+
+    @Test
+    fun a_photo_that_failed_at_once_is_removed_deleted_and_cleared_from_the_device() = runTest {
+        // Given — two photos whose uploads failed at once
+        repository.addTask("Given up", notes = null)
+        val task = repository.tasks().awaitValue { it.isNotEmpty() }.single()
+        server.isUploadFailing = true
+        repository.addPhoto(task.id, EncodedPhoto(ByteArray(8), 4, 3))
+        repository.addPhoto(task.id, EncodedPhoto(ByteArray(8), 4, 3))
+        val failed = repository.photos(task.id).awaitValue { it.size == 2 }
+
+        // When — one removed
+        assertTrue(repository.removePendingPhoto(failed.first().id))
+
+        // Then
+        repository.photos(task.id).awaitValue { it.size == 1 }
+        assertEquals(2, failedPhotos.listFiles().orEmpty().size) // the other's bytes and record
+
+        // When — the device cleared
+        repository.clearLocalData()
+
+        // Then — nothing of either is left, and nothing was ever sent but the failed uploads
+        assertEquals(0, failedPhotos.listFiles().orEmpty().size)
+        assertTrue(server.rows(Tables.TASK_PHOTOS).isEmpty())
+    }
+
+    @Test
+    fun deleting_a_task_drops_its_photos_that_failed_at_once() = runTest {
+        // Given
+        repository.addTask("Deleted with its failed photo", notes = null)
+        val task = repository.tasks().awaitValue { it.isNotEmpty() }.single()
+        server.isUploadFailing = true
+        repository.addPhoto(task.id, EncodedPhoto(ByteArray(8), 4, 3))
+        repository.photos(task.id).awaitValue { it.hasFailedUpload() }
+
+        // When
+        repository.deleteTask(task.id)
+
+        // Then
+        assertEquals(0, failedPhotos.listFiles().orEmpty().size)
     }
 
     @Test

@@ -86,6 +86,7 @@ class OfflineTasksApplication : Application() {
                 supabase = supabase,
                 session = session,
                 scope = applicationScope,
+                failedPhotoDirectory = File(filesDir, FAILED_PHOTOS_DIRECTORY),
             )
         photoEncoder = JpegPhotoEncoder(contentResolver)
         applicationScope.launch(Dispatchers.IO) {
@@ -115,6 +116,12 @@ private const val TAG = "OfflineTasks"
  * uploaded.
  */
 private const val EARLIER_PENDING_PHOTOS_DIRECTORY = "pending-photos"
+
+/**
+ * The directory under the app's files where a photo whose upload failed when it was sent at once is
+ * kept, with its bytes, until it is retried or removed.
+ */
+private const val FAILED_PHOTOS_DIRECTORY = "failed-photo-adds"
 
 /** The app's [OfflineTasksApplication], for a ViewModel factory's initializer. */
 val CreationExtras.offlineTasksApplication: OfflineTasksApplication

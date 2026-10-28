@@ -280,8 +280,11 @@ sample keeps a queue of its own, written before the library could queue an uploa
   then the `task_photos` row, a write queued behind the file. Offline both wait, and a later sync
   sends the task, the file and the row in that order. Online the file is sent at once and the row
   after it, from the repository's scope rather than the screen's, and the photo shows meanwhile,
-  marked waiting; a refusal then is the app's error message, and nothing is kept. The mark has no
-  progress yet.
+  marked waiting. The mark has no progress yet. When that send fails (Storage refuses it, or
+  answers a `500`), the library throws and keeps nothing, as for a row write sent at once, so the
+  app keeps the photo itself: its bytes and a record under `failed-photo-adds/` in its files, shown
+  marked failed with Storage's words, across restarts, until **Retry** adds it again or **Remove**
+  deletes it.
 - **Shown from the device at once.** The queued row is in the photo lists as any queued write is,
   and its file is drawn from `cachedFile`, which answers the queued copy; a refused one is drawn
   from its entry's `localPath`, which `cachedFile` never answers. The lists mark a photo
