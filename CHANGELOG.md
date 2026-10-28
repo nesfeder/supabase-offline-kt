@@ -54,6 +54,12 @@ All notable changes to this project are recorded in this file. The format follow
 - A bucket's `evictCachedFile(path)` deletes one object's cached copies, the untransformed one and
   every image transform, and `evictCachedFile(path) { … }` one transform's copy alone; nothing is
   sent. The Swift package has `evictCachedFile(path:)` and `evictCachedFile(path:transform:)`.
+- A bucket's `pinCachedFile(path)` keeps an object on the device: the cache never evicts its
+  copies, the untransformed one and every image transform's, across restarts, until
+  `unpinCachedFile(path)`, `evictCachedFile(path)`, a delete through the bucket, `clearFileCache()`,
+  `clearLocalData()` or a change of user. Pinning sends and downloads nothing, writes keep the pin,
+  and a move takes it along; `isCachedFilePinned(path)` says whether an object is pinned. The Swift
+  package has `pinCachedFile(path:)`, `unpinCachedFile(path:)` and `isCachedFilePinned(path:)`.
 - `cachedFile(path) { … }` returns the cached copy of one image transform, the one a download with
   the same `transform { … }` keeps, so a cached thumbnail can be handed to an image loader as a
   file. `localUriIfCached(path) { … }` on Android and `localPathIfCached(path) { … }` on iOS give it
@@ -140,6 +146,12 @@ All notable changes to this project are recorded in this file. The format follow
   whole object before. The Swift package's downloads do the same. Each cached file's row records
   the `ETag` it was sent under, in the `eTag` column, which was always empty; a file an earlier
   version cached has none, so its next download fetches it whole once and records it.
+- Each pinned Storage object is recorded in a row of its own among the library's records in the
+  database (`pinned_file` and the object's key), so pins outlive a restart. Nothing already on a
+  device changes. An earlier version of the library ignores those rows: 0.2.0 evicts pinned files
+  as any other, deletes the rows with `clearLocalData()`, and keeps them when another user signs
+  in, so after going back to 0.2.0, a switch of user and an upgrade again, the new user has the
+  earlier user's pins (their files are not kept).
 - The rejected list keeps a guarded write's base in each guarded entry, under two new keys
   (`baseVersion`, `baseJson`), so a retry replays guarded. A list an earlier build wrote reads back
   without them, and a retry of such an entry replays unguarded, as it did there.

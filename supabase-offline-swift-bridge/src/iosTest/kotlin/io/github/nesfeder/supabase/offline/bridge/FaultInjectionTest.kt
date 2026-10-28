@@ -357,6 +357,12 @@ class FaultInjectionTest {
                 },
             "evictCachedFile" to { unvalued { storage.evictCachedFile("b", "p", null, it) } },
             "clearFileCache" to { unvalued { storage.clearFileCache(it) } },
+            "pinCachedFile" to { unvalued { storage.pinCachedFile("b", "p", it) } },
+            "unpinCachedFile" to { unvalued { storage.unpinCachedFile("b", "p", it) } },
+            "isCachedFilePinned" to
+                {
+                    valued<Boolean> { storage.isCachedFilePinned("b", "p", it) }
+                },
         )
     }
 

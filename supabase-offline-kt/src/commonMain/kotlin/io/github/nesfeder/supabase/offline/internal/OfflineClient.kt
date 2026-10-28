@@ -103,6 +103,7 @@ import io.github.nesfeder.supabase.offline.internal.realtime.ServerChangeFeed
 import io.github.nesfeder.supabase.offline.internal.realtime.ServerChangeFollower
 import io.github.nesfeder.supabase.offline.internal.realtime.WatchedTable
 import io.github.nesfeder.supabase.offline.internal.storage.CachingBucketApi
+import io.github.nesfeder.supabase.offline.internal.storage.PinnedFileRecords
 import io.github.nesfeder.supabase.offline.internal.storage.QueuedUploadFiles
 import io.github.nesfeder.supabase.offline.internal.storage.QueuedUploadWriter
 import io.github.nesfeder.supabase.offline.internal.storage.QueuedUploads
@@ -454,6 +455,7 @@ internal class OfflineClient(
     private val fileCache =
         StorageFileCache(
             cachedFileDao = cachedFileDao,
+            pinRecords = PinnedFileRecords(components.queryCacheDao),
             ownership = cacheOwnership,
             fetchedAtMillis = rowClock,
             dataDirectoryProvider = baseDirectoryProvider,

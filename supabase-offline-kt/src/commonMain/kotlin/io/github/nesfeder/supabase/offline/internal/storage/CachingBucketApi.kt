@@ -143,17 +143,33 @@ internal class CachingBucketApi(
         entryOf(path, transform)?.let { entry -> cache.useCachedCopy(entry) }
     }
 
-    // Any path, as a write drops it: one that cannot be cached has no copy, and loses nothing
+    // Any path, as a write drops it: one that cannot be cached has no copy or pin, and loses
+    // nothing
     override suspend fun evictCachedFile(path: String): Unit = operationGate.call {
-        cache.invalidateObject(bucketId, path)
+        cache.forgetObject(bucketId, path)
     }
 
+    // One transform's copy alone: the object's pin stays
     override suspend fun evictCachedFile(
         path: String,
         transform: ImageTransformation.() -> Unit,
     ): Unit = operationGate.call {
         if (!cachesDownloadsOf(path)) return@call
         entryOf(path, transform)?.let { entry -> cache.invalidateEntry(entry) }
+    }
+
+    override suspend fun pinCachedFile(path: String): Unit = operationGate.call {
+        requireCacheableEntry(path)
+        cache.pinObject(bucketId, path)
+    }
+
+    // Any path, as evictCachedFile: one that cannot be cached has no pin
+    override suspend fun unpinCachedFile(path: String): Unit = operationGate.call {
+        cache.unpinObject(bucketId, path)
+    }
+
+    override suspend fun isCachedFilePinned(path: String): Boolean = operationGate.call {
+        cachesDownloadsOf(path) && cache.isObjectPinned(bucketId, path)
     }
 
     /**
@@ -173,20 +189,7 @@ internal class CachingBucketApi(
 
     /** [ensureCachedFile]'s body, run while the call holds the client's gate. */
     private suspend fun ensureCachedFileNow(path: String, isPublic: Boolean): CachedFile {
-        require(isRequestedByItsOwnName(path)) {
-            "This object path cannot be cached on the device: it holds '%', '?' or '#', which go " +
-                "into the request's URL unencoded, so its request can reach another object"
-        }
-        require(isCacheableObjectPath(path)) {
-            "This object path cannot be cached on the device: it has a leading '/', an empty, '.' " +
-                "or '..' segment, a '\\' or a control character"
-        }
-        val entry =
-            cache.entryFor(bucketId, path)
-                ?: throw IllegalArgumentException(
-                    "This object cannot be cached on the device: its bucket id or its path cannot " +
-                        "be mapped onto a file"
-                )
+        val entry = requireCacheableEntry(path)
         // Storage does not hold a queued upload yet: its copy on the device is the one to return
         queuedUploads?.uploads?.queuedCopyOf(bucketId, path)?.let { queued ->
             return queued
@@ -566,7 +569,7 @@ internal class CachingBucketApi(
         ): T? {
             val copy = notModified.exchange(null) ?: return null
             val served =
-                cache.withPinned(copy.entry) {
+                cache.holdingForRead(copy.entry) {
                     if (cache.confirmCopy(copy.entry, copy.eTag, start)) read(copy.entry) else null
                 }
             if (served != null) {
@@ -1079,10 +1082,11 @@ internal class CachingBucketApi(
     ): FileUploadResponse =
         invalidatingAfter(path) { delegate.uploadToSignedUrl(path, token, data, options) }
 
+    // A pin goes with the object; kept while the object may still be there
     override suspend fun delete(paths: Collection<String>): Unit =
         storageWrite(
             write = { delegate.delete(paths) },
-            applied = { paths.forEach { path -> cache.invalidateObject(bucketId, path) } },
+            applied = { paths.forEach { path -> cache.forgetObject(bucketId, path) } },
             uncertain = { paths.forEach { path -> cache.invalidateObject(bucketId, path) } },
         )
 
@@ -1102,8 +1106,12 @@ internal class CachingBucketApi(
                 )
             },
             uncertain = {
-                cache.invalidateObject(bucketId, from)
-                cache.invalidateObject(destinationBucket ?: bucketId, to)
+                cache.invalidateMove(
+                    fromBucket = bucketId,
+                    from = from,
+                    toBucket = destinationBucket ?: bucketId,
+                    to = to,
+                )
             },
         )
 
@@ -1180,6 +1188,28 @@ internal class CachingBucketApi(
             networkAccess.ensureEnabled()
             delegate.changePublicStatusTo(public)
         }
+
+    /**
+     * The cache entry of the untransformed object at [path], refusing a path whose downloads are
+     * never cached ([cachesDownloadsOf]) with the reason.
+     *
+     * @throws IllegalArgumentException when [path] cannot be cached.
+     */
+    private fun requireCacheableEntry(path: String): FileCacheEntry {
+        require(isRequestedByItsOwnName(path)) {
+            "This object path cannot be cached on the device: it holds '%', '?' or '#', which go " +
+                "into the request's URL unencoded, so its request can reach another object"
+        }
+        require(isCacheableObjectPath(path)) {
+            "This object path cannot be cached on the device: it has a leading '/', an empty, '.' " +
+                "or '..' segment, a '\\' or a control character"
+        }
+        return cache.entryFor(bucketId, path)
+            ?: throw IllegalArgumentException(
+                "This object cannot be cached on the device: its bucket id or its path cannot be " +
+                    "mapped onto a file"
+            )
+    }
 
     /**
      * Whether a download of [path] in this bucket is cached: both map onto a file, and the pinned

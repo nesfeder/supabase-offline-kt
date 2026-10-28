@@ -126,7 +126,7 @@ class FileCacheBoundTest {
         val entry = assertNotNull(bucket.cache.entryFor(BUCKET, "a.bin"))
 
         // When — while a read holds a, a download takes the cache past the bound
-        bucket.cache.withPinned(entry) {
+        bucket.cache.holdingForRead(entry) {
             download(bucket, "b.bin", size = 6, at = 2 * MINUTE)
             // Then — a stays for as long as it is being read
             assertNotNull(bucket.api.cachedFile("a.bin"))

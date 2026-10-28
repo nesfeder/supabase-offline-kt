@@ -94,10 +94,11 @@ struct StorageTests {
         try await client.close()
     }
 
-    /// The package refuses these names in `ensureCachedFile` and encodes them in
+    /// The package refuses these names in `ensureCachedFile` and `pinCachedFile` and encodes them in
     /// `escapingURLDelimiters` because the core refuses to cache them. When this test fails, the
     /// core caches names holding that character: remove the package's refusal in
-    /// `ensureCachedFile`, `escapingURLDelimiters` and `holdsURLDelimiters`, and the tests of them.
+    /// `refuseANameTheCacheCannotHold`, `escapingURLDelimiters` and `holdsURLDelimiters`, and the
+    /// tests of them.
     @Test(arguments: ["photo?v=1.png", "100%.png", "a#b.png"])
     func theCoreStillRefusesANameHoldingEachDelimiter(name: String) async throws {
         // Given
@@ -405,12 +406,56 @@ struct StorageTests {
         try await client.close()
     }
 
+    @Test func aPinHoldsUntilItIsUnpinnedOrTheObjectEvictedAndSendsNothing() async throws {
+        // Given
+        let storage = FakeStorageServer()
+        let client = Self.makeClient(storage)
+        let bucket = client.storage.from("avatars")
+
+        // When pinned before any download, unpinned, then pinned again and evicted
+        try await bucket.pinCachedFile(path: "a.png")
+        let pinnedBeforeADownload = try await bucket.isCachedFilePinned(path: "a.png")
+        let nothingSentByThePin = storage.requests.values.isEmpty
+        _ = try await bucket.download(path: "a.png")
+        try await bucket.unpinCachedFile(path: "a.png")
+        let pinnedAfterUnpinning = try await bucket.isCachedFilePinned(path: "a.png")
+        try await bucket.pinCachedFile(path: "a.png")
+        try await bucket.evictCachedFile(path: "a.png")
+
+        // Then the eviction took the copy and the pin
+        #expect(pinnedBeforeADownload)
+        #expect(nothingSentByThePin)
+        #expect(!pinnedAfterUnpinning)
+        #expect(try await bucket.isCachedFilePinned(path: "a.png") == false)
+        #expect(try await bucket.cachedFile(path: "a.png") == nil)
+        try await client.close()
+    }
+
+    @Test(arguments: [("photo?v=1.png", true), ("../a.png", false)])
+    func pinningANameTheCacheCannotHoldIsRefused(name: String, holdsADelimiter: Bool) async throws {
+        // Given
+        let storage = FakeStorageServer()
+        let client = Self.makeClient(storage)
+        let bucket = client.storage.from("avatars")
+
+        // When
+        let error = await #expect(throws: OfflineError.self) { try await bucket.pinCachedFile(path: name) }
+
+        // Then
+        #expect(error?.code == .invalidRequest)
+        #expect(error?.message.contains("keep those characters out of the names") == holdsADelimiter)
+        #expect(try await bucket.isCachedFilePinned(path: name) == false)
+        #expect(storage.requests.values.isEmpty)
+        try await client.close()
+    }
+
     @Test func clearingTheFileCacheDeletesEveryFileAndKeepsTheQueue() async throws {
-        // Given a cached file, and a write queued offline
+        // Given a cached file, pinned, and a write queued offline
         let storage = FakeStorageServer()
         let client = Self.makeClient(storage)
         let bucket = client.storage.from("avatars")
         _ = try await bucket.download(path: "a.png")
+        try await bucket.pinCachedFile(path: "a.png")
         storage.goOffline()
         _ = try await client.from("todos").insert(TodoRow(id: 3, title: "Tea", done: false)).execute()
         #expect(try await client.pendingMutationCount() == 1)
@@ -418,8 +463,9 @@ struct StorageTests {
         // When
         try await client.storage.clearFileCache()
 
-        // Then the file is gone, and the write still waits
+        // Then the file and its pin are gone, and the write still waits
         #expect(try await bucket.cachedFile(path: "a.png") == nil)
+        #expect(try await bucket.isCachedFilePinned(path: "a.png") == false)
         #expect(try await client.pendingMutationCount() == 1)
         try await client.close()
     }
@@ -895,6 +941,8 @@ struct StorageTests {
         let authenticatedURL = await #expect(throws: OfflineError.self) { try await bucket.authenticatedURL(path: "a.png") }
         let evicted = await #expect(throws: OfflineError.self) { try await bucket.evictCachedFile(path: "a.png") }
         let cleared = await #expect(throws: OfflineError.self) { try await client.storage.clearFileCache() }
+        let pinned = await #expect(throws: OfflineError.self) { try await bucket.pinCachedFile(path: "a.png") }
+        let pinAsked = await #expect(throws: OfflineError.self) { try await bucket.isCachedFilePinned(path: "a.png") }
 
         // Then the URL builders too, as they read the opened client
         #expect(download?.code == .clientClosed)
@@ -903,6 +951,8 @@ struct StorageTests {
         #expect(authenticatedURL?.code == .clientClosed)
         #expect(evicted?.code == .clientClosed)
         #expect(cleared?.code == .clientClosed)
+        #expect(pinned?.code == .clientClosed)
+        #expect(pinAsked?.code == .clientClosed)
         #expect(storage.requests.values.isEmpty)
     }
 }

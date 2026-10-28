@@ -248,7 +248,10 @@ class EveryCacheWriterCountsAndroidTest {
         const val ENGINE_PACKAGE = "io.github.nesfeder.supabase.offline."
         const val TABLE = "tasks"
 
-        /** The components `buildCacheComponents` gives the table, each of which writes it. */
+        /**
+         * The parts that write the table: the components `buildCacheComponents` gives it, and the
+         * file cache's pin records.
+         */
         val WRITERS =
             listOf(
                 "CacheOwnership",
@@ -257,6 +260,7 @@ class EveryCacheWriterCountsAndroidTest {
                 "QueryOverlay",
                 "CachePatcher",
                 "LocalData",
+                "PinnedFileRecords",
             )
 
         /** The table's methods that read and write nothing. */

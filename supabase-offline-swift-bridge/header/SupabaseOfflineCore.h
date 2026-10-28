@@ -1427,6 +1427,9 @@ __attribute__((swift_name("BridgeStorage")))
 /** The object at [path]'s details, as supabase-kt's file object in JSON. */
 - (SOCBridgeCancellable *)infoBucket:(NSString *)bucket path:(NSString *)path completion:(void (^)(NSString * _Nullable, SOCBridgeError * _Nullable))completion __attribute__((swift_name("info(bucket:path:completion:)")));
 
+/** Whether [path] is pinned on the device; never touches the network. */
+- (SOCBridgeCancellable *)isCachedFilePinnedBucket:(NSString *)bucket path:(NSString *)path completion:(void (^)(SOCBoolean * _Nullable, SOCBridgeError * _Nullable))completion __attribute__((swift_name("isCachedFilePinned(bucket:path:completion:)")));
+
 /**
  * The objects under [prefix].
  *
@@ -1448,11 +1451,17 @@ __attribute__((swift_name("BridgeStorage")))
 /** The current user's queued uploads, in every bucket, in the order they will be sent. */
 - (SOCBridgeCancellable *)pendingUploadsCompletion:(void (^)(NSArray<SOCBridgePendingUpload *> * _Nullable, SOCBridgeError * _Nullable))completion __attribute__((swift_name("pendingUploads(completion:)")));
 
+/** Pins [path] on the device, so the cache never evicts its copies; downloads nothing. */
+- (SOCBridgeCancellable *)pinCachedFileBucket:(NSString *)bucket path:(NSString *)path completion:(void (^)(SOCBridgeError * _Nullable))completion __attribute__((swift_name("pinCachedFile(bucket:path:completion:)")));
+
 /** The public URL of [path]; builds a URL and sends nothing. */
 - (SOCBridgeStringResult *)publicUrlBucket:(NSString *)bucket path:(NSString *)path __attribute__((swift_name("publicUrl(bucket:path:)")));
 
 /** The current user's queued uploads Storage refused for good on replay, oldest first. */
 - (SOCBridgeCancellable *)rejectedUploadsCompletion:(void (^)(NSArray<SOCBridgeRejectedUpload *> * _Nullable, SOCBridgeError * _Nullable))completion __attribute__((swift_name("rejectedUploads(completion:)")));
+
+/** Removes the pin on [path], if it has one; its cached copies stay. */
+- (SOCBridgeCancellable *)unpinCachedFileBucket:(NSString *)bucket path:(NSString *)path completion:(void (^)(SOCBridgeError * _Nullable))completion __attribute__((swift_name("unpinCachedFile(bucket:path:completion:)")));
 
 /** Replaces the object at [path] with [data]; [options] and the answer as for [upload]. */
 - (SOCBridgeCancellable *)updateBucket:(NSString *)bucket path:(NSString *)path data:(NSData *)data options:(NSString * _Nullable)options completion:(void (^)(NSString * _Nullable, SOCBridgeError * _Nullable))completion __attribute__((swift_name("update(bucket:path:data:options:completion:)")));

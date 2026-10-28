@@ -179,10 +179,13 @@ method OfflineBucketApi.evictCachedFile(path:) | func evictCachedFile(path: Stri
 method OfflineBucketApi.evictCachedFile(path:transform:) | func evictCachedFile(path: String, transform: OfflineBucketApi.ImageTransformation) async throws
 method OfflineBucketApi.exists(path:) | func exists(path: String) async throws -> Bool
 method OfflineBucketApi.info(path:) | func info(path: String) async throws -> OfflineBucketApi.FileObjectV2
+method OfflineBucketApi.isCachedFilePinned(path:) | func isCachedFilePinned(path: String) async throws -> Bool
 method OfflineBucketApi.list(path:options:) | func list(path: String? = nil, options: OfflineBucketApi.StorageListFilter? = nil) async throws -> [OfflineBucketApi.FileObject]
 method OfflineBucketApi.move(from:to:destinationBucket:) | func move(from source: String, to destination: String, destinationBucket: String? = nil) async throws
+method OfflineBucketApi.pinCachedFile(path:) | func pinCachedFile(path: String) async throws
 method OfflineBucketApi.publicURL(path:) | func publicURL(path: String) async throws -> URL
 method OfflineBucketApi.remove(paths:) | func remove(paths: [String]) async throws
+method OfflineBucketApi.unpinCachedFile(path:) | func unpinCachedFile(path: String) async throws
 method OfflineBucketApi.update(_:data:options:) | @discardableResult func update(_ path: String, data: Data, options: OfflineBucketApi.UploadOptions = UploadOptions()) async throws -> OfflineBucketApi.FileUploadResponse
 method OfflineBucketApi.upload(_:data:mutationStrategy:options:) | @discardableResult func upload(_ path: String, data: Data, mutationStrategy: MutationStrategy, options: OfflineBucketApi.UploadOptions = UploadOptions()) async throws -> UploadOutcome
 method OfflineBucketApi.upload(_:data:options:) | @discardableResult func upload(_ path: String, data: Data, options: OfflineBucketApi.UploadOptions = UploadOptions()) async throws -> OfflineBucketApi.FileUploadResponse

@@ -109,7 +109,10 @@ A transformed download is kept apart from the original, and
 ``OfflineBucketApi/cachedFile(path:transform:)`` finds its copy. To free the device's storage,
 ``OfflineBucketApi/evictCachedFile(path:)`` deletes one object's copies and
 ``OfflineStorage/clearFileCache()`` every kept file; neither sends anything, and both leave the
-queued writes and the cached query results.
+queued writes and the cached query results. ``OfflineBucketApi/pinCachedFile(path:)`` keeps an
+object's copies through every eviction, across restarts, until
+``OfflineBucketApi/unpinCachedFile(path:)``, an eviction or removal of the object, or one of those
+clears.
 
 An object name holding `%`, `?` or `#` is never kept on the device, and other requests than the URL
 builders, signing and uploads to a signed URL can mistake it for another object: keep those

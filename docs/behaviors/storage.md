@@ -85,9 +85,9 @@ transform that sets nothing is the untransformed copy, as it is for a download. 
 copy keeps the `fetchedAt` of the download that made it. Read it or hand it to an image loader, but
 do not move or write it: the cache may delete it when the object is uploaded, updated, deleted,
 moved or copied over through the offline bucket, when the server reports it gone, when the cache
-passes its bound and the file has not been used for 30 seconds, when the cache passes to another
-user, when it is evicted or the file cache cleared ([below](#evicting-and-clearing)), and when
-local data is cleared. A file whose size on disk is not the one recorded for it, which a power loss
+passes its bound and the file has not been used for 30 seconds (unless the object is
+[pinned](#pinned-files)), when the cache passes to another user, when it is evicted or the file
+cache cleared ([below](#evicting-and-clearing)), and when local data is cleared. A file whose size on disk is not the one recorded for it, which a power loss
 right after a download can leave, is deleted too, and the object is downloaded again when next
 asked for. Open it soon, or copy it if it must outlive those. `cachedFile` and `ensureCachedFile`
 never ask the server whether the copy is current: compare `fetchedAt` with your own rule, and
@@ -127,11 +127,12 @@ From the samples: [TaskPhotoFiles.kt](https://github.com/nesfeder/supabase-offli
 
 Three calls delete cached files on the device and send nothing; the objects stay in their buckets,
 and the next download of each fetches it again. A bucket's `evictCachedFile(path)` deletes one
-object's copies, the untransformed one and every image transform, and no other object's;
-`evictCachedFile(path) { … }` deletes one transform's copy alone. `offline.storage.clearFileCache()`
-deletes every downloaded file in every bucket, with its record, and leaves the mutation queue, the
-cached query results and the rejected and conflicted lists: it frees the device's storage without
-dropping writes waiting to sync, so a "Free up space" button can call it. At sign-out, call
+object's copies, the untransformed one and every image transform, and its pin, and no other
+object's; `evictCachedFile(path) { … }` deletes one transform's copy alone and leaves the pin.
+`offline.storage.clearFileCache()` deletes every downloaded file in every bucket, with its record,
+and every pin, and leaves the mutation queue, the cached query results and the rejected and
+conflicted lists: it frees the device's storage without dropping writes waiting to sync, so a
+"Free up space" button can call it. At sign-out, call
 `clearLocalData()` instead ([Signing out and switching users](sign-out.md)): it deletes these
 files too, with the user's queued writes, and rewrites the database without what it deleted, which
 `clearFileCache()` does not.
@@ -142,6 +143,36 @@ caches that. A download in flight when the file cache is cleared is handed to it
 but is not cached, as across `clearLocalData()`: an `ensureCachedFile` running meanwhile throws
 `IllegalStateException`. The Swift package has the same calls: `evictCachedFile(path:)`,
 `evictCachedFile(path:transform:)` and `storage.clearFileCache()`.
+
+## Pinned files
+
+```kotlin
+--8<-- "StorageExamples.kt:pin"
+```
+
+A bucket's `pinCachedFile(path)` keeps an object on the device: the cache never evicts its
+copies, the untransformed one and every image transform's, kept now or later, however long ago
+they were used. It sends nothing and downloads nothing, so pinning an object that is not cached
+records the pin alone, and its next download is kept; call `ensureCachedFile(path)` after it to
+have the object offline now. `unpinCachedFile(path)` removes the pin and leaves the copies, which
+the cache then evicts as it does any other file. `isCachedFilePinned(path)` says whether the
+object is pinned, cached or not. A path that cannot be cached ([below](#paths-that-are-never-cached))
+cannot be pinned: `pinCachedFile` throws `IllegalArgumentException` and sends nothing.
+
+The pin is stored in the database and outlives a restart. It stays through every write to the
+object: an upload or update drops its copies, as for any object, and the next download is kept
+pinned. A move through the bucket takes the pin to the new path, or drops it when the new path
+cannot be pinned; a delete through the bucket removes it, as do `evictCachedFile(path)`,
+`clearFileCache()`, `clearLocalData()` and the cache passing to another user. A move or delete that
+timed out leaves the pin where the object may be: on both ends of the move, and on the object that
+may not have been deleted. Pinned while the cache still belongs to the user before, until a sign-in
+settles, the pin is not kept, as a download then is not.
+
+Pinned copies count toward `fileCacheSizeBytes`. When they alone take more than nine tenths of it,
+eviction stops at the bound rather than a tenth below; when they fill it, the cache stays over its
+bound, and every other file is evicted once it has not been used for 30 seconds
+([Cache size and eviction](eviction.md#the-file-cache)). The Swift package has the same calls:
+`pinCachedFile(path:)`, `unpinCachedFile(path:)` and `isCachedFilePinned(path:)`.
 
 ## Queued uploads
 

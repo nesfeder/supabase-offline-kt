@@ -142,6 +142,9 @@ abstract interface io.github.nesfeder.supabase.offline/OfflineBucketApi : io.git
     abstract suspend fun ensureCachedFile(kotlin/String, kotlin/Boolean = ...): io.github.nesfeder.supabase.offline/CachedFile // io.github.nesfeder.supabase.offline/OfflineBucketApi.ensureCachedFile|ensureCachedFile(kotlin.String;kotlin.Boolean){}[0]
     abstract suspend fun evictCachedFile(kotlin/String) // io.github.nesfeder.supabase.offline/OfflineBucketApi.evictCachedFile|evictCachedFile(kotlin.String){}[0]
     abstract suspend fun evictCachedFile(kotlin/String, kotlin/Function1<io.github.jan.supabase.storage/ImageTransformation, kotlin/Unit>) // io.github.nesfeder.supabase.offline/OfflineBucketApi.evictCachedFile|evictCachedFile(kotlin.String;kotlin.Function1<io.github.jan.supabase.storage.ImageTransformation,kotlin.Unit>){}[0]
+    abstract suspend fun isCachedFilePinned(kotlin/String): kotlin/Boolean // io.github.nesfeder.supabase.offline/OfflineBucketApi.isCachedFilePinned|isCachedFilePinned(kotlin.String){}[0]
+    abstract suspend fun pinCachedFile(kotlin/String) // io.github.nesfeder.supabase.offline/OfflineBucketApi.pinCachedFile|pinCachedFile(kotlin.String){}[0]
+    abstract suspend fun unpinCachedFile(kotlin/String) // io.github.nesfeder.supabase.offline/OfflineBucketApi.unpinCachedFile|unpinCachedFile(kotlin.String){}[0]
     abstract suspend fun upload(kotlin/String, kotlin/ByteArray, io.github.nesfeder.supabase.offline/MutationStrategy, kotlin/Function1<io.github.jan.supabase.storage/UploadOptionBuilder, kotlin/Unit> = ...): io.github.nesfeder.supabase.offline/UploadOutcome // io.github.nesfeder.supabase.offline/OfflineBucketApi.upload|upload(kotlin.String;kotlin.ByteArray;io.github.nesfeder.supabase.offline.MutationStrategy;kotlin.Function1<io.github.jan.supabase.storage.UploadOptionBuilder,kotlin.Unit>){}[0]
 }
 

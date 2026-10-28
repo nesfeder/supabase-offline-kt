@@ -12,6 +12,7 @@ import io.github.nesfeder.supabase.offline.internal.mutationqueue.StoredServerEr
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.VersionColumns
 import io.github.nesfeder.supabase.offline.internal.postgrest.FilterDescriptor
 import io.github.nesfeder.supabase.offline.internal.postgrest.QueryShape
+import io.github.nesfeder.supabase.offline.internal.storage.PinnedFileRecords
 import io.github.nesfeder.supabase.offline.internal.storage.QUEUED_UPLOADS_DIRECTORY_NAME
 import io.github.nesfeder.supabase.offline.internal.storage.StoredUpload
 import io.github.nesfeder.supabase.offline.internal.storage.UPLOAD_OPERATION_NAME
@@ -126,6 +127,25 @@ class PersistedNamesTest {
                     queryCacheDao.getRow(
                         RESERVED_TABLE_NAME,
                         "query_shape\u001Ftodos\u001Ftodos?shared",
+                    )
+                )
+                .payload,
+        )
+    }
+
+    @Test
+    fun a_pinned_file_is_recorded_under_this_name_with_these_keys() = runTest {
+        // Given / When — an object pinned, by its bucket and path
+        PinnedFileRecords(queryCacheDao).pin("media", "photos/a b.png")
+
+        // Then
+        assertEquals("pinned_file", PINNED_FILE_CACHE_KEY_PREFIX_NAME)
+        assertEquals(
+            """{"version":1,"bucketId":"media","path":"photos/a b.png"}""",
+            assertNotNull(
+                    queryCacheDao.getRow(
+                        RESERVED_TABLE_NAME,
+                        "pinned_file\u001Fmedia::photos/a b.png",
                     )
                 )
                 .payload,

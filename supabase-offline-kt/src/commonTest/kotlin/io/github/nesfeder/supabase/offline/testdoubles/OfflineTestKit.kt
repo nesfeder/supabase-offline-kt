@@ -54,6 +54,7 @@ import io.github.nesfeder.supabase.offline.internal.postgrest.readShapePostgrest
 import io.github.nesfeder.supabase.offline.internal.realtime.ServerChangeFeed
 import io.github.nesfeder.supabase.offline.internal.realtime.WatchedTable
 import io.github.nesfeder.supabase.offline.internal.storage.CachingBucketApi
+import io.github.nesfeder.supabase.offline.internal.storage.PinnedFileRecords
 import io.github.nesfeder.supabase.offline.internal.storage.StorageFileCache
 import io.github.nesfeder.supabase.offline.internal.storage.markFileUsed
 import io.github.nesfeder.supabase.offline.internal.storage.syncFileToDisk
@@ -456,6 +457,7 @@ internal fun newTestFileCache(
 ): StorageFileCache =
     StorageFileCache(
         cachedFileDao = store.cachedFileDao,
+        pinRecords = PinnedFileRecords(store.queryCacheDao),
         ownership = store.cacheOwnership,
         fetchedAtMillis = store.nowMillis,
         dataDirectoryProvider = { baseDirectory },
