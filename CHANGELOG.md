@@ -208,6 +208,11 @@ All notable changes to this project are recorded in this file. The format follow
 
 ### Fixed
 
+- A change the server sent to a named table as soon as its Realtime channel was joined could be
+  dropped: supabase-kt starts listening for a table's changes only once the coroutine behind it
+  runs, which could be after the join was taken, and it drops a change nothing listens for. Each
+  table now listens before its join goes out. The read of the table on every join usually made up
+  for the loss.
 - `syncStatus` could stop counting the queue, the rejected list and the conflicted list for good
   when a read of the rejected or conflicted list failed while a count was being read, as a failing
   disk under load can make happen: its counts stayed where they were for the life of the client,

@@ -22,6 +22,7 @@ import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.ProducerScope
@@ -29,9 +30,11 @@ import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.buffer
 import kotlinx.coroutines.flow.channelFlow
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.yield
 
 /** What the client's channels are named, with a number that makes each join's topic its own. */
 internal const val REALTIME_TOPIC_PREFIX: String = "supabase-offline"
@@ -73,6 +76,11 @@ internal const val REALTIME_NOT_INSTALLED_MESSAGE: String =
  * change once 64 wait; so is the feed's own flow, between those and its collector. The follower
  * bounds what waits, in its backlog.
  *
+ * Nor is a change sent as soon as the join is taken: supabase-kt registers a table's callback only
+ * when that `callbackFlow`'s producer first runs, and drops a change no callback takes. The
+ * producers run unconfined, so each starts inside the collection that asks for it, and every
+ * table's callback is in place before the join goes out.
+ *
  * @param tokenRefresher keeps the channel's token current for a client without Auth, or `null` when
  *   Auth, or supabase-kt itself, does.
  * @param leaveBound how long a leave may take before the channel is abandoned to supabase-kt.
@@ -107,6 +115,9 @@ internal class SupabaseRealtimeFeed(
                         // Fused into supabase-kt's callbackFlow: its channel, not one after
                         // it, so its trySend never finds the buffer full
                         .buffer(Channel.UNLIMITED)
+                        // Fused too: the producer, which registers the table's callback, starts
+                        // inside the collection below rather than when a dispatcher gets to it
+                        .flowOn(Dispatchers.Unconfined)
                 launch(start = CoroutineStart.UNDISPATCHED) {
                     changes.collect { action ->
                         action.toEvent(watched.table, schema)?.let { event -> send(event) }
@@ -114,6 +125,7 @@ internal class SupabaseRealtimeFeed(
                 }
             }
             launch(start = CoroutineStart.UNDISPATCHED) { reportStatus(channel) }
+            awaitQueuedRegistrations()
             joinSent = true
             channel.subscribe()
             tokenRefresher?.let { refresher -> launch { refresher.keepFresh() } }
@@ -123,6 +135,18 @@ internal class SupabaseRealtimeFeed(
         }
     }
         .buffer(Channel.UNLIMITED)
+
+    /**
+     * Lets the producers the loop above started register their callbacks before the join. They ran
+     * at once unless this feed itself runs on a dispatcher that runs its work in place (unconfined,
+     * or `Dispatchers.Main.immediate` on the main thread): there they may wait in the thread's
+     * queue of such work, behind this coroutine. A yield in that queue lets them run first. Where
+     * the queue is empty, as on any dispatcher that dispatches, it returns at once, without a
+     * dispatch.
+     */
+    private suspend fun awaitQueuedRegistrations() {
+        withContext(Dispatchers.Unconfined) { yield() }
+    }
 
     /**
      * Sends [ServerChangeEvent.Joined] each time the channel subscribes, and fails the feed once a
