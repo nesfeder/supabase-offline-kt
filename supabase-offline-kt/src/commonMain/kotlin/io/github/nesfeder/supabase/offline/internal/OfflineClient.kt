@@ -128,6 +128,7 @@ import kotlinx.coroutines.IO
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -138,7 +139,6 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.merge
-import kotlinx.coroutines.flow.retryWhen
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.job
@@ -1329,34 +1329,42 @@ internal class OfflineClient(
             }
         }
         clientScope.launch {
-            // The flows only say when to count; every count is read in one snapshot under the
-            // queue's lock, so a write moving between the queue and a list is counted once, and
-            // an older snapshot never lands after a newer one
-            merge(
-                    mutationQueue.queueChanges(),
-                    mutationQueue.shownRejectionsFlow().map {},
-                    mutationQueue.shownConflictsFlow().map {},
-                )
-                .conflate()
-                .retryWhen { failure, attempt ->
+            var doublings = 0
+            while (true) {
+                try {
+                    // The flows only say when to count; every count is read in one snapshot under
+                    // the queue's lock, so a write moving between the queue and a list is counted
+                    // once, and an older snapshot never lands after a newer one
+                    merge(
+                            mutationQueue.queueChanges(),
+                            mutationQueue.shownRejectionsFlow().map {},
+                            mutationQueue.shownConflictsFlow().map {},
+                        )
+                        .conflate()
+                        .collect {
+                            val counts = queueCountsOrNull() ?: return@collect
+                            publishStatus { status ->
+                                status.copy(
+                                    pendingMutationCount = counts.pending,
+                                    rejectedMutationCount = counts.rejected,
+                                    conflictedMutationCount = counts.conflicted,
+                                )
+                            }
+                        }
+                    return@launch
+                } catch (failure: Exception) {
+                    // Closing ends it. Any other failure is followed again, one that cut a count
+                    // short included: `retryWhen` rethrows a flow's failure that canceled the
+                    // count in progress, which ended the status's counts for good
+                    ensureActive()
                     engineLogger.warning {
                         "The sync status lost track of the queue (${failure::class.simpleName}); " +
                             "following it again"
                     }
-                    val doublings = attempt.coerceAtMost(STATUS_RETRY_DOUBLINGS.toLong()).toInt()
                     delay(STATUS_RETRY_WAIT * (1 shl doublings))
-                    true
+                    doublings = minOf(doublings + 1, STATUS_RETRY_DOUBLINGS)
                 }
-                .collect {
-                    val counts = queueCountsOrNull() ?: return@collect
-                    publishStatus { status ->
-                        status.copy(
-                            pendingMutationCount = counts.pending,
-                            rejectedMutationCount = counts.rejected,
-                            conflictedMutationCount = counts.conflicted,
-                        )
-                    }
-                }
+            }
         }
     }
 

@@ -199,6 +199,11 @@ All notable changes to this project are recorded in this file. The format follow
 
 ### Fixed
 
+- `syncStatus` could stop counting the queue, the rejected list and the conflicted list for good
+  when a read of the rejected or conflicted list failed while a count was being read, as a failing
+  disk under load can make happen: its counts stayed where they were for the life of the client,
+  and a background failure was logged. Such a failure is now logged as any other failed read, and
+  the counts follow the queue again after the usual wait.
 - An object and a folder of the same name in one bucket, such as `album` and `album/cover.png`, can
   both be cached now. On disk they would need one name to be both a file and a folder, so the one
   downloaded second was never cached: `ensureCachedFile` threw for it every time, a channel download
