@@ -22,9 +22,16 @@ import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertIs
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import org.junit.runner.RunWith
 import org.robolectric.Robolectric
 
@@ -155,14 +162,26 @@ class OfflinePluginAndroidTest {
                 }
             }
 
-        // When — the read is cached, and the network goes
+        // When — the read is cached, and the network goes; the bound is enforced by a pass that
+        // runs after the response is written, so the cache is asked again, on real time, while it
+        // still serves the read, for up to ten seconds
         supabase.offline.from("todos").select()
         server.answer = { connectivityFailure() }
-
-        // Then — the bound evicted it at once
-        assertFailsWith<CacheMissException> {
+        suspend fun cacheOnlyRead() = runCatching {
             supabase.offline.from("todos").select(readStrategy = ReadStrategy.CacheOnly())
         }
+        var read = cacheOnlyRead()
+        withContext(Dispatchers.Default) {
+            withTimeoutOrNull(10.seconds) {
+                while (read.isSuccess) {
+                    delay(20.milliseconds)
+                    read = cacheOnlyRead()
+                }
+            }
+        }
+
+        // Then — the bound evicted it
+        assertIs<CacheMissException>(read.exceptionOrNull(), "the read was still served: $read")
         supabase.close()
     }
 }

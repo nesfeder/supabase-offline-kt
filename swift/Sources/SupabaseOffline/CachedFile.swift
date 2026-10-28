@@ -14,8 +14,9 @@ public struct CachedFile: Sendable, Hashable {
     /// path in that client's memory, which is not on disk.
     public let path: String
 
-    /// When the copy was downloaded. A cached copy is served however old it is: compare this with
-    /// your own rule.
+    /// When the copy was downloaded, or the server last answered a download that it had not changed.
+    /// A cached copy is served however old it is: compare this with your own rule, and download the
+    /// object again when it is too old; the server then sends it only if it changed.
     public let fetchedAt: Date
 
     /// The copy's size in bytes.

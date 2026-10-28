@@ -16,8 +16,10 @@ import kotlin.time.Instant
  * open it soon after you receive it, or copy it if you need it to outlive those.
  *
  * @property path absolute path of the cached file on this device.
- * @property fetchedAt when the file was downloaded from the server. Nothing revalidates a cached
- *   file, so compare this with your own freshness rule and download again when it is too old.
+ * @property fetchedAt when the file was downloaded from the server, or the server last answered a
+ *   download that it had not changed. The cache never asks on its own, so compare this with your
+ *   own freshness rule and download the object again when it is too old: the server then sends it
+ *   only if it changed.
  * @property sizeBytes size of the file on disk, in bytes.
  */
 @ConsistentCopyVisibility
