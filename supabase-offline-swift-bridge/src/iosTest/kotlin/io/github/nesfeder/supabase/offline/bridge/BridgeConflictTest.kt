@@ -72,11 +72,12 @@ class BridgeConflictTest {
         // When
         val report = client.queueTitleChangeAndSync()
 
-        // Then — the write is parked, never resent
+        // Then — the write is parked, never resent. The status counts the conflicted list in the
+        // background, after the sync has returned, so the count is awaited
         assertEquals(0, report.syncedCount)
         assertEquals(1, report.conflicted.size)
         assertEquals(1, server.patches().size)
-        assertEquals(1, client.currentSyncStatus().conflictedMutationCount)
+        awaitUntil { client.currentSyncStatus().conflictedMutationCount == 1 }
         client.closeAndWait()
     }
 
