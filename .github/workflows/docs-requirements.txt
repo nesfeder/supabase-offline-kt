@@ -6,7 +6,7 @@
 # reads, so moving to Zensical later means replacing these pins, not rewriting the config.
 babel==2.18.0
 backrefs==8.1
-certifi==2026.10.19
+certifi==2026.10.23
 charset-normalizer==3.5.2
 click==8.5.0
 colorama==0.4.6
