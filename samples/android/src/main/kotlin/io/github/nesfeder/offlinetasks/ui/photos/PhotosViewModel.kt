@@ -56,6 +56,7 @@ class PhotosViewModel(
 ) : ViewModel() {
     private val shownCount = MutableStateFlow(PHOTO_PAGE_SIZE)
 
+    // --8<-- [start:screen-state]
     /** The screen's state. */
     val uiState: StateFlow<PhotosUiState> =
         combine(
@@ -79,6 +80,8 @@ class PhotosViewModel(
                 SharingStarted.WhileSubscribed(5_000),
                 PhotosUiState.NoDataYet(isLoading = true),
             )
+
+    // --8<-- [end:screen-state]
 
     /** Reads one more page: the newest photos, a page more of them. */
     fun showMore() {

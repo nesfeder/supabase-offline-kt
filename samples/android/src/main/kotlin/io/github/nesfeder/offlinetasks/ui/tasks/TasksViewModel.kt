@@ -188,9 +188,13 @@ class TasksViewModel(
             .flatMapLatest { ids -> repository.photoCounts(ids).reportingFailures(failures) }
             .onStart { emit(emptyMap()) }
 
+    // --8<-- [start:headline-flow]
+    /** The subtitle and the banner's one value, from the status and the list's refresh together. */
     private val headlines: Flow<SyncHeadline> =
         combine(repository.syncStatus, allTasks.map { it.refresh }, ::syncHeadlineOf)
             .withSyncedMoment()
+
+    // --8<-- [end:headline-flow]
 
     /**
      * One-off messages, each delivered once. A refusal announced while the screen was away is

@@ -43,12 +43,14 @@ fun PhotoThumbnail(
     modifier: Modifier = Modifier,
     showOnDeviceMark: Boolean = false,
 ) {
+    // --8<-- [start:produce-state]
     // Read again once the upload is done: the device's own copy then gives way to the cache's.
     val isPending = photo.pendingUpload != null
     val file by
         produceState<PhotoFileState>(PhotoFileState.Loading, photo.id, canReachServer, isPending) {
             value = loadFile(photo)
         }
+    // --8<-- [end:produce-state]
     val shape = MaterialTheme.shapes.large
     Box(
         modifier =

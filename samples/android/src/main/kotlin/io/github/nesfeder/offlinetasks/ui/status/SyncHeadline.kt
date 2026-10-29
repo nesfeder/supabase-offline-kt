@@ -39,6 +39,7 @@ sealed interface SyncHeadline {
     data object ShowingSavedData : SyncHeadline
 }
 
+// --8<-- [start:headline]
 /** The headline for [status] and the task list's [refresh], in order of what matters most. */
 fun syncHeadlineOf(status: AppSyncStatus, refresh: TaskRefreshState): SyncHeadline {
     val pending = status.pendingMutationCount
@@ -51,6 +52,8 @@ fun syncHeadlineOf(status: AppSyncStatus, refresh: TaskRefreshState): SyncHeadli
         else -> SyncHeadline.UpToDate
     }
 }
+
+// --8<-- [end:headline]
 
 /** These headlines with [SyncHeadline.JustSynced] shown for [holdFor] after a sync finishes. */
 @OptIn(ExperimentalCoroutinesApi::class)

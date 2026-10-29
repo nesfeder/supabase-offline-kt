@@ -153,6 +153,7 @@ nav:
   - Getting started:
       - Project setup: getting-started/setup.md
       - iOS apps in Swift: getting-started/swift.md
+      - Android apps in Compose: getting-started/compose.md
       - Coming from supabase-kt: getting-started/migrating.md
       - Testing your app: getting-started/testing.md
   - Behaviors:

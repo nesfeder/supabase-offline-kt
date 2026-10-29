@@ -328,6 +328,7 @@ while the other process has the database open.
 
 ## Next steps
 
+- [Android apps in Compose](compose.md): collecting the flows on a screen.
 - [Coming from supabase-kt](migrating.md): moving existing calls.
 - [Testing your app](testing.md): the in-memory client for unit tests.
 - [Behaviors](../behaviors/index.md): what each call does offline.
