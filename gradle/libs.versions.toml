@@ -82,7 +82,7 @@ buildToolFloor-jsoup = "1.23.2"
 buildToolFloor-netty = "4.1.137.Final"
 # GHSA-rcgg-9c38-7xpx: the Kotlin Gradle plugin's Swift export brings 1.41.0 (2.4.20, 2.5.0-Beta1).
 # Unneeded once a Kotlin release's Swift export brings 1.62.0.
-buildToolFloor-opentelemetry = "1.62.0"
+buildToolFloor-opentelemetry = "1.67.0"
 # The Android sample's image loader.
 coil = "3.6.3"
 # The documentation engine: the HTML reference in each published artifact's documentation jar.
