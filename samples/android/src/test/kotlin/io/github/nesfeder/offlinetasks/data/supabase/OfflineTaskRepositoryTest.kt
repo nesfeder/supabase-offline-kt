@@ -604,19 +604,18 @@ class OfflineTaskRepositoryTest {
 
     @Test
     fun an_upload_whose_answer_was_lost_counts_as_stored_once_storage_shows_its_bytes() = runTest {
-        // Given — a photo whose file was stored, and whose answer the connection lost
+        // Given — a photo whose file was stored, and whose answer the connection lost, once
         repository.addTask("Stored once", notes = null)
         val task = repository.tasks().awaitValue { it.isNotEmpty() }.single()
-        server.loseUploadAnswers = true
+        server.loseNextUploadAnswer = true
         repository.addPhoto(task.id, EncodedPhoto(ByteArray(8), 4, 3))
         assertEquals(1, server.files.size)
 
-        // When — the connection back, and the queue sent
-        server.loseUploadAnswers = false
+        // When — the queue sent (the library's own pass may already have sent it)
         repository.syncPendingMutations()
 
-        // Then — sent again, refused as a duplicate, and taken as stored once the object in the
-        // bucket is its bytes; the row written
+        // Then — sent once more, refused as a duplicate, and taken as stored once the object in
+        // the bucket is its bytes; the row written
         repository.photos(task.id).awaitValue { photos -> photos.isUploaded() }
         assertEquals(2, server.requests.count { it.startsWith("POST /storage/v1/object/") })
         assertEquals(1, server.requests.count { it.startsWith("GET /storage/v1/object/info/") })

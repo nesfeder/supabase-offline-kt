@@ -97,10 +97,13 @@ class FakeSupabaseServer {
     var maxRows: Int = 1_000
 
     /**
-     * While true, an upload's answer is lost once the file is stored, as a connection that drops on
-     * the way back would lose it: the file is in the bucket, and the app hears a network failure.
+     * When true, the next upload's answer is lost once the file is stored, as a connection that
+     * drops on the way back would lose it: the file is in the bucket, and the app hears a network
+     * failure. One answer only, then false again: the send that follows finds the file stored
+     * whether the library's own pass or a sync the test asks for makes it, so a test can count its
+     * sends exactly.
      */
-    var loseUploadAnswers: Boolean = false
+    @Volatile var loseNextUploadAnswer: Boolean = false
 
     /**
      * While true, an upload finds a file already at its path, as one an earlier try stored would
@@ -215,7 +218,10 @@ class FakeSupabaseServer {
                 }
             }
         val isUpload = request.method == HttpMethod.Post && path.startsWith(UPLOAD_PREFIX)
-        if (loseUploadAnswers && isUpload) throw IOException("connection lost after the upload")
+        if (loseNextUploadAnswer && isUpload) {
+            loseNextUploadAnswer = false
+            throw IOException("connection lost after the upload")
+        }
         val hold = holdUploadAnswers
         if (hold != null && isUpload) {
             uploadsHeld.update { it + 1 }
