@@ -26,7 +26,7 @@ From the samples: [FakeSupabaseServer.kt](https://github.com/nesfeder/supabase-o
 kotlin {
     sourceSets {
         commonTest.dependencies {
-            implementation("io.github.nesfeder.supabase-offline:supabase-offline-kt-testing:0.2.0")
+            implementation("io.github.nesfeder.supabase-offline:supabase-offline-kt-testing:0.3.0")
             implementation("io.ktor:ktor-client-mock:3.4.3")
         }
     }

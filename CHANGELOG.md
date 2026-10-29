@@ -9,9 +9,7 @@ All notable changes to this project are recorded in this file. The format follow
      the heading it needs (before the first release, under any of them). A release renames
      "Unreleased" to its version and date, and starts a new one. -->
 
-## Unreleased
-
-### Breaking
+## [0.3.0] - 2026-10-29
 
 ### Added
 
@@ -194,10 +192,6 @@ All notable changes to this project are recorded in this file. The format follow
   table, and a sync's `syncedCount`, `remainingCount` and `alreadyOnServerCount` count a queued
   upload as a write; `pendingMutations()` and `rejectedMutations()` still list row writes only. An
   app that queues no upload sees the counts it saw.
-
-### Deprecated
-
-### Removed
 
 ### Fixed
 
