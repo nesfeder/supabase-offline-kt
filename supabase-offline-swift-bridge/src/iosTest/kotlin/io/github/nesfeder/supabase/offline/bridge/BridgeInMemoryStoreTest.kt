@@ -25,16 +25,19 @@ class BridgeInMemoryStoreTest {
         val (outcome, _) = first.mutateAndWait(INSERT_TODO, """{"id":2,"title":"Tea"}""")
         first.closeAndWait()
 
-        // When — the next client opens over the store and syncs
+        // When — the next client opens over the store, counts what waits, then syncs. The count
+        // is awaited before the sync is asked for: each bridge call runs in a coroutine of its own,
+        // so two asked for together run in either order, and the sync could empty the queue first
         val second = openTestClient(server, store = store) { autoSync = false }
         val counted = CompletionProbe<Int>()
         second.pendingMutationCount(null, counted.completion)
+        val waiting = counted.awaitValue()
         val synced = CompletionProbe<BridgeSyncReport>()
         second.syncPendingMutations(null, synced.completion)
 
         // Then — it found the write, and sent it
         assertEquals(true, outcome?.isQueued)
-        assertEquals(1, counted.awaitValue())
+        assertEquals(1, waiting)
         assertEquals(1, assertNotNull(synced.awaitValue()).syncedCount)
         assertEquals(1, server.requests.count { it.method == "POST" })
         second.closeAndWait()
