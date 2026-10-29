@@ -21,6 +21,7 @@ import io.ktor.http.HttpMethod
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.decodeURLPart
 import io.ktor.http.headersOf
+import kotlin.concurrent.Volatile
 import kotlin.concurrent.atomics.AtomicReference
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.concurrent.atomics.update
@@ -36,6 +37,10 @@ import okio.ByteString.Companion.toByteString
  * tests of queued uploads: it records every request in the order it arrived, so a test can tell
  * whether a file went before or after the rows around it. As hosted Storage does, it refuses an
  * upload that may not overwrite an object it already holds as a duplicate.
+ *
+ * A test sets the switches below on its own thread while the client's passes send on another, so
+ * each is volatile, and [online] is read once per request: a request answered after the test turned
+ * the network back on is recorded as reached, however the two interleave.
  */
 internal class UploadAndRowServer {
 
@@ -84,24 +89,25 @@ internal class UploadAndRowServer {
     val objects: MutableStateFlow<Map<String, ByteArray>> = MutableStateFlow(emptyMap())
 
     /** When `false`, every request fails at the transport layer, as it does with no network. */
-    var online: Boolean = true
+    @Volatile var online: Boolean = true
 
     /**
      * How Storage answers an upload of `bucket/path`: `null` stores it; otherwise a refusal, or a
      * store whose answer is lost.
      */
-    var uploadAnswer: ((key: String) -> UploadAnswer?)? = null
+    @Volatile var uploadAnswer: ((key: String) -> UploadAnswer?)? = null
 
     /**
      * The ETag `info` answers for an object's bytes, or `null` for none: by default their MD5,
      * quoted, as S3 gives a single-part upload's.
      */
+    @Volatile
     var etagOf: (ByteArray) -> String? = { bytes -> "\"" + bytes.toByteString().md5().hex() + "\"" }
 
     /**
      * How Storage answers `info` of `bucket/path` instead of from [objects], or `null` for that.
      */
-    var infoAnswer: ((key: String) -> InfoAnswer?)? = null
+    @Volatile var infoAnswer: ((key: String) -> InfoAnswer?)? = null
 
     /** What Storage does with an `info` request instead of answering it from [objects]. */
     sealed interface InfoAnswer {
@@ -144,6 +150,8 @@ internal class UploadAndRowServer {
                 else -> error("UploadAndRowServer has no route for ${request.url.encodedPath}")
             }
         val bytes = request.body.toByteArray()
+        // Read once: recorded as it is answered, whatever the test does to it meanwhile
+        val reached = online
         recorded.update { list ->
             list +
                 Recorded(
@@ -160,11 +168,11 @@ internal class UploadAndRowServer {
                                     HttpHeaders.ContentType to type.toString()
                                 }
                             ),
-                    reached = online,
+                    reached = reached,
                 )
         }
         arrived.update { count -> count + 1 }
-        if (!online) throw IOException("network unreachable")
+        if (!reached) throw IOException("network unreachable")
         val json = headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString())
         val key = target.substringAfter('/')
         when {
