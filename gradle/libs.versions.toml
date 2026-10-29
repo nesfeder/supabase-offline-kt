@@ -80,8 +80,9 @@ buildToolFloor-jsoup = "1.23.2"
 # 4.1.137.Final releases bring every other Netty artifact at the same version, so those two are the
 # floors. Unneeded once an Android Gradle plugin release's test platform brings 4.1.137.Final.
 buildToolFloor-netty = "4.1.137.Final"
-# GHSA-rcgg-9c38-7xpx: the Kotlin Gradle plugin's Swift export brings 1.41.0 (2.4.20, 2.5.0-Beta1).
-# Unneeded once a Kotlin release's Swift export brings 1.62.0.
+# GHSA-rcgg-9c38-7xpx (patched in 1.62.0) and GHSA-ccrj-gw8r-854m (1.67.0): the Kotlin Gradle
+# plugin's Swift export brings 1.41.0 (2.4.21, 2.5.0-Beta1). Unneeded once a Kotlin release's Swift
+# export brings 1.67.0.
 buildToolFloor-opentelemetry = "1.67.0"
 # The Android sample's image loader.
 coil = "3.6.3"
@@ -121,7 +122,7 @@ supabase-bom = "3.6.0"
 # The library as the samples take it: its newest release on Maven Central, never the version this
 # build makes. The post-release pull request moves it (RELEASING.md); the Android sample builds
 # this checkout instead with -PsupabaseOffline.local=true (settings.gradle.kts).
-supabase-offline = "0.2.0"
+supabase-offline = "0.3.0"
 
 [libraries]
 # The `gradleApi` and `gradlePlugin` entries are the plugins build-logic compiles against; the
