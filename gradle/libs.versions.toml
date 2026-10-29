@@ -43,6 +43,14 @@ buildToolFloor-commons-lang3 = "3.18.0"
 # GHSA-27j2-h3m2-8237: Kover's HTML reporter (coverage-report 1.0.25) and Dokka's generator (2.2.0)
 # bring 2.3.32. Unneeded once a Kover release and a Dokka release bring 2.3.35.
 buildToolFloor-freemarker = "2.3.35"
+# GHSA-xxph-c9ww-hj94: the Android Gradle plugin, its lint and its test platform's plugins bring
+# 33.4.0-jre (9.3.3 through 9.6.0-alpha02, through com.android.tools:common), the test platform's
+# core, launcher and drivers 32.0.1-jre (com.google.testing.platform 0.0.9-alpha04), and Room's
+# compiler 33.2.1-jre on the KSP processor classpaths (2.8.5). Unneeded once an Android Gradle
+# plugin release, its test platform and a Room release bring 33.7.2-jre. Robolectric (4.17) brings
+# 33.6.0-jre onto the host-test classpaths, which the floors do not reach;
+# supabase-offline.host-test-robolectric applies this floor alone there.
+buildToolFloor-guava = "33.7.2-jre"
 # GHSA-7r82-7xv7-xcpj: the Android Gradle plugin's lint and its test platform's result listener
 # bring 4.5.6 through httpmime 4.5.6. Unneeded once an Android Gradle plugin release drops that
 # httpmime.
@@ -155,6 +163,7 @@ buildToolFloor-bcpkix = { module = "org.bouncycastle:bcpkix-jdk18on", version.re
 buildToolFloor-bcprov = { module = "org.bouncycastle:bcprov-jdk18on", version.ref = "buildToolFloor-bouncycastle" }
 buildToolFloor-commons-lang3 = { module = "org.apache.commons:commons-lang3", version.ref = "buildToolFloor-commons-lang3" }
 buildToolFloor-freemarker = { module = "org.freemarker:freemarker", version.ref = "buildToolFloor-freemarker" }
+buildToolFloor-guava = { module = "com.google.guava:guava", version.ref = "buildToolFloor-guava" }
 buildToolFloor-httpclient = { module = "org.apache.httpcomponents:httpclient", version.ref = "buildToolFloor-httpclient" }
 buildToolFloor-jackson-dataformat-xml = { module = "com.fasterxml.jackson.dataformat:jackson-dataformat-xml", version.ref = "buildToolFloor-jackson" }
 buildToolFloor-jackson-module-kotlin = { module = "com.fasterxml.jackson.module:jackson-module-kotlin", version.ref = "buildToolFloor-jackson" }

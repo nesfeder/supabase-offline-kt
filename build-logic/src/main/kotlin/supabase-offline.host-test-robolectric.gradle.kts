@@ -42,3 +42,17 @@ tasks.withType<Test>().configureEach {
         )
     )
 }
+
+// Robolectric brings Guava onto the host-test classpaths (4.17: 33.6.0-jre, GHSA-xxph-c9ww-hj94),
+// where the build-tool floors do not reach: those cover the classpaths the plugins and their tools
+// resolve, and a test classpath is no place for the other floors. The Guava floor alone applies
+// here, on the scope the tests declare Robolectric in, so the compile and runtime classpaths and
+// the Kotlin Gradle plugin's metadata resolution, which holds to the compile classpath's versions,
+// move together. A constraint only ever raises a version. Unneeded once a Robolectric release
+// brings the floor's version; when the floor itself goes, this lookup fails and says so.
+private val guavaFloor = catalogLibrary("buildToolFloor-guava")
+private val hostTestConstraints = dependencies.constraints
+
+configurations
+    .matching { it.name == "androidHostTestImplementation" || it.name == "testImplementation" }
+    .configureEach { hostTestConstraints.add(name, guavaFloor) }

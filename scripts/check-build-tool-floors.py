@@ -16,7 +16,11 @@ The build applies them as dependency constraints to these configurations, which 
     reference (``supabase-offline.api-reference``);
   * every configuration of a module whose name starts with ``unified-test-platform-``: the Android
     Gradle plugin's unified test platform, which an application module creates to run instrumented
-    tests (both ``supabase-offline.build-tool-floors``, which every role plugin applies).
+    tests;
+  * every configuration of a module whose name starts with ``ksp``: the Kotlin Symbol Processing
+    plugin's processor classpaths, which resolve Room's compiler for each target, and its own plugin
+    classpaths (the last three through ``supabase-offline.build-tool-floors``, which every role
+    plugin applies).
 
 It takes the modules from Gradle's own ``projects`` report, asks Gradle for the resolved graphs (the
 ``buildEnvironment`` and ``dependencies`` reports) and fails when:
@@ -83,7 +87,7 @@ PER_MODULE = ["androidLintTool", "swiftExportClasspathResolvable", "kotlinBouncy
 # Configurations checked by the start of their name, in every module that has them; at least one
 # module must have one for each prefix. A later release's new configuration of the same tool is
 # checked without a change here, as the convention plugin floors it without one.
-PER_MODULE_PREFIXES = ["unified-test-platform-"]
+PER_MODULE_PREFIXES = ["unified-test-platform-", "ksp"]
 
 TASK = re.compile(r"^> Task (?P<path>\S+)")
 # A project in the `projects` report's hierarchy; its "Project locations" lines are lower case, and
@@ -360,14 +364,16 @@ def self_test_report(lib: str = LIB_OK, other: str = OTHER_OK, lint: bool = True
                      result_listener: str | None = None, test_platform_core: str | None = None,
                      dotted: str | None = None, root_dokka: str | None = None,
                      publication: str | None = None, root_publication: str | None = None,
-                     root_report: bool = True) -> str:
+                     root_report: bool = True, ksp: str | None = None,
+                     ksp_processor: bool = True) -> str:
     """A log of the two checked commands: every module listed, then every report.
 
     `lib` and `other` are the graphs of the two floored packages everywhere; the other arguments
-    replace one configuration's graph, drop a report, or change the module list. The second module
-    is an application's: it alone has configurations of the unified test platform, one of them with
-    dots in its name. The root project's report holds Dokka's generator and publication plugins
-    alone.
+    replace one configuration's graph, drop a report, or change the module list. The first module
+    alone has the Kotlin Symbol Processing plugin's configurations, a declarable scope and a
+    processor classpath; the second is an application's: it alone has configurations of the unified
+    test platform, one of them with dots in its name. The root project's report holds Dokka's
+    generator and publication plugins alone.
     """
     listed = MODULES if projects is None else projects
     hierarchy = "".join(f"+--- Project '{module}'\n" for module in listed)
@@ -399,6 +405,10 @@ def self_test_report(lib: str = LIB_OK, other: str = OTHER_OK, lint: bool = True
             + f"{other if dokka is None else dokka}\n"
             + "dokkaHtmlPublicationPluginResolver~internal - [Internal Dokka Configuration] Dokka.\n"
             + f"{lib if publication is None else publication}\n"
+            + ("" if index != 0 or not ksp_processor else
+               "kspAndroid - KSP dependencies for 'androidMain'. (n)\nNo dependencies\n\n"
+               "kspAndroidMainProcessorClasspath\n"
+               f"{other if ksp is None else ksp}\n")
             + ("" if index == 0 or not test_platform else
                "unified-test-platform-core - A configuration to resolve the Unified Test Platform.\n"
                "\\--- com.example:core:1.0\n     "
@@ -440,6 +450,13 @@ SELF_TEST_CASES: list[tuple[str, str, str | None]] = [
     ("no module with a unified test platform configuration",
      self_test_report(test_platform=False),
      "<every module>:dependencies unified-test-platform-*: not in the Gradle report"),
+    ("a package below its floor in a KSP processor classpath only",
+     self_test_report(ksp="\\--- org.example:other:4.5.6\n"),
+     ":module-a:dependencies kspAndroidMainProcessorClasspath: org.example:other resolves"
+     " to 4.5.6"),
+    ("no module with a KSP configuration",
+     self_test_report(ksp_processor=False),
+     "<every module>:dependencies ksp*: not in the Gradle report"),
     ("a package below its floor in the root build script's classpath only",
      self_test_report(root="+--- org.example:lib:1.79\n" + OTHER_OK),
      ":buildEnvironment classpath: org.example:lib resolves to 1.79"),

@@ -81,6 +81,8 @@ updates:
         update-types: ["version-update:semver-patch", "version-update:semver-minor", "version-update:semver-major"]
       - dependency-name: "org.freemarker:freemarker"
         update-types: ["version-update:semver-patch", "version-update:semver-minor", "version-update:semver-major"]
+      - dependency-name: "com.google.guava:guava"
+        update-types: ["version-update:semver-patch", "version-update:semver-minor", "version-update:semver-major"]
       - dependency-name: "org.apache.httpcomponents:httpclient"
         update-types: ["version-update:semver-patch", "version-update:semver-minor", "version-update:semver-major"]
       - dependency-name: "org.jdom:jdom2"
@@ -133,6 +135,7 @@ updates:
           - "org.bouncycastle:*"
           - "org.apache.commons:commons-lang3"
           - "org.freemarker:freemarker"
+          - "com.google.guava:guava"
           - "org.apache.httpcomponents:httpclient"
           - "org.jdom:jdom2"
           - "org.bitbucket.b_c:jose4j"
