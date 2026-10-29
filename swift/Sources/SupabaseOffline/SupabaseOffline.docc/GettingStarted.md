@@ -18,7 +18,7 @@ app's target, and `SupabaseOfflineTesting` to its test target. In a package mani
 
 <!-- not compiled: a line of a package manifest -->
 ```swift
-.package(url: "https://github.com/nesfeder/supabase-offline-swift", .upToNextMinor(from: "0.2.0"))
+.package(url: "https://github.com/nesfeder/supabase-offline-swift", .upToNextMinor(from: "0.3.0"))
 ```
 
 Use `.upToNextMinor`: before 1.0, a minor release may change the API. The package needs iOS 16 and

@@ -36,12 +36,12 @@ a Ktor engine of the version supabase-kt uses.
 kotlin {
     sourceSets {
         commonMain.dependencies {
-            implementation("io.github.nesfeder.supabase-offline:supabase-offline-kt:0.2.0")
+            implementation("io.github.nesfeder.supabase-offline:supabase-offline-kt:0.3.0")
         }
         androidMain.dependencies { implementation("io.ktor:ktor-client-okhttp:3.4.3") }
         iosMain.dependencies { implementation("io.ktor:ktor-client-darwin:3.4.3") }
         commonTest.dependencies {
-            implementation("io.github.nesfeder.supabase-offline:supabase-offline-kt-testing:0.2.0")
+            implementation("io.github.nesfeder.supabase-offline:supabase-offline-kt-testing:0.3.0")
         }
     }
 }
@@ -118,7 +118,7 @@ network comes back.
 
 An iOS app in Swift uses the Swift package: the same library as a native Swift API, beside
 supabase-swift, which keeps Auth. In Xcode, add `https://github.com/nesfeder/supabase-offline-swift`
-with **File > Add Package Dependencies…** (in a manifest, `.upToNextMinor(from: "0.2.0")`), the
+with **File > Add Package Dependencies…** (in a manifest, `.upToNextMinor(from: "0.3.0")`), the
 `SupabaseOffline` library to your app's target and `SupabaseOfflineTesting` to its tests. It needs
 iOS 16 and Xcode 26 or later, and runs on arm64 simulators only: a simulator build that includes
 x86_64 fails to link, so build for a specific simulator, or with `ARCHS=arm64`.
