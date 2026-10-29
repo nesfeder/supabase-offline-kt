@@ -333,6 +333,7 @@ internal constructor(
                     lastSyncedAtEpochMillis = null,
                     lastSyncError = error,
                     conflictedMutationCount = 0,
+                    isQueueCounted = false,
                 )
             },
         ) {

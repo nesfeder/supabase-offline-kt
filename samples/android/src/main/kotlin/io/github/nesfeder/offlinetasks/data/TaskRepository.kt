@@ -266,7 +266,7 @@ interface TaskRepository {
     /** How many writes wait in the mutation queue, for one [table] or all of them. */
     fun pendingMutationCount(table: String? = null): Flow<Int>
 
-    /** How many writes wait in the mutation queue now, read once, as the app starts. */
+    /** How many writes wait in the mutation queue now, read once. */
     suspend fun pendingMutationCountNow(): Int
 
     /** The writes waiting in the mutation queue, in the order they will be sent. */

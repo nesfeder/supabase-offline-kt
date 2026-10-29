@@ -219,7 +219,7 @@ private fun DestinationBadge(topLevel: TopLevelDestination, badges: AppShellUiSt
             TopLevelDestination.Photos -> 0
             TopLevelDestination.Sync ->
                 if (badges.needsAttentionCount > 0) badges.needsAttentionCount
-                else badges.pendingCount
+                else badges.pendingCount ?: 0
         }
     if (count == 0) return
     val refused = topLevel == TopLevelDestination.Sync && badges.needsAttentionCount > 0

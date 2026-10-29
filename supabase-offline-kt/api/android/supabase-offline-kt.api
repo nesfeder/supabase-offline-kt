@@ -694,6 +694,7 @@ public final class io/github/nesfeder/supabase/offline/SyncStatus {
 	public final fun component5 ()Lkotlin/time/Instant;
 	public final fun component6 ()Lio/github/nesfeder/supabase/offline/SyncFailedException;
 	public final fun component7 ()I
+	public final fun component8 ()Z
 	public fun equals (Ljava/lang/Object;)Z
 	public final fun getConflictedMutationCount ()I
 	public final fun getLastSyncError ()Lio/github/nesfeder/supabase/offline/SyncFailedException;
@@ -702,6 +703,7 @@ public final class io/github/nesfeder/supabase/offline/SyncStatus {
 	public final fun getPendingMutationCount ()I
 	public final fun getRejectedMutationCount ()I
 	public fun hashCode ()I
+	public final fun isQueueCounted ()Z
 	public final fun isSyncing ()Z
 	public fun toString ()Ljava/lang/String;
 }

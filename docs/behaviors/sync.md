@@ -212,13 +212,16 @@ From the samples: [LibraryMappings.kt](https://github.com/nesfeder/supabase-offl
 | --- | --- |
 | `network` | `UNKNOWN` (nothing has said yet; counts as online), `ONLINE`, `OFFLINE` or `DISABLED` (after `disableNetwork()`) |
 | `pendingMutationCount`, `rejectedMutationCount`, `conflictedMutationCount` | The current user's queued writes, rejected entries and conflicted entries, queued and refused uploads among them. They follow each change to the queue shortly after it, read together, so a write moving between them is counted in exactly one |
+| `isQueueCounted` | Whether the three counts have been read from the queue: `false` in the value a client starts with, where they are `0` for want of a count, and `true` from the first counted value on, the last value at `close()` included |
 | `isSyncing` | Whether a pass is sending, started by you or by the library |
 | `lastSyncedAt` | When a pass, or a write sent at once, last left the user's queue empty. Kept in memory only |
 | `lastSyncError` | The failure that last stopped a pass with writes queued (a `NetworkUnavailable`, `ServerFailure` or `LocalFailure` stop); cleared when a later pass runs to the end or stops because the session changed user, when sending empties the queue, and when local data is cleared. A pass stopped because the session is not ready, access is off or a write waits behind another table leaves it as it was |
 
 It follows the queue from the moment the client opens, so its counts include what an earlier run
-left queued. It is the same flow whether or not the client is open, never throws, and after
-`close()` holds its last value.
+left queued, shortly after. Until that first count the counts are `0` and `isQueueCounted` is
+`false`: a badge or a banner that would otherwise say "nothing waiting" for a moment waits for
+`isQueueCounted`, as the samples' Sync badges do. It is the same flow whether or not the client is
+open, never throws, and after `close()` holds its last value.
 
 ## The network switch
 
@@ -294,4 +297,5 @@ worker on Android, a `BGTaskScheduler` task on iOS), never from a second process
 - A client without Auth sends what an earlier run left queued when it opens, and only that: a write
   made as it opens is sent at once, by itself. With `identityFromAccessToken`, it sends what the
   token's user left queued.
-- The status counts what an earlier run left queued from the moment the client opens.
+- The status counts what an earlier run left queued from the moment the client opens, and
+  `isQueueCounted` says when it has.

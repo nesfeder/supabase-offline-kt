@@ -254,6 +254,7 @@ internal fun SyncStatus.toBridge(): BridgeSyncStatus =
         lastSyncedAtEpochMillis = lastSyncedAt?.toEpochMilliseconds(),
         lastSyncError = lastSyncError?.let(::lastSyncErrorOf),
         conflictedMutationCount = conflictedMutationCount,
+        isQueueCounted = isQueueCounted,
     )
 
 /** [SyncStatus.lastSyncError] as a value: a [SyncFailedException], or, defensively, anything. */

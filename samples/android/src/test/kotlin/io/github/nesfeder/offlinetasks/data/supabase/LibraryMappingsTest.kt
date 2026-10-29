@@ -380,6 +380,17 @@ class LibraryMappingsTest {
         assertEquals(2, shown.conflictedMutationCount)
     }
 
+    @Test
+    fun the_status_says_whether_the_queue_has_been_counted() {
+        // Given — the value a client starts with, and a counted one
+        val starting = syncStatus(isQueueCounted = false)
+        val counted = syncStatus(pendingMutationCount = 2)
+
+        // When / Then — the badges read the flag through the app's status
+        assertFalse(starting.toAppSyncStatus().isQueueCounted)
+        assertTrue(counted.toAppSyncStatus().isQueueCounted)
+    }
+
     private companion object {
         val MADE: Instant = Instant.parse("2026-10-01T09:00:00Z")
         val REFUSED: Instant = Instant.parse("2026-10-01T09:05:00Z")

@@ -165,7 +165,7 @@ final class TaskRepository {
     // --8<-- [end:sync-status]
 
     // --8<-- [start:pending-count]
-    /// How many writes wait, read once: the Sync tab's badge at launch, before the first status.
+    /// How many writes wait, read once; the status carries it too, once it has counted the queue.
     func pendingMutationCountNow() async throws -> Int {
         try await client.pendingMutationCount()
     }

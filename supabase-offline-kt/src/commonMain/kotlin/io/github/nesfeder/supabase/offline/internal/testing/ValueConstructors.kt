@@ -288,7 +288,7 @@ public object ValueConstructors {
     public fun localFailureStop(error: SyncFailedException): SyncStopReason.LocalFailure =
         SyncStopReason.LocalFailure(error)
 
-    /** A [SyncStatus] with the given fields. */
+    /** A [SyncStatus] with the given fields, its counts counted. */
     public fun syncStatus(
         network: NetworkStatus,
         pendingMutationCount: Int,
@@ -305,9 +305,13 @@ public object ValueConstructors {
             lastSyncedAt,
             lastSyncError,
             conflictedMutationCount = 0,
+            isQueueCounted = true,
         )
 
-    /** A [SyncStatus] with the given fields, [SyncStatus.conflictedMutationCount] included. */
+    /**
+     * A [SyncStatus] with the given fields, [SyncStatus.conflictedMutationCount] included, its
+     * counts counted.
+     */
     public fun syncStatus(
         network: NetworkStatus,
         pendingMutationCount: Int,
@@ -325,6 +329,29 @@ public object ValueConstructors {
             lastSyncedAt,
             lastSyncError,
             conflictedMutationCount,
+            isQueueCounted = true,
+        )
+
+    /** A [SyncStatus] with the given fields, [SyncStatus.isQueueCounted] included. */
+    public fun syncStatus(
+        network: NetworkStatus,
+        pendingMutationCount: Int,
+        rejectedMutationCount: Int,
+        isSyncing: Boolean,
+        lastSyncedAt: Instant?,
+        lastSyncError: SyncFailedException?,
+        conflictedMutationCount: Int,
+        isQueueCounted: Boolean,
+    ): SyncStatus =
+        SyncStatus(
+            network,
+            pendingMutationCount,
+            rejectedMutationCount,
+            isSyncing,
+            lastSyncedAt,
+            lastSyncError,
+            conflictedMutationCount,
+            isQueueCounted,
         )
 
     /** A [MutationConflict] with the given fields. */

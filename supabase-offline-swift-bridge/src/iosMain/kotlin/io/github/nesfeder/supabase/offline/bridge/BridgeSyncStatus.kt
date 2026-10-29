@@ -15,6 +15,9 @@ package io.github.nesfeder.supabase.offline.bridge
  * @property lastSyncError why the last pass stopped with writes queued, a
  *   [BridgeErrorKind.SYNC_FAILED]; `null` once a later pass runs to the end.
  * @property conflictedMutationCount the current user's entries on the conflicted list.
+ * @property isQueueCounted whether the three counts have been read from the queue: `false` in the
+ *   value a client starts with, where they are `0` for want of a count, and `true` from the first
+ *   counted value on.
  */
 public class BridgeSyncStatus
 internal constructor(
@@ -25,6 +28,7 @@ internal constructor(
     public val lastSyncedAtEpochMillis: Long?,
     public val lastSyncError: BridgeError?,
     public val conflictedMutationCount: Int,
+    public val isQueueCounted: Boolean,
 )
 
 /** Whether the library believes it can reach the network; a hint, never a gate. */

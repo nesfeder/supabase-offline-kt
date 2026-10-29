@@ -85,7 +85,9 @@ public final class io/github/nesfeder/supabase/offline/testing/TestValuesKt {
 	public static synthetic fun syncReport$default (ILjava/util/List;IIIILjava/lang/Object;)Lio/github/nesfeder/supabase/offline/SyncReport;
 	public static final fun syncStatus (Lio/github/nesfeder/supabase/offline/NetworkStatus;IIZLkotlin/time/Instant;Lio/github/nesfeder/supabase/offline/SyncFailedException;)Lio/github/nesfeder/supabase/offline/SyncStatus;
 	public static final fun syncStatus (Lio/github/nesfeder/supabase/offline/NetworkStatus;IIZLkotlin/time/Instant;Lio/github/nesfeder/supabase/offline/SyncFailedException;I)Lio/github/nesfeder/supabase/offline/SyncStatus;
+	public static final fun syncStatus (Lio/github/nesfeder/supabase/offline/NetworkStatus;IIZLkotlin/time/Instant;Lio/github/nesfeder/supabase/offline/SyncFailedException;IZ)Lio/github/nesfeder/supabase/offline/SyncStatus;
 	public static synthetic fun syncStatus$default (Lio/github/nesfeder/supabase/offline/NetworkStatus;IIZLkotlin/time/Instant;Lio/github/nesfeder/supabase/offline/SyncFailedException;IILjava/lang/Object;)Lio/github/nesfeder/supabase/offline/SyncStatus;
 	public static synthetic fun syncStatus$default (Lio/github/nesfeder/supabase/offline/NetworkStatus;IIZLkotlin/time/Instant;Lio/github/nesfeder/supabase/offline/SyncFailedException;ILjava/lang/Object;)Lio/github/nesfeder/supabase/offline/SyncStatus;
+	public static synthetic fun syncStatus$default (Lio/github/nesfeder/supabase/offline/NetworkStatus;IIZLkotlin/time/Instant;Lio/github/nesfeder/supabase/offline/SyncFailedException;IZILjava/lang/Object;)Lio/github/nesfeder/supabase/offline/SyncStatus;
 }
 

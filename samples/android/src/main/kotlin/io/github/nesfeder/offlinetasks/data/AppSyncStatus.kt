@@ -11,6 +11,12 @@ data class AppSyncStatus(
     val rejectedMutationCount: Int,
     /** Writes parked because their row moved on the server, until the user settles them. */
     val conflictedMutationCount: Int = 0,
+    /**
+     * False until the library has counted the queue once, shortly after it opens: the three counts
+     * are 0 for want of a count until then, so the badges wait for this rather than show nothing
+     * waiting.
+     */
+    val isQueueCounted: Boolean = true,
     /** True while a replay of the mutation queue is running. */
     val isSyncing: Boolean,
     /** When a replay last finished with the queue empty; kept in memory only. */

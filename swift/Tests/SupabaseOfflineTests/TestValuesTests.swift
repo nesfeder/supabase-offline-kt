@@ -169,6 +169,8 @@ struct TestValuesTests {
         #expect(!defaulted.isSyncing)
         #expect(defaulted.lastSyncedAt == nil)
         #expect(defaulted.lastSyncError == nil)
+        #expect(defaulted.isQueueCounted)
+        #expect(given.isQueueCounted)
     }
 
     @Test func aQuerySnapshotTakesEveryField() {
@@ -486,5 +488,19 @@ struct TestValuesTests {
         #expect(status.pendingMutationCount == 1)
         #expect(plainStatus.conflictedMutationCount == 0)
         #expect(status != syncStatus(pendingMutationCount: 1))
+    }
+
+    @Test func aSyncStatusCanBeTheOneAClientStartsWith() {
+        // When — the overload that takes the flag, with and without the conflict count
+        let starting = syncStatus(isQueueCounted: false)
+        let startingWithConflicts = syncStatus(conflictedMutationCount: 3, isQueueCounted: false)
+
+        // Then — not counted, and otherwise the state of a client that has done nothing yet
+        #expect(!starting.isQueueCounted)
+        #expect(starting.pendingMutationCount == 0)
+        #expect(starting.conflictedMutationCount == 0)
+        #expect(!startingWithConflicts.isQueueCounted)
+        #expect(startingWithConflicts.conflictedMutationCount == 3)
+        #expect(starting != syncStatus())
     }
 }

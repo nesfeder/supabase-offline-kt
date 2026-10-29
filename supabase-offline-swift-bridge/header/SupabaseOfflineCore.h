@@ -1556,11 +1556,15 @@ __attribute__((swift_name("BridgeSyncReport")))
  * @property lastSyncError why the last pass stopped with writes queued, a
  *   [BridgeErrorKind.SYNC_FAILED]; `null` once a later pass runs to the end.
  * @property conflictedMutationCount the current user's entries on the conflicted list.
+ * @property isQueueCounted whether the three counts have been read from the queue: `false` in the
+ *   value a client starts with, where they are `0` for want of a count, and `true` from the first
+ *   counted value on.
  */
 __attribute__((objc_subclassing_restricted))
 __attribute__((swift_name("BridgeSyncStatus")))
 @interface SOCBridgeSyncStatus : SOCBase
 @property (readonly) int32_t conflictedMutationCount __attribute__((swift_name("conflictedMutationCount")));
+@property (readonly) BOOL isQueueCounted __attribute__((swift_name("isQueueCounted")));
 @property (readonly) BOOL isSyncing __attribute__((swift_name("isSyncing")));
 @property (readonly) SOCBridgeError * _Nullable lastSyncError __attribute__((swift_name("lastSyncError")));
 @property (readonly) SOCLong * _Nullable lastSyncedAtEpochMillis __attribute__((swift_name("lastSyncedAtEpochMillis")));

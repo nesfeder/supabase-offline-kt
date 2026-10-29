@@ -554,6 +554,7 @@ property SyncReport.syncedCount | let syncedCount: Int
 struct SyncStatus | struct SyncStatus
 func.op SyncStatus.==(_:_:) | static func == (lhs: SyncStatus, rhs: SyncStatus) -> Bool
 property SyncStatus.conflictedMutationCount | let conflictedMutationCount: Int
+property SyncStatus.isQueueCounted | let isQueueCounted: Bool
 property SyncStatus.isSyncing | let isSyncing: Bool
 property SyncStatus.lastSyncError | let lastSyncError: OfflineError?
 property SyncStatus.lastSyncedAt | let lastSyncedAt: Date?

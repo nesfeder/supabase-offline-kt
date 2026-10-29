@@ -5,6 +5,11 @@ import SupabaseOfflineCore
 
 /// Where the client stands with the current user's queued writes and the network: one value to draw
 /// a sync banner from.
+///
+/// The value a client starts with has not counted the queue yet: its counts are `0` for want of a
+/// count and ``isQueueCounted`` is `false`, until the first count lands, shortly after the client
+/// opens. An app that would otherwise show "nothing waiting" for a moment waits for
+/// ``isQueueCounted`` instead.
 public struct SyncStatus: Sendable {
 
     /// Whether the client believes it can reach the network; current as soon as
@@ -39,6 +44,11 @@ public struct SyncStatus: Sendable {
     /// The current user's entries on ``SupabaseOfflineClient/conflictedMutations()``.
     public let conflictedMutationCount: Int
 
+    /// Whether the three counts have been read from the queue: `false` in the value a client starts
+    /// with, where they are `0` for want of a count, and `true` from the first counted value on, the
+    /// last value at ``SupabaseOfflineClient/close()`` included.
+    public let isQueueCounted: Bool
+
     /// Built by the package, and by the testing product's factories.
     package init(
         network: NetworkStatus,
@@ -47,7 +57,8 @@ public struct SyncStatus: Sendable {
         isSyncing: Bool,
         lastSyncedAt: Date?,
         lastSyncError: OfflineError?,
-        conflictedMutationCount: Int = 0
+        conflictedMutationCount: Int = 0,
+        isQueueCounted: Bool = true
     ) {
         self.network = network
         self.pendingMutationCount = pendingMutationCount
@@ -56,6 +67,7 @@ public struct SyncStatus: Sendable {
         self.lastSyncedAt = lastSyncedAt
         self.lastSyncError = lastSyncError
         self.conflictedMutationCount = conflictedMutationCount
+        self.isQueueCounted = isQueueCounted
     }
 }
 
@@ -74,19 +86,21 @@ extension SyncStatus: Equatable {
             && lhs.lastSyncError?.serverError == rhs.lastSyncError?.serverError
             && lhs.lastSyncError?.isNetworkOrConnectivityFailure == rhs.lastSyncError?.isNetworkOrConnectivityFailure
             && lhs.conflictedMutationCount == rhs.conflictedMutationCount
+            && lhs.isQueueCounted == rhs.isQueueCounted
     }
 }
 
 extension SyncStatus {
 
-    /// The status of a client that has done nothing yet: the network unknown, nothing queued.
+    /// The status of a client that has done nothing yet: the network unknown, the queue not counted.
     static let initial = SyncStatus(
         network: .unknown,
         pendingMutationCount: 0,
         rejectedMutationCount: 0,
         isSyncing: false,
         lastSyncedAt: nil,
-        lastSyncError: nil
+        lastSyncError: nil,
+        isQueueCounted: false
     )
 
     /// The engine's `status`; runs on the caller's thread or the engine's.
@@ -98,7 +112,8 @@ extension SyncStatus {
             isSyncing: status.isSyncing,
             lastSyncedAt: status.lastSyncedAtEpochMillis.map { Date(epochMilliseconds: $0.int64Value) },
             lastSyncError: status.lastSyncError.flatMap { OfflineError.thrown(for: $0) as? OfflineError },
-            conflictedMutationCount: Int(status.conflictedMutationCount)
+            conflictedMutationCount: Int(status.conflictedMutationCount),
+            isQueueCounted: status.isQueueCounted
         )
     }
 }

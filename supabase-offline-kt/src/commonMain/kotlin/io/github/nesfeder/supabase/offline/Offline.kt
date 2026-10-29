@@ -380,7 +380,8 @@ public interface Offline : SupabasePlugin<Offline.Config> {
      * current.
      *
      * It follows the queue from the moment the client opens, so shortly after, its counts include
-     * the writes an earlier run left queued, whether or not the app has read it yet. The same flow
+     * the writes an earlier run left queued, whether or not the app has read it yet; until that
+     * first count its counts are `0` and [SyncStatus.isQueueCounted] is `false`. The same flow
      * whether or not the client is open, and it never throws. At [close] it takes one last value,
      * with [SyncStatus.isSyncing] `false`, and changes no more; read after [close], it holds that
      * value.

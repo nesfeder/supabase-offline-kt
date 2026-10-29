@@ -342,6 +342,10 @@ class TestValuesTest {
             )
         val plainReport = syncReport(syncedCount = 1)
         val plainStatus = syncStatus()
+        // The status a client starts with, before its first count: the one overload that takes
+        // the flag, with or without the conflict count
+        val uncounted = syncStatus(isQueueCounted = false)
+        val uncountedWithConflicts = syncStatus(conflictedMutationCount = 3, isQueueCounted = false)
 
         // Then
         assertEquals(12, pending.id)
@@ -366,6 +370,12 @@ class TestValuesTest {
         assertEquals(syncedAt, status.lastSyncedAt)
         assertSame(failure, status.lastSyncError)
         assertEquals(3, status.conflictedMutationCount)
+        assertTrue(status.isQueueCounted)
+        assertTrue(plainStatus.isQueueCounted)
+        assertFalse(uncounted.isQueueCounted)
+        assertEquals(0, uncounted.conflictedMutationCount)
+        assertFalse(uncountedWithConflicts.isQueueCounted)
+        assertEquals(3, uncountedWithConflicts.conflictedMutationCount)
         assertNull(plainPending.baseVersion)
         assertEquals(
             0 to 0,
