@@ -31,6 +31,7 @@ import io.github.nesfeder.offlinetasks.data.TaskPhoto
 import io.github.nesfeder.offlinetasks.ui.components.EmptyState
 import io.github.nesfeder.offlinetasks.ui.feedback.AppSnackbarHost
 
+// --8<-- [start:route]
 /** The Photos destination: the grid wired to its ViewModel. */
 @Composable
 fun PhotosRoute(
@@ -45,6 +46,8 @@ fun PhotosRoute(
         onShowMore = viewModel::showMore,
     )
 }
+
+// --8<-- [end:route]
 
 /**
  * The photos across tasks, newest first, a page at a time, each marked when it is available

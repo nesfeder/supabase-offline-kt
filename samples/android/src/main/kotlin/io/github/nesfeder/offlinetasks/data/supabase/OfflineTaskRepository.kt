@@ -177,10 +177,14 @@ class OfflineTaskRepository(
 
     // --8<-- [end:realtime-status]
 
+    // --8<-- [start:sync-status]
+    /** The plugin's status in the app's words, still a StateFlow: the first value is read now. */
     override val syncStatus: StateFlow<AppSyncStatus> =
         offline.syncStatus
             .map { it.toAppSyncStatus() }
             .stateIn(scope, SharingStarted.Eagerly, offline.syncStatus.value.toAppSyncStatus())
+
+    // --8<-- [end:sync-status]
 
     // --8<-- [start:reactive-strategies]
     /** The list's live read, with the strategy the "Prefer fresh data" switch picks. */
