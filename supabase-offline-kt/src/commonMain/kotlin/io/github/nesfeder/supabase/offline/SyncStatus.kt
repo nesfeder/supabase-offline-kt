@@ -15,8 +15,8 @@ import kotlin.time.Instant
  * list, refused or parked on replay, retried or resolved, is counted in exactly one of them.
  *
  * The value a client starts with has not counted the queue yet: its counts are `0` for want of a
- * count and [isQueueCounted] is `false`, until the first count lands, shortly after the client
- * opens. An app that would otherwise show "nothing waiting" for a moment waits for [isQueueCounted]
+ * count and `isQueueCounted` is `false`, until the first count lands, shortly after the client
+ * opens. An app that would otherwise show "nothing waiting" for a moment waits for `isQueueCounted`
  * instead.
  *
  * @property network whether the library believes it can reach the network; see [NetworkStatus].
