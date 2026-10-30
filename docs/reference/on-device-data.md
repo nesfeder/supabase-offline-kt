@@ -110,11 +110,17 @@ It is indexed on (`owner`, `synced_at_ms`) and indexed on (`table_name`).
 | `base_json` | TEXT | yes | That row's columns the write sets, and its version, as JSON text; `NULL` with `base_version` |
 
 
-The library's own records (the rejected list, the conflicted list, whose cache it is, each cached
-list's query shape and each pinned Storage object) are JSON text in reserved rows of
-`object_cache`, under a table name 94 bytes long: Postgres cuts identifiers at 63 bytes, so no
-table of yours can have that name, and `from()` refuses it. A reserved row is never evicted,
-counted against `cacheSizeBytes`, read as a query or overlaid.
+The library's own records (the rejected list, the conflicted list, whose cache it is, when the
+current user's queue was last emptied, each cached list's query shape and each pinned Storage
+object) are JSON text in reserved rows of `object_cache`, under a table name 94 bytes long:
+Postgres cuts identifiers at 63 bytes, so no table of yours can have that name, and `from()`
+refuses it. A reserved row is never evicted, counted against `cacheSizeBytes`, read as a query or
+overlaid.
+
+The last-synced record has the signature `last_synced_at` and holds the identity whose queue it
+was (`user:` and the user's id, or `anonymous`) and when sending last emptied it, in milliseconds
+since 1970: `SyncStatus.lastSyncedAt` across launches. It is written each time sending empties the
+queue, and goes with `clearLocalData()` and when the cache passes to another identity.
 
 A pinned object's row ([Pinned files](../behaviors/storage.md#pinned-files)) has the signature
 `pinned_file`, a unit separator (U+001F) and the object's key, `<bucket>::<path>`, and holds the
@@ -132,13 +138,13 @@ filters on.
 
 | Event | What goes | What stays |
 | --- | --- | --- |
-| `clearLocalData()` | Every cached list, every downloaded file and every pin, every queued write (never sent), queued uploads with their files, the rejected list and the conflicted list. The database is rewritten without them, as far as open reads allow ([details](../behaviors/sign-out.md#what-clearlocaldata-deletes)) | The database file itself, empty |
+| `clearLocalData()` | Every cached list, every downloaded file and every pin, every queued write (never sent), queued uploads with their files, the rejected list, the conflicted list and the record of when the queue was last emptied. The database is rewritten without them, as far as open reads allow ([details](../behaviors/sign-out.md#what-clearlocaldata-deletes)) | The database file itself, empty |
 | `storage.clearFileCache()` | Every downloaded file, in every bucket, with its row in `storage_objects`, and every pin | The cached lists, the mutation queue with its queued uploads' files, the rejected list and the conflicted list. The database is not rewritten without the deleted rows, as it is by `clearLocalData()` |
 | A bucket's `evictCachedFile(path)` | That object's downloaded files, the untransformed one and every image transform, with their rows, and its pin; with a transform, that transform's file and row alone | Every other object's files, and everything else |
 | A bucket's `unpinCachedFile(path)` | That object's pin | Its downloaded files, which eviction may then take |
-| A user signs out, or another signs in (with Auth) | Once the session settles as someone else: the cached lists, the downloaded files and the pins | The mutation queue, the rejected list and the conflicted list: each user's writes wait for that user |
+| A user signs out, or another signs in (with Auth) | Once the session settles as someone else: the cached lists, the downloaded files, the pins and the record of when the earlier identity's queue was last emptied | The mutation queue, the rejected list and the conflicted list: each user's writes wait for that user |
 | Sign-out without Auth, or with your own token provider, and `identityFromAccessToken` off | Nothing: there is one identity for the life of the install | Everything |
-| The token names another user, or none, with `identityFromAccessToken` on (without Auth) | At the client's next call: the cached lists, the downloaded files and the pins | The mutation queue, the rejected list and the conflicted list: each user's writes wait for that user |
+| The token names another user, or none, with `identityFromAccessToken` on (without Auth) | At the client's next call: the cached lists, the downloaded files, the pins and the record of when the earlier identity's queue was last emptied | The mutation queue, the rejected list and the conflicted list: each user's writes wait for that user |
 | `close()` | Nothing | Everything, for the next client |
 | Eviction | Cached lists fetched longest ago, past `cacheSizeBytes`; files used least recently, past `fileCacheSizeBytes`, except a pinned object's | The queue, which is never evicted; the rejected list keeps its newest 100 entries (see [Failures and the rejected list](../behaviors/failures.md#the-rejected-list)) |
 | Uninstalling the app | Everything: it is all in the app's private storage | |

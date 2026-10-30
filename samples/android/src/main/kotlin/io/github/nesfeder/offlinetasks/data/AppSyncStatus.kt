@@ -19,7 +19,7 @@ data class AppSyncStatus(
     val isQueueCounted: Boolean = true,
     /** True while a replay of the mutation queue is running. */
     val isSyncing: Boolean,
-    /** When a replay last finished with the queue empty; kept in memory only. */
+    /** When a replay last finished with the queue empty; the library keeps it across launches. */
     val lastSyncedAt: Instant?,
     /**
      * Why the last replay stopped early, cleared by the next clean one: a

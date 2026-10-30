@@ -3,6 +3,7 @@
 package io.github.nesfeder.supabase.offline.internal.db
 
 import io.github.nesfeder.supabase.offline.internal.cache.CacheWriteOutcome
+import io.github.nesfeder.supabase.offline.internal.cache.LastSyncedAt
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.EnqueueOutcome
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentity
 import io.github.nesfeder.supabase.offline.internal.testing.InMemoryCachedFileDao
@@ -16,6 +17,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlin.time.Instant
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
@@ -88,6 +90,30 @@ class CacheOwnershipTest {
         )
         assertEquals(ownerRecordOf(USER_B), recordedOwner())
     }
+
+    @Test
+    fun a_drop_takes_the_last_synced_record_of_the_identity_before_and_keeps_the_new_owners() =
+        runTest {
+            // Given — when A's queue was last emptied, kept
+            store.lastSyncedAt.save(LastSyncedAt(USER_A, Instant.fromEpochMilliseconds(1_000)))
+
+            // When — the cache passes to B
+            store.localData.dropCacheFor(USER_B)
+
+            // Then — A's record went with A's cache
+            assertNull(queryCacheDao.getRow(RESERVED_TABLE_NAME, LAST_SYNCED_AT_CACHE_KEY))
+
+            // When — B's queue is emptied, then the cache is made B's again, as a read that found
+            // it another's just before the switch asks
+            store.lastSyncedAt.save(LastSyncedAt(USER_B, Instant.fromEpochMilliseconds(2_000)))
+            store.localData.dropCacheFor(USER_B)
+
+            // Then — B's record stays
+            assertEquals(
+                """{"version":1,"owner":"$USER_B","syncedAtMs":2000}""",
+                queryCacheDao.getRow(RESERVED_TABLE_NAME, LAST_SYNCED_AT_CACHE_KEY)?.payload,
+            )
+        }
 
     @Test
     fun a_response_or_write_that_began_before_a_drop_is_kept_out_of_the_cache_not_the_queue() =

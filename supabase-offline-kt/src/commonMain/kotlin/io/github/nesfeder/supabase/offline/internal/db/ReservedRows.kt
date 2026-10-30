@@ -5,7 +5,7 @@ package io.github.nesfeder.supabase.offline.internal.db
 /**
  * The `object_cache` table name under which the engine keeps its own small records — the
  * rejected-mutation and conflicted-mutation lists, each cached query's shape, each pinned Storage
- * object and whose the cache is — beside the cache.
+ * object, whose the cache is and when the current user's queue was last emptied — beside the cache.
  *
  * It cannot collide with a table reachable through PostgREST: Postgres truncates identifiers to
  * `NAMEDATALEN - 1` = 63 bytes, so no table can be *named* anything longer, and this name is far
@@ -14,8 +14,8 @@ package io.github.nesfeder.supabase.offline.internal.db
  *
  * Rows under this name are never evicted, never counted toward the cache size, never returned by a
  * read and never touched by an overlay; `clearLocalData` removes them with everything else, and a
- * drop of the cache for a new owner removes the query shapes and the pinned objects and keeps the
- * rest.
+ * drop of the cache for a new owner removes the query shapes, the pinned objects and the
+ * last-synced record of the identity before it, and keeps the rest.
  *
  * Changing this value orphans every installed device's records, so it never changes.
  */
@@ -33,6 +33,12 @@ internal const val CONFLICTED_MUTATIONS_CACHE_KEY: String = "conflicted_mutation
  * cache belong to.
  */
 internal const val CACHE_OWNER_CACHE_KEY: String = "cache_owner"
+
+/**
+ * Signature, within [RESERVED_TABLE_NAME], of when the current user's queue was last emptied by
+ * sending, with whose queue it was: `SyncStatus.lastSyncedAt` across clients.
+ */
+internal const val LAST_SYNCED_AT_CACHE_KEY: String = "last_synced_at"
 
 /**
  * The name that begins the signature of each query-shape record within [RESERVED_TABLE_NAME]: the

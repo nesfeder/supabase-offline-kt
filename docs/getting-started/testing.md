@@ -98,10 +98,11 @@ Each in-memory client starts empty. To test what your app does after it is kille
 (a write queued offline is sent, a rejected write is still listed, a cached list still shows),
 build both clients over one `InMemoryStore` with `inMemory(store = store)`. The second finds what
 the first left when it closed: the queued writes, which it replays, the rejected and conflicted
-lists, the cached queries and the cached files. Nothing a close does clears the store;
+lists, the cached queries and the cached files, and when the queue was last emptied, which its
+status carries from its first counted value on. Nothing a close does clears the store;
 `clearLocalData()` does. What the library keeps only while a client runs starts over, as after a
-real relaunch: the status's `lastSyncedAt` and `lastSyncError`, the `disableNetwork()` and
-`disableRealtime()` switches, and the waits between failed passes.
+real relaunch: the status's `lastSyncError`, the `disableNetwork()` and `disableRealtime()`
+switches, and the waits between failed passes.
 
 One client holds a store at a time, as one holds a database: building a client over a store
 another holds, open or still closing, fails with an `IllegalStateException`, since both would

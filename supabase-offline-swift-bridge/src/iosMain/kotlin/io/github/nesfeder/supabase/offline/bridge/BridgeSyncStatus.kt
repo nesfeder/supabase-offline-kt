@@ -10,8 +10,9 @@ package io.github.nesfeder.supabase.offline.bridge
  * @property pendingMutationCount the current user's queued writes.
  * @property rejectedMutationCount the current user's entries on the rejected list.
  * @property isSyncing whether a sync pass is sending.
- * @property lastSyncedAtEpochMillis when a pass last left the queue empty, in milliseconds since
- *   1970; `null` until it happens.
+ * @property lastSyncedAtEpochMillis when a pass, or a write sent at once, last left the current
+ *   user's queue empty, in milliseconds since 1970; `null` until it happens. Kept on the device for
+ *   that user: a new client carries it from its first counted value on.
  * @property lastSyncError why the last pass stopped with writes queued, a
  *   [BridgeErrorKind.SYNC_FAILED]; `null` once a later pass runs to the end.
  * @property conflictedMutationCount the current user's entries on the conflicted list.

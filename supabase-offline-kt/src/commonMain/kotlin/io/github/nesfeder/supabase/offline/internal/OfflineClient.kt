@@ -369,9 +369,11 @@ internal class OfflineClient(
             scope = clientScope,
             networkAccess = networkAccess,
             mutationQueue = mutationQueue,
+            lastSyncedAtRecord = components.lastSyncedAt,
             engineLogger = engineLogger,
             clock = clock,
             replayIdentityNow = sessionIdentity::replayIdentityNow,
+            cacheOwner = { cacheOwnership.record.owner() },
         )
 
     /**
@@ -511,6 +513,7 @@ internal class OfflineClient(
             localData = localData,
             databaseScrub = databaseScrub,
             liveQueries = liveQueries,
+            cacheOwnerChanged = statusTracker::recordCacheOwnerChanged,
             engineLogger = engineLogger,
         )
 
@@ -1013,11 +1016,12 @@ internal class OfflineClient(
 
     /**
      * Clears local data for a sign-out, in the lock order [SessionCoordinator] states; the writes
-     * an earlier failure held back go with it, so the status's last error does too.
+     * an earlier failure held back go with it, so the status's last error does too, and so does the
+     * record of when the queue was last emptied.
      */
     override suspend fun clearLocalData(): Unit = operationGate.call {
         sessionCoordinator.clearLocalData()
-        // The writes an earlier failure held back are gone with it
+        // The writes an earlier failure held back are gone with it, and the last-synced record
         statusTracker.recordLocalDataCleared()
     }
 

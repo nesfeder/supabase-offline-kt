@@ -25,6 +25,16 @@ All notable changes to this project are recorded in this file. The format follow
 
 ### Changed
 
+- `SyncStatus.lastSyncedAt` is kept on the device. When sending empties the current user's queue,
+  the time is written to one more reserved row of `object_cache`, `last_synced_at`, beside the
+  cache owner's, with whose queue it was, and a new client carries it from its first counted value
+  on, so a Sync screen no longer says "never synced" on every cold start. `clearLocalData()`
+  removes the row with everything else, and the cache passing to another user removes the earlier
+  user's, so one user's time never shows for the next. Data already on a device moves nowhere: the
+  row appears after the first sync on this version, and an older build reads past it, as it does
+  past every reserved row it does not know. The Swift package's `SyncStatus.lastSyncedAt` is kept
+  the same way. The network and Realtime switches are still not kept.
+
 ### Deprecated
 
 ### Removed

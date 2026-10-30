@@ -25,8 +25,10 @@ import kotlin.time.Instant
  * @property rejectedMutationCount the current user's entries on the rejected list.
  * @property isSyncing whether a sync pass is running, started by the app or by the library.
  * @property lastSyncedAt when the current user's queue was last emptied by sending, by a sync pass
- *   or by a write sent at once, by the device's clock; `null` until it happens. Kept in memory
- *   only: a new client starts without it.
+ *   or by a write sent at once, by the device's clock, to the millisecond; `null` until it happens.
+ *   Kept on the device, with whose queue it was: a new client carries it from its first counted
+ *   value on, until [Offline.clearLocalData] or the session settling as another user takes it back,
+ *   so one user's time never shows for the next.
  * @property lastSyncError the failure that last stopped a sync pass with writes still queued
  *   ([SyncStopReason.NetworkUnavailable], [SyncStopReason.ServerFailure] or
  *   [SyncStopReason.LocalFailure]): the server's [SyncFailedException.httpStatus] and

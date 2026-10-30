@@ -36,7 +36,8 @@ import okio.IOException
  * @param queueIdentity the identity an upload is made for, read as it is made; `null` when it
  *   cannot be told, and the upload is then sent at once.
  * @param requestSync asks for a replay pass.
- * @param queueEmptied told when an upload sent at once left its user's queue empty.
+ * @param queueEmptied told when an upload sent at once left its user's queue empty, with that
+ *   identity.
  */
 internal class QueuedUploadWriter(
     val uploads: QueuedUploads,
@@ -45,7 +46,7 @@ internal class QueuedUploadWriter(
     private val headSender: MutationQueueReplayer,
     private val queueIdentity: suspend () -> QueueIdentity?,
     private val requestSync: () -> Unit,
-    private val queueEmptied: suspend () -> Unit,
+    private val queueEmptied: suspend (QueueIdentity) -> Unit,
     private val engineLogger: EngineLogger,
 ) {
 
@@ -162,7 +163,7 @@ internal class QueuedUploadWriter(
                 UploadOutcome.Queued(pendingUploadOf(queued))
             }
             is HeadSendOutcome.Sent -> {
-                if (!requestPassIfPending(identity)) queueEmptied()
+                if (!requestPassIfPending(identity)) queueEmptied(identity)
                 UploadOutcome.Applied(sent.result)
             }
             is HeadSendOutcome.StaysQueued -> {

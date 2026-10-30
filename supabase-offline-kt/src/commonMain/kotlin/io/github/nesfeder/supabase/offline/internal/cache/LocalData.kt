@@ -25,6 +25,7 @@ internal class LocalData(
     private val mutationDao: MutationDao,
     private val freshness: CacheFreshness,
     private val ownership: CacheOwnership,
+    private val lastSyncedAt: LastSyncedAtRecord,
     private val mutationQueue: MutationQueue,
     private val queryCache: QueryCache,
     private val queryOverlay: QueryOverlay,
@@ -78,9 +79,10 @@ internal class LocalData(
 
     /**
      * Empties the cache for [owner], the identity it now belongs to: every cached query with its
-     * shape record, and every Storage row and pin, go in one transaction that records [owner]. The
-     * mutation queue and its records stay. No response or cache patch started before it lands
-     * afterward; the files of the Storage cache are its caller's to delete.
+     * shape record, every Storage row and pin, and the last-synced record unless it is already
+     * [owner]'s, go in one transaction that records [owner]. The mutation queue and its records
+     * stay. No response or cache patch started before it lands afterward; the files of the Storage
+     * cache are its caller's to delete.
      */
     suspend fun dropCacheFor(owner: String) {
         // The locks and order of [clearLocalData], which this is but for the mutation queue
@@ -99,6 +101,7 @@ internal class LocalData(
                             RESERVED_TABLE_NAME,
                             PINNED_FILE_CACHE_KEY_PREFIX,
                         )
+                        lastSyncedAt.clearUnlessOwnedBy(owner)
                         queryCacheDao.upsert(ownership.record.rowOf(owner))
                     }
                 }
