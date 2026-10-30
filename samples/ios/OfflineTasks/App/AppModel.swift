@@ -54,9 +54,6 @@ final class AppModel {
     /// device", "Added 5 tasks".
     private(set) var notice: String?
 
-    /// How many writes waited when the app launched, read once, until the first status arrives.
-    private(set) var pendingAtLaunch: Int?
-
     /// Settings → Prefer fresh data: the task list asks the server before showing anything.
     var prefersFreshData = false
 
@@ -72,9 +69,6 @@ final class AppModel {
 
     /// Hides the notice again.
     @ObservationIgnored private var noticeTimer: Task<Void, Never>?
-
-    /// Whether the client has reported its status since launch.
-    @ObservationIgnored private var hasStatus = false
 
     /// The ids of the refused writes already announced.
     @ObservationIgnored private var announcedRejections: Set<Int64>?
@@ -110,9 +104,10 @@ final class AppModel {
     }
 
     /// The Sync tab's badge: the writes waiting, the ones refused and the ones parked on a
-    /// conflict. At launch, before the client's first status, the count read once.
+    /// conflict. Nothing until the client has counted the queue, shortly after it opens, rather
+    /// than a zero that then changes.
     var syncBadge: Int {
-        guard hasStatus else { return pendingAtLaunch ?? 0 }
+        guard syncStatus.isQueueCounted else { return 0 }
         return syncStatus.pendingMutationCount + syncStatus.rejectedMutationCount + syncStatus.conflictedMutationCount
     }
 
@@ -134,7 +129,6 @@ final class AppModel {
     /// announces refused writes, and uploads the photos picked on this device.
     func run() async {
         await withDiscardingTaskGroup { group in
-            group.addTask { await self.readPendingAtLaunch() }
             group.addTask { await self.followSyncStatus() }
             group.addTask { await self.followRealtimeStatus() }
             group.addTask { await self.session.signInWhenReachable(self.repository.syncStatus) }
@@ -224,15 +218,6 @@ final class AppModel {
         }
     }
 
-    /// Reads how many writes wait, once, for the badge until the first status arrives.
-    private func readPendingAtLaunch() async {
-        do {
-            pendingAtLaunch = try await repository.pendingMutationCountNow()
-        } catch {
-            report(error)
-        }
-    }
-
     /// Follows the client's sync status, and holds "All changes synced" for a moment after a sync
     /// empties the queue.
     private func followSyncStatus() async {
@@ -240,7 +225,6 @@ final class AppModel {
             for try await status in repository.syncStatus {
                 let wasSyncing = syncStatus.isSyncing && syncStatus.pendingMutationCount > 0
                 syncStatus = status
-                hasStatus = true
                 if wasSyncing, status.pendingMutationCount == 0, !status.isSyncing { showJustSynced() }
             }
         } catch {

@@ -278,7 +278,9 @@ public func syncStopReason(kind: SyncStopReason.Kind, error: OfflineError? = nil
 }
 
 /// Where the client stands with the queue and the network, as `SupabaseOfflineClient.syncStatus`
-/// holds it; every field defaults to the state of a client that has done nothing yet.
+/// holds it; every field defaults to the state of a client that has done nothing yet and has counted
+/// its queue: nothing waiting, `isQueueCounted` `true`. For the value a client starts with, before
+/// its first count, give `isQueueCounted: false`, which selects the third overload.
 ///
 /// - Parameters:
 ///   - network: Whether the client believes it can reach the network.
@@ -307,7 +309,9 @@ public func syncStatus(
 }
 
 /// Where the client stands with the queue, the conflicted list and the network, as
-/// `SupabaseOfflineClient.syncStatus` holds it.
+/// `SupabaseOfflineClient.syncStatus` holds it; every field but `conflictedMutationCount`, which
+/// selects this overload, defaults to the state of a client that has done nothing yet and has
+/// counted its queue.
 ///
 /// - Parameters:
 ///   - network: Whether the client believes it can reach the network.
@@ -334,6 +338,42 @@ public func syncStatus(
         lastSyncedAt: lastSyncedAt,
         lastSyncError: lastSyncError,
         conflictedMutationCount: conflictedMutationCount
+    )
+}
+
+/// Where the client stands with the queue and the network, saying whether the queue has been
+/// counted; every field but `isQueueCounted`, which selects this overload, defaults to the state of
+/// a client that has done nothing yet. `syncStatus(isQueueCounted: false)` is the value a client
+/// starts with, before its first count.
+///
+/// - Parameters:
+///   - network: Whether the client believes it can reach the network.
+///   - pendingMutationCount: The current user's queued writes.
+///   - rejectedMutationCount: The current user's rejected writes.
+///   - isSyncing: Whether a sync pass is sending.
+///   - lastSyncedAt: When the queue was last emptied by sending.
+///   - lastSyncError: Why the last pass stopped with writes still queued.
+///   - conflictedMutationCount: The current user's entries on the conflicted list.
+///   - isQueueCounted: Whether the counts have been read from the queue.
+public func syncStatus(
+    network: NetworkStatus = .unknown,
+    pendingMutationCount: Int = 0,
+    rejectedMutationCount: Int = 0,
+    isSyncing: Bool = false,
+    lastSyncedAt: Date? = nil,
+    lastSyncError: OfflineError? = nil,
+    conflictedMutationCount: Int = 0,
+    isQueueCounted: Bool
+) -> SyncStatus {
+    SyncStatus(
+        network: network,
+        pendingMutationCount: pendingMutationCount,
+        rejectedMutationCount: rejectedMutationCount,
+        isSyncing: isSyncing,
+        lastSyncedAt: lastSyncedAt,
+        lastSyncError: lastSyncError,
+        conflictedMutationCount: conflictedMutationCount,
+        isQueueCounted: isQueueCounted
     )
 }
 

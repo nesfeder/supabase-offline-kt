@@ -429,7 +429,7 @@ one failed read never turns a trigger off.
 
 | Member | What it does | Rule | Throws |
 | --- | --- | --- | --- |
-| `syncStatus: StateFlow<SyncStatus>` | One value to draw a sync banner from. | It follows the queue from the moment the client opens, so its counts include what an earlier run left queued before the app first reads it. The same flow whether or not the client is open, and it never throws. At `close()` it takes a last value with `isSyncing` `false`, and changes no more. | — |
+| `syncStatus: StateFlow<SyncStatus>` | One value to draw a sync banner from. | It follows the queue from the moment the client opens, so its counts include what an earlier run left queued before the app first reads it; until the first count they are `0` and `isQueueCounted` is `false`. The same flow whether or not the client is open, and it never throws. At `close()` it takes a last value with `isSyncing` `false`, and changes no more. | — |
 | `disableNetwork()` | Turns the library's network access off, as an airplane-mode switch does. | Not kept: a new client starts with access on. Calling it again changes nothing. | — |
 | `enableNetwork()` | Turns it back on: a waiting refresh runs, and with `autoSync`, queued writes are sent once the network is reachable and the session settled. | Calling it while access is on changes nothing. | — |
 
@@ -439,6 +439,7 @@ one failed read never turns a trigger off.
 | --- | --- |
 | `network: NetworkStatus` | Whether the library believes it can reach the network. Current as soon as `disableNetwork()` or `enableNetwork()` returns. |
 | `pendingMutationCount`, `rejectedMutationCount`, `conflictedMutationCount` | The current user's queued writes, rejected entries and conflicted entries. They follow each change to the queue shortly after it, read together, so a write moving between the queue and either list is counted in exactly one. A failed read of either is logged, and they follow the queue again after a wait that doubles up to about a minute. |
+| `isQueueCounted: Boolean` | Whether the three counts have been read from the queue: `false` in the value a client starts with, where they are `0` for want of a count, and `true` from the first counted value on, the last value at `close()` included. |
 | `isSyncing` | Whether a pass is sending, started by the app or by the library; `false` while a pass waits for the session to settle. |
 | `lastSyncedAt: Instant?` | When a pass, or a write sent at once, last left the current user's queue empty, a pass over an already empty queue included. In memory only. |
 | `lastSyncError: SyncFailedException?` | The failure that last stopped a pass with writes queued: the server's `httpStatus` and `code`, or a failure the network or the device caused. Cleared when a later pass runs to the end or stops because the session changed user, when sending empties the queue, and when local data is cleared; a pass stopped because the session is not ready, access is off or a write waits behind another table leaves it as it was. |

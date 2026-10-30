@@ -14,6 +14,11 @@ import kotlin.time.Instant
  * expects. They are read together: a write moving between the queue and the rejected or conflicted
  * list, refused or parked on replay, retried or resolved, is counted in exactly one of them.
  *
+ * The value a client starts with has not counted the queue yet: its counts are `0` for want of a
+ * count and `isQueueCounted` is `false`, until the first count lands, shortly after the client
+ * opens. An app that would otherwise show "nothing waiting" for a moment waits for `isQueueCounted`
+ * instead.
+ *
  * @property network whether the library believes it can reach the network; see [NetworkStatus].
  * @property pendingMutationCount the current user's writes waiting in the mutation queue, in every
  *   table.
@@ -32,6 +37,9 @@ import kotlin.time.Instant
  *   the writes it held back. It carries no row, filter value or token.
  * @property conflictedMutationCount the current user's entries on the conflicted list
  *   ([Offline.conflictedMutations]).
+ * @property isQueueCounted whether the three counts have been read from the queue: `false` in the
+ *   value a client starts with, where they are `0` for want of a count, and `true` from the first
+ *   counted value on, the last value at [Offline.close] included.
  */
 @ConsistentCopyVisibility
 public data class SyncStatus
@@ -43,4 +51,5 @@ internal constructor(
     public val lastSyncedAt: Instant?,
     public val lastSyncError: SyncFailedException?,
     public val conflictedMutationCount: Int,
+    public val isQueueCounted: Boolean,
 )

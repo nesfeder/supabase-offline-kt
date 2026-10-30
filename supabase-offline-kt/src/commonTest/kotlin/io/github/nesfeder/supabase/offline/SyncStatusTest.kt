@@ -138,8 +138,11 @@ class SyncStatusTest {
         recorder.cancelAndJoin()
 
         // Then — every status counted the write in exactly one place, once it was counted at all
-        val counted = seen.map { value -> value.pendingMutationCount + value.rejectedMutationCount }
-        assertEquals(listOf(), counted.dropWhile { it == 0 }.filter { it != 1 }, "counts: $counted")
+        val counted =
+            seen
+                .dropWhile { value -> !value.isQueueCounted }
+                .map { value -> value.pendingMutationCount + value.rejectedMutationCount }
+        assertEquals(listOf(), counted.filter { it != 1 }, "counts: $counted")
         client.close()
     }
 
@@ -189,9 +192,11 @@ class SyncStatusTest {
         // sent once the network was back
         assertEquals(0, parked.pendingMutationCount)
         assertEquals(0, requeued.rejectedMutationCount)
-        val counted = seen.map { value ->
-            value.pendingMutationCount + value.conflictedMutationCount
-        }
+        // (the recorder started before the write was made, so a counted empty queue comes first)
+        val counted =
+            seen
+                .dropWhile { value -> !value.isQueueCounted }
+                .map { value -> value.pendingMutationCount + value.conflictedMutationCount }
         assertEquals(listOf(), counted.dropWhile { it == 0 }.filter { it != 1 }, "counts: $counted")
         assertTrue(seen.any { it.conflictedMutationCount == 1 }, "counts: $counted")
         assertEquals(JsonPrimitive("mine"), server.rows(GUARDED_TABLE).single()["title"])
@@ -311,6 +316,49 @@ class SyncStatusTest {
             client.syncStatus.awaiting { it.pendingMutationCount == 1 }.pendingMutationCount,
         )
         client.close()
+    }
+
+    @Test
+    fun the_status_says_when_its_counts_have_been_read() = runTest {
+        // Given — a write an earlier run left queued, and a queue whose first count is held, as a
+        // slow disk would hold it
+        val countReading = CompletableDeferred<Unit>()
+        val countReleased = CompletableDeferred<Unit>()
+        val mutationDao = FakeMutationDao()
+        newTestStore(mutationDao = mutationDao).mutationQueue.enqueueInsert(TABLE, row(1))
+        mutationDao.beforePendingCount = {
+            if (countReading.complete(Unit)) countReleased.await()
+        }
+
+        // When — a client opens over it, and a collector records every status it is handed
+        val client =
+            newTestOfflineClient(
+                mutationDao = mutationDao,
+                config = Offline.Config().apply { autoSync = false },
+            )
+        val status = client.syncStatus
+        val seen = mutableListOf<SyncStatus>()
+        val recorder = launch(Dispatchers.Default) { status.collect { value -> seen += value } }
+        withContext(Dispatchers.Default) { withTimeout(10.seconds) { countReading.await() } }
+        val beforeTheCount = status.value
+        countReleased.complete(Unit)
+        val counted = status.awaiting { it.isQueueCounted }
+        client.close()
+        recorder.cancelAndJoin()
+
+        // Then — until the first count the status says so, with counts of zero for want of one;
+        // from it on, the counts are the queue's and the status stays counted, at close included
+        assertFalse(beforeTheCount.isQueueCounted)
+        assertEquals(0, beforeTheCount.pendingMutationCount)
+        assertEquals(1, counted.pendingMutationCount)
+        assertTrue(status.value.isQueueCounted)
+        assertEquals(
+            listOf(),
+            seen.zipWithNext().filter { (earlier, later) ->
+                earlier.isQueueCounted && !later.isQueueCounted
+            },
+            "a counted status was followed by one not counted: $seen",
+        )
     }
 
     @Test

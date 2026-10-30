@@ -108,6 +108,7 @@ internal fun SyncStatus.toAppSyncStatus(): AppSyncStatus =
         pendingMutationCount = pendingMutationCount,
         rejectedMutationCount = rejectedMutationCount,
         conflictedMutationCount = conflictedMutationCount,
+        isQueueCounted = isQueueCounted,
         isSyncing = isSyncing,
         lastSyncedAt = lastSyncedAt,
         lastSyncError = lastSyncError?.toAppFailure(LibraryCall.Sync),

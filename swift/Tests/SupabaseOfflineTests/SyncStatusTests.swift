@@ -103,4 +103,24 @@ struct SyncStatusTests {
         #expect(await eventually { client.syncStatus.value == settled })
         try await client.close()
     }
+
+    @Test func theStatusSaysWhenItsCountsHaveBeenRead() async throws {
+        // Given a client that has not opened its database yet
+        let server = RecordingFakeServer { _ in .status(201) }
+        let client = SupabaseOfflineClient.inMemory(config: .init(autoSync: false), server: server.server)
+        let starting = client.syncStatus.value
+
+        // When the client opens and counts the queue, then closes
+        #expect(await eventually { client.syncStatus.value.isQueueCounted })
+        let counted = client.syncStatus.value
+        try await client.close()
+
+        // Then the value it started with said so, with counts of zero for want of a count, and
+        // from the first count on it stays counted, the last value included
+        #expect(!starting.isQueueCounted)
+        #expect(starting.pendingMutationCount == 0)
+        #expect(counted.isQueueCounted)
+        #expect(counted.pendingMutationCount == 0)
+        #expect(client.syncStatus.value.isQueueCounted)
+    }
 }

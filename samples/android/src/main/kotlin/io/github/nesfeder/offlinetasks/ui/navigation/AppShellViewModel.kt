@@ -19,10 +19,8 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flow
-import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.flow.stateIn
 
@@ -30,8 +28,10 @@ import kotlinx.coroutines.flow.stateIn
 data class AppShellUiState(
     /** Open tasks, for the badge on Tasks; null until known. */
     val openTaskCount: Int? = null,
-    /** Writes waiting in the mutation queue, for the badge on Sync. */
-    val pendingCount: Int = 0,
+    /**
+     * Writes waiting in the mutation queue, for the badge on Sync; null until the queue is counted.
+     */
+    val pendingCount: Int? = null,
     /** Writes the server refused and the user has not dismissed: the badge on Sync turns red. */
     val rejectedCount: Int = 0,
     /** Writes parked on a conflict, waiting for the user to keep one side: red on Sync too. */
@@ -71,21 +71,14 @@ class AppShellViewModel(
         .reportingFailures(failures)
 
     /**
-     * The queue's size: read once at launch, so the badge is right at once, then from the status,
-     * which follows each change to the queue shortly after it.
+     * The badge counts. The status counts the queue shortly after the library opens, and says when
+     * it has: until then the Sync badge shows nothing, rather than a zero that then changes.
      */
-    private val pendingCount: Flow<Int> = flow {
-        emit(repository.pendingMutationCountNow())
-        emitAll(repository.syncStatus.drop(1).map { it.pendingMutationCount })
-    }
-        .reportingFailures(failures)
-
-    /** The badge counts. */
     val uiState: StateFlow<AppShellUiState> =
-        combine(openTaskCount, pendingCount, repository.syncStatus) { open, pending, status ->
+        combine(openTaskCount, repository.syncStatus) { open, status ->
                 AppShellUiState(
                     openTaskCount = open,
-                    pendingCount = pending,
+                    pendingCount = status.pendingMutationCount.takeIf { status.isQueueCounted },
                     rejectedCount = status.rejectedMutationCount,
                     conflictedCount = status.conflictedMutationCount,
                 )

@@ -55,7 +55,10 @@ internal class SyncStatusTracker(
     private val replayIdentityNow: suspend () -> QueueIdentity?,
 ) {
 
-    /** What [status] reports; its network is set at once, its counts as the queue changes. */
+    /**
+     * What [status] reports; its network is set at once, its counts as the queue changes, and
+     * [SyncStatus.isQueueCounted] with the first count.
+     */
     private val syncStatusState =
         MutableStateFlow(
             SyncStatus(
@@ -66,6 +69,7 @@ internal class SyncStatusTracker(
                 lastSyncedAt = null,
                 lastSyncError = null,
                 conflictedMutationCount = 0,
+                isQueueCounted = false,
             )
         )
 
@@ -105,7 +109,8 @@ internal class SyncStatusTracker(
     /**
      * Starts, at open, the work that keeps [status] current, in [scope] so the client's close stops
      * it. It follows the network, the passes ([passRunning]), and the counts as the queue and the
-     * lists change; after a failed read, again after a wait doubling up to about a minute.
+     * lists change, the first count marking the status counted; after a failed read, again after a
+     * wait doubling up to about a minute.
      */
     fun start(passRunning: Flow<Boolean>) {
         scope.launch {
@@ -139,6 +144,7 @@ internal class SyncStatusTracker(
                                     pendingMutationCount = counts.pending,
                                     rejectedMutationCount = counts.rejected,
                                     conflictedMutationCount = counts.conflicted,
+                                    isQueueCounted = true,
                                 )
                             }
                         }

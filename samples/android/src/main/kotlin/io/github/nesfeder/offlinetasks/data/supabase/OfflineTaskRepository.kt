@@ -843,7 +843,7 @@ class OfflineTaskRepository(
     override fun pendingMutationCount(table: String?): Flow<Int> =
         offline.pendingMutationCountFlow(table)
 
-    /** The queue's size, read once: the badge has it before the status's first update. */
+    /** The queue's size, read once; the status carries it too, once it has counted the queue. */
     override suspend fun pendingMutationCountNow(): Int = offline.pendingMutationCount()
 
     // --8<-- [end:pending-count]

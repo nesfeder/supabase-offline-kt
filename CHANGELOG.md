@@ -15,6 +15,14 @@ All notable changes to this project are recorded in this file. The format follow
 
 ### Added
 
+- `SyncStatus.isQueueCounted` says whether the status's three counts have been read from the
+  queue: `false` in the value a client starts with, where they are `0` for want of a count, and
+  `true` from the first counted value on, the last value at `close()` included. A badge or a banner
+  that would otherwise say "nothing waiting" for a moment waits for it, as the samples' Sync badges
+  now do, in place of a count read once at launch. The Swift package's `SyncStatus` has it too, and
+  each testing artifact's `syncStatus` has an overload that takes it; the existing overloads build
+  a counted status.
+
 ### Changed
 
 ### Deprecated

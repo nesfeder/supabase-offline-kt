@@ -467,7 +467,9 @@ public fun localFailureStop(error: SyncFailedException): SyncStopReason.LocalFai
 
 /**
  * Where the library stands with the queue and the network, as [Offline.syncStatus] holds it; every
- * field defaults to the state of a client that has done nothing yet.
+ * field defaults to the state of a client that has done nothing yet and has counted its queue:
+ * nothing waiting, [SyncStatus.isQueueCounted] `true`. For the value a client starts with, before
+ * its first count, give `isQueueCounted = false`, which selects the third overload.
  *
  * @param network whether the library believes it can reach the network.
  * @param pendingMutationCount the current user's queued writes.
@@ -497,7 +499,7 @@ public fun syncStatus(
 /**
  * Where the library stands with the queue and the network, the conflicted list included; every
  * field but [conflictedMutationCount], which selects this overload, defaults to the state of a
- * client that has done nothing yet.
+ * client that has done nothing yet and has counted its queue.
  *
  * @param network whether the library believes it can reach the network.
  * @param pendingMutationCount the current user's queued writes.
@@ -525,6 +527,43 @@ public fun syncStatus(
         lastSyncedAt,
         lastSyncError,
         conflictedMutationCount,
+    )
+
+/**
+ * Where the library stands with the queue and the network, saying whether the queue has been
+ * counted; every field but [isQueueCounted], which selects this overload, defaults to the state of
+ * a client that has done nothing yet. `syncStatus(isQueueCounted = false)` is the value a client
+ * starts with, before its first count.
+ *
+ * @param network whether the library believes it can reach the network.
+ * @param pendingMutationCount the current user's queued writes.
+ * @param rejectedMutationCount the current user's rejected writes.
+ * @param isSyncing whether a sync pass is running.
+ * @param lastSyncedAt when the queue was last emptied by sending, or `null`.
+ * @param lastSyncError why the last pass stopped with writes still queued, or `null`.
+ * @param conflictedMutationCount the current user's writes on the conflicted list.
+ * @param isQueueCounted whether the counts have been read from the queue.
+ */
+@OptIn(OfflineInternal::class)
+public fun syncStatus(
+    network: NetworkStatus = NetworkStatus.UNKNOWN,
+    pendingMutationCount: Int = 0,
+    rejectedMutationCount: Int = 0,
+    isSyncing: Boolean = false,
+    lastSyncedAt: Instant? = null,
+    lastSyncError: SyncFailedException? = null,
+    conflictedMutationCount: Int = 0,
+    isQueueCounted: Boolean,
+): SyncStatus =
+    ValueConstructors.syncStatus(
+        network,
+        pendingMutationCount,
+        rejectedMutationCount,
+        isSyncing,
+        lastSyncedAt,
+        lastSyncError,
+        conflictedMutationCount,
+        isQueueCounted,
     )
 
 /**
