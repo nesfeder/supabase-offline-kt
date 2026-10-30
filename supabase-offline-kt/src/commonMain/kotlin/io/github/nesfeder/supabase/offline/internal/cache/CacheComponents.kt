@@ -38,6 +38,7 @@ internal class CacheComponents(
     val queryCacheDao: PayloadWriteCountingDao,
     val freshness: CacheFreshness,
     val cacheOwnership: CacheOwnership,
+    val lastSyncedAt: LastSyncedAtRecord,
     val mutationQueue: MutationQueue,
     val queryCache: QueryCache,
     val queryOverlay: QueryOverlay,
@@ -111,6 +112,7 @@ internal fun buildCacheComponents(
             identityProvider = identityProvider,
             onCacheNotServed = onCacheNotServed,
         )
+    val lastSyncedAt = LastSyncedAtRecord(countingQueryCacheDao, EngineJson)
     // The per-table write locks the query cache, the patch and retirement share
     val tableWriteLocks = TableWriteLocks()
     val mutationQueue =
@@ -177,6 +179,7 @@ internal fun buildCacheComponents(
             mutationDao = mutationDao,
             freshness = freshness,
             ownership = cacheOwnership,
+            lastSyncedAt = lastSyncedAt,
             mutationQueue = mutationQueue,
             queryCache = queryCache,
             queryOverlay = queryOverlay,
@@ -186,6 +189,7 @@ internal fun buildCacheComponents(
         queryCacheDao = countingQueryCacheDao,
         freshness = freshness,
         cacheOwnership = cacheOwnership,
+        lastSyncedAt = lastSyncedAt,
         mutationQueue = mutationQueue,
         queryCache = queryCache,
         queryOverlay = queryOverlay,

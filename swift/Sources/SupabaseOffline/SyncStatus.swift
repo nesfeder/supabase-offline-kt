@@ -29,7 +29,10 @@ public struct SyncStatus: Sendable {
     public let isSyncing: Bool
 
     /// When a pass, or a write sent at once, last left the current user's queue empty, by the
-    /// device's clock; `nil` until it happens. Kept in memory only.
+    /// device's clock, to the millisecond; `nil` until it happens. Kept on the device for that user:
+    /// a new client carries it from its first counted value on, until
+    /// ``SupabaseOfflineClient/clearLocalData()`` or the session settling as another user takes it
+    /// back.
     public let lastSyncedAt: Date?
 
     /// The failure that last stopped a sync pass with writes still queued

@@ -337,7 +337,7 @@ internal fun newTestOfflineTable(
     operationGate: ClientOperationGate = ClientOperationGate(),
     readShapePostgrest: Postgrest = readShapePostgrestOf(delegate.postgrest),
     clock: Clock = Clock.System,
-    queueEmptied: suspend () -> Unit = {},
+    queueEmptied: suspend (QueueIdentity) -> Unit = {},
     networkAccess: NetworkAccess = NetworkAccess(),
 ): OfflineTable =
     OfflineTable(

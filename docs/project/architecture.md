@@ -441,7 +441,7 @@ one failed read never turns a trigger off.
 | `pendingMutationCount`, `rejectedMutationCount`, `conflictedMutationCount` | The current user's queued writes, rejected entries and conflicted entries. They follow each change to the queue shortly after it, read together, so a write moving between the queue and either list is counted in exactly one. A failed read of either is logged, and they follow the queue again after a wait that doubles up to about a minute. |
 | `isQueueCounted: Boolean` | Whether the three counts have been read from the queue: `false` in the value a client starts with, where they are `0` for want of a count, and `true` from the first counted value on, the last value at `close()` included. |
 | `isSyncing` | Whether a pass is sending, started by the app or by the library; `false` while a pass waits for the session to settle. |
-| `lastSyncedAt: Instant?` | When a pass, or a write sent at once, last left the current user's queue empty, a pass over an already empty queue included. In memory only. |
+| `lastSyncedAt: Instant?` | When a pass, or a write sent at once, last left the current user's queue empty, a pass over an already empty queue included, to the millisecond. Kept on the device with whose queue it was, in the `last_synced_at` reserved row: a new client carries it from its first counted value on; `clearLocalData()` and a drop of the cache for another identity take it back. |
 | `lastSyncError: SyncFailedException?` | The failure that last stopped a pass with writes queued: the server's `httpStatus` and `code`, or a failure the network or the device caused. Cleared when a later pass runs to the end or stops because the session changed user, when sending empties the queue, and when local data is cleared; a pass stopped because the session is not ready, access is off or a write waits behind another table leaves it as it was. |
 
 `NetworkStatus` is the closed enum `UNKNOWN` (nothing has said yet; treated as online), `ONLINE`,
@@ -1208,11 +1208,21 @@ and the file cache belong to. With Auth, a read is served only from the current 
 a write goes only into it. A cache no identity owns is adopted by a user, and by the anonymous
 identity only while it holds nothing, since rows an earlier session left may be a user's.
 
+**The last-synced record.** One more reserved row, `last_synced_at`, keeps when the current user's
+queue was last emptied by sending, with whose queue it was, so `SyncStatus.lastSyncedAt` outlives
+the client. The status tracker writes it after it publishes the time, outside its lock, and reads it
+once at open: the first counted status carries it when it is the recorded cache owner's, or the
+cache has no recorded owner; another identity's, which a drop that failed part-way can leave, is
+removed and read as none. A failed read or write is logged, never thrown: the status starts, or the
+next client starts, without it.
+
 **`dropCacheFor`.** When the session settles into another identity, or a read or a write finds the
 cache another identity's, the client drops it under the send lock (no pass is stopped, since none of
-the queue goes) and the file cache's lock: the cached queries, their shapes and the file rows go in
-one transaction that records the new owner, the database is rewritten, the files are deleted, and
-live queries fetch again, as after a clear, even when a later step fails. The drop watermark moves, so a response or a patch that started before it
+the queue goes) and the file cache's lock: the cached queries, their shapes, the file rows and the
+last-synced record of the identity before (the new owner's own stays) go in one transaction that
+records the new owner, the status takes the time back under the send lock, the database is
+rewritten, the files are deleted, and live queries fetch again, as after a clear, even when a later
+step fails. The drop watermark moves, so a response or a patch that started before it
 cannot land afterward; a download that started before it is kept out by the file cache's own
 generation. The mutation queue is kept: queued writes stay with their owners.
 
@@ -1255,9 +1265,10 @@ cached read is served back as a `PostgrestResult` of the same shape, and the ove
 per change. `body_json` and `filter_json` are the JSON a replay sends and the filter it rebuilds,
 kept as written so a replay sends exactly what the caller made. `operation` is the stored word
 (`INSERT`, `UPSERT`, `UPDATE`, `DELETE`), a format pinned by tests. The engine's own records (the
-rejected list, the conflicted list, the cache owner, each query's shape) are JSON text in reserved
-rows of `object_cache`, under a table name 94 bytes long: Postgres truncates identifiers at 63
-bytes, so no table can be named that, and `from()` refuses it. A reserved row is never evicted,
+rejected list, the conflicted list, the cache owner, when the current user's queue was last emptied,
+each query's shape) are JSON text in reserved rows of `object_cache`, under a table name 94 bytes
+long: Postgres truncates identifiers at 63 bytes, so no table can be named that, and `from()`
+refuses it. A reserved row is never evicted,
 counted, read as a query or overlaid. `localPath` records where a file was written, but a file's
 place is always derived from its bucket and path: its own file, or its hashed file when another name
 takes that place. The recorded path only says which of the two holds the file, or names a file an
@@ -1309,6 +1320,7 @@ The decisions that shaped the API and the engine, with the date each was settled
 | 2026-10-02 | Live collections complete at close; a flow collected after it fails. | A screen torn down with the client sees its flow end, not an error. |
 | 2026-10-02 | `autoSync` is read once, when the client opens. | The two triggers it governs must follow one value; one read live and one read at open disagreed. |
 | 2026-10-02 | The network switch is not kept across restarts. | It follows the rule of the offline libraries an app's developer is likely to know: a new client starts with access on. |
+| 2026-10-29 | `SyncStatus.lastSyncedAt` is kept on the device, in a reserved row beside the cache owner's, with whose queue it was; the network and Realtime switches still are not. | The Sync tab said "never synced" on every cold start while the device held the answer, and both samples had nowhere to get it. One row in the one database keeps the on-device contract as it is, and recording whose it was lets a change of user take it back, so one user's time never shows for the next. The switches stay in memory by the 2026-10-02 decision: a kept switch would hold a client offline, or off Realtime, across launches without the app asking. |
 | 2026-10-02 | The exceptions, like every value type, have no public constructor; tests build them with the testing artifact's factories. | The library can then change them without breaking a caller. |
 | 2026-10-22 | The closed error has a type of its own, `OfflineClientClosedException`, an `IllegalStateException` with the message it always had, not an `OfflineException`. | The engine told it apart by its message, an app could only match the message, and the Swift bridge took any `IllegalStateException` met while closing for it, so an unrelated one read as a closed client. Keeping the supertype and the message keeps every existing `catch` and match working. |
 | 2026-10-04 | `syncPendingMutations(table)` keeps the order across tables: it stops at a write with an earlier write of the user queued in another table, and reports what it held back. | The order is the library's first promise, and an app syncing one table expects the rows its writes depend on to go first. |
@@ -1356,6 +1368,7 @@ What the library promises, each with the tests that pin it:
 | No write leaves the queue silently. It leaves when the server accepts it; when the server refuses it for good on replay, or its schema-cache refusals reach the bound (it goes to the rejected list); when the library can no longer replay it exactly as it was made (the rejected list too); when, sent at once, it fails with a status that does not keep it queued, a refusal or a `500` from the database among them (the error is thrown to its caller); when a conflict is settled with `KeepServer` (counted in `conflictsKeptServerCount`) or parked (the conflicted list); or when the app discards it or clears local data. A failure that may pass leaves it queued. | `MutationQueueTransientFailureTest`, `SchemaCacheMissTest`, `HeadSendTest`, `DiscardPendingMutationTest`, `RejectedMutationListTest`, `GuardedReplayOutcomesTest`, `ConflictedListTest`, `UnknownOperationRowAndroidTest`, `UnknownOperationRowIosTest` |
 | On a table whose configured key matches a unique key on the server, a keyed INSERT whose send may have reached the server is never inserted twice. | `MutationQueueIdempotentReplayTest`, `UnconfirmedSendProofTest`, `UndeliveredRequestsAndroidTest`, `UndeliveredRequestsIosTest` |
 | Answering a read from the cache sends no request. | `CachedReadsSendNothingTest` |
+| The time the queue was last emptied is kept across clients for the identity whose queue it was, and never shown for another. | `SyncStatusTest`, `SyncStatusTrackerTest`, `CacheOwnershipTest` |
 | On a table with a version column, a queued UPDATE or DELETE that pins one cached row is applied only while the server's row has the version the device saw; a row that moved is never overwritten without the resolver or the defaults deciding, and the device's own earlier writes never read as a conflict. | `MutationBaseCaptureTest`, `GuardedReplayRequestTest`, `GuardedReplayOutcomesTest`, `BaseForwardingTest`, `ConflictPolicyTest`, `ConflictResolverTest` |
 | A read, an update or a delete with two top-level filters on one column is refused before anything is sent or queued, under every strategy, online and offline. | `SameColumnFiltersTest`, `UpstreamRepeatedParameterTest` |
 | A read, an update or a delete with a pattern list the server would read as another list (empty, or a pattern that is empty, `NULL`, edged with white space or holding a brace) is refused before anything is sent or queued, at the top level and in a group, online and offline. | `PatternListsTest`, `UpstreamPatternListTest` |

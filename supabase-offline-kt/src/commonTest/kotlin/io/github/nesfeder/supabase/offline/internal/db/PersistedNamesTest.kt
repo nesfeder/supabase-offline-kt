@@ -3,6 +3,7 @@
 package io.github.nesfeder.supabase.offline.internal.db
 
 import io.github.nesfeder.supabase.offline.MutationOperation
+import io.github.nesfeder.supabase.offline.internal.cache.LastSyncedAt
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.EnqueueOutcome
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.MAX_REJECTED_MUTATIONS
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentity
@@ -27,6 +28,7 @@ import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
+import kotlin.time.Instant
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -62,6 +64,34 @@ class PersistedNamesTest {
         assertEquals("rejected_mutations", REJECTED_MUTATIONS_CACHE_KEY)
         assertEquals("conflicted_mutations", CONFLICTED_MUTATIONS_CACHE_KEY)
         assertEquals("cache_owner", CACHE_OWNER_CACHE_KEY)
+        assertEquals("last_synced_at", LAST_SYNCED_AT_CACHE_KEY)
+    }
+
+    @Test
+    fun when_the_queue_was_last_emptied_is_written_under_this_name_with_these_keys() = runTest {
+        // When — a user's queue emptied by sending at a known time, then nobody's
+        store.lastSyncedAt.save(
+            LastSyncedAt(
+                QueueIdentity.User("u-1").storedValue,
+                Instant.fromEpochMilliseconds(1_727_000_006_000),
+            )
+        )
+        val forUser = queryCacheDao.getRow(RESERVED_TABLE_NAME, "last_synced_at")?.payload
+        store.lastSyncedAt.save(
+            LastSyncedAt(
+                QueueIdentity.Anonymous.storedValue,
+                Instant.fromEpochMilliseconds(1_727_000_007_000),
+            )
+        )
+        val forNobody = queryCacheDao.getRow(RESERVED_TABLE_NAME, "last_synced_at")?.payload
+
+        // Then — one row, the newer record in place of the older
+        assertEquals("""{"version":1,"owner":"user:u-1","syncedAtMs":1727000006000}""", forUser)
+        assertEquals("""{"version":1,"owner":"anonymous","syncedAtMs":1727000007000}""", forNobody)
+        assertEquals(
+            LastSyncedAt("anonymous", Instant.fromEpochMilliseconds(1_727_000_007_000)),
+            store.lastSyncedAt.load(),
+        )
     }
 
     @Test

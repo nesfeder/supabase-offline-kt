@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline
 
+import io.github.nesfeder.supabase.offline.internal.db.CACHE_OWNER_CACHE_KEY
+import io.github.nesfeder.supabase.offline.internal.db.LAST_SYNCED_AT_CACHE_KEY
 import io.github.nesfeder.supabase.offline.internal.db.REJECTED_MUTATIONS_CACHE_KEY
 import io.github.nesfeder.supabase.offline.internal.db.RESERVED_TABLE_NAME
 import io.github.nesfeder.supabase.offline.testdoubles.FakeMutationDao
@@ -18,7 +20,9 @@ import io.github.nesfeder.supabase.offline.testdoubles.enqueueInsert
 import io.github.nesfeder.supabase.offline.testdoubles.newGuardedServer
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
 import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
+import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClientWithAuth
 import io.github.nesfeder.supabase.offline.testdoubles.renameTask
+import io.github.nesfeder.supabase.offline.testdoubles.signInForTest
 import io.github.nesfeder.supabase.offline.testdoubles.taskRow
 import io.ktor.http.HttpStatusCode
 import kotlin.test.Test
@@ -30,6 +34,7 @@ import kotlin.test.assertSame
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
+import kotlin.time.Instant
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -220,6 +225,219 @@ class SyncStatusTest {
         assertNull(client.syncStatus.awaiting { it.pendingMutationCount == 0 }.lastSyncError)
         client.close()
     }
+
+    @Test
+    fun the_last_sync_time_is_kept_for_the_next_client_over_the_same_data() = runTest {
+        // Given — a write queued offline, then sent by a pass; the client is closed, as a killed
+        // app's is
+        val server = RecordingPostgrestServer(answer = { connectivityFailure() })
+        val queryCacheDao = FakeQueryCacheDao()
+        val mutationDao = FakeMutationDao()
+        val first =
+            newTestOfflineClient(
+                supabase = server.supabaseClient(),
+                queryCacheDao = queryCacheDao,
+                mutationDao = mutationDao,
+            )
+        first.from(TABLE).insert(row(1))
+        server.answer = { okJson("[]") }
+        first.syncPendingMutations()
+        val synced =
+            first.syncStatus.awaiting { it.lastSyncedAt != null && it.pendingMutationCount == 0 }
+        first.close()
+
+        // When — the next client opens over the same data, and nothing is sent
+        val second =
+            newTestOfflineClient(
+                supabase = server.supabaseClient(),
+                queryCacheDao = queryCacheDao,
+                mutationDao = mutationDao,
+                config = Offline.Config().apply { autoSync = false },
+            )
+        val counted = second.syncStatus.awaiting { it.isQueueCounted }
+
+        // Then — its first counted value carries the time, to the millisecond, as the row kept it
+        // with whose queue it was
+        val syncedAt = assertNotNull(synced.lastSyncedAt)
+        assertEquals(syncedAt, counted.lastSyncedAt)
+        assertEquals(0, syncedAt.nanosecondsOfSecond % 1_000_000)
+        assertEquals(
+            """{"version":1,"owner":"anonymous","syncedAtMs":${syncedAt.toEpochMilliseconds()}}""",
+            queryCacheDao.getRow(RESERVED_TABLE_NAME, LAST_SYNCED_AT_CACHE_KEY)?.payload,
+        )
+        second.close()
+    }
+
+    @Test
+    fun the_last_sync_time_is_one_users_and_never_shows_for_the_next() = runTest {
+        // Given — A signed in, with a write queued offline then sent
+        val server = RecordingPostgrestServer(answer = { connectivityFailure() })
+        val supabase = newTestSupabaseClientWithAuth(server.engine)
+        supabase.signInForTest("A")
+        val queryCacheDao = FakeQueryCacheDao()
+        val mutationDao = FakeMutationDao()
+        val client =
+            newTestOfflineClient(
+                supabase = supabase,
+                queryCacheDao = queryCacheDao,
+                mutationDao = mutationDao,
+            )
+        client.from(TABLE).insert(row(1))
+        server.answer = { okJson("[]") }
+        client.syncPendingMutations()
+        val synced =
+            client.syncStatus.awaiting { it.lastSyncedAt != null && it.pendingMutationCount == 0 }
+
+        // When — B signs in, and the cache settles as B's
+        supabase.signInForTest("B")
+        val forB = client.syncStatus.awaiting { it.lastSyncedAt == null }
+        client.close()
+
+        // Then — A's time went with A's cache, in the status and on the device: a client opening
+        // as B starts without it
+        assertNotNull(synced.lastSyncedAt)
+        assertTrue(forB.isQueueCounted)
+        assertNull(queryCacheDao.getRow(RESERVED_TABLE_NAME, LAST_SYNCED_AT_CACHE_KEY))
+        val relaunched =
+            newTestOfflineClient(
+                supabase = supabase,
+                queryCacheDao = queryCacheDao,
+                mutationDao = mutationDao,
+                config = Offline.Config().apply { autoSync = false },
+            )
+        assertNull(relaunched.syncStatus.awaiting { it.isQueueCounted }.lastSyncedAt)
+        relaunched.close()
+    }
+
+    @Test
+    fun clearing_local_data_clears_the_last_sync_time_for_good() = runTest {
+        // Given — a queue emptied by sending, its time kept
+        val server = RecordingPostgrestServer(answer = { connectivityFailure() })
+        val queryCacheDao = FakeQueryCacheDao()
+        val mutationDao = FakeMutationDao()
+        val client =
+            newTestOfflineClient(
+                supabase = server.supabaseClient(),
+                queryCacheDao = queryCacheDao,
+                mutationDao = mutationDao,
+            )
+        client.from(TABLE).insert(row(1))
+        server.answer = { okJson("[]") }
+        client.syncPendingMutations()
+        client.syncStatus.awaiting { it.lastSyncedAt != null && it.pendingMutationCount == 0 }
+        assertNotNull(queryCacheDao.getRow(RESERVED_TABLE_NAME, LAST_SYNCED_AT_CACHE_KEY))
+
+        // When
+        client.clearLocalData()
+
+        // Then — gone from the status as the clear returns, and from the device: the next client
+        // starts without it
+        assertNull(client.syncStatus.value.lastSyncedAt)
+        assertNull(queryCacheDao.getRow(RESERVED_TABLE_NAME, LAST_SYNCED_AT_CACHE_KEY))
+        client.close()
+        val next =
+            newTestOfflineClient(
+                supabase = server.supabaseClient(),
+                queryCacheDao = queryCacheDao,
+                mutationDao = mutationDao,
+                config = Offline.Config().apply { autoSync = false },
+            )
+        assertNull(next.syncStatus.awaiting { it.isQueueCounted }.lastSyncedAt)
+        next.close()
+    }
+
+    @Test
+    fun a_kept_time_is_restored_only_when_it_is_the_cache_owners() = runTest {
+        // Given — three devices: one whose kept time is the recorded cache owner's, one whose kept
+        // time is another identity's, as a drop that failed part-way leaves, and one whose record
+        // this build cannot read
+        val owners = FakeQueryCacheDao()
+        owners.seedPayload(RESERVED_TABLE_NAME, CACHE_OWNER_CACHE_KEY, ownerRecord("user:A"))
+        owners.seedPayload(RESERVED_TABLE_NAME, LAST_SYNCED_AT_CACHE_KEY, keptRecord("user:A"))
+        val anothers = FakeQueryCacheDao()
+        anothers.seedPayload(RESERVED_TABLE_NAME, CACHE_OWNER_CACHE_KEY, ownerRecord("user:B"))
+        anothers.seedPayload(RESERVED_TABLE_NAME, LAST_SYNCED_AT_CACHE_KEY, keptRecord("user:A"))
+        val unreadable = FakeQueryCacheDao()
+        unreadable.seedPayload(RESERVED_TABLE_NAME, LAST_SYNCED_AT_CACHE_KEY, """{"version":2}""")
+
+        // When — a client opens over each
+        val restored = firstCountedStatusOver(owners)
+        val notRestored = firstCountedStatusOver(anothers)
+        val notRead = firstCountedStatusOver(unreadable)
+
+        // Then — only the owner's time shows, and the other records are removed
+        assertEquals(KEPT_AT, restored.lastSyncedAt)
+        assertNull(notRestored.lastSyncedAt)
+        assertNull(anothers.getRow(RESERVED_TABLE_NAME, LAST_SYNCED_AT_CACHE_KEY))
+        assertNull(notRead.lastSyncedAt)
+        assertNull(unreadable.getRow(RESERVED_TABLE_NAME, LAST_SYNCED_AT_CACHE_KEY))
+    }
+
+    @Test
+    fun a_failed_read_or_write_of_the_kept_time_is_logged_and_leaves_the_status_right() = runTest {
+        // Given — a device whose reads of the kept time fail, and whose write of it will fail
+        val queryCacheDao =
+            FakeQueryCacheDao().apply {
+                seedPayload(RESERVED_TABLE_NAME, LAST_SYNCED_AT_CACHE_KEY, keptRecord("anonymous"))
+                onGetSnapshot = { table, key ->
+                    if (table == RESERVED_TABLE_NAME && key == LAST_SYNCED_AT_CACHE_KEY) {
+                        error("Scripted failure reading the kept time")
+                    }
+                }
+                failNextUpsertOf { row -> row.cacheKey == LAST_SYNCED_AT_CACHE_KEY }
+            }
+        val logs = RecordingLogSink()
+        val server = RecordingPostgrestServer(answer = { connectivityFailure() })
+        val client =
+            newTestOfflineClient(
+                supabase = server.supabaseClient(),
+                queryCacheDao = queryCacheDao,
+                engineLogger = logs.asEngineLogger(),
+            )
+
+        // When — the status counts, then a write is queued and sent
+        val counted = client.syncStatus.awaiting { it.isQueueCounted }
+        client.from(TABLE).insert(row(1))
+        server.answer = { okJson("[]") }
+        client.syncPendingMutations()
+        val synced =
+            client.syncStatus.awaiting { it.lastSyncedAt != null && it.pendingMutationCount == 0 }
+
+        // Then — the status started without the time it could not read, has the time of the send
+        // it could not keep, and said so each time
+        assertNull(counted.lastSyncedAt)
+        assertNotNull(synced.lastSyncedAt)
+        assertEquals(
+            keptRecord("anonymous"),
+            queryCacheDao.getRow(RESERVED_TABLE_NAME, LAST_SYNCED_AT_CACHE_KEY)?.payload,
+        )
+        assertTrue(
+            logs.entries.any { "Could not read when the queue was last emptied" in it.message },
+            "${'$'}{logs.entries}",
+        )
+        assertTrue(
+            logs.entries.any { "Could not keep when the queue was last emptied" in it.message },
+            "${'$'}{logs.entries}",
+        )
+        client.close()
+    }
+
+    /** The first counted status of a client opened over [queryCacheDao], with nothing to send. */
+    private suspend fun firstCountedStatusOver(queryCacheDao: FakeQueryCacheDao): SyncStatus {
+        val client =
+            newTestOfflineClient(
+                queryCacheDao = queryCacheDao,
+                config = Offline.Config().apply { autoSync = false },
+            )
+        return client.syncStatus.awaiting { it.isQueueCounted }.also { client.close() }
+    }
+
+    /** The cache owner record naming [owner]. */
+    private fun ownerRecord(owner: String): String = """{"version":1,"owner":"$owner"}"""
+
+    /** The last-synced record of [owner]'s queue emptied at [KEPT_AT]. */
+    private fun keptRecord(owner: String): String =
+        """{"version":1,"owner":"$owner","syncedAtMs":${KEPT_AT.toEpochMilliseconds()}}"""
 
     @Test
     fun the_status_says_a_pass_is_running_while_one_is() = runTest {
@@ -495,5 +713,8 @@ class SyncStatusTest {
     private companion object {
         const val TABLE = "notes"
         const val RETRIES = 20
+
+        /** When a kept record says the queue was emptied. */
+        val KEPT_AT: Instant = Instant.fromEpochMilliseconds(1_761_700_000_000)
     }
 }

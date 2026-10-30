@@ -14,9 +14,9 @@ Signing out in supabase-kt alone clears the session, not the device.
 ## What `clearLocalData()` deletes
 
 The cached query results, the downloaded Storage files, every write still in the mutation queue
-(never sent), queued uploads with their bytes among them, the rejected list and the conflicted
-list. It does not touch the server, and the
-client stays usable.
+(never sent), queued uploads with their bytes among them, the rejected list, the conflicted list
+and the record of when the queue was last emptied (`syncStatus.value.lastSyncedAt` reads `null`
+once it returns). It does not touch the server, and the client stays usable.
 
 - A replay pass running at that moment is canceled first, and nothing queued is sent once the
   clear has begun.
@@ -56,8 +56,10 @@ to one identity at a time: a signed-in user, or nobody signed in.
 
 - A read never returns what was cached for another identity, and a response or download that
   started before the switch is never written into the new identity's cache.
-- When the session settles into a different identity, both caches are dropped. The mutation queue
-  is kept whole: each identity's writes wait for it.
+- When the session settles into a different identity, both caches are dropped, and so is the time
+  the earlier identity's queue was last emptied: `syncStatus.value.lastSyncedAt` reads `null` until
+  the new identity's queue is emptied by sending. The mutation queue is kept whole: each identity's
+  writes wait for it.
 - The Realtime channel for the named tables follows the identity too: it is left and joined again
   as the new user, who reads the named tables again, and a change the old user's channel still
   delivers is never applied to the new user's cache

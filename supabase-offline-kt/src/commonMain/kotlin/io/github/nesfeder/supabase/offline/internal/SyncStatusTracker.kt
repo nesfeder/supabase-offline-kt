@@ -3,6 +3,8 @@
 package io.github.nesfeder.supabase.offline.internal
 
 import io.github.nesfeder.supabase.offline.SyncStatus
+import io.github.nesfeder.supabase.offline.internal.cache.LastSyncedAt
+import io.github.nesfeder.supabase.offline.internal.cache.LastSyncedAtRecord
 import io.github.nesfeder.supabase.offline.internal.cache.ShownQueueCounts
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogger
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.MutationQueue
@@ -14,6 +16,7 @@ import io.github.nesfeder.supabase.offline.internal.network.NetworkAccess
 import kotlin.time.Clock
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
+import kotlin.time.Instant
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
@@ -41,18 +44,26 @@ import kotlinx.coroutines.sync.withLock
  * so a write moving between them is counted once. A failed read is followed again after a wait
  * doubling from [STATUS_RETRY_WAIT].
  *
+ * [SyncStatus.lastSyncedAt] is the one part kept on the device, in [lastSyncedAtRecord]: the first
+ * counted status carries what the device holds, when it is the cache owner's or the cache has none,
+ * and each later record of it is written after it is published. A clear, and a drop of the cache
+ * for another identity, take it back.
+ *
  * @param scope where the work that keeps the status current runs: the client's, so its close stops
  *   it.
  * @param replayIdentityNow the identity a replay sent now would go out as, as [SessionIdentity]
  *   tells it.
+ * @param cacheOwner the identity the cache is recorded as belonging to, or `null` for none.
  */
 internal class SyncStatusTracker(
     private val scope: CoroutineScope,
     private val networkAccess: NetworkAccess,
     private val mutationQueue: MutationQueue,
+    private val lastSyncedAtRecord: LastSyncedAtRecord,
     private val engineLogger: EngineLogger,
     private val clock: Clock,
     private val replayIdentityNow: suspend () -> QueueIdentity?,
+    private val cacheOwner: suspend () -> String?,
 ) {
 
     /**
@@ -81,6 +92,12 @@ internal class SyncStatusTracker(
     /** Set, under [statusLock], by [publishFinal]: the status changes no more. */
     private var statusFinal = false
 
+    /**
+     * Whose queue [SyncStatus.lastSyncedAt] was last emptied for, as the queue stores an identity;
+     * `null` while it is `null`. Guarded by [statusLock].
+     */
+    private var lastSyncedOwner: String? = null
+
     /** The same flow whether or not the client is open; after its close it keeps its last value. */
     val status: StateFlow<SyncStatus> = syncStatusState.asStateFlow()
 
@@ -89,10 +106,17 @@ internal class SyncStatusTracker(
         publishStatus { status -> status.copy(network = networkAccess.status) }
     }
 
-    /** Applies [change] to the status, unless [publishFinal] has published its last value. */
-    private suspend fun publishStatus(change: (SyncStatus) -> SyncStatus) {
-        statusLock.withLock { if (!statusFinal) syncStatusState.update(change) }
-    }
+    /**
+     * Applies [change] to the status, unless [publishFinal] has published its last value.
+     *
+     * @return whether it was applied.
+     */
+    private suspend fun publishStatus(change: (SyncStatus) -> SyncStatus): Boolean =
+        statusLock.withLock {
+            if (statusFinal) return@withLock false
+            syncStatusState.update(change)
+            true
+        }
 
     /**
      * Publishes the status's last value, with no pass running, after which it changes no more: the
@@ -109,8 +133,8 @@ internal class SyncStatusTracker(
     /**
      * Starts, at open, the work that keeps [status] current, in [scope] so the client's close stops
      * it. It follows the network, the passes ([passRunning]), and the counts as the queue and the
-     * lists change, the first count marking the status counted; after a failed read, again after a
-     * wait doubling up to about a minute.
+     * lists change, the first count marking the status counted and carrying the last-synced time
+     * the device kept; after a failed read, again after a wait doubling up to about a minute.
      */
     fun start(passRunning: Flow<Boolean>) {
         scope.launch {
@@ -125,6 +149,9 @@ internal class SyncStatusTracker(
             }
         }
         scope.launch {
+            // Read once, before the first count, and published with it; a time recorded by a send
+            // that got ahead of the first count is newer and stays
+            var restored: LastSyncedAt? = restoredLastSyncedAt()
             var doublings = 0
             while (true) {
                 try {
@@ -139,13 +166,22 @@ internal class SyncStatusTracker(
                         .conflate()
                         .collect {
                             val counts = queueCountsOrNull() ?: return@collect
-                            publishStatus { status ->
-                                status.copy(
-                                    pendingMutationCount = counts.pending,
-                                    rejectedMutationCount = counts.rejected,
-                                    conflictedMutationCount = counts.conflicted,
-                                    isQueueCounted = true,
-                                )
+                            val restoring = restored
+                            restored = null
+                            statusLock.withLock {
+                                if (statusFinal) return@withLock
+                                if (restoring != null && lastSyncedOwner == null) {
+                                    lastSyncedOwner = restoring.owner
+                                }
+                                syncStatusState.update { status ->
+                                    status.copy(
+                                        pendingMutationCount = counts.pending,
+                                        rejectedMutationCount = counts.rejected,
+                                        conflictedMutationCount = counts.conflicted,
+                                        isQueueCounted = true,
+                                        lastSyncedAt = status.lastSyncedAt ?: restoring?.at,
+                                    )
+                                }
                             }
                         }
                     return@launch
@@ -164,6 +200,32 @@ internal class SyncStatusTracker(
             }
         }
     }
+
+    /**
+     * The last-synced time the device kept, when it is the recorded cache owner's or the cache has
+     * no recorded owner yet; another identity's, which a failed drop can leave, is removed and read
+     * as none, so one user's time never shows for the next. A failed read is logged and read as
+     * none: the status starts without it, as it did before anything was kept.
+     */
+    private suspend fun restoredLastSyncedAt(): LastSyncedAt? =
+        try {
+            val kept = lastSyncedAtRecord.load() ?: return null
+            val owner = cacheOwner()
+            if (owner == null || owner == kept.owner) {
+                kept
+            } else {
+                lastSyncedAtRecord.clear()
+                null
+            }
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (failure: Exception) {
+            engineLogger.warning {
+                "Could not read when the queue was last emptied (${failure::class.simpleName}); " +
+                    "the status starts without it"
+            }
+            null
+        }
 
     /**
      * The current user's pending and rejected counts, or `null` when counting fails; the status
@@ -193,12 +255,14 @@ internal class SyncStatusTracker(
      */
     suspend fun recordPassEnded(report: EngineSyncReport) {
         when (val stop = report.stop) {
-            null ->
-                if (report.remainingCount == 0 && sessionQueueIsEmpty()) {
-                    recordQueueEmptiedBySending()
+            null -> {
+                val emptiedFor = if (report.remainingCount == 0) identityWithEmptyQueue() else null
+                if (emptiedFor != null) {
+                    recordQueueEmptiedBySending(emptiedFor)
                 } else {
                     publishStatus { status -> status.copy(lastSyncError = null) }
                 }
+            }
             is SyncStop.TransientFailure ->
                 publishStatus { status -> status.copy(lastSyncError = syncFailureOf(stop.cause)) }
             is SyncStop.HeldBehindEarlierMutations ->
@@ -216,11 +280,14 @@ internal class SyncStatusTracker(
         }
     }
 
-    /** Whether the settled session has nothing queued; `false` when that cannot be told. */
-    private suspend fun sessionQueueIsEmpty(): Boolean {
-        val identity = replayIdentityNow() ?: return false
+    /**
+     * The settled session's identity, when it has nothing queued; `null` when it has, or when that
+     * cannot be told.
+     */
+    private suspend fun identityWithEmptyQueue(): QueueIdentity? {
+        val identity = replayIdentityNow() ?: return null
         return try {
-            !mutationQueue.hasPendingMutationsOf(identity.storedValue)
+            identity.takeUnless { mutationQueue.hasPendingMutationsOf(identity.storedValue) }
         } catch (cancellation: CancellationException) {
             throw cancellation
         } catch (failure: Exception) {
@@ -228,20 +295,66 @@ internal class SyncStatusTracker(
                 "Could not tell whether the queue is empty for the sync status " +
                     "(${failure::class.simpleName})"
             }
-            false
+            null
         }
     }
 
-    /** Records that sending left the session's queue empty: now, and no error since. */
-    suspend fun recordQueueEmptiedBySending() {
-        publishStatus { status ->
-            status.copy(lastSyncedAt = clock.now(), lastSyncError = null)
+    /**
+     * Records that sending left [identity]'s queue empty: now, to the millisecond, and no error
+     * since; then keeps the time on the device, outside the status's lock. A failed write is
+     * logged: the status has the time, and the next client starts without it.
+     */
+    suspend fun recordQueueEmptiedBySending(identity: QueueIdentity) {
+        val emptied =
+            LastSyncedAt(
+                owner = identity.storedValue,
+                at = Instant.fromEpochMilliseconds(clock.now().toEpochMilliseconds()),
+            )
+        val published = statusLock.withLock {
+            if (statusFinal) return@withLock false
+            lastSyncedOwner = emptied.owner
+            syncStatusState.update { status ->
+                status.copy(lastSyncedAt = emptied.at, lastSyncError = null)
+            }
+            true
+        }
+        if (!published) return
+        try {
+            lastSyncedAtRecord.save(emptied)
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (failure: Exception) {
+            engineLogger.warning {
+                "Could not keep when the queue was last emptied (${failure::class.simpleName}); " +
+                    "the next client starts without it"
+            }
         }
     }
 
-    /** Records that local data was cleared: the writes an earlier failure held back are gone. */
+    /**
+     * Records that local data was cleared: the writes an earlier failure held back are gone, and so
+     * is the record of when the queue was last emptied, with the clear's transaction.
+     */
     suspend fun recordLocalDataCleared() {
-        publishStatus { status -> status.copy(lastSyncError = null) }
+        statusLock.withLock {
+            if (statusFinal) return@withLock
+            lastSyncedOwner = null
+            syncStatusState.update { status ->
+                status.copy(lastSyncedAt = null, lastSyncError = null)
+            }
+        }
+    }
+
+    /**
+     * Records that the cache now belongs to [owner]: a last-synced time that was another identity's
+     * goes, as its record went with the drop's transaction; one already [owner]'s stays.
+     */
+    suspend fun recordCacheOwnerChanged(owner: String) {
+        statusLock.withLock {
+            if (statusFinal || lastSyncedOwner == owner) return@withLock
+            lastSyncedOwner = null
+            syncStatusState.update { status -> status.copy(lastSyncedAt = null) }
+        }
     }
 
     companion object {

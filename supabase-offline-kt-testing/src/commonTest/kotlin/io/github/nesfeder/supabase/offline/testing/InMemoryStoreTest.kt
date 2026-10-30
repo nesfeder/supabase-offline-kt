@@ -28,8 +28,10 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
+import kotlin.time.Instant
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
@@ -126,6 +128,41 @@ class InMemoryStoreTest {
             assertEquals(0, status.pendingMutationCount)
             val cached = second.offline.from(TASKS).select(readStrategy = ReadStrategy.CacheOnly())
             assertTrue("t1" in cached.data, cached.data)
+            second.close()
+        }
+
+    @Test
+    fun when_the_queue_was_last_emptied_is_kept_for_the_next_client() =
+        runTest(timeout = 2.minutes) {
+            // Given — a write sent at once, which left the queue empty, then the client closed
+            val clock = FakeClock(Instant.parse("2026-10-29T12:00:00Z"))
+            val server = ScriptedServer()
+            val first = server.supabaseClient { inMemory(clock = clock, store = store) }
+            first.offline
+                .from(TABLE)
+                .insert(JsonArray(listOf(buildJsonObject { put("title", "Tea") })))
+            val synced =
+                withContext(Dispatchers.Default) {
+                    withTimeout(10.seconds) {
+                        first.offline.syncStatus.first { status -> status.lastSyncedAt != null }
+                    }
+                }
+            first.close()
+
+            // When — the app relaunches an hour later, with the server gone
+            clock.now += 1.hours
+            server.online = false
+            val second = server.supabaseClient { inMemory(clock = clock, store = store) }
+            val counted =
+                withContext(Dispatchers.Default) {
+                    withTimeout(10.seconds) {
+                        second.offline.syncStatus.first { status -> status.isQueueCounted }
+                    }
+                }
+
+            // Then — the time the first client recorded shows from the first counted value on
+            assertEquals(Instant.parse("2026-10-29T12:00:00Z"), synced.lastSyncedAt)
+            assertEquals(synced.lastSyncedAt, counted.lastSyncedAt)
             second.close()
         }
 

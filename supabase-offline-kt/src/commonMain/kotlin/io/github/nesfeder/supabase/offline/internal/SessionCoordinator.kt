@@ -40,6 +40,8 @@ import kotlinx.coroutines.launch
  * @param scope where its work runs: the client's, so its close stops it.
  * @param autoSync [io.github.nesfeder.supabase.offline.Offline.Config.autoSync], read once when the
  *   client opened.
+ * @param cacheOwnerChanged told, once a drop has made the cache another identity's, whose it now
+ *   is, so the status takes back what was the identity before's.
  */
 internal class SessionCoordinator(
     private val scope: CoroutineScope,
@@ -54,6 +56,7 @@ internal class SessionCoordinator(
     private val localData: LocalData,
     private val databaseScrub: DatabaseScrub,
     private val liveQueries: LiveQueries,
+    private val cacheOwnerChanged: suspend (owner: String) -> Unit,
     private val engineLogger: EngineLogger,
 ) {
 
@@ -172,6 +175,8 @@ internal class SessionCoordinator(
                 fileCache.clear {
                     localData.dropCacheFor(identity.storedValue)
                     dropped = true
+                    // Under the send lock still: no pass records a time for the identity before
+                    cacheOwnerChanged(identity.storedValue)
                     databaseScrub.rewriteAfterDelete()
                 }
             }

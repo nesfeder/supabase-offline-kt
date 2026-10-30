@@ -133,8 +133,8 @@ internal class OfflineTable(
     private val operationGate: ClientOperationGate = ClientOperationGate(),
     /** The time a read compares a cached row's age with; see [QueryReader]. */
     private val clock: Clock = Clock.System,
-    /** Told when a write sent at once left its identity's queue empty. */
-    private val queueEmptied: suspend () -> Unit = {},
+    /** Told when a write sent at once left its identity's queue empty, with that identity. */
+    private val queueEmptied: suspend (QueueIdentity) -> Unit = {},
     /** Whether the network is known down, for a reactive read's refresh; see [QueryReader]. */
     private val networkAccess: NetworkAccess = NetworkAccess(),
 ) {
@@ -167,7 +167,7 @@ internal class OfflineTable(
         operationGate: ClientOperationGate = ClientOperationGate(),
         readShapePostgrest: Postgrest = readShapePostgrestOf(delegate.postgrest),
         clock: Clock = Clock.System,
-        queueEmptied: suspend () -> Unit = {},
+        queueEmptied: suspend (QueueIdentity) -> Unit = {},
         networkAccess: NetworkAccess = NetworkAccess(),
     ) : this(
         delegate = SupabaseRemoteTable(delegate, readShapePostgrest, networkAccess),
@@ -706,7 +706,7 @@ internal class OfflineTable(
 
             is MutationQueueReplayer.HeadSendOutcome.Sent -> {
                 engineLogger.debug { "$operationLabel $table response: ${sent.result.data}" }
-                if (!requestPassIfPending(identity)) queueEmptied()
+                if (!requestPassIfPending(identity)) queueEmptied(identity)
                 MutationOutcome.Applied(sent.result)
             }
 

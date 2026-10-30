@@ -214,7 +214,7 @@ From the samples: [LibraryMappings.kt](https://github.com/nesfeder/supabase-offl
 | `pendingMutationCount`, `rejectedMutationCount`, `conflictedMutationCount` | The current user's queued writes, rejected entries and conflicted entries, queued and refused uploads among them. They follow each change to the queue shortly after it, read together, so a write moving between them is counted in exactly one |
 | `isQueueCounted` | Whether the three counts have been read from the queue: `false` in the value a client starts with, where they are `0` for want of a count, and `true` from the first counted value on, the last value at `close()` included |
 | `isSyncing` | Whether a pass is sending, started by you or by the library |
-| `lastSyncedAt` | When a pass, or a write sent at once, last left the user's queue empty. Kept in memory only |
+| `lastSyncedAt` | When a pass, or a write sent at once, last left the user's queue empty, to the millisecond. Kept on the device for that user: a new client carries it from its first counted value on, until `clearLocalData()` or the session settling as another user takes it back ([On-device data](../reference/on-device-data.md#the-database)) |
 | `lastSyncError` | The failure that last stopped a pass with writes queued (a `NetworkUnavailable`, `ServerFailure` or `LocalFailure` stop); cleared when a later pass runs to the end or stops because the session changed user, when sending empties the queue, and when local data is cleared. A pass stopped because the session is not ready, access is off or a write waits behind another table leaves it as it was |
 
 It follows the queue from the moment the client opens, so its counts include what an earlier run
@@ -281,7 +281,7 @@ worker on Android, a `BGTaskScheduler` task on iOS), never from a second process
 - After a pass stopped on a server's `Retry-After`, the library's own next pass waits at least that
   long, at most an hour.
 - `syncStatus` follows the queue, the rejected list and the passes, and says when the queue was last
-  emptied.
+  emptied, which it keeps across launches for the user whose queue it was.
 - `syncStatus.network` is `DISABLED` as soon as `disableNetwork()` returns; a new client starts with
   access on.
 - While access is off, a Storage download is answered from the file cache, and an upload, a delete

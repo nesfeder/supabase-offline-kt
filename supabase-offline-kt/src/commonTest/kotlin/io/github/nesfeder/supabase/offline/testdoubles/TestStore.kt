@@ -7,6 +7,7 @@ import io.github.nesfeder.supabase.offline.internal.cache.CacheComponents
 import io.github.nesfeder.supabase.offline.internal.cache.CacheFreshness
 import io.github.nesfeder.supabase.offline.internal.cache.CacheOwnership
 import io.github.nesfeder.supabase.offline.internal.cache.CachePatcher
+import io.github.nesfeder.supabase.offline.internal.cache.LastSyncedAtRecord
 import io.github.nesfeder.supabase.offline.internal.cache.LocalData
 import io.github.nesfeder.supabase.offline.internal.cache.QueryCache
 import io.github.nesfeder.supabase.offline.internal.cache.QueryCacheLimits
@@ -109,6 +110,9 @@ internal class TestStore(
 
     /** Whose the caches are. */
     val cacheOwnership: CacheOwnership = components.cacheOwnership
+
+    /** When the current user's queue was last emptied, as kept on the device. */
+    val lastSyncedAt: LastSyncedAtRecord = components.lastSyncedAt
 
     /** The mutation queue. */
     val mutationQueue: MutationQueue = components.mutationQueue
