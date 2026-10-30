@@ -630,16 +630,18 @@ class OfflineTaskRepositoryTest {
         repository.setNetworkEnabled(false)
         repository.addPhoto(task.id, EncodedPhoto(ByteArray(8), 4, 3))
         val photo = repository.photos(task.id).awaitValue { it.isNotEmpty() }.single()
-        val release = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Boolean>()
         server.holdUploadAnswers = release
         repository.setNetworkEnabled(true)
         withTimeout(WAIT) { server.uploadsHeld.first { it == 1 } }
 
-        // When — removed while the answer is on its way, which then arrives
+        // When — removed while the answer is on its way, and the connection then loses the answer:
+        // the file is in the bucket, and the upload stays queued for whichever of the two reads
+        // the queue first
         val removing = scope.async { repository.removePendingPhoto(photo.id) }
-        release.complete(Unit)
+        release.complete(false)
 
-        // Then — the file is deleted again, and no row names it
+        // Then — the file that landed is deleted again, and no row names it
         assertTrue(removing.await())
         withTimeout(WAIT) { while (server.files.isNotEmpty()) delay(POLL) }
         repository.photos(task.id).awaitValue { it.isEmpty() }
@@ -651,7 +653,7 @@ class OfflineTaskRepositoryTest {
     fun a_photo_added_online_shows_waiting_until_its_row_is_written() = runTest {
         // Given — a task, and Storage slow to answer
         val task = taskWithPhotosRead("Slow upload")
-        val release = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Boolean>()
         server.holdUploadAnswers = release
 
         // When — added online, its upload on the wire
@@ -663,7 +665,7 @@ class OfflineTaskRepositoryTest {
         assertTrue(adding.isActive)
 
         // When — Storage answers
-        release.complete(Unit)
+        release.complete(true)
         adding.await()
 
         // Then — the same photo, uploaded, its row written
@@ -676,7 +678,7 @@ class OfflineTaskRepositoryTest {
     fun a_photo_removed_while_it_is_added_online_leaves_no_file_and_no_row() = runTest {
         // Given — a photo being added online, its upload on the wire
         val task = taskWithPhotosRead("Removed at once")
-        val release = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Boolean>()
         server.holdUploadAnswers = release
         val adding = scope.async { repository.addPhoto(task.id, EncodedPhoto(ByteArray(8), 4, 3)) }
         val shown = repository.photos(task.id).awaitValue { it.isNotEmpty() }.single()
@@ -684,7 +686,7 @@ class OfflineTaskRepositoryTest {
 
         // When — removed, which waits for the add to end, then Storage answers
         val removing = scope.async { repository.removePendingPhoto(shown.id) }
-        release.complete(Unit)
+        release.complete(true)
 
         // Then
         adding.await()
@@ -784,14 +786,14 @@ class OfflineTaskRepositoryTest {
         repository.setNetworkEnabled(false)
         repository.addPhoto(task.id, EncodedPhoto(ByteArray(8), 4, 3))
         repository.photos(task.id).awaitValue { it.isNotEmpty() }
-        val release = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Boolean>()
         server.holdUploadAnswers = release
         repository.setNetworkEnabled(true)
         withTimeout(WAIT) { server.uploadsHeld.first { it == 1 } }
 
         // When — the task deleted while Storage holds the answer, which then arrives
         val deleting = scope.async { repository.deleteTask(task.id) }
-        release.complete(Unit)
+        release.complete(true)
         deleting.await()
 
         // Then — the file that landed is deleted too
@@ -807,14 +809,14 @@ class OfflineTaskRepositoryTest {
         repository.setNetworkEnabled(false)
         repository.addPhoto(task.id, EncodedPhoto(ByteArray(8), 4, 3))
         repository.photos(task.id).awaitValue { it.isNotEmpty() }
-        val release = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Boolean>()
         server.holdUploadAnswers = release
         repository.setNetworkEnabled(true)
         withTimeout(WAIT) { server.uploadsHeld.first { it == 1 } }
 
         // When
         val startingOver = scope.async { repository.startOver() }
-        release.complete(Unit)
+        release.complete(true)
         startingOver.await()
 
         // Then — nothing of the first user is left in the bucket

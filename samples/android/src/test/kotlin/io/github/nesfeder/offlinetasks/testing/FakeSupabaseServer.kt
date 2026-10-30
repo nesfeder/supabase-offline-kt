@@ -113,9 +113,11 @@ class FakeSupabaseServer {
 
     /**
      * While set, an upload's answer waits for it once the file is stored, as a slow network would
-     * keep it: the file is in the bucket before the app hears so.
+     * keep it, and is lost at the transport when it completes with `false`, as a connection that
+     * drops on the way back would lose it: either way the file is in the bucket before the app
+     * hears anything.
      */
-    var holdUploadAnswers: CompletableDeferred<Unit>? = null
+    var holdUploadAnswers: CompletableDeferred<Boolean>? = null
 
     /** How many uploads are stored and waiting on [holdUploadAnswers]. */
     val uploadsHeld: MutableStateFlow<Int> = MutableStateFlow(0)
@@ -225,7 +227,7 @@ class FakeSupabaseServer {
         val hold = holdUploadAnswers
         if (hold != null && isUpload) {
             uploadsHeld.update { it + 1 }
-            hold.await()
+            if (!hold.await()) throw IOException("connection lost after the upload")
         }
         return response
     }
