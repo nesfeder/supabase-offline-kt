@@ -1,6 +1,7 @@
 // Copyright (c) 2026 nesfeder
 // SPDX-License-Identifier: MIT
 import Foundation
+import SupabaseOfflineCore
 import SupabaseOfflineTesting
 import Testing
 @testable import SupabaseOffline
@@ -10,6 +11,9 @@ struct SyncStatusTests {
 
     /// A row to write.
     private static let tea = TodoRow(id: 3, title: "Tea", done: false)
+
+    /// The project a client built by hand names.
+    private static let projectURL = URL(string: "https://project.supabase.co")!
 
     @Test func turningTheNetworkOffFailsEveryRequestAtOnceAndHoldsSync() async throws {
         // Given a reachable server, and the client's network access turned off
@@ -105,22 +109,37 @@ struct SyncStatusTests {
     }
 
     @Test func theStatusSaysWhenItsCountsHaveBeenRead() async throws {
-        // Given a client that has not opened its database yet
-        let server = RecordingFakeServer { _ in .status(201) }
-        let client = SupabaseOfflineClient.inMemory(config: .init(autoSync: false), server: server.server)
+        // Given a client whose open is held, as a slow disk would hold it, so it has not opened its
+        // database yet, and a reader of its status started before the open ends
+        let opening = DispatchSemaphore(value: 0)
+        let client = SupabaseOfflineClient(supabaseURL: Self.projectURL, supabaseKey: "key", config: .init(autoSync: false)) {
+            opening.wait()
+            return BridgeTesting.shared.openInMemory(options: $0, server: FakeSilentServer(), clock: nil, realtime: nil, store: nil)
+        }
+        let seen = RecordingList<SyncStatus>()
+        let reader = Task { for try await status in client.syncStatus { seen.append(status) } }
         let starting = client.syncStatus.value
 
-        // When the client opens and counts the queue, then closes
-        #expect(await eventually { client.syncStatus.value.isQueueCounted })
+        // When the open is released, the client counts the queue and the reader is handed a
+        // counted value, then the client closes
+        opening.signal()
+        #expect(await eventually { seen.values.last?.isQueueCounted == true })
         let counted = client.syncStatus.value
         try await client.close()
+        try await reader.value
 
         // Then the value it started with said so, with counts of zero for want of a count, and
-        // from the first count on it stays counted, the last value included
+        // from the first count on it stays counted, in every value the reader was handed and the
+        // last value included
         #expect(!starting.isQueueCounted)
         #expect(starting.pendingMutationCount == 0)
         #expect(counted.isQueueCounted)
         #expect(counted.pendingMutationCount == 0)
         #expect(client.syncStatus.value.isQueueCounted)
+        let values = seen.values
+        #expect(
+            zip(values, values.dropFirst()).allSatisfy { earlier, later in !(earlier.isQueueCounted && !later.isQueueCounted) },
+            "a counted status was followed by one not counted: \(values)"
+        )
     }
 }
