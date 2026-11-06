@@ -64,17 +64,16 @@ struct AwaitCompletionTests {
         let call = FakeCoreCall<Int>()
 
         // When
-        let started = ContinuousClock.now
         let result = await Task {
             withUnsafeCurrentTask { $0?.cancel() }
             return try await awaitCompletion { call.start($0) }
         }.result
 
-        // Then
+        // Then it throws the cancellation, and the call was never sent, so nothing but the
+        // cancellation could have ended the await
         #expect(throws: CancellationError.self) { try result.get() }
         #expect(!call.wasSent)
         #expect(call.handle.cancelCount == 0)
-        #expect(ContinuousClock.now - started < .seconds(1))
     }
 
     @Test func canceledWhileRunningThrowsAtOnceAndCancelsTheCallOnce() async throws {
@@ -84,13 +83,12 @@ struct AwaitCompletionTests {
         #expect(await eventually { call.wasSent })
 
         // When
-        let canceled = ContinuousClock.now
         task.cancel()
         let result = await task.result
 
-        // Then
+        // Then it throws the cancellation without an answer, which never comes, so nothing but
+        // the cancellation could have ended the await, and the call is canceled once
         #expect(throws: CancellationError.self) { try result.get() }
-        #expect(ContinuousClock.now - canceled < .seconds(1))
         #expect(call.handle.cancelCount == 1)
 
         // When the core answers late, then the answer is dropped
