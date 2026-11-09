@@ -97,7 +97,7 @@ jobs:
           java-version: '17'
 
       # No cache is restored in this workflow: a release builds only what the commit holds.
-      - uses: gradle/actions/wrapper-validation@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+      - uses: gradle/actions/wrapper-validation@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
 
       # `check` of both modules, less the iOS simulator suites, which need macOS (and whose link
       # step needs Xcode): the Android host tests, the API records, the coverage floor.
@@ -173,7 +173,7 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - uses: gradle/actions/wrapper-validation@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+      - uses: gradle/actions/wrapper-validation@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
 
       # The release XCFramework on Apple's SQLite, with the privacy manifest in each slice, and the
       # check that the required-reason APIs it references are the recorded ones, each declared.
@@ -332,7 +332,7 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - uses: gradle/actions/wrapper-validation@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+      - uses: gradle/actions/wrapper-validation@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
 
       # The zip the framework job built, the one the draft release holds. It is only hashed here.
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
