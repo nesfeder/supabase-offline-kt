@@ -6,8 +6,10 @@ package io.github.nesfeder.supabase.offline.testdoubles
 
 import io.github.jan.supabase.annotations.SupabaseInternal
 import io.github.jan.supabase.realtime.RealtimeMessage
+import io.github.jan.supabase.realtime.RealtimeProtocolVersion
 import io.github.jan.supabase.realtime.websocket.RealtimeWebsocket
 import io.github.jan.supabase.realtime.websocket.RealtimeWebsocketFactory
+import io.ktor.websocket.Frame
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CompletableDeferred
@@ -16,12 +18,20 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.getAndUpdate
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.withTimeout
+import kotlinx.serialization.json.add
+import kotlinx.serialization.json.buildJsonArray
 
 /**
  * A Realtime websocket a test scripts: what supabase-kt sends arrives on [sent], and the test
  * answers through [answer], as the Realtime server would. Disconnecting ends both.
+ *
+ * It speaks Realtime protocol 2.0.0, supabase-kt's default: each answer reaches supabase-kt as the
+ * text frame the server sends, the JSON array `[join_ref, ref, topic, event, payload]`. The socket
+ * builds that array itself because supabase-kt's own encoder is internal. Messages supabase-kt
+ * sends arrive already decoded, whatever protocol version it encodes them for.
  */
 internal class ScriptedRealtimeWebsocket : RealtimeWebsocket {
 
@@ -39,16 +49,38 @@ internal class ScriptedRealtimeWebsocket : RealtimeWebsocket {
     /** Completed once supabase-kt disconnected this socket. */
     val disconnected: CompletableDeferred<Unit> = CompletableDeferred()
 
+    /** The next ref [makeRef] hands out. */
+    private val nextRef = MutableStateFlow(0)
+
     override val hasIncomingMessages: Boolean
         get() = !incoming.isClosedForReceive
 
-    override suspend fun receive(): RealtimeMessage {
+    /**
+     * A ref per message, counting from `"0"`, as the real socket does. It must be numeric:
+     * supabase-kt reads a heartbeat's ref back as an integer.
+     */
+    override fun makeRef(): String = nextRef.getAndUpdate { ref -> ref + 1 }.toString()
+
+    override suspend fun receive(): Frame {
         receives.update { count -> count + 1 }
-        return incoming.receive()
+        val message = incoming.receive()
+        val serverFrame = buildJsonArray {
+            add(message.joinRef)
+            add(message.ref)
+            add(message.topic)
+            add(message.event)
+            add(message.payload)
+        }
+        return Frame.Text(serverFrame.toString())
     }
 
-    override suspend fun send(message: RealtimeMessage) {
+    override suspend fun send(message: RealtimeMessage, vsn: RealtimeProtocolVersion) {
         sent.send(message)
+    }
+
+    /** Fails: supabase-kt sends binary frames only for broadcasts, and the library sends none. */
+    override suspend fun send(data: ByteArray) {
+        error("The library never sends a binary broadcast, but ${data.size} bytes were sent")
     }
 
     override suspend fun blockUntilDisconnect() {

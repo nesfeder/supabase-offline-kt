@@ -28,6 +28,7 @@ import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 import kotlin.time.Clock
+import kotlin.time.Duration
 import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.minutes
@@ -84,6 +85,10 @@ class SupabaseRealtimeFeedTest {
             reconnectDelay = 1.hours
             rejoinDelay = 10.milliseconds
             maxAttempts = 2
+            // supabase-kt 3.9 disconnects a socket with no channels after
+            // disconnectOnEmptyChannelsAfter (by default twice the heartbeat interval), and these
+            // tests want the close at once
+            disconnectOnEmptyChannelsAfter = Duration.ZERO
         }
     }
     private val feed = SupabaseRealtimeFeed(supabase, logs.asEngineLogger())
@@ -597,6 +602,10 @@ class SupabaseRealtimeFeedTest {
                         websocketFactory = ownSockets
                         heartbeatInterval = 1.hours
                         reconnectDelay = 1.hours
+                        // supabase-kt 3.9 disconnects a socket with no channels after
+                        // disconnectOnEmptyChannelsAfter (by default twice the heartbeat
+                        // interval), and this test wants the close at once
+                        disconnectOnEmptyChannelsAfter = Duration.ZERO
                     }
                 }
                 val ownFeed =
@@ -696,7 +705,9 @@ class SupabaseRealtimeFeedTest {
 
     /**
      * The server's word that a channel's binding is refused, as it sends one after the join reply:
-     * a system message with an error status, which names no binding supabase-kt reads.
+     * a system message with an error status, which names no binding supabase-kt reads. It names the
+     * channel by its sub-topic, a field supabase-kt 3.9 requires: without it, the message fails to
+     * decode in supabase-kt's read loop, which then reconnects.
      */
     private fun bindingRefused(topic: String): RealtimeMessage =
         RealtimeMessage(
@@ -706,6 +717,7 @@ class SupabaseRealtimeFeedTest {
                 put("status", "error")
                 put("extension", "postgres_changes")
                 put("message", "Unable to subscribe to changes with given parameters")
+                put("channel", topic.removePrefix("realtime:"))
             },
             null,
         )
