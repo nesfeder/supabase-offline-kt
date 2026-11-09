@@ -726,8 +726,8 @@ class InMemoryTaskRepository(
         return server.rowsOf(state.value.userId).tasks.values.count { !it.isDone }
     }
 
-    override suspend fun readWithTwoFiltersOnOneColumn() {
-        throw InvalidRequestException("Two top-level filters on column created_at")
+    override suspend fun readWithQuotedValueInList() {
+        throw InvalidRequestException("A value of `in` on `title` holds a quote or a backslash")
     }
 
     override suspend fun setNetworkEnabled(enabled: Boolean) {

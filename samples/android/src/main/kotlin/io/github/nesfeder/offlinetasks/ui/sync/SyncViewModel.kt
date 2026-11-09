@@ -54,8 +54,8 @@ enum class TryIt {
     /** A grouped delete, which the queue cannot hold, made while the network is off. */
     GroupedDelete,
 
-    /** Two top-level filters on one column, which the library refuses. */
-    TwoFilters,
+    /** An `in` list whose element holds a double quote, which the library refuses. */
+    QuotedInValue,
 
     /** A count of open tasks on the server, with the generic filter. */
     CountOpen,
@@ -321,8 +321,8 @@ class SyncViewModel(
             TryIt.SampleTasks -> TryItResult.Written(repository.addSampleTasks())
             TryIt.StarterList -> TryItResult.Written(repository.importStarterList())
             TryIt.GroupedDelete -> TryItResult.Written(repository.deleteThisWeeksDoneTasks())
-            TryIt.TwoFilters -> {
-                repository.readWithTwoFiltersOnOneColumn()
+            TryIt.QuotedInValue -> {
+                repository.readWithQuotedValueInList()
                 TryItResult.Done
             }
             TryIt.CountOpen -> TryItResult.Counted(repository.countOpenTasksOnServer())

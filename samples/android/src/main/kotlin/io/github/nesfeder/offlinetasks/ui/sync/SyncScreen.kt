@@ -635,7 +635,7 @@ private fun LazyListScope.developerGroup(state: SyncUiState.Ready, actions: Sync
             TryIt.SampleTasks,
             TryIt.StarterList,
             TryIt.GroupedDelete,
-            TryIt.TwoFilters,
+            TryIt.QuotedInValue,
             TryIt.CountOpen,
         )
     val rows = items.size + 1
@@ -728,7 +728,7 @@ private val TryIt.title: Int
             TryIt.SampleTasks -> R.string.try_sample_tasks
             TryIt.StarterList -> R.string.try_starter_list
             TryIt.GroupedDelete -> R.string.try_grouped_delete
-            TryIt.TwoFilters -> R.string.try_two_filters
+            TryIt.QuotedInValue -> R.string.try_quoted_in_value
             TryIt.CountOpen -> R.string.try_count_open
             TryIt.SignedUpload -> R.string.try_signed_upload
         }
@@ -740,7 +740,7 @@ private val TryIt.body: Int
             TryIt.SampleTasks -> R.string.try_sample_tasks_body
             TryIt.StarterList -> R.string.try_starter_list_body
             TryIt.GroupedDelete -> R.string.try_grouped_delete_body
-            TryIt.TwoFilters -> R.string.try_two_filters_body
+            TryIt.QuotedInValue -> R.string.try_quoted_in_value_body
             TryIt.CountOpen -> R.string.try_count_open_body
             TryIt.SignedUpload -> R.string.try_signed_upload_body
         }

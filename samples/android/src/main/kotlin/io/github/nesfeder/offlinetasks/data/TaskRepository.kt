@@ -370,11 +370,12 @@ interface TaskRepository {
     suspend fun countOpenTasksOnServer(): Int
 
     /**
-     * Reads with two filters on one column, which the library refuses before sending anything.
+     * Reads with an `in` list whose element holds a double quote, which the library refuses before
+     * sending anything.
      *
      * @throws InvalidRequestException always.
      */
-    suspend fun readWithTwoFiltersOnOneColumn()
+    suspend fun readWithQuotedValueInList()
 
     /** Switches the app's own network access off ("Simulate offline") or back on. */
     suspend fun setNetworkEnabled(enabled: Boolean)
