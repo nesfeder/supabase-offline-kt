@@ -360,14 +360,22 @@ class FilterReplayTest {
     @Test
     fun `an array literal queued unquoted replays the elements the server read`() {
         // Given literals queued by a release on supabase-kt 3.6, which joined the elements raw.
-        // Postgres read `{a\b}` as `ab`, `{NULL}` as SQL NULL, `{ a , b }` as `a` and `b`, and
-        // `{x.y,z}` as `x.y` and `z`.
+        // Postgres read `{a\b}` as `ab`, `{NULL}` as SQL NULL, `{ a , b }` as `a` and `b`,
+        // `{x.y,z}` as `x.y` and `z`, `{ \t}` as the empty list, and `{\u00A0}` as one no-break
+        // space, which its array input does not trim as white space.
         // When / Then each replays those elements, written as supabase-kt writes them now
         assertEquals(listOf("cs.{ab}"), replayStored("""{a\b}""")["tags"])
         assertEquals(listOf("cs.{NULL}"), replayStored("{NULL}")["tags"])
         assertEquals(listOf("cs.{a,b}"), replayStored("{ a , b }")["tags"])
         assertEquals(listOf("cs.{x.y,z}"), replayStored("{x.y,z}")["tags"])
         assertEquals(listOf("""cs.{"a b\\"}"""), replayStored("""{a b\\}""")["tags"])
+        val noBreakSpace =
+            SelectRequestBuilder(schema, conversion).apply {
+                filter { cs("tags", listOf("\u00A0")) }
+            }
+        assertEquals(listOf("\u00A0"), parseArrayLiteral("{\u00A0}"))
+        assertEquals(noBreakSpace.params["tags"], replayStored("{\u00A0}")["tags"])
+        assertEquals(listOf("cs.{}"), replayStored("{ \t}")["tags"])
     }
 
     @Test

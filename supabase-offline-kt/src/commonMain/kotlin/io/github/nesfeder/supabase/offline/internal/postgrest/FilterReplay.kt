@@ -421,7 +421,7 @@ private fun String.isArrayLiteral(): Boolean = length >= 2 && startsWith('{') &&
  *
  * - A quoted element is taken as written, its backslashes escaping the next character.
  * - An unquoted element runs to the next `,` or `}`, its backslashes escaping the next character,
- *   and loses the white space at either end that no backslash escapes.
+ *   and loses the white space at either end that no backslash escapes ([isPostgresArraySpace]).
  * - An unquoted `NULL`, in any case and without a backslash, is SQL null; `"NULL"` is the string.
  * - `{}` is the empty list.
  *
@@ -433,11 +433,11 @@ private fun String.isArrayLiteral(): Boolean = length >= 2 && startsWith('{') &&
 internal fun parseArrayLiteral(literal: String): List<String?>? {
     if (!literal.isArrayLiteral()) return null
     val body = literal.substring(1, literal.length - 1)
-    if (body.isBlank()) return emptyList()
+    if (body.all(::isPostgresArraySpace)) return emptyList()
     val elements = mutableListOf<String?>()
     var index = 0
     while (true) {
-        while (index < body.length && body[index].isWhitespace()) index++
+        while (index < body.length && isPostgresArraySpace(body[index])) index++
         val element = StringBuilder()
         var isNullable = true
         if (index < body.length && body[index] == '"') {
@@ -460,7 +460,7 @@ internal fun parseArrayLiteral(literal: String): List<String?>? {
                 }
             }
             index++
-            while (index < body.length && body[index].isWhitespace()) index++
+            while (index < body.length && isPostgresArraySpace(body[index])) index++
         } else {
             // The length up to the last character white space trimming must keep
             var kept = 0
@@ -477,7 +477,7 @@ internal fun parseArrayLiteral(literal: String): List<String?>? {
                     }
                     else -> {
                         element.append(char)
-                        if (!char.isWhitespace()) kept = element.length
+                        if (!isPostgresArraySpace(char)) kept = element.length
                         index++
                     }
                 }
@@ -492,6 +492,14 @@ internal fun parseArrayLiteral(literal: String): List<String?>? {
         index++
     }
 }
+
+/**
+ * Whether Postgres's array input trims [char] as white space around an element: its `array_isspace`
+ * takes only a space, `\t`, `\n`, `\r`, `\u000B` and `\u000C`. Kotlin's [Char.isWhitespace] also
+ * takes a no-break space, U+2003 and U+001C to U+001F, which Postgres keeps as element content, so
+ * using it would read `{\u00A0}` as the empty list.
+ */
+private fun isPostgresArraySpace(char: Char): Boolean = char in " \t\n\r\u000B\u000C"
 
 /**
  * Splits an unwrapped `in` list body on its element separators, honoring the quoting `escapeValue`
