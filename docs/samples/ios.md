@@ -278,13 +278,12 @@ Each item says which call it makes, then what happened:
 - **Import the starter list**: an upsert that ignores duplicates, under ids made from your user's;
   running it again changes nothing, even after you edited one.
 - **Count tasks with notes**: the generic filter, naming its operator as text.
-- **Delete last week's done tasks**: two conditions on one column, which the queue cannot hold, so
-  the delete is sent at once; offline, it is refused with the library's own words, and nothing
-  waits.
+- **Delete last week's done tasks**: two conditions on one column, which the queue records like any
+  other filters, so online the delete is sent at once and offline it waits in the queue.
 - **Upload through a signed URL**: a generated photo on your newest task, through a one-time upload
   URL, the way an upload is handed to code that holds no session.
 
-![The Sync tab's Try it, offline: the invalid title queued, and the delete of last week's done tasks refused in the library's own words, nothing changed](../assets/samples/ios/try-it.png){ width="270" loading=lazy }
+![The Sync tab's Try it, offline, after a few items: each says which call it made and what happened](../assets/samples/ios/try-it.png){ width="270" loading=lazy }
 
 ### Start over
 

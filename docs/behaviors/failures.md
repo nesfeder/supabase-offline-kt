@@ -59,7 +59,7 @@ Match the type, not the message: another `IllegalStateException` can say nothing
 | `MutationNotQueueableException` | A write the queue cannot hold (a dry run, a filter it cannot record, another schema, an unknown user) could not be sent for want of a connection. Nothing was queued |
 | The connectivity failure itself | An `OnlineOnly` write could not be sent |
 | `NetworkDisabledException` | An `OnlineOnly` write was made while network access is off |
-| `IllegalArgumentException` | An UPDATE or DELETE named two top-level filters on one column, a pattern list the server would misread, or an `in` element or group value holding `"` or `\` the server would read with its escapes; nothing was sent or queued |
+| `IllegalArgumentException` | An UPDATE or DELETE named an empty pattern list, or an `in` element or group value holding `"` or `\` the server would read with its escapes; nothing was sent or queued |
 
 A `QueueIfOffline` write that may not have run, or may pass when sent again, is not thrown: no
 connection or no answer, a `408`, `429`, `502`, `503`, `504`, `520`, `522` or `524`, or a `401` for
@@ -166,6 +166,8 @@ Everything else keeps the last write wins:
 
 ## A missing Storage object
 
-Storage answers a request for a missing object with HTTP 400 and a 404 in its body, which
-supabase-kt raises as `NotFoundRestException`, so `httpStatusOrNull()` reads 400: test for the type.
+Storage answers a request for a missing object with HTTP 400 and a 404 in its body. supabase-kt
+raises every Storage failure as a `StorageRestException` that carries the body's status, so
+`httpStatusOrNull()` reads 404: test the status, not the type. A Storage refusal on the rejected
+list carries the same status, and its `code` is Storage's own error code, such as `NoSuchKey`.
 The offline bucket drops its cached copy when the server says so ([Storage caching](storage.md)).

@@ -1,6 +1,6 @@
 # Supported features
 
-What the library does with each part of supabase-kt 3.6, the version it is built against. The
+What the library does with each part of supabase-kt 3.9, the version it is built against. The
 library caches PostgREST lists and Storage downloads, and queues PostgREST writes; everything else
 goes to the server as supabase-kt sends it.
 
@@ -23,23 +23,21 @@ Reached through `supabase.offline.from(table)` or `from(schema, table)`.
 | --- | --- |
 | `select` of a list of rows | **Cached**, under its query: filters, order, columns, `limit`, `range`. The user's queued writes are laid over every answer |
 | `selectAsFlow` of a list of rows | **Cached**, and emitted again as the cached rows change; refreshed from the server as its strategy says |
-| `select` with `single()` | **Cached** as its list, one row long, under the key of the list read with the same query. Offline, answered from that list when it holds exactly one row, the user's queued writes laid over it; with no row or several it fails as with nothing cached, and under `CacheOnly` throws `CacheMissException` |
+| `select` with `single()` or `maybeSingle()` | **Cached** as its list, one row long, under the key of the list read with the same query. Offline, answered from that list when it holds exactly one row, the user's queued writes laid over it; with no row or several it fails as with nothing cached, and under `CacheOnly` throws `CacheMissException` |
 | `select` of another shape: `head`, a `count` (with rows or without), `csv()`, `geojson()`, `stripNulls()`, `explain()` | **Passed through**, never stored. Under `CacheOnly`, refused with `CacheMissException` |
 | `selectAsFlow` of another shape, `single()` included | The server's answer, emitted once; offline the flow fails. A `single()` answer is cached as a one-shot read's is |
 | `insert`, `upsert` (`QueueIfOffline`) | **Queued**, with `onConflict`, `ignoreDuplicates` and `defaultToNull` kept for the replay. `select()` brings the server's rows back when the write is sent at once |
 | `update`, `delete` (`QueueIfOffline`) with a filter the queue can record | **Queued**. The queue records filters on the table's own columns, joined as AND, with any of supabase-kt's operators |
 | `update`, `delete` with a filter the queue cannot record | **Sent directly**: no filter, an `or { }` or `and { }` group, a negated filter (`filterNot`), an embedded table's column, `limit`, `order` or `offset`. Offline, `MutationNotQueueableException` |
 | `update`, `delete` (`QueueIfOffline`) of one cached row, on a table with a version column | **Queued**, and replayed only while the server's row still has the version the device saw; a row that moved meanwhile is a conflict, settled by the app's resolver or held ([Conflicts and merging](../behaviors/conflicts.md)). Not checked: the send at once, inserts and upserts, which replay as made |
-| Two top-level filters on one column, in a read, an update or a delete | **Refused** with `IllegalArgumentException`: supabase-kt would send only the first. Use one `and { }` group |
+| Two top-level filters on one column, in a read, an update or a delete | Sent as two conditions, which the server joins as AND; cached, captured and queued like any other filters |
+| An empty pattern list (`likeAll`, `likeAny`, `ilikeAll`, `ilikeAny`), in a read, an update or a delete | **Refused** with `IllegalArgumentException`: supabase-kt sends it as no pattern at all, and `likeAll` over it matches every row |
 | An `in` element, or a comparison value inside an `or { }` or `and { }` group, holding `"` or `\` and none of `,.:()`, in a read, an update or a delete | **Refused** with `IllegalArgumentException`: supabase-kt escapes such a value but does not quote it, so the server would read the escapes as the value. A single top-level filter sends the value as written. Not read: a text search query, and a string given to `cs`, `cd` or `ov` in a group. A write queued before 0.3.0 with such an `in` element goes to the rejected list when it comes up for sending |
-| A write carrying `Prefer: tx=rollback` (a dry run) | **Sent directly**, never queued. A rolled-back write is not patched into the cache |
+| A dry run: `dryRun()`, or a write carrying `Prefer: tx=rollback` | **Sent directly**, never queued. A rolled-back write is not patched into the cache |
 | A write to a schema other than the client's default | **Sent directly**: the queue replays to the default schema only |
 | Any write with `mutationStrategy = OnlineOnly` | **Passed through**; the cached lists change when they are fetched again |
 | `supabase.offline.rpc(…)` | **Passed through**: a function may change data, so it is neither cached nor queued |
 | `applyServerRecord`, `applyServerDelete` | Applies a row the server reports to every cached list of the table; sends nothing |
-
-Not in supabase-kt 3.6, so not here: `maybeSingle()`, `dryRun()` (add the `Prefer` header
-yourself) and the `isdistinct` operator.
 
 ## Storage
 
@@ -54,11 +52,12 @@ Reached through `supabase.offline.storage.from(bucket)`.
 | `createSignedUrl`, `createSignedUrls`, `list`, `info`, `exists` | **Passed through** |
 | `publicUrl`, `authenticatedUrl` and the other URL builders | Built on the device; nothing is sent |
 | Bucket management: `createBucket`, `listBuckets`, `emptyBucket`, `deleteBucket` and the rest | Not on the offline client: call it on `supabase.storage` |
-| An object name with `%`, `?` or `#` | **Passed through**, never cached: supabase-kt 3.6 puts it in the URL as written. `ensureCachedFile` refuses it |
+| An object name with `%`, `?` or `#` | Like any other name: supabase-kt puts it in the URL percent-encoded, and the library caches it under its own name |
+| An object name holding a lone UTF-16 surrogate | **Refused** with `IllegalArgumentException`: it is not a valid Unicode string, so it cannot name one object on every platform |
 | An object path that cannot map onto a file (a leading `/`, an empty, `.` or `..` segment, a `\`, a control character) | **Passed through**, never cached. `ensureCachedFile` refuses it |
 
-`purgeCache` is not in supabase-kt 3.6. On an app that forces 3.8, call it on `supabase.storage`'s
-bucket, not on the offline one.
+`purgeCache` purges the CDN's cache of an object, not the object, so it is **passed through** and
+leaves the device's cached copy alone.
 
 ## Auth, Realtime and Functions
 

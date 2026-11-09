@@ -27,7 +27,7 @@ kotlin {
     sourceSets {
         commonTest.dependencies {
             implementation("io.github.nesfeder.supabase-offline:supabase-offline-kt-testing:0.3.0")
-            implementation("io.ktor:ktor-client-mock:3.4.3")
+            implementation("io.ktor:ktor-client-mock:3.6.0")
         }
     }
 }

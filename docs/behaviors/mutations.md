@@ -153,32 +153,24 @@ the kind:
 
 ## Two filters on one column
 
-An update or a delete with two top-level filters on one column throws `IllegalArgumentException`
-under either strategy, online or offline, before anything is sent or queued
-([Coming from supabase-kt](../getting-started/migrating.md#two-filters-on-one-column)). One
-`and { }` group is the fix, and a group is a filter the queue cannot record, so such a write is
-sent at once: Try it makes one offline to show its `MutationNotQueueableException`.
+An update or a delete with two top-level filters on one column, such as
+`filter { gte("age", 1); lte("age", 10) }`, sends both conditions, and the server joins them as
+AND. The queue records each condition and replays them all, so such a write is queued like any
+other; a Swift update or delete with two conditions on one column queues the same way. The same
+conditions written as one `and { }` group reach the server alike, but a group is a filter the queue
+cannot record, so that write is sent at once: Try it makes one offline to show its
+`MutationNotQueueableException`.
 
-From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/OfflineTaskRepository.kt) · [TaskRepository.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskRepository.swift)
+From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/OfflineTaskRepository.kt)
 
-=== "Android"
-
-    ```kotlin
-    --8<-- "data/supabase/OfflineTaskRepository.kt:same-column-write"
-    ```
-
-=== "iOS"
-
-    ```swift
-    --8<-- "Data/TaskRepository.swift:same-column-write"
-    ```
-
-    Swift sends two conditions on one column together, in one `and` group, so nothing is refused.
+```kotlin
+--8<-- "data/supabase/OfflineTaskRepository.kt:same-column-write"
+```
 
 ## Dry runs
 
-A dry run (`Prefer: tx=rollback`: supabase-kt 3.8's `dryRun()`, or the header added by hand on
-3.6) is never queued, since a replay would run it for real: it is sent at once, and offline throws
+A dry run (`Prefer: tx=rollback`: supabase-kt's `dryRun()`, or the header added by hand) is
+never queued, since a replay would run it for real: it is sent at once, and offline throws
 `MutationNotQueueableException`. PostgREST rolls it back only when the project lets a request
 choose (`db-tx-end` set to `commit-allow-override` or `rollback-allow-override`), which a hosted
 Supabase project does not by default, so there **a dry run commits**: the library reads

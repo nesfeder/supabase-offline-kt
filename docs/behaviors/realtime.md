@@ -56,21 +56,34 @@ and is joined again on its own schedule, only that table is read again when it i
 tables stay joined and keep receiving. The channels share supabase-kt's one socket; a join is one
 more message on it per table, and the reads on joining cost what they did, one per table.
 
-A Kotlin app that names more than one table, or keeps channels of its own beside the library's,
-for broadcast, presence or changes of its own, should install supabase-kt's Realtime plugin with
-`install(Realtime) { maxAttempts = 1 }`. On an error reply supabase-kt 3.6.0 rejoins the channel
-from inside the socket's read loop: it waits 2 s, sends a leave, and then waits for an
-`UNSUBSCRIBED` that only that same loop could read, so no channel on the socket receives anything
-meanwhile. When the library's channels are alone on the socket, the library closes it, which ends
-the stuck loop, and joins every table's channel again: at each refusal the other tables lose their
-channel for a moment and are read again. With an app channel present nothing is closed, the loop
-stays stuck until the heartbeat timeout and the reconnect delay have passed, and every channel
-receives nothing meanwhile. With `maxAttempts = 1` supabase-kt does not rejoin after an error
-reply: the refused channel turns `UNSUBSCRIBED` at once, the library joins it again after its own
-wait, and the other channels never notice. It also ends supabase-kt's rejoin after an error reply
-for the app's channels, which the wait above never covered: such a channel turns `UNSUBSCRIBED`,
-and the app subscribes it again itself. After a socket reconnection supabase-kt still rejoins every
-channel.
+What supabase-kt does underneath, and what the library adds:
+
+- **A refused binding.** The server can accept a table's join and then refuse its change feed,
+  for a filter that names a renamed column, say, by sending a system message with status `error`.
+  supabase-kt only logs it and keeps the channel joined; the library watches each channel's system
+  messages and ends that table's channel on such a message. The table is then joined again on the
+  library's schedule above while the other tables keep receiving, and the refused channel is left
+  with an ordinary leave on a socket that stays open.
+- **A refused join, or a channel error while joined.** supabase-kt joins the same channel again
+  every `rejoinDelay`, without a leave in between, and the table reads `Subscribing`; after a
+  channel error it reads `Subscribed` again on the rejoin and is read again. After `maxAttempts`
+  refusals or errors supabase-kt gives the channel up, and the library takes over with its own
+  wait. A rejoin no longer holds up the socket, so the other channels keep receiving meanwhile, and
+  `maxAttempts` needs no particular value for the library's sake: set it for your app's own
+  channels.
+- **A token provider that throws.** With supabase-kt's default `requireValidSession = true`, no
+  join is sent while the provider throws, and supabase-kt tries again every `rejoinDelay` without
+  counting attempts, so it never gives up, even with `maxAttempts = 1`. The table reads
+  `Subscribing` until the provider returns a token, and the next try then joins.
+- **Network access off, or the network known down.** The library leaves its channels and then
+  closes supabase-kt's socket at once, when nothing but its channels was on it, so nothing more is
+  sent. A socket that holds a channel of your app's own stays open, with that channel joined. An
+  app that installs Realtime with `disconnectOnNoSubscriptions = false` keeps its socket too: it
+  stays open and sends heartbeats while network access is off.
+- **Every other time the last channel leaves**, because the subscription is switched off or a
+  table's channel ended, supabase-kt closes the empty socket after `disconnectOnEmptyChannelsAfter`,
+  twice `heartbeatInterval` (30 s) by default, rather than at once. A sign-out and `close()` close
+  it at once, through supabase-kt.
 
 `realtimeStatus` sums up where the tables' channels stand, as one value to draw a row of the Sync
 screen from: `Stalled` while any table is, with the cause of the first one named, otherwise
@@ -203,10 +216,8 @@ configured as `schema.table`, or `id`.
 - **The publication.** A table missing from `supabase_realtime` is joined without complaint and
   sends nothing.
 - **Broadcast and presence** are not covered: keep them on supabase-kt's, or supabase-swift's, own
-  channels. A Kotlin app that does sets `maxAttempts = 1` on supabase-kt's Realtime plugin
+  channels. They share supabase-kt's socket with the library's channels
   ([The lifecycle](#the-lifecycle)).
-- **supabase-kt's pin.** The library is built on supabase-kt 3.6 partly because of Realtime: 3.7.0
-  and 3.8.0 carry a Realtime crash ([why 3.6](../project/compatibility.md#why-36-not-38)).
 - **The log.** supabase-kt's own Realtime logger prints the join payload, the token included, at
   `DEBUG`; keep `DEBUG` out of release builds ([Security](../help/security.md#logs)).
 

@@ -37,10 +37,9 @@ Import `io.github.nesfeder.supabase.offline.offline`. Storage works the same way
   once that the server refuses throws, as it does in supabase-kt. The library adds three of its
   own: `MutationNotQueueableException`, for a write the queue cannot hold that cannot be sent (its
   `cause` is supabase-kt's connectivity failure); `NetworkDisabledException`, while network access
-  is off; and `IllegalArgumentException`, for two top-level filters on one column, a pattern
-  list the server would misread, or an `in` element or group value holding `"` or `\` and none of
-  `,.:()`, which supabase-kt would send escaped but unquoted
-  ([Supported features](../reference/supported-features.md#postgrest)). Test for being offline with
+  is off; and `IllegalArgumentException`, for an empty pattern list, or an `in` element or group
+  value holding `"` or `\` and none of `,.:()`, which supabase-kt would send escaped but unquoted
+  ([Filters the library refuses](#filters-the-library-refuses)). Test for being offline with
   `isNetworkOrConnectivityFailure()`, not by catching `HttpRequestException`.
 
 The offline choices are named parameters with defaults, placed before the trailing lambda:
@@ -105,51 +104,29 @@ The typed `rpc`, with the library's `rpc` imported:
 shape and once for each request it sends; a write that may be queued runs it up to three times.
 Keep side effects out of it, and read no clock or counter inside it.
 
-## Two filters on one column
+## Filters the library refuses
 
-supabase-kt sends only the first value of each top-level query parameter, so
-`filter { gte("age", 1); lte("age", 10) }` sends `age=gte.1` and nothing else: every row from 1
-up. The library refuses such a call with an `IllegalArgumentException`, before anything is sent
-or queued, for reads, updates and deletes. A read would show the wrong rows; a queued delete would
-replay later and remove more than you asked. Write the conditions as one `and { }` group, which
-supabase-kt sends whole:
+Two filters reach the server as something other than what the call says, so the library refuses
+them with an `IllegalArgumentException`, before anything is sent or queued, for reads, updates and
+deletes:
 
-From the samples: [TaskQueries.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/TaskQueries.kt) · [OfflineTaskRepository.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/OfflineTaskRepository.kt) · [TaskQuery.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskQuery.swift)
+- **An `in` element, or a comparison value inside an `or { }` or `and { }` group, holding `"` or
+  `\` and none of `,.:()`.** supabase-kt escapes the quote or backslash but leaves the value
+  unquoted, so the server reads the escapes as part of the value and matches nothing. Filter on
+  such a value with a single top-level filter, which is sent as written.
+- **An empty pattern list** given to `likeAll`, `likeAny`, `ilikeAll` or `ilikeAny`. supabase-kt
+  sends it as no pattern at all, and `likeAll` over it matches every row.
 
-=== "Android"
+From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/OfflineTaskRepository.kt)
 
-    ```kotlin
-    --8<-- "data/supabase/TaskQueries.kt:same-column"
+```kotlin
+--8<-- "data/supabase/OfflineTaskRepository.kt:quoted-in-value-refused"
+```
 
-    --8<-- "data/supabase/OfflineTaskRepository.kt:two-filters-refused"
-    ```
-
-=== "iOS"
-
-    ```swift
-    --8<-- "Data/TaskQuery.swift:same-column"
-    ```
-
-    Swift sends two conditions on one column together, in one `and` group, so nothing is refused.
-
-Two cases the library cannot see, because supabase-kt keeps one value by replacing the first
-rather than adding a second: two top-level `or { }` groups (only the last is sent), and a text
-search on a column after a filter on the same column (only the text search is sent). Combine
-those into one group too.
-
-## What supabase-kt 3.6 does not have
-
-The library is built against supabase-kt 3.6 ([why](../project/compatibility.md#supabase-kt)),
-which lacks a few things 3.8 has:
-
-- **`dryRun()`.** Add the header yourself, `headers.append("Prefer", "tx=rollback")` in the
-  request block (supabase-kt marks it experimental). The library never queues such a write, and on
-  a hosted Supabase project a dry run commits
-  ([Writes and the offline queue](../behaviors/mutations.md#dry-runs)).
-- **`maybeSingle()`**, the `isdistinct` filter operator and `purgeCache`.
-- **Storage object names with `%`, `?` or `#`**, which supabase-kt 3.6 puts in the URL as written,
-  so a `?` or `#` can reach a different object. The library never caches such a name, and
-  `ensureCachedFile` refuses it ([Storage caching](../behaviors/storage.md#paths-that-are-never-cached)).
+Two top-level filters on one column, such as `filter { gte("age", 1); lte("age", 10) }`, are sent
+whole: the server joins them as AND, and the library caches, queues and replays them like any other
+filters. One case the library cannot see: a second top-level `or { }` group replaces the first, so
+only the last is sent. Combine such groups into one.
 
 ## What is never cached or queued
 
@@ -207,7 +184,7 @@ ahead of it, is still exactly the one you built.
 1. Add the dependency and install the plugin last ([Project setup](setup.md)).
 2. Import `io.github.nesfeder.supabase.offline.offline`, and swap `supabase.from` for
    `supabase.offline.from` where a read or write should work offline.
-3. Fix the call shapes above; the compiler finds all but two filters on one column.
+3. Fix the call shapes above; the compiler finds each one.
 4. Make new rows' ids on the device.
 5. Call `clearLocalData()` when a user signs out.
 6. Show the sync status and the rejected list somewhere in the app.

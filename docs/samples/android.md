@@ -180,10 +180,10 @@ offline, the app says why they cannot run.
 
 Besides **Queue an invalid title**, the Sync tab's **Try it** adds five sample tasks in one write,
 imports a starter list that a second import leaves as it is, makes a grouped delete offline that
-the library refuses, makes a read with two filters on one column that it refuses too, and counts
-the open tasks on the server. Each says which call it made and what happened.
+the library refuses, makes a read with a quoted value in an `in` list that it refuses too, and
+counts the open tasks on the server. Each says which call it made and what happened.
 
-![The Sync tab's Try it, after a few items offline: the invalid title queued, the grouped delete refused in the library's own words, and the two filters on one column refused before anything was sent](../assets/samples/android/try-it.png){ width="270" loading=lazy }
+![The Sync tab's Try it, after a few items offline: the invalid title queued, the grouped delete refused in the library's own words, and the quoted value in an in list refused before anything was sent](../assets/samples/android/try-it.png){ width="270" loading=lazy }
 
 ### Start over
 

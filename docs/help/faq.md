@@ -21,9 +21,10 @@ application context from androidx.startup's `InitializationProvider`. If your ma
 that provider, the plugin cannot open its database; keep the provider, or at least the library's
 initializer under it.
 
-**A read, an update or a delete throws `IllegalArgumentException`: "two top-level filters on" a
-column.** supabase-kt would send only the first: put them in one `and { }` group; see
-[Coming from supabase-kt](../getting-started/migrating.md#two-filters-on-one-column).
+**A read, an update or a delete throws `IllegalArgumentException`: "a pattern list on" a column
+"is empty", or a value "holds a quote or a backslash".** The server would read either as something
+else: pass at least one pattern, or filter on the quoted value with a single top-level filter; see
+[Coming from supabase-kt](../getting-started/migrating.md#filters-the-library-refuses).
 
 ## The first read offline is empty
 
