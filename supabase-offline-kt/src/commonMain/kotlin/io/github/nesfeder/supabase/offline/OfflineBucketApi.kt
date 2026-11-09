@@ -13,11 +13,12 @@ import io.github.jan.supabase.storage.UploadOptionBuilder
  * Get one with `offline.storage.from(bucketId)` ([OfflineStorage.from]).
  *
  * Everything it inherits from [BucketApi] keeps supabase-kt's declaration, is documented in
- * [supabase-kt's reference](https://supabase-community.github.io/supabase-kt/), and, except
- * `purgeCache` (supabase-kt 3.8), works on this bucket with the behavior below: uploads, updates
- * and uploads to a signed URL, resumable uploads through [resumable], downloads, deletes, moves,
- * copies, signed, public, authenticated and render URLs, `list`, `info`, `exists`,
- * `changePublicStatusTo`, and supabase-kt's `…AsFlow` extensions, which call them.
+ * [supabase-kt's reference](https://supabase-community.github.io/supabase-kt/), and works on this
+ * bucket with the behavior below: uploads, updates and uploads to a signed URL, resumable uploads
+ * through [resumable], downloads, deletes, moves, copies, signed, public, authenticated and render
+ * URLs, `list`, `info`, `exists`, `changePublicStatusTo`, `purgeCache`, and supabase-kt's `…AsFlow`
+ * extensions, which call them. `purgeCache` purges Storage's CDN cache of an object, not the
+ * object, so it leaves the file cache as it is.
  *
  * **Downloads** go to the network first. A successful download is written to the cache (a failure
  * to write the copy is logged and never fails the download); when the network fails, the cached

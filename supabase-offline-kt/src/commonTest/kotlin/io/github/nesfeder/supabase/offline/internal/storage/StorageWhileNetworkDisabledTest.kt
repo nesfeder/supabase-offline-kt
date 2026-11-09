@@ -97,6 +97,25 @@ class StorageWhileNetworkDisabledTest {
         assertNotNull(bucket.cachedFile(OBJECT_PATH))
     }
 
+    @Test
+    fun a_cdn_purge_is_refused_while_access_is_off_and_passes_through_when_on() = runTest {
+        // Given — a cached file
+        bucket.downloadAuthenticated(OBJECT_PATH)
+
+        // When — purged with access off, then on
+        networkAccess.disable()
+        assertFailsWith<NetworkDisabledException> { bucket.purgeCache(OBJECT_PATH) }
+        val purgedWhileOff = fake.purgedPaths.toList()
+        networkAccess.enable()
+        bucket.purgeCache(OBJECT_PATH)
+
+        // Then — nothing sent while off, supabase-kt's purge once on, and the device's copy kept:
+        // the purge is of the CDN's copy, not the object
+        assertEquals(emptyList(), purgedWhileOff)
+        assertEquals(listOf(OBJECT_PATH), fake.purgedPaths)
+        assertNotNull(bucket.cachedFile(OBJECT_PATH))
+    }
+
     private companion object {
         const val BUCKET = "avatars"
         const val OBJECT_PATH = "user/avatar.png"

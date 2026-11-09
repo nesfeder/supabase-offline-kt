@@ -29,9 +29,9 @@ import kotlin.time.Duration
 
 /**
  * Scriptable [BucketApi] for the offline bucket's tests: every download returns [onDownload]'s
- * bytes, and every write records its arguments after [onWrite]. [setHeader] records its header,
- * [bucketId] is served, and every other member fails. It sees no image transform; a test that needs
- * one uses [RecordingStorageServer] and the real bucket.
+ * bytes, and every write records its arguments after [onWrite]. [purgeCache] records its path,
+ * [setHeader] records its header, [bucketId] is served, and every other member fails. It sees no
+ * image transform; a test that needs one uses [RecordingStorageServer] and the real bucket.
  *
  * @property bucketId Bucket identifier the wrapper reads via `BucketApi by delegate`.
  * @property onDownload what every download, of every kind, returns or throws: a transport error, a
@@ -79,6 +79,9 @@ internal class FakeBucketApi(
 
     /** `(from, to, destinationBucket)` of every [copy], in call order. */
     val copies: MutableList<Triple<String, String, String?>> = mutableListOf()
+
+    /** Paths passed to [purgeCache], in call order. */
+    val purgedPaths: MutableList<String> = mutableListOf()
 
     private fun unsupported(member: String): Nothing =
         error("FakeBucketApi.$member must not be called in this test")
@@ -244,8 +247,9 @@ internal class FakeBucketApi(
     override suspend fun changePublicStatusTo(public: Boolean): Unit =
         unsupported("changePublicStatusTo")
 
-    override suspend fun purgeCache(path: String, options: PurgeCacheOptions.() -> Unit): Unit =
-        unsupported("purgeCache")
+    override suspend fun purgeCache(path: String, options: PurgeCacheOptions.() -> Unit) {
+        purgedPaths += path
+    }
 
     override fun publicUrl(path: String, builder: PublicUrlBuilder.() -> Unit): String =
         unsupported("publicUrl")
