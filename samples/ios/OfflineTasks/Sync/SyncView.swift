@@ -429,7 +429,7 @@ extension TryItItem {
         case .sampleTasks: "An insert of a list of five rows: one write, one request."
         case .starterList: "An upsert with onConflict and ignoreDuplicates: running it twice changes nothing."
         case .tasksWithNotes: "The generic filter, filter(\"notes\", operator: \"not.is\", value: \"null\"): it asks the server."
-        case .groupedDelete: "A delete with gte and lt on created_at, one group the queue can’t hold: offline, it’s refused."
+        case .groupedDelete: "A delete with gte and lt on created_at, two conditions on one column: online sent at once, offline queued."
         case .signedUpload: "createSignedUploadURL, then uploadToSignedURL: a generated photo for your newest task."
         case .makeConflict: call(isDemo: true)
         }

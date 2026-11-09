@@ -161,21 +161,41 @@ struct ApiTourTests {
         try await test.stop()
     }
 
-    @Test("Offline, the grouped delete is refused with the library's own words, and nothing is queued")
+    @Test("Offline, the grouped delete and its photo rows' delete are queued, and sent once back online")
     func groupedDeleteOffline() async throws {
-        // Given
-        let test = TestApp()
+        // Given: a done task from last week with a photo, and the network off
+        let session = DemoSession()
+        let userID = try #require(session.userID)
+        let lastWeek = TaskQuery.week(before: .now).start + 3_600
+        let server = DemoServer(tasks: [
+            TaskRow(id: DeviceID.make(), userID: userID, title: "Old and done", notes: nil, done: true, createdAt: lastWeek),
+            TaskRow(id: DeviceID.make(), userID: userID, title: "New and done", notes: nil, done: true, createdAt: .now),
+        ])
+        let test = TestApp(server: server, session: session)
         try await test.start()
+        try await eventually("the tasks are listed") { test.app.tasks.tasks?.count == 2 }
+        let old = try await test.task(titled: "Old and done")
+        try await test.addPhoto(to: old.id)
         try await test.setOffline(true)
 
         // When
         test.app.sync.run(.groupedDelete, newestTaskID: nil)
         try await eventually("Try it says so") { test.app.sync.tryItResults[.groupedDelete] != nil }
 
-        // Then
-        let said = try #require(test.app.sync.tryItResults[.groupedDelete])
-        #expect(said.hasPrefix("That change can’t wait in the queue, and the server can’t be reached, so nothing was changed. ("))
-        #expect(test.app.syncStatus.pendingMutationCount == 0)
+        // Then: the photo rows' delete and the tasks' delete wait, and the server still has both tasks
+        #expect(
+            test.app.sync.tryItResults[.groupedDelete]
+                == "Queued: it waits on this device, and last week’s done tasks go when it syncs."
+        )
+        try await eventually("the deletes wait") { test.app.syncStatus.pendingMutationCount == 2 }
+        #expect(await test.server.rows(of: Tables.tasks).count == 2)
+
+        // And once back online: the old task and its photo row are deleted, its file stays
+        try await test.setOffline(false)
+        try await eventually("both deletes are sent") { test.app.syncStatus.pendingMutationCount == 0 }
+        try await eventually("the server drops the old task") { await test.server.rows(of: Tables.tasks).count == 1 }
+        #expect(await test.server.rows(of: Tables.taskPhotos).isEmpty)
+        #expect(await test.server.objectPaths().count == 1)
         try await test.stop()
     }
 

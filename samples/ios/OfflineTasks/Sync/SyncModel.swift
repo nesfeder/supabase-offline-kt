@@ -215,8 +215,12 @@ final class SyncModel {
             let count = try await repository.tasksWithNotesOnServer()
             return "The server has \(Wording.count(count, "task", "tasks")) with notes."
         case .groupedDelete:
-            try await repository.deleteLastWeeksDoneTasks()
-            return "Sent at once and applied: last week’s done tasks are gone."
+            // Applied has the server's answer; a queued delete changes nothing on screen yet, since
+            // the cache cannot evaluate its conditions on `created_at`.
+            let outcome = try await repository.deleteLastWeeksDoneTasks()
+            return outcome.isQueued
+                ? "Queued: it waits on this device, and last week’s done tasks go when it syncs."
+                : "Sent at once and applied: last week’s done tasks are gone."
         case .signedUpload:
             guard let taskID = newestTaskID else { return "Add a task first: the photo goes on your newest task." }
             try await repository.attachPhotoThroughSignedURL(taskID: taskID, photo: try await PhotoEncoder.encode(SamplePhoto.jpeg()))
@@ -305,7 +309,7 @@ enum TryItItem: CaseIterable, Hashable {
     /// Counts the tasks with notes through the generic `filter`, naming its operator.
     case tasksWithNotes
 
-    /// A delete with two conditions on one column, which the queue cannot hold: offline, refused.
+    /// A delete with two conditions on one column: online sent at once, offline queued.
     case groupedDelete
 
     /// Uploads a generated photo through a signed upload URL.
