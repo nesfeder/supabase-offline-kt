@@ -94,7 +94,7 @@ kotlin = "2.4.21"
 kotlinx-coroutines = "1.11.0"
 kotlinx-serialization = "1.11.0"
 kover = "0.9.11"
-ksp = "2.3.12"
+ksp = "2.3.13"
 # The formatter kempt runs (.kempt.toml reads this key). CI pins the jar by checksum: see
 # CONTRIBUTING.md, "Formatting", before changing it.
 ktfmt = "0.64"
