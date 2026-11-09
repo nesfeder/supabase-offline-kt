@@ -13,6 +13,18 @@ All notable changes to this project are recorded in this file. The format follow
 
 ### Breaking
 
+- Every Storage failure from the offline bucket is now supabase-kt's `StorageRestException`: no
+  `NotFoundRestException`, `BadRequestRestException` or `UnauthorizedRestException` any more, so
+  test the status, not the type. `httpStatusOrNull()`, a `SyncFailedException` and a rejected
+  upload's `status` carry the Storage API's own status, the one its error body names, and its `code`
+  is Storage's error code, such as `NoSuchKey`. Hosted Storage sends a refusal on an HTTP 400 with
+  the real status in the body, so a refusal recorded as `400` is now `403` or `409`, and a body
+  `5xx`, `408` or `429` behind an HTTP 400 now keeps an upload queued where it was rejected.
+  supabase-kt's Realtime `requireValidSession` now defaults to `true`: while the token provider
+  throws, no join is sent and supabase-kt tries again every `rejoinDelay` without giving up, so the
+  table reads `Subscribing`. An object name holding a lone UTF-16 surrogate is refused with
+  `IllegalArgumentException` before anything is sent, and never cached.
+
 ### Added
 
 - `SyncStatus.isQueueCounted` says whether the status's three counts have been read from the
@@ -35,23 +47,47 @@ All notable changes to this project are recorded in this file. The format follow
   past every reserved row it does not know. The Swift package's `SyncStatus.lastSyncedAt` is kept
   the same way. The network and Realtime switches are still not kept.
 - The library is built and tested against supabase-kt 3.9.0, with Ktor 3.6.0, kotlinx.coroutines
-  1.11.0 and okio 3.18.2, the versions it was built with. 3.9.0 is the first supabase-kt release
-  carrying both Realtime fixes the library waited for on 3.6: the heartbeat that could end an app's
-  process as Realtime disconnected, and the channel leave sent without its join reference.
-- On this change, data already on a device moves nowhere: the database, the queue and the cached
-  files are read as before. A replayed insert or upsert now names its columns quoted on the wire
-  (`columns="id","title"`). Storage object names holding `%`, `?` or `#` are now cached, since
-  supabase-kt percent-encodes them. An object name holding a lone UTF-16 surrogate is refused with
-  `IllegalArgumentException` before anything is sent, and a queued upload under one goes to the
-  rejected list. Every Storage failure is a `StorageRestException`, whose status is the one the
-  Storage API's error body names, so a rejected upload records that status (`403` where it was
-  `400`) and Storage's error code.
+  1.11.0 and okio 3.18.2, the versions it was released with. 3.9.0 is the first supabase-kt release
+  carrying both Realtime fixes the library waited for on 3.6, with a batch of Realtime reliability
+  fixes besides. What an app now gets by default: `dryRun()`, `maybeSingle()`, `notIn`, the
+  `isdistinct` operator, `purgeCache` on the offline bucket (passed through, behind the network
+  switch, leaving the cached copy alone), and Storage object names holding `%`, `?` or `#` cached
+  like any other, since supabase-kt percent-encodes them. The warning at install names 3.9.
+- Filters: two top-level filters on one column are sent, and the server joins them as AND; the
+  library captures, replays and admits them like any other filters, and no longer refuses them. A
+  pattern list (`likeAll`, `likeAny`, `ilikeAll`, `ilikeAny`) is refused only when it is empty,
+  since supabase-kt now quotes each pattern as Postgres reads it. An `in` element or group value
+  holding a quote or a backslash is still refused. In the Swift package, a text search beside a
+  filter on its column keeps both, and an update or a delete with two filters on one column can now
+  be queued.
+- Cache keys: a query with a pattern list, or `cs`, `cd` or `ov`, whose elements hold a comma, a
+  brace, a quote, a backslash, a period, a colon, a parenthesis, white space or `NULL`, or are
+  empty, and a query with `eq` and a text search on one column, get a new key once, as supabase-kt
+  3.9 writes them: such a query starts with a cold cache, and its old rows go with eviction. A Swift
+  app's keys change for the same inputs, and for a read with a configured text search beside another
+  filter on its column. The database, the queue and the cached files are read as before. A replayed
+  insert or upsert now names its columns quoted on the wire (`columns="id","title"`). A `cs`, `cd`
+  or `ov` literal queued by 0.3.0 that the server would have rejected as malformed is moved to the
+  rejected list when it comes up for sending.
+- Realtime: a binding the server refuses after the join is handled through supabase-kt's system
+  message, and that table alone is joined again on the library's schedule while the others keep
+  receiving. After `disableNetwork()`, or once the network is known down, the library closes
+  supabase-kt's socket when nothing but its own channels was on it. In every other case supabase-kt
+  closes an empty socket after `disconnectOnEmptyChannelsAfter` (its default, 30 s) rather than at
+  once.
 
 ### Deprecated
 
 ### Removed
 
 ### Fixed
+
+- Inherited from supabase-kt 3.9: the heartbeat that could race Realtime's disconnect and end the
+  app's process; the channel leave sent without its `join_ref`; the one `401` after a token refresh,
+  when the first request went out with the old token; and the local session kept after a sign-out
+  the server refused.
+- A queued upload whose object name cannot be put in a URL now goes to the rejected list instead of
+  holding the queue.
 
 ## [0.3.0] - 2026-10-29
 
