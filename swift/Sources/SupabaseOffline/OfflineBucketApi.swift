@@ -14,10 +14,8 @@ import SupabaseOfflineCore
 /// ``info(path:)`` and ``exists(path:)`` always ask the server.
 ///
 /// An object name that cannot be mapped onto a file safely (a leading `/`, an empty, `.` or `..`
-/// segment, a `\` or a control character) downloads uncached, and so does one holding `%`, `?` or
-/// `#`. The URL builders, signing and ``uploadToSignedURL(_:token:data:options:)`` encode those
-/// three, but every other request can mistake such a name for another object: keep them out of
-/// names.
+/// segment, a `\` or a control character) downloads uncached. Every request encodes each segment of
+/// the name, so one holding `%`, `?` or `#` names its own object and is kept like any other.
 public struct OfflineBucketApi: Sendable {
 
     /// The client the requests go through.
@@ -136,7 +134,7 @@ public struct OfflineBucketApi: Sendable {
         return try await client.connection.call { core, complete in
             core.storage.uploadToSignedUrl(
                 bucket: bucketId,
-                path: escapingURLDelimiters(in: path),
+                path: path,
                 token: token,
                 data: data,
                 options: optionsText
@@ -194,7 +192,7 @@ public struct OfflineBucketApi: Sendable {
     ///   off, or `server` with Storage's status when Storage refuses it.
     public func createSignedUploadURL(path: String, upsert: Bool = false) async throws -> UploadSignedURL {
         try await client.connection.call { core, complete in
-            core.storage.createSignedUploadUrl(bucket: bucketId, path: escapingURLDelimiters(in: path), upsert: upsert) {
+            core.storage.createSignedUploadUrl(bucket: bucketId, path: path, upsert: upsert) {
                 answer, failure in
                 complete(coreResult(answer, failure) { try UploadSignedURL(coreText: requiredValue($0), path: path) })
             }
@@ -211,7 +209,7 @@ public struct OfflineBucketApi: Sendable {
         return try await client.connection.call { core, complete in
             core.storage.createSignedUrl(
                 bucket: bucketId,
-                path: escapingURLDelimiters(in: path),
+                path: path,
                 expiresInSeconds: Int64(expiresIn),
                 imageTransform: transformText
             ) { answer, failure in
@@ -246,7 +244,7 @@ public struct OfflineBucketApi: Sendable {
     /// - Throws: ``OfflineError``: `clientClosed` once the client is closed.
     public func publicURL(path: String) async throws -> URL {
         let answer = try await client.connection.openedClient().client.storage
-            .publicUrl(bucket: bucketId, path: escapingURLDelimiters(in: path))
+            .publicUrl(bucket: bucketId, path: path)
         return try storageURL(answer)
     }
 
@@ -258,7 +256,7 @@ public struct OfflineBucketApi: Sendable {
     /// - Throws: ``OfflineError``: `clientClosed` once the client is closed.
     public func authenticatedURL(path: String) async throws -> URL {
         let answer = try await client.connection.openedClient().client.storage
-            .authenticatedUrl(bucket: bucketId, path: escapingURLDelimiters(in: path))
+            .authenticatedUrl(bucket: bucketId, path: path)
         return try storageURL(answer)
     }
 
@@ -431,7 +429,6 @@ public struct OfflineBucketApi: Sendable {
     /// - Throws: ``OfflineError``: `invalidRequest` for a name the cache cannot hold (see
     ///   ``OfflineBucketApi``), sending nothing, or `clientClosed` once the client is closed.
     public func pinCachedFile(path: String) async throws {
-        try refuseANameTheCacheCannotHold(path)
         try await client.connection.call { core, complete in
             core.storage.pinCachedFile(bucket: bucketId, path: path) { failure in
                 complete(coreResult(failure))
@@ -471,11 +468,9 @@ public struct OfflineBucketApi: Sendable {
     /// A cached copy is returned however old it is, and an upload of the object still queued for the
     /// current user is returned as ``cachedFile(path:)`` returns it, with no request; a refused one
     /// is not, and the object is downloaded as when nothing is cached. Throws
-    /// ``OfflineError/Code/invalidRequest``
-    /// for a name the cache cannot hold (see ``OfflineBucketApi``), sending nothing; one holding
-    /// `%`, `?` or `#` is refused before the client is asked. Canceling the task throws
-    /// `CancellationError` at once, and the download may still finish and be kept, as with
-    /// ``download(path:options:isPublic:)``.
+    /// ``OfflineError/Code/invalidRequest`` for a name the cache cannot hold (see
+    /// ``OfflineBucketApi``), sending nothing. Canceling the task throws `CancellationError` at once,
+    /// and the download may still finish and be kept, as with ``download(path:options:isPublic:)``.
     ///
     /// - Parameters:
     ///   - path: The object's path in the bucket.
@@ -485,7 +480,6 @@ public struct OfflineBucketApi: Sendable {
     ///   Storage refuses the download, `connectivity` offline, or `networkDisabled` with the network
     ///   turned off.
     public func ensureCachedFile(path: String, isPublic: Bool = false) async throws -> CachedFile {
-        try refuseANameTheCacheCannotHold(path)
         return try await client.connection.call { core, complete in
             core.storage.ensureCachedFile(bucket: bucketId, path: path, isPublic: isPublic) { file, failure in
                 complete(coreResult(file, failure) { try CachedFile(coreFile: requiredValue($0)) })
@@ -520,7 +514,6 @@ public struct OfflineBucketApi: Sendable {
         isPublic: Bool = false,
         onProgress: @escaping @Sendable (DownloadProgress) -> Void
     ) async throws -> CachedFile {
-        try refuseANameTheCacheCannotHold(path)
         return try await client.connection.call { core, complete in
             core.storage.ensureCachedFileWithProgress(
                 bucket: bucketId,
@@ -539,21 +532,6 @@ public struct OfflineBucketApi: Sendable {
             }
         }
     }
-
-    /// Throws `invalidRequest` for a name holding `%`, `?` or `#`, in the package's own words,
-    /// before the client is asked; the core refuses the other names it cannot hold itself.
-    private func refuseANameTheCacheCannotHold(_ path: String) throws {
-        // A copy of the core's rule, kept only for the wording: when the test
-        // `theCoreStillRefusesANameHoldingEachDelimiter` fails, the core caches these names, and
-        // this check and `escapingURLDelimiters` must go.
-        guard !holdsURLDelimiters(path) else {
-            throw OfflineError(
-                code: .invalidRequest,
-                message: "This object's name holds '%', '?' or '#', so it cannot be kept on the device: "
-                    + "keep those characters out of the names of objects the app keeps on the device"
-            )
-        }
-    }
 }
 
 extension CachedFile {
@@ -566,23 +544,6 @@ extension CachedFile {
             sizeBytes: Int(coreFile.sizeBytes)
         )
     }
-}
-
-/// `name` as a URL path for a call that writes it into a URL: percent-encoded whole when it holds
-/// `%`, `?` or `#`, which would start an escape, a query or a fragment, and otherwise as it is.
-///
-/// The core writes the name into the URL unencoded today; a core that encodes it would encode it
-/// twice. When the test `theCoreStillRefusesANameHoldingEachDelimiter` fails, the core has started
-/// to: remove this helper, `holdsURLDelimiters` and `refuseANameTheCacheCannotHold`.
-func escapingURLDelimiters(in name: String) -> String {
-    guard holdsURLDelimiters(name) else { return name }
-    return name.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? name
-}
-
-/// Whether `name` holds `%`, `?` or `#` anywhere, as a scalar of its own or inside a character
-/// (the `#` of a keycap emoji), as the core sees them: it never caches such an object.
-func holdsURLDelimiters(_ name: String) -> Bool {
-    name.unicodeScalars.contains { "%?#".unicodeScalars.contains($0) }
 }
 
 /// The URL in a synchronous answer of the core, or the failure it carries.

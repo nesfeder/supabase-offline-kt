@@ -115,10 +115,10 @@ object's copies through every eviction, across restarts, until
 clears. ``OfflineBucketApi/ensureCachedFile(path:isPublic:onProgress:)`` hands a closure the
 download's ``DownloadProgress`` on a background thread, for a progress bar.
 
-An object name holding `%`, `?` or `#` is never kept on the device, and other requests than the URL
-builders, signing and uploads to a signed URL can mistake it for another object: keep those
-characters out of object names. A name that cannot be mapped onto a file safely (a leading `/`, an
-empty, `.` or `..` segment, a `\` or a control character) downloads without being kept.
+Every request encodes each segment of an object's name, so a name holding `%`, `?` or `#` names
+its own object and is kept on the device like any other. A name that cannot be mapped onto a file
+safely (a leading `/`, an empty, `.` or `..` segment, a `\` or a control character) downloads
+without being kept.
 
 ## Two conditions on one column
 
@@ -150,7 +150,8 @@ These fail with ``OfflineError/Code/invalidRequest`` and send nothing:
   a range filter inside a group; a range written other than as exclusive bounds, `(lower,upper)`;
 - filter text the package cannot read, and a negative `maxAge`;
 - an empty upload, or one of 2 GiB or more;
-- ``OfflineBucketApi/ensureCachedFile(path:isPublic:)`` for a name the cache cannot hold;
+- ``OfflineBucketApi/ensureCachedFile(path:isPublic:)`` and
+  ``OfflineBucketApi/pinCachedFile(path:)`` for a name the cache cannot hold;
 - retrying a rejected write whose ``RejectedMutation/isRetryable`` is `false`.
 
 ## How values are written

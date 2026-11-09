@@ -152,7 +152,7 @@ supabase-swift never matches, because Storage's refusals arrive as `OfflineError
 | `cachedFile(path:transform:)` | `cachedFile(path) { … }` (`cachedFile(path, transform)`) | Kotlin's names; an `ImageTransformation` value for the transform lambda, as `createSignedURL`'s `transform:` is. An overload, not a defaulted parameter |
 | `evictCachedFile(path:)` | `evictCachedFile(path)` | Kotlin's name |
 | `evictCachedFile(path:transform:)` | `evictCachedFile(path) { … }` (`evictCachedFile(path, transform)`) | Kotlin's names; the transform as for `cachedFile(path:transform:)` |
-| `pinCachedFile(path:)` | `pinCachedFile(path)` | Kotlin's name. A name holding `%`, `?` or `#` is refused (`invalidRequest`) before the client is asked, in the package's own words, as `ensureCachedFile(path:isPublic:)` refuses it |
+| `pinCachedFile(path:)` | `pinCachedFile(path)` | Kotlin's name. A name the cache cannot hold is refused (`invalidRequest`), as `ensureCachedFile(path:isPublic:)` refuses it; one holding `%`, `?` or `#` is pinned like any other |
 | `unpinCachedFile(path:)` | `unpinCachedFile(path)` | Kotlin's name |
 | `isCachedFilePinned(path:)` | `isCachedFilePinned(path)` | Kotlin's name |
 | `ensureCachedFile(path:isPublic:)` | `ensureCachedFile(path, isPublic)` | Kotlin's name. A name holding `%`, `?` or `#` is refused (`invalidRequest`) before the client is asked, in the package's own words, where Kotlin's throws `IllegalArgumentException` |
