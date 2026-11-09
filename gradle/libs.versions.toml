@@ -91,7 +91,7 @@ dokka = "2.2.0"
 junit = "4.13.2"
 kotlin = "2.4.21"
 # Held with supabase-bom, as Ktor is: the version the pinned supabase-kt release was built with.
-kotlinx-coroutines = "1.10.2"
+kotlinx-coroutines = "1.11.0"
 kotlinx-serialization = "1.11.0"
 kover = "0.9.11"
 ksp = "2.3.12"
@@ -99,10 +99,11 @@ ksp = "2.3.12"
 # CONTRIBUTING.md, "Formatting", before changing it.
 ktfmt = "0.64"
 # Held with supabase-bom: the version the pinned supabase-kt release was built with.
-ktor = "3.4.3"
+ktor = "3.6.0"
 # The Maven Central publishing plugin (com.vanniktech.maven.publish). It needs Gradle 9.0 or later.
 mavenPublish = "0.37.0"
-okio = "3.17.0"
+# Held with supabase-bom, as Ktor is: the version the pinned supabase-kt release was built with.
+okio = "3.18.2"
 robolectric = "4.17"
 # The Android framework jar Robolectric 4.17 loads for `sdk=35`, named by the exact build its
 # release picks (org.robolectric:android-all-instrumented). The build resolves it so no test
@@ -115,10 +116,11 @@ sqlite = "2.6.2"
 # The system-SQLite iOS test variant only. androidx.sqlite 2.6.x cannot open a connection on the
 # iOS libsqlite3 (fixed in 2.7.0-alpha02); every published artifact stays on "sqlite".
 sqlite-system = "2.7.1"
-# 3.6, not 3.8: supabase-kt 3.7.0 and 3.8.0 carry an uncaught Realtime heartbeat crash and a protocol
-# V2 leave defect, fixed upstream but not yet released. Move to the first release with both fixes;
-# supabase-offline-kt/build.gradle.kts adds the tests that need 3.8 API from that minor on.
-supabase-bom = "3.6.0"
+# Moved by hand, with the pass-through set (CONTRIBUTING.md, "Held dependencies"). 3.9.0 is the
+# first release carrying both Realtime fixes the library waited for: the heartbeat that raced
+# disconnect() (supabase-community/supabase-kt#1395) and the leave sent without its join reference
+# (supabase-community/supabase-kt#1402).
+supabase-bom = "3.9.0"
 # The library as the samples take it: its newest release on Maven Central, never the version this
 # build makes. The post-release pull request moves it (RELEASING.md); the Android sample builds
 # this checkout instead with -PsupabaseOffline.local=true (settings.gradle.kts).
