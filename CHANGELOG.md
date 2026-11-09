@@ -49,10 +49,13 @@ All notable changes to this project are recorded in this file. The format follow
 - The library is built and tested against supabase-kt 3.9.0, with Ktor 3.6.0, kotlinx.coroutines
   1.11.0 and okio 3.18.2, the versions it was released with. 3.9.0 is the first supabase-kt release
   carrying both Realtime fixes the library waited for on 3.6, with a batch of Realtime reliability
-  fixes besides. What an app now gets by default: `dryRun()`, `maybeSingle()`, `notIn`, the
-  `isdistinct` operator, `purgeCache` on the offline bucket (passed through, behind the network
-  switch, leaving the cached copy alone), and Storage object names holding `%`, `?` or `#` cached
-  like any other, since supabase-kt percent-encodes them. The warning at install names 3.9.
+  fixes besides. What an app now gets by default: `dryRun()`, `maybeSingle()`, `notIn` (in reads
+  and in writes sent online; a write filtered with it is negated, `not.in.(…)`, which the queue
+  cannot record, so it is sent at once and never queued, and offline throws
+  `MutationNotQueueableException`), the `isdistinct` operator, `purgeCache` on the offline bucket
+  (passed through, behind the network switch, leaving the cached copy alone), and Storage object
+  names holding `%`, `?` or `#` cached like any other, since supabase-kt percent-encodes them. The
+  warning at install names 3.9.
 - Filters: two top-level filters on one column are sent, and the server joins them as AND; the
   library captures, replays and admits them like any other filters, and no longer refuses them. A
   pattern list (`likeAll`, `likeAny`, `ilikeAll`, `ilikeAny`) is refused only when it is empty,

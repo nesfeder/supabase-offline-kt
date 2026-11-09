@@ -31,8 +31,8 @@ import kotlinx.serialization.json.Json
 
 /**
  * Pins that the dry-run probe touches nothing but PostgREST writes — supabase-kt refreshes an
- * expired session inline, in the same coroutine, and that request must go through. That supabase-kt
- * 3.8's `dryRun()` shows only as `tx=rollback` in the `Prefer` header is pinned by
+ * expired session inline, in the same coroutine, and that request must go through. That
+ * supabase-kt's `dryRun()` shows only as `tx=rollback` in the `Prefer` header is pinned by
  * `DryRunPreferHeaderContractTest`.
  */
 class DryRunDetectionContractTest {

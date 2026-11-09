@@ -53,8 +53,8 @@ import kotlinx.serialization.json.jsonPrimitive
  * `single()` asks for the rows the list read of the same query does, as one object: its answer is
  * cached as that list, one row long, under the list's key, through every guard a list response
  * passes, and the cache answers it, with the queued writes laid over it, when that list holds
- * exactly one row. No row, or several, answer nothing. supabase-kt 3.8's `maybeSingle()` asks the
- * same and is held to the same rule.
+ * exactly one row. No row, or several, answer nothing. `maybeSingle()` asks the same and is held to
+ * the same rule.
  */
 class CachedSingleTest {
 

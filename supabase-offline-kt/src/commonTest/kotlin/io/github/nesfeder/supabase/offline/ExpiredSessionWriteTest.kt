@@ -32,9 +32,8 @@ import kotlinx.serialization.json.JsonElement
  * Offline for longer than a session token lives, supabase-kt refreshes the token before building a
  * request, cannot, and throws before anything is sent. A write that may queue still queues, as the
  * signed-in user's: telling a dry run needs only the request's shape, not the session's token (a
- * dry run in the same state is refused: `ExpiredSessionDryRunTest`, on supabase-kt 3.8). Online, a
- * refresh the Auth server refuses throws the same way, so the write is known never to have been
- * sent.
+ * dry run in the same state is refused: `ExpiredSessionDryRunTest`). Online, a refresh the Auth
+ * server refuses throws the same way, so the write is known never to have been sent.
  */
 class ExpiredSessionWriteTest {
 

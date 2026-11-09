@@ -82,8 +82,11 @@ What supabase-kt does underneath, and what the library adds:
   stays open and sends heartbeats while network access is off.
 - **Every other time the last channel leaves**, because the subscription is switched off or a
   table's channel ended, supabase-kt closes the empty socket after `disconnectOnEmptyChannelsAfter`,
-  twice `heartbeatInterval` (30 s) by default, rather than at once. A sign-out and `close()` close
-  it at once, through supabase-kt.
+  twice `heartbeatInterval` (30 s) by default, rather than at once. With the Auth plugin installed,
+  a sign-out closes it at once, through supabase-kt's `disconnectOnSessionLoss`, unless Realtime
+  was given its own `accessToken`. Without the Auth plugin, where a sign-out shows only through
+  `identityFromAccessToken`, the socket closes after `disconnectOnEmptyChannelsAfter`. `close()`
+  closes it at once, through supabase-kt.
 
 `realtimeStatus` sums up where the tables' channels stand, as one value to draw a row of the Sync
 screen from: `Stalled` while any table is, with the cause of the first one named, otherwise

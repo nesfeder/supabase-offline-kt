@@ -144,13 +144,16 @@ app past them.
 
 **What an app gets with 3.9.** The supabase-kt API that arrived in 3.7 and 3.8 works through the
 library: `dryRun()`, `maybeSingle()`, `notIn`, the `isdistinct` filter operator, and `purgeCache` on
-a bucket from `supabase.offline.storage`. Storage object names containing `%`, `?` or `#` are put in
-the URL percent-encoded, so the library caches them like any other name. Two top-level filters on
-one column, such as `filter { gte("age", 1); lte("age", 10) }`, are both sent, and the server joins
-them as AND, so the library sends, caches and queues them instead of refusing them. Two fixes come
-with it: the first request after supabase-kt refreshes an expired token no longer goes out with the
-old token (supabase-community/supabase-kt#1352), and a sign-out the server refuses now clears the
-local session (#1359).
+a bucket from `supabase.offline.storage`. `notIn` works in reads and in writes sent online; a write
+filtered with it is negated (`not.in.(…)`), which the queue cannot record, so it is sent at once and
+never queued, and offline throws `MutationNotQueueableException` ([supported
+features](../reference/supported-features.md#postgrest)). Storage object names containing `%`, `?`
+or `#` are put in the URL percent-encoded, so the library caches them like any other name. Two
+top-level filters on one column, such as `filter { gte("age", 1); lte("age", 10) }`, are both sent,
+and the server joins them as AND, so the library sends, caches and queues them instead of refusing
+them. Two fixes come with it: the first request after supabase-kt refreshes an expired token no
+longer goes out with the old token (supabase-community/supabase-kt#1352), and a sign-out the server
+refuses now clears the local session (#1359).
 
 **Pattern lists.** supabase-kt quotes a pattern of `likeAll`, `likeAny`, `ilikeAll` or `ilikeAny`
 that Postgres would otherwise read as something else (an empty pattern, `NULL`, a pattern edged

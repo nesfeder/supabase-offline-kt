@@ -24,8 +24,7 @@ import kotlinx.serialization.json.put
  * Every refusal to queue an offline write is driven through the client, the way an app reaches it:
  * each filter shape the queue cannot capture or replay in full, a write with no filter, and a
  * replay the server rejects or fails with a message quoting the value; a dry run is in
- * `DryRunLogPrivacyTest`, which needs supabase-kt 3.8. Each log at INFO and above is searched for
- * the value.
+ * `DryRunLogPrivacyTest`. Each log at INFO and above is searched for the value.
  */
 class LogPrivacyTest {
 

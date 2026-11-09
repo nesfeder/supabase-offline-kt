@@ -98,7 +98,8 @@ internal fun Throwable.toAppFailure(call: LibraryCall): Throwable =
         // A row that does not decode into the app's type, or a value that does not encode.
         this is SerializationException || this is SupabaseEncodingException ->
             RowFormatException(this)
-        // Two top-level filters on one column, or a retry of a write that cannot be retried.
+        // An empty pattern list, a quoted `in` value, or a retry of a write that cannot be
+        // retried.
         this is IllegalArgumentException -> InvalidRequestException(message.orEmpty(), this)
         else -> this // unexpected: reported as it is
     }

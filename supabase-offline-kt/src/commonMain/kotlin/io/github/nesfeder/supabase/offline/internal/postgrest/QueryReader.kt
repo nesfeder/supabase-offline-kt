@@ -558,13 +558,13 @@ internal class QueryReader(
     }
 
     /**
-     * A one-shot read of one row as an object, `single()` or supabase-kt 3.8's `maybeSingle()`. It
-     * asks for the rows the list read of the same query does, so the cache holds a successful
-     * answer as that list, one row long, under the list's key ([cacheSingleObject]). The cache
-     * answers it with that list, the queued writes laid over it, when the list holds exactly one
-     * row ([cachedSingleObject]): under `CacheOnly`, under `CacheFirst` before the network, and
-     * under `NetworkFirst` and `CacheFirst` when the network cannot be reached, or when the session
-     * does not settle within the restore window. No row, or several, answer nothing: the network's
+     * A one-shot read of one row as an object, `single()` or `maybeSingle()`. It asks for the rows
+     * the list read of the same query does, so the cache holds a successful answer as that list,
+     * one row long, under the list's key ([cacheSingleObject]). The cache answers it with that
+     * list, the queued writes laid over it, when the list holds exactly one row
+     * ([cachedSingleObject]): under `CacheOnly`, under `CacheFirst` before the network, and under
+     * `NetworkFirst` and `CacheFirst` when the network cannot be reached, or when the session does
+     * not settle within the restore window. No row, or several, answer nothing: the network's
      * failure is thrown, or [CacheMissException] under `CacheOnly`. The server's own answer is
      * returned as it came.
      */
@@ -657,9 +657,9 @@ internal class QueryReader(
     /**
      * Offers a single-object [response] to the cache as the list read of the same query is
      * answered, one row long, through every guard a list response passes: the trust policy, the
-     * cache's owner, the table's watermark and a clear of local data. A blank body (supabase-kt
-     * 3.8's `maybeSingle()` answers no row and several rows alike with one) or a body that is not
-     * one JSON object is not offered.
+     * cache's owner, the table's watermark and a clear of local data. A blank body (supabase-kt's
+     * `maybeSingle()` answers no row and several rows alike with one) or a body that is not one
+     * JSON object is not offered.
      */
     private suspend fun cacheSingleObject(
         slot: CacheSlot,

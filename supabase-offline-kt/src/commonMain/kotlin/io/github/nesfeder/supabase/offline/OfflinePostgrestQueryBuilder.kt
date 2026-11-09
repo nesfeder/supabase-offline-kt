@@ -91,11 +91,12 @@ public class OfflinePostgrestQueryBuilder internal constructor(private val engin
      * holds the rows it asks for. To show one row offline, read the list a screen already reads,
      * with the same request, and pick the row from it.
      *
-     * Only a list of rows is cached. A read that asks for another shape (`single()`,
-     * `maybeSingle()`, `head`, a `count` with rows or without, `csv()`, `geojson()`,
-     * `stripNulls()` or `explain()`) goes to the server under every strategy but
-     * [ReadStrategy.CacheOnly], is not stored, and offline fails as [ReadStrategy.NetworkOnly]
-     * does; under [ReadStrategy.CacheOnly] it sends nothing and throws [CacheMissException].
+     * Only a list of rows is cached. A `single()` or `maybeSingle()` read is cached as its list,
+     * and answered offline when that list holds one row. A read that asks for another shape
+     * (`head`, a `count` with rows or without, `csv()`, `geojson()`, `stripNulls()` or `explain()`)
+     * goes to the server under every strategy but [ReadStrategy.CacheOnly], is not stored, and
+     * offline fails as [ReadStrategy.NetworkOnly] does; under [ReadStrategy.CacheOnly] it sends
+     * nothing and throws [CacheMissException].
      *
      * @param columns the columns to select.
      * @param readStrategy where the rows come from; [ReadStrategy.NetworkFirst] by default, which
