@@ -34,6 +34,18 @@ All notable changes to this project are recorded in this file. The format follow
   row appears after the first sync on this version, and an older build reads past it, as it does
   past every reserved row it does not know. The Swift package's `SyncStatus.lastSyncedAt` is kept
   the same way. The network and Realtime switches are still not kept.
+- The library is built and tested against supabase-kt 3.9.0, with Ktor 3.6.0, kotlinx.coroutines
+  1.11.0 and okio 3.18.2, the versions it was built with. 3.9.0 is the first supabase-kt release
+  carrying both Realtime fixes the library waited for on 3.6: the heartbeat that could end an app's
+  process as Realtime disconnected, and the channel leave sent without its join reference.
+- On this change, data already on a device moves nowhere: the database, the queue and the cached
+  files are read as before. A replayed insert or upsert now names its columns quoted on the wire
+  (`columns="id","title"`). Storage object names holding `%`, `?` or `#` are now cached, since
+  supabase-kt percent-encodes them. An object name holding a lone UTF-16 surrogate is refused with
+  `IllegalArgumentException` before anything is sent, and a queued upload under one goes to the
+  rejected list. Every Storage failure is a `StorageRestException`, whose status is the one the
+  Storage API's error body names, so a rejected upload records that status (`403` where it was
+  `400`) and Storage's error code.
 
 ### Deprecated
 
