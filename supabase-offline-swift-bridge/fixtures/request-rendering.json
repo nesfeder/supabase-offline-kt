@@ -314,7 +314,7 @@
       "request": {
         "method": "POST",
         "path": "/rest/v1/todos",
-        "query": [["columns", "id,title,done"]],
+        "query": [["columns", "\"id\",\"title\",\"done\""]],
         "headers": {"Content-Profile": "public", "Prefer": "return=minimal"},
         "body": [{"id": "7d6f0c52-9d7e-4b8e-9f51-3c1e2f0a9b11", "title": "Buy milk", "done": false}]
       }
@@ -327,7 +327,7 @@
       "request": {
         "method": "POST",
         "path": "/rest/v1/todos",
-        "query": [["select", "id"], ["columns", "id,title"]],
+        "query": [["select", "id"], ["columns", "\"id\",\"title\""]],
         "headers": {"Prefer": "return=representation"},
         "body": [{"id": 9007199254740993, "title": "Tea"}]
       }
@@ -340,7 +340,7 @@
       "request": {
         "method": "POST",
         "path": "/rest/v1/todos",
-        "query": [["on_conflict", "id"], ["columns", "id,title"]],
+        "query": [["on_conflict", "id"], ["columns", "\"id\",\"title\""]],
         "headers": {"Prefer": "resolution=ignore-duplicates,return=minimal"},
         "body": [{"id": 1, "title": "Tea"}]
       }
@@ -353,7 +353,7 @@
       "request": {
         "method": "POST",
         "path": "/rest/v1/todos",
-        "query": [["columns", "id"]],
+        "query": [["columns", "\"id\""]],
         "headers": {"Prefer": "missing=default,return=minimal"},
         "body": [{"id": 2}]
       }

@@ -88,7 +88,7 @@ class MutationQueueIdempotentReplayTest {
         // Then — nothing on the server can be its own, so a duplicate must be refused
         val request = server.requests.single()
         assertEquals("POST", request.method)
-        assertEquals(mapOf("columns" to "id,title"), request.query)
+        assertEquals(mapOf("columns" to "\"id\",\"title\""), request.query)
         assertEquals("return=minimal", request.prefer)
     }
 
@@ -179,7 +179,7 @@ class MutationQueueIdempotentReplayTest {
 
         // Then
         val request = server.requests.single()
-        assertEquals(mapOf("columns" to "title"), request.query)
+        assertEquals(mapOf("columns" to "\"title\""), request.query)
         assertEquals("return=minimal", request.prefer)
     }
 

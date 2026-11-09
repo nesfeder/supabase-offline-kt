@@ -137,7 +137,7 @@ internal class UnknownOperationRowScenario(private val open: (path: String) -> O
             RecordedRequest(
                 method = "POST",
                 table = "todos",
-                query = mapOf("columns" to "id,title"),
+                query = mapOf("columns" to "\"id\",\"title\""),
                 prefer = "return=minimal",
                 contentProfile = "public",
                 acceptProfile = null,
