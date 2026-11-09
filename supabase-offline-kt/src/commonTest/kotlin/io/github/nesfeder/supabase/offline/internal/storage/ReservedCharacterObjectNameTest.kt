@@ -12,7 +12,7 @@ import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertIs
+import kotlin.test.assertNotNull
 import kotlinx.coroutines.test.runTest
 import okio.FileSystem
 import okio.Path
@@ -20,10 +20,10 @@ import okio.Path.Companion.toPath
 import okio.SYSTEM
 
 /**
- * supabase-kt 3.6 puts an object name in the URL as written: `x?y.png` requests `x`, a different
- * object, and `a%b.png` leaves a URL the HTTP client cannot build, so the library refuses it before
- * sending. Whatever the download returns, the cache never keeps another object's bytes under the
- * name the caller asked for. From 3.8, which encodes the name, each is cached as any other.
+ * supabase-kt percent-encodes each segment of an object name in the URL, so a name holding `?`, `#`
+ * or `%` requests its own object: `x?y.png` never reaches `x`, and `a%b.png` is sent as any other
+ * name. The cache keeps that object's bytes under the name the caller asked for. (supabase-kt 3.6
+ * put the name in the URL as written, and the library then refused to cache such names.)
  */
 class ReservedCharacterObjectNameTest {
 
@@ -46,72 +46,55 @@ class ReservedCharacterObjectNameTest {
     }
 
     @Test
-    fun a_name_with_a_question_mark_never_caches_the_object_its_url_reaches() = runTest {
-        assertCachesOnlyItsOwnBytes(name = "x?y.png", reached = "x")
+    fun a_name_with_a_question_mark_caches_its_own_object() = runTest {
+        assertCachesItsOwnBytes(name = "x?y.png", cutTo = "x")
     }
 
     @Test
-    fun a_name_with_a_hash_never_caches_the_object_its_url_reaches() = runTest {
-        assertCachesOnlyItsOwnBytes(name = "x#y.png", reached = "x")
+    fun a_name_with_a_hash_caches_its_own_object() = runTest {
+        assertCachesItsOwnBytes(name = "x#y.png", cutTo = "x")
     }
 
     @Test
-    fun a_folder_name_with_a_question_mark_never_caches_the_object_its_url_reaches() = runTest {
-        assertCachesOnlyItsOwnBytes(name = "dir/x?y/z.png", reached = "dir/x")
+    fun a_folder_name_with_a_question_mark_caches_its_own_object() = runTest {
+        assertCachesItsOwnBytes(name = "dir/x?y/z.png", cutTo = "dir/x")
     }
 
     @Test
-    fun a_name_with_a_bare_percent_sign_is_refused_or_downloads_its_own_bytes() = runTest {
-        // Given
-        val name = "a%b.png"
-        server.objects["$BUCKET/$name"] = OWN.encodeToByteArray()
-
-        // When
-        val failure = runCatching { bucket().downloadAuthenticated(name) {} }.exceptionOrNull()
-
-        // Then — the library's refusal, if any, and nothing but the name's bytes cached
-        if (failure != null) assertIs<IllegalArgumentException>(failure)
-        assertCachedBytesAreItsOwn(name)
+    fun a_name_with_a_bare_percent_sign_caches_its_own_object() = runTest {
+        assertCachesItsOwnBytes(name = "a%b.png", cutTo = "a")
     }
 
     @Test
-    fun a_cached_file_of_such_a_name_holds_its_own_bytes_or_is_refused() = runTest {
-        // Given — the object the name means, and another at the path its URL is cut to
+    fun a_cached_file_of_such_a_name_holds_its_own_bytes() = runTest {
+        // Given — the object the name means, and another at the path an unencoded URL is cut to
         val name = "x?y.png"
         server.objects["$BUCKET/$name"] = OWN.encodeToByteArray()
         server.objects["$BUCKET/x"] = OTHER.encodeToByteArray()
 
         // When
-        val ensured = runCatching { bucket().ensureCachedFile(name) }
+        val file = bucket().ensureCachedFile(name)
 
-        // Then — refused as uncacheable, or the name's own bytes
-        val file = ensured.getOrNull()
-        if (file == null) {
-            assertIs<IllegalArgumentException>(ensured.exceptionOrNull())
-        } else {
-            assertEquals(OWN, FileSystem.SYSTEM.read(file.path.toPath()) { readUtf8() })
-        }
+        // Then
+        assertEquals(OWN, FileSystem.SYSTEM.read(file.path.toPath()) { readUtf8() })
     }
 
     /**
-     * Downloads [name] while the server holds another object at [reached], the path a name sent
-     * unencoded is cut to, then checks that the cache holds [name]'s own bytes or nothing.
+     * Downloads [name] while the server holds another object at [cutTo], the path the name would
+     * reach were it sent unencoded, then checks that the download and the cache hold [name]'s own
+     * bytes.
      */
-    private suspend fun assertCachesOnlyItsOwnBytes(name: String, reached: String) {
-        // Given — the object the name means, and another at the path its URL is cut to
+    private suspend fun assertCachesItsOwnBytes(name: String, cutTo: String) {
+        // Given
         server.objects["$BUCKET/$name"] = OWN.encodeToByteArray()
-        server.objects["$BUCKET/$reached"] = OTHER.encodeToByteArray()
+        server.objects["$BUCKET/$cutTo"] = OTHER.encodeToByteArray()
 
-        // When — supabase-kt returns whichever object its request reached
-        bucket().downloadAuthenticated(name) {}
+        // When
+        val downloaded = bucket().downloadAuthenticated(name) {}.decodeToString()
 
-        // Then — nothing cached, or the name's own bytes
-        assertCachedBytesAreItsOwn(name)
-    }
-
-    /** Fails when the cache holds anything but [name]'s own bytes under [name]. */
-    private suspend fun assertCachedBytesAreItsOwn(name: String) {
-        val row = store.getStorageByKey(BUCKET, name) ?: return
+        // Then
+        assertEquals(OWN, downloaded, name)
+        val row = assertNotNull(store.getStorageByKey(BUCKET, name), name)
         assertEquals(OWN, FileSystem.SYSTEM.read(row.localPath.toPath()) { readUtf8() }, name)
     }
 

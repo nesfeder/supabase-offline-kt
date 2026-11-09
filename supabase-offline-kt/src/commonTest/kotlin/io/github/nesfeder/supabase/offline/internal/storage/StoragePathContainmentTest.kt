@@ -323,14 +323,12 @@ class StoragePathContainmentTest {
         // When
         paths.forEach { path -> bucket().downloadAuthenticated(path) {} }
 
-        // Then — one file per cached path, every one inside the cache, nothing escaped. A path
-        // holding `%` is never cached while supabase-kt puts it in the URL unencoded (3.6).
+        // Then — one file per path, every one inside the cache, nothing escaped
         val written =
             FileSystem.SYSTEM.listRecursively(dataDirectory)
                 .filter { FileSystem.SYSTEM.metadata(it).isRegularFile }
                 .toList()
-        val cached = paths.filter { path -> isRequestedByItsOwnName(path) }
-        assertEquals(cached.size, written.size, "two lookalike paths shared one file")
+        assertEquals(paths.size, written.size, "two lookalike paths shared one file")
         assertTrue(written.all { it.isStrictlyInside(dataDirectory) })
         assertNothingEscaped()
     }

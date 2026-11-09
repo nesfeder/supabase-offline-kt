@@ -21,16 +21,18 @@ import okio.Path
 import okio.SYSTEM
 
 /**
- * A call naming an object whose name holds a `%` not followed by two hex digits cannot be sent: the
- * pinned supabase-kt puts the name in the URL as it is, and the HTTP client cannot build that URL.
- * It is refused as an invalid argument before anything is sent, not reported as a connectivity
- * failure, so an app does not think it is offline.
+ * A call naming an object whose name holds a lone UTF-16 surrogate cannot name it in its URL:
+ * supabase-kt percent-encodes the name as UTF-8, which a lone surrogate has no form in. On the JVM
+ * the encoder sends a `?` in its place, so the request would reach another object; on Kotlin/Native
+ * it throws an `IOException` before sending, which would read as a lost connection. The library
+ * refuses such a call as an invalid argument before anything is sent, on every platform, so an app
+ * neither touches another object nor thinks it is offline.
  */
-class StorageBarePercentNameTest {
+class StorageLoneSurrogateNameTest {
 
     private val dataDirectory: Path =
         FileSystem.SYSTEM_TEMPORARY_DIRECTORY /
-            "supabase-offline-bare-percent-${Random.nextLong().toULong()}"
+            "supabase-offline-lone-surrogate-${Random.nextLong().toULong()}"
     private val server = RecordingStorageServer()
     private val client: OfflineClient =
         newTestOfflineClient(
@@ -63,8 +65,8 @@ class StorageBarePercentNameTest {
             .map { call -> assertFailsWith<IllegalArgumentException>(name) { call() } }
 
     @Test
-    fun a_call_naming_an_object_with_a_bare_percent_is_refused_and_sends_nothing() = runTest {
-        listOf("100%.png", "a%", "a%4", "%zz.png").forEach { name ->
+    fun a_call_naming_an_object_with_a_lone_surrogate_is_refused_and_sends_nothing() = runTest {
+        listOf("x\uD800.png", "x\uDC00.png", "\uD800", "a\uD83D/b.png").forEach { name ->
             // When
             val failures = failuresOfEveryCallNaming(name)
 
@@ -79,13 +81,20 @@ class StorageBarePercentNameTest {
     }
 
     @Test
-    fun a_name_whose_percent_begins_an_escape_is_sent_as_before() = runTest {
-        // When — a name the URL can carry, whichever object the server reads it as
-        val failure = runCatching { bucket.downloadAuthenticated("a%41.png") {} }.exceptionOrNull()
+    fun a_name_whose_surrogates_pair_up_is_sent_by_its_own_name() = runTest {
+        // Given — an emoji outside the Basic Multilingual Plane, one surrogate pair
+        val name = "smile-\uD83D\uDE00.png"
+        server.objects["$BUCKET/$name"] = BYTES
 
-        // Then — sent, and answered by the server, not refused on the device
-        assertEquals(1, server.requests.size)
-        assertFalse(failure is IllegalArgumentException, "$failure")
+        // When
+        val downloaded = bucket.downloadAuthenticated(name) {}
+
+        // Then — sent, percent-encoded as UTF-8, and answered with its own object
+        assertEquals(
+            "/storage/v1/object/authenticated/$BUCKET/smile-%F0%9F%98%80.png",
+            server.requests.single().encodedPath,
+        )
+        assertEquals("bytes", downloaded.decodeToString())
         client.close()
     }
 

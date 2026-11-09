@@ -1233,10 +1233,7 @@ internal class CachingBucketApi(
      * @throws IllegalArgumentException when [path] cannot be cached.
      */
     private fun requireCacheableEntry(path: String): FileCacheEntry {
-        require(isRequestedByItsOwnName(path)) {
-            "This object path cannot be cached on the device: it holds '%', '?' or '#', which go " +
-                "into the request's URL unencoded, so its request can reach another object"
-        }
+        requireUrlFor(path)
         require(isCacheableObjectPath(path)) {
             "This object path cannot be cached on the device: it has a leading '/', an empty, '.' " +
                 "or '..' segment, a '\\' or a control character"
@@ -1249,19 +1246,21 @@ internal class CachingBucketApi(
     }
 
     /**
-     * Whether a download of [path] in this bucket is cached: both map onto a file, and the pinned
-     * supabase-kt's request reaches the object the path names.
+     * Whether a download of [path] in this bucket is cached: both map onto a file, and a request
+     * can name the path ([canBeNamedInAUrl]), so a download of it is ever sent.
      */
     private fun cachesDownloadsOf(path: String): Boolean =
-        isCacheableBucketId(bucketId) &&
-            isCacheableObjectPath(path) &&
-            isRequestedByItsOwnName(path)
+        isCacheableBucketId(bucketId) && isCacheableObjectPath(path) && canBeNamedInAUrl(path)
 
-    /** Refuses [path] when the request's URL cannot be built, which reads as a network failure. */
+    /**
+     * Refuses [path] before anything is sent when supabase-kt cannot name it in a request's URL the
+     * same way on every platform ([canBeNamedInAUrl]): on one it would reach another object, on the
+     * other it would fail as if the network had.
+     */
     private fun requireUrlFor(path: String) {
-        require(canBuildTheUrlFor(path)) {
-            "This object path holds a '%' that does not begin a percent-escape, so the request's " +
-                "URL cannot be built"
+        require(canBeNamedInAUrl(path)) {
+            "This object path holds a lone UTF-16 surrogate, which is not a Unicode character, so " +
+                "supabase-kt cannot name it in a request's URL"
         }
     }
 

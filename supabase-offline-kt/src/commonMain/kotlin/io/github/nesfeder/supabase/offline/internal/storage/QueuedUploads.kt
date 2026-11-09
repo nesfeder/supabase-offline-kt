@@ -35,6 +35,13 @@ internal const val MISSING_UPLOAD_FILE_REASON: String =
     "The queued upload's file is no longer on this device"
 
 /**
+ * Why a queued upload whose object path supabase-kt cannot name in a URL is refused: one queued by
+ * an earlier version whose path holds a lone UTF-16 surrogate ([canBeNamedInAUrl]).
+ */
+internal const val UNNAMEABLE_UPLOAD_PATH_REASON: String =
+    "The queued upload's object path holds a lone UTF-16 surrogate, which no request can name"
+
+/**
  * The client's queued Storage uploads: the files that hold their bytes, how a pass sends one, what
  * a sent one leaves in the file cache, and the queued copy `cachedFile` answers while one waits.
  * The rows themselves are the mutation queue's.
@@ -64,6 +71,14 @@ internal class QueuedUploads(
                     "cannot be sent: Storage is not installed",
                     STORAGE_NOT_INSTALLED_REASON,
                 )
+        // Sent, it would reach another object on the JVM and fail as a lost connection on iOS,
+        // which would hold the queue behind it on every pass
+        if (!canBeNamedInAUrl(stored.path)) {
+            return UploadSend.Refused(
+                "cannot be sent: its object path holds a lone UTF-16 surrogate",
+                UNNAMEABLE_UPLOAD_PATH_REASON,
+            )
+        }
         val bytes =
             files.read(stored.file, stored.size)
                 ?: return UploadSend.Refused("has lost its file", MISSING_UPLOAD_FILE_REASON)
@@ -162,7 +177,7 @@ internal class QueuedUploads(
         try {
             withContext(NonCancellable) {
                 fileCache.invalidateObject(bucketId, path)
-                if (!isCacheableBucketId(bucketId) || !isRequestedByItsOwnName(path)) {
+                if (!isCacheableBucketId(bucketId)) {
                     return@withContext
                 }
                 val entry = fileCache.entryFor(bucketId, path) ?: return@withContext

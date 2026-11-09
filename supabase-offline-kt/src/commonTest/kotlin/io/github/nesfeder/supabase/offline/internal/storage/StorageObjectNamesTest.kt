@@ -11,8 +11,10 @@ import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertNotEquals
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlinx.coroutines.test.runTest
 import okio.FileSystem
@@ -23,9 +25,10 @@ import okio.SYSTEM
 
 /**
  * Two objects with different names are two cache entries, however the file system would spell their
- * names: Unicode normalization forms, lone surrogates and names longer than a file name may be.
- * Such names are stored under a hash of the object's key; plain ASCII names keep their verbatim
- * file, where installs of earlier versions already have them.
+ * names: Unicode normalization forms and names longer than a file name may be. Such names are
+ * stored under a hash of the object's key; plain ASCII names keep their verbatim file, where
+ * installs of earlier versions already have them. A name with a lone surrogate names no object a
+ * request can reach, and is refused.
  */
 class StorageObjectNamesTest {
 
@@ -74,9 +77,19 @@ class StorageObjectNamesTest {
     }
 
     @Test
-    fun names_with_different_lone_surrogates_are_two_objects() = runTest {
-        // Given / When / Then — both would be encoded as "x?.txt"
-        assertTwoObjects("x\uD800.txt", "x\uD801.txt")
+    fun a_name_with_a_lone_surrogate_is_refused_before_anything_is_sent() = runTest {
+        // Given — names no request can carry: the JVM would send both as "x?.txt", another
+        // object, and Kotlin/Native's URL encoder fails on them
+        delegate.onDownload = { "ANY".encodeToByteArray() }
+        val bucket = bucket()
+
+        // When / Then — refused as invalid, never sent, and nothing cached
+        for (name in listOf("x\uD800.txt", "x\uD801.txt")) {
+            assertFailsWith<IllegalArgumentException> { bucket.downloadAuthenticated(name) {} }
+            assertFailsWith<IllegalArgumentException> { bucket.ensureCachedFile(name) }
+            assertNull(bucket.cachedFile(name))
+        }
+        assertEquals(0, delegate.downloadInvocations)
     }
 
     @Test

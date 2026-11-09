@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.storage
 
-import io.github.nesfeder.supabase.offline.internal.TESTED_SUPABASE_KT_VERSION
 import okio.ByteString.Companion.toByteString
 import okio.Path
 
@@ -60,34 +59,29 @@ internal fun isCacheableObjectPath(objectPath: String): Boolean =
     objectPath.isNotEmpty() && objectPath.split('/').all(::isCacheableSegment)
 
 /**
- * The characters supabase-kt before 3.8 puts into a Storage URL as written: a `%` fails the
- * request, and a `?` or `#` cuts the path short, so the request can fetch a different object. Empty
- * from 3.8, which encodes each segment; this goes when the pin reaches 3.8.
+ * Whether supabase-kt can put [objectPath] into a Storage URL as the same name on every platform:
+ * not when it holds a lone UTF-16 surrogate, which is no Unicode character. supabase-kt
+ * percent-encodes each segment of the path as UTF-8, and a lone surrogate has no UTF-8 form: the
+ * JVM's encoder sends a `?` in its place, so the request reaches another object, and
+ * Kotlin/Native's fails before sending with an `IOException` that reads as a network failure.
  */
-internal val CHARACTERS_SENT_UNENCODED: Set<Char> =
-    TESTED_SUPABASE_KT_VERSION.split('.', '-').take(2).map(String::toInt).let { (major, minor) ->
-        if (major < 3 || (major == 3 && minor < 8)) setOf('%', '?', '#') else emptySet()
+internal fun canBeNamedInAUrl(objectPath: String): Boolean {
+    var index = 0
+    while (index < objectPath.length) {
+        val character = objectPath[index]
+        when {
+            character.isHighSurrogate() -> {
+                if (index + 1 >= objectPath.length || !objectPath[index + 1].isLowSurrogate()) {
+                    return false
+                }
+                index += 2
+            }
+            character.isLowSurrogate() -> return false
+            else -> index++
+        }
     }
-
-/**
- * Whether the pinned supabase-kt's request for [objectPath] reaches that object, so what it returns
- * may be cached. A path holding one of [CHARACTERS_SENT_UNENCODED] downloads as supabase-kt
- * downloads it, and is never cached or served from the cache.
- */
-internal fun isRequestedByItsOwnName(objectPath: String): Boolean = objectPath.none { character ->
-    character in CHARACTERS_SENT_UNENCODED
+    return true
 }
-
-/**
- * Whether the pinned supabase-kt can build the URL of a request for [objectPath]: not when it puts
- * `%` in the URL as written and a `%` does not begin a percent-escape, which the HTTP client
- * refuses before sending, as if the network had failed.
- */
-internal fun canBuildTheUrlFor(objectPath: String): Boolean =
-    '%' !in CHARACTERS_SENT_UNENCODED || !BARE_PERCENT.containsMatchIn(objectPath)
-
-/** A `%` not followed by two hex digits. */
-private val BARE_PERCENT = Regex("%(?![0-9A-Fa-f]{2})")
 
 private fun isCacheableSegment(segment: String): Boolean =
     segment.isNotEmpty() &&

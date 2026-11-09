@@ -107,6 +107,26 @@ class StorageObjectNameUrlEncodingTest {
         assertFalse(FileSystem.SYSTEM.exists(file))
     }
 
+    @Test
+    fun a_name_with_a_bare_percent_is_requested_encoded_and_cached_under_its_own_name() = runTest {
+        // Given — a `%` that begins no escape, which supabase-kt 3.6 could not put in a URL
+        val name = "100%.png"
+        server.objects["$BUCKET/$name"] = CONTENT.encodeToByteArray()
+        val bucket = bucket()
+
+        // When
+        bucket.downloadAuthenticated(name) {}
+
+        // Then — requested percent-encoded, and served offline under the name as written
+        assertEquals(
+            "/storage/v1/object/authenticated/$BUCKET/100%25.png",
+            server.requests.single().encodedPath,
+        )
+        assertNotNull(store.getStorageByKey(BUCKET, name))
+        server.online = false
+        assertEquals(CONTENT, bucket.downloadAuthenticated(name) {}.decodeToString())
+    }
+
     private companion object {
         const val BUCKET = "avatars"
         const val NAME = "a b/my file%?#.png"

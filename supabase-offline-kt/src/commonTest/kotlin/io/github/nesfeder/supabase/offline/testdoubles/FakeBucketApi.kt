@@ -22,6 +22,7 @@ import io.github.jan.supabase.storage.UploadSignedUrl
 import io.github.jan.supabase.storage.resumable.ResumableClient
 import io.ktor.client.request.HttpRequestBuilder
 import io.ktor.client.request.url
+import io.ktor.http.encodeURLPath
 import io.ktor.utils.io.ByteWriteChannel
 import io.ktor.utils.io.writeFully
 import kotlin.time.Duration
@@ -123,7 +124,8 @@ internal class FakeBucketApi(
 
     /**
      * Runs the overrides in [options] on the request supabase-kt would send for an untransformed
-     * download of [path], as the real bucket does.
+     * download of [path], as the real bucket does: at a URL whose bucket and path segments are each
+     * percent-encoded, as supabase-kt's own `storagePath` encodes them.
      */
     private fun runRequestOverrides(
         path: String,
@@ -135,7 +137,10 @@ internal class FakeBucketApi(
         val access = if (isPublic) "public" else "authenticated"
         val request =
             HttpRequestBuilder().apply {
-                url("$TEST_SUPABASE_URL/storage/v1/object/$access/$bucketId/$path")
+                val encodedPath = path.split('/').joinToString("/") { it.encodeURLPath() }
+                url(
+                    "$TEST_SUPABASE_URL/storage/v1/object/$access/${bucketId.encodeURLPath()}/$encodedPath"
+                )
             }
         overrides.forEach { override -> request.override() }
     }

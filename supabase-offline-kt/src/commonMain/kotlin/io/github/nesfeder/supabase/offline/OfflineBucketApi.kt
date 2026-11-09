@@ -42,10 +42,11 @@ import io.github.jan.supabase.storage.UploadOptionBuilder
  * cached copy. A resumable upload started or continued through [resumable] drops them once it
  * finishes.
  *
- * **Object paths that cannot be cached** — a leading `/`, an empty or `.`/`..` segment, a `\`, a
- * control character, and with supabase-kt below 3.8 a `%`, `?` or `#`, which it puts in the URL
- * unencoded — still download and write normally; they are never mapped onto a file. A `%` there
- * that does not begin a percent-escape throws [IllegalArgumentException] before anything is sent.
+ * **Object paths that cannot be cached** — a leading `/`, an empty or `.`/`..` segment, a `\` or a
+ * control character — still download and write normally; they are never mapped onto a file. A path
+ * holding a lone UTF-16 surrogate, which is no Unicode character, throws [IllegalArgumentException]
+ * before anything is sent: supabase-kt cannot name it in a request's URL the same way on every
+ * platform.
  *
  * The cache is bounded by [Offline.Config.fileCacheSizeBytes], evicting the least recently used
  * files first and never those of an object pinned with [pinCachedFile]; [evictCachedFile] deletes
@@ -105,8 +106,8 @@ public interface OfflineBucketApi : BucketApi {
      * @param mutationStrategy whether the upload may wait in the mutation queue.
      * @param options `upsert`, `contentType` and `userMetadata`, as for supabase-kt's `upload`.
      * @return [UploadOutcome.Applied] with Storage's response, or [UploadOutcome.Queued].
-     * @throws IllegalArgumentException when [data] is empty, or [path] holds a `%` that does not
-     *   begin a percent-escape (see [OfflineBucketApi]); nothing is sent or kept.
+     * @throws IllegalArgumentException when [data] is empty, or [path] holds a lone UTF-16
+     *   surrogate (see [OfflineBucketApi]); nothing is sent or kept.
      * @throws MutationNotQueueableException when an upload the queue cannot hold cannot be sent for
      *   want of a connection.
      * @throws OfflineClientClosedException when the client is closed.
