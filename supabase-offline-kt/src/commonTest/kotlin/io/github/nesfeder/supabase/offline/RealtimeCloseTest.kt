@@ -200,7 +200,7 @@ class RealtimeCloseTest {
                 val leave = socket.awaitSent("phx_leave")
                 assertTrue(leave.topic.startsWith("realtime:supabase-offline-"), leave.topic)
                 socket.awaitDisconnected()
-                assertEquals(Realtime.Status.DISCONNECTED, supabase.realtime.status.value)
+                supabase.realtime.awaitStatus(Realtime.Status.DISCONNECTED)
                 supabase.close()
                 val warnings = logs.entriesAt(EngineLogLevel.WARNING)
                 assertTrue(warnings.isEmpty(), "$warnings")
@@ -321,6 +321,14 @@ class RealtimeCloseTest {
     /** Waits until the status is of [kind], as `Stalled` carries its cause. */
     private suspend fun Offline.awaitStatus(kind: KClass<out RealtimeStatus>) {
         withTimeout(10.seconds) { realtimeStatus.first { status -> kind.isInstance(status) } }
+    }
+
+    /**
+     * Waits until supabase-kt's status is [expected]. Its `disconnect()` closes the socket before
+     * it sets the status, so a test that woke on the socket's close may read the old one.
+     */
+    private suspend fun Realtime.awaitStatus(expected: Realtime.Status) {
+        withTimeout(10.seconds) { status.first { current -> current == expected } }
     }
 
     /** An unsigned JWT for [subject] whose every segment is base64, as supabase-kt decodes them. */
