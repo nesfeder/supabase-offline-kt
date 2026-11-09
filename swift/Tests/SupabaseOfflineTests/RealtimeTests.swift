@@ -16,7 +16,9 @@ struct RealtimeTests {
     private static let greenTea = TodoRow(id: 2, title: "Green tea", done: true)
 
     @Test func theNamedTablesAreFollowedAndReportedChangesReachTheCachedRows() async throws {
-        // Given a client following `todos` through the fake, with the table's row cached
+        // Given a client following `todos` through the fake, with the table's row cached once the
+        // join has been handled: a join reads the table's cached queries again, so a row cached
+        // before it would be requested twice
         let realtime = FakeRealtime()
         let server = RecordingFakeServer(rows: Self.rows)
         let client = SupabaseOfflineClient.inMemory(
@@ -24,9 +26,10 @@ struct RealtimeTests {
             server: server.server,
             realtime: realtime
         )
-        _ = try await client.from("todos").select().execute([TodoRow].self)
+        #expect(await eventually { realtime.joinCount == 1 })
         #expect(await eventually { realtime.subscribedTables == ["todos"] })
         #expect(await eventually { client.realtimeStatus.value == .subscribed })
+        _ = try await client.from("todos").select().execute([TodoRow].self)
 
         // When the server reports an insert, an update and a delete
         try realtime.reportInsert(table: "todos", record: ["id": .int(2), "title": .string("Tea"), "done": .bool(false)])
