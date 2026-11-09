@@ -8,6 +8,7 @@ import io.github.jan.supabase.annotations.SupabaseInternal
 import io.github.jan.supabase.postgrest.Postgrest
 import io.github.jan.supabase.postgrest.query.filter.FilterOperator
 import io.github.jan.supabase.realtime.Realtime
+import io.github.jan.supabase.realtime.RealtimeChannel
 import io.github.jan.supabase.realtime.RealtimeMessage
 import io.github.jan.supabase.realtime.channel
 import io.github.jan.supabase.realtime.realtime
@@ -25,6 +26,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 import kotlin.time.Clock
@@ -67,11 +69,14 @@ import kotlinx.serialization.json.putJsonObject
  * The feed over supabase-kt's real Realtime plugin, driven through a scripted websocket: the join
  * names each table with its schema and filter, a subscribed channel reports joined and then each
  * change as sent, a burst of changes reaches a slow collector whole and in order, a refused join
- * ends the feed, a close from the server ends it too, and a canceled collector leaves the channel.
- * With a channel per table on one socket, a refused channel is left on the server while another
- * table's keeps receiving, supabase-kt's read loop that its own rejoin stopped is freed by closing
- * a socket that holds only this library's channels and never one that holds an app's, and a channel
- * left while joining is left on the server.
+ * ends the feed once supabase-kt gives up rejoining it, a close from the server ends it too, and a
+ * canceled collector leaves the channel. A channel error while joined is joined again by
+ * supabase-kt, and reported joined once more. A binding the server refuses ends the feed, though
+ * supabase-kt keeps the channel joined; an error from another extension does not. With a channel
+ * per table on one socket, a refused channel is left on the server while another table's keeps
+ * receiving, a channel left while joining is left on the server, and a leave never closes a socket
+ * that holds an app's own channel. A token provider that throws keeps the channel joining, and the
+ * feed waits, until it stops throwing.
  */
 class SupabaseRealtimeFeedTest {
 
@@ -324,29 +329,25 @@ class SupabaseRealtimeFeedTest {
     fun a_refused_channel_is_left_and_another_tables_channel_keeps_receiving() =
         runTest(timeout = 2.minutes) {
             withContext(Dispatchers.Default) {
-                // Given — a Realtime plugin that gives up on a channel after one refusal, and two
-                // tables followed, each on a channel of its own, both joined
-                val ownSockets = ScriptedRealtimeWebsocketFactory()
-                val own = newTestSupabaseClient {
-                    install(Postgrest)
-                    install(Realtime) {
-                        websocketFactory = ownSockets
-                        heartbeatInterval = 1.hours
-                        reconnectDelay = 1.hours
-                        maxAttempts = 1
-                    }
-                }
-                val ownFeed = SupabaseRealtimeFeed(own, logs.asEngineLogger())
-                val two = followTwoTables(ownFeed, ownSockets)
+                // Given — two tables followed, each on a channel of its own, both joined
+                val two = followTwoTables(feed, sockets)
 
-                // When — the server refuses the tasks binding
+                // When — the server refuses the tasks binding, which supabase-kt only logs,
+                // keeping the channel joined
                 two.socket.answer(bindingRefused(two.tasksJoin.topic))
 
-                // Then — the tasks feed ends, and its channel is left on the server, which would
-                // otherwise keep it and keep trying its binding
+                // Then — the tasks feed ends, naming the refused binding
                 val ended = withTimeout(10.seconds) { two.tasksOutcome.receive() }
-                assertTrue(ended.exceptionOrNull() is ServerChangeFeedEndedException, "$ended")
-                assertEquals(two.tasksJoin.topic, two.socket.awaitSent("phx_leave").topic)
+                val failure = assertIs<ServerChangeFeedEndedException>(ended.exceptionOrNull())
+                assertTrue("refused" in failure.message.orEmpty(), "${failure.message}")
+
+                // And — the channel, still joined, is left on the server with a plain leave of
+                // that join, which the server would otherwise keep, trying its binding
+                val leave = two.socket.awaitSent("phx_leave")
+                assertEquals(two.tasksJoin.topic, leave.topic)
+                assertNotNull(leave.joinRef)
+                assertEquals(two.tasksJoin.joinRef, leave.joinRef)
+                assertFalse(supabase.realtime.subscriptions.containsKey(two.tasksJoin.topic))
 
                 // And — the audit channel keeps receiving on the socket, which stays open
                 two.socket.answer(
@@ -362,42 +363,50 @@ class SupabaseRealtimeFeedTest {
                 )
                 assertFalse(two.socket.disconnected.isCompleted)
                 two.auditFollow.cancelAndJoin()
-                own.close()
             }
             supabase.close()
         }
 
     @Test
-    fun a_rejoin_that_stops_the_read_loop_closes_a_socket_that_holds_only_the_librarys_channels() =
+    fun an_error_from_another_extension_does_not_end_the_feed() =
         runTest(timeout = 2.minutes) {
             withContext(Dispatchers.Default) {
-                // Given — two tables followed, each on a channel of its own, both joined, with
-                // supabase-kt's rejoin after a refusal on, and a heartbeat that never gives up
-                val two = followTwoTables(feed, sockets)
-
-                // When — the server refuses the tasks binding
-                two.socket.answer(bindingRefused(two.tasksJoin.topic))
-
-                // Then — supabase-kt's rejoin marks the channel leaving from inside the read loop,
-                // which then waits for a reply only it could read; the socket is closed, which
-                // frees it
-                two.socket.awaitDisconnected()
-                val tasksEnded = withTimeout(10.seconds) { two.tasksOutcome.receive() }
-                assertTrue(tasksEnded.exceptionOrNull() is ServerChangeFeedEndedException)
-
-                // And — the audit feed ends with the socket, for the follower to join it again
-                val auditEnded = withTimeout(10.seconds) { two.auditOutcome.receive() }
-                assertTrue(auditEnded.exceptionOrNull() is ServerChangeFeedEndedException)
-
-                // And — no leave went out for the audit channel, which ended with the socket.
-                // supabase-kt marks the tasks channel leaving before it writes its leave, and the
-                // socket may close in between, so that leave is there only when it won the race
-                val leaves = buildList {
-                    for (message in two.socket.sent) {
-                        if (message.event == "phx_leave") add(message.topic)
+                // Given — a table followed and joined
+                val events = Channel<ServerChangeEvent>(Channel.UNLIMITED)
+                val collecting = launch {
+                    feed.follow(listOf(WatchedTable("tasks")), "public").collect {
+                        events.send(it)
                     }
                 }
-                assertTrue(leaves.all { topic -> topic == two.tasksJoin.topic }, "$leaves")
+                val socket = sockets.awaitSocket(0)
+                val join = socket.awaitSent("phx_join")
+                socket.answer(joinTaken(join, join.bindings()))
+                assertEquals(ServerChangeEvent.Joined, events.receiveWithin())
+
+                // When — the server reports an error from an extension other than the bindings'
+                socket.answer(systemError(join.topic, extension = "system"))
+                socket.answer(
+                    change(
+                        join.topic,
+                        ids = listOf(1),
+                        data = insert(buildJsonObject { put("id", "t1") }),
+                    )
+                )
+
+                // Then — the feed goes on delivering, and the error is logged by its extension
+                assertEquals(
+                    ServerChangeEvent.Saved("tasks", "public", buildJsonObject { put("id", "t1") }),
+                    events.receiveWithin(),
+                )
+                // The error reaches the feed's own collector, which may log it after the change
+                withTimeout(10.seconds) {
+                    while (logs.entries.none { entry -> "system extension" in entry.message }) {
+                        delay(20.milliseconds)
+                    }
+                }
+                assertTrue(collecting.isActive)
+                collecting.cancelAndJoin()
+                socket.answerLeaveIfSent()
             }
             supabase.close()
         }
@@ -424,14 +433,15 @@ class SupabaseRealtimeFeedTest {
                 socket.answer(joinTaken(join, join.bindings()))
                 assertEquals(ServerChangeEvent.Joined, events.receiveWithin())
 
-                // When — the server refuses the binding, and supabase-kt's rejoin stops the loop
+                // When — the server refuses the binding, and the feed ends and leaves
                 socket.answer(bindingRefused(join.topic))
-
-                // Then — the feed ends, and the socket stays open: closing it would end the app's
-                // channel for good
                 val ended = withTimeout(10.seconds) { outcome.receive() }
                 assertTrue(ended.exceptionOrNull() is ServerChangeFeedEndedException, "$ended")
+                assertEquals(join.topic, socket.awaitSent("phx_leave").topic)
+
+                // Then — the socket stays open: closing it would end the app's channel
                 assertFalse(socket.disconnected.isCompleted)
+                assertEquals(Realtime.Status.CONNECTED, supabase.realtime.status.value)
                 assertTrue(supabase.realtime.subscriptions.containsKey(appChannel.topic))
             }
             supabase.close()
@@ -474,11 +484,13 @@ class SupabaseRealtimeFeedTest {
     fun a_refused_join_ends_the_feed() =
         runTest(timeout = 2.minutes) {
             withContext(Dispatchers.Default) {
-                // Given — a server that refuses every join and takes every leave, as supabase-kt's
-                // rejoin leaves the channel before joining it again
+                // Given — a server that refuses every join and takes every leave; supabase-kt joins
+                // again after a refusal, the channel still joining, until maxAttempts (two here)
+                val joins = AtomicInt(0)
                 val refusing = launch {
                     val socket = sockets.awaitSocket(0)
                     for (message in socket.sent) {
+                        if (message.event == "phx_join") joins.incrementAndFetch()
                         val reply =
                             when (message.event) {
                                 "phx_join" ->
@@ -497,11 +509,50 @@ class SupabaseRealtimeFeedTest {
                     }
                 }
 
-                // When / Then — the feed ends, leaving the next join to the follower
+                // When / Then — the feed ends once supabase-kt gives up, after its own rejoin,
+                // leaving the next join to the follower
                 assertFailsWith<ServerChangeFeedEndedException> {
                     withTimeout(30.seconds) { feed.follow(tables, "public").collect {} }
                 }
+                assertEquals(2, joins.load())
                 refusing.cancelAndJoin()
+            }
+            supabase.close()
+        }
+
+    @Test
+    fun a_channel_error_while_joined_is_joined_again_and_reported_joined_once_more() =
+        runTest(timeout = 2.minutes) {
+            withContext(Dispatchers.Default) {
+                // Given — joined
+                val events = Channel<ServerChangeEvent>(Channel.UNLIMITED)
+                val outcome = Channel<Result<Unit>>(Channel.UNLIMITED)
+                val following = launch {
+                    outcome.send(
+                        runCatching {
+                            feed.follow(listOf(WatchedTable("tasks")), "public").collect {
+                                events.send(it)
+                            }
+                        }
+                    )
+                }
+                val socket = sockets.awaitSocket(0)
+                val join = socket.awaitSent("phx_join")
+                socket.answer(joinTaken(join, join.bindings()))
+                assertEquals(ServerChangeEvent.Joined, events.receiveWithin())
+
+                // When — the server reports an error on the channel
+                socket.answer(RealtimeMessage(join.topic, "phx_error", buildJsonObject {}, null))
+
+                // Then — supabase-kt joins the same channel again, without a leave, and the feed
+                // reports the join once more rather than ending
+                val rejoin = socket.awaitSent("phx_join")
+                assertEquals(join.topic, rejoin.topic)
+                socket.answer(joinTaken(rejoin, rejoin.bindings()))
+                assertEquals(ServerChangeEvent.Joined, events.receiveWithin())
+                assertTrue(outcome.tryReceive().isFailure)
+                following.cancelAndJoin()
+                socket.answerLeaveIfSent()
             }
             supabase.close()
         }
@@ -638,6 +689,72 @@ class SupabaseRealtimeFeedTest {
             supabase.close()
         }
 
+    @Test
+    fun a_token_provider_that_throws_keeps_the_channel_joining_until_it_stops_throwing() =
+        runTest(timeout = 2.minutes) {
+            withContext(Dispatchers.Default) {
+                // Given — a Realtime token provider that throws, under supabase-kt's default
+                // requireValidSession, with one refusal allowed
+                val throwing = AtomicBoolean(true)
+                val asked = AtomicInt(0)
+                val ownSockets = ScriptedRealtimeWebsocketFactory()
+                val own = newTestSupabaseClient {
+                    install(Postgrest)
+                    install(Realtime) {
+                        websocketFactory = ownSockets
+                        heartbeatInterval = 1.hours
+                        reconnectDelay = 1.hours
+                        rejoinDelay = 10.milliseconds
+                        maxAttempts = 1
+                        accessToken = {
+                            asked.incrementAndFetch()
+                            check(!throwing.load()) { "no token" }
+                            null
+                        }
+                    }
+                }
+                val ownFeed = SupabaseRealtimeFeed(own, logs.asEngineLogger())
+                val events = Channel<ServerChangeEvent>(Channel.UNLIMITED)
+                val outcome = Channel<Result<Unit>>(Channel.UNLIMITED)
+                launch {
+                    outcome.send(
+                        runCatching {
+                            ownFeed.follow(listOf(WatchedTable("tasks")), "public").collect {
+                                events.send(it)
+                            }
+                        }
+                    )
+                }
+                val socket = ownSockets.awaitSocket(0)
+
+                // When — the provider has thrown for longer than maxAttempts rejoins would take
+                withTimeout(10.seconds) { while (asked.load() < 10) delay(10.milliseconds) }
+
+                // Then — supabase-kt asked again every rejoinDelay without giving up, sent no join,
+                // and the feed neither joined nor ended
+                val sentSoFar = buildList {
+                    while (true) add(socket.sent.tryReceive().getOrNull()?.event ?: break)
+                }
+                assertTrue("phx_join" !in sentSoFar, "$sentSoFar")
+                assertTrue(events.tryReceive().isFailure)
+                assertTrue(outcome.tryReceive().isFailure)
+                assertEquals(
+                    RealtimeChannel.Status.SUBSCRIBING,
+                    own.realtime.subscriptions.values.single().status.value,
+                )
+
+                // When — the provider stops throwing
+                throwing.store(false)
+
+                // Then — the next rejoin sends the join, and the feed joins
+                val join = socket.awaitSent("phx_join")
+                socket.answer(joinTaken(join, join.bindings()))
+                assertEquals(ServerChangeEvent.Joined, events.receiveWithin())
+                own.close()
+            }
+            supabase.close()
+        }
+
     /** Two tables followed through [feed], each on a channel of its own, both joined. */
     private class TwoTables(
         val socket: ScriptedRealtimeWebsocket,
@@ -705,18 +822,33 @@ class SupabaseRealtimeFeedTest {
 
     /**
      * The server's word that a channel's binding is refused, as it sends one after the join reply:
-     * a system message with an error status, which names no binding supabase-kt reads. It names the
-     * channel by its sub-topic, a field supabase-kt 3.9 requires: without it, the message fails to
-     * decode in supabase-kt's read loop, which then reconnects.
+     * a system message from the `postgres_changes` extension with an error status, which names no
+     * binding supabase-kt reads.
      */
     private fun bindingRefused(topic: String): RealtimeMessage =
+        systemError(
+            topic,
+            extension = "postgres_changes",
+            message = "Unable to subscribe to changes with given parameters",
+        )
+
+    /**
+     * A system message from [extension] with an error status. It names the channel by its
+     * sub-topic, a field supabase-kt 3.9 requires: without it, the message fails to decode in
+     * supabase-kt's read loop, which then reconnects.
+     */
+    private fun systemError(
+        topic: String,
+        extension: String,
+        message: String = "Something went wrong",
+    ): RealtimeMessage =
         RealtimeMessage(
             topic,
             "system",
             buildJsonObject {
                 put("status", "error")
-                put("extension", "postgres_changes")
-                put("message", "Unable to subscribe to changes with given parameters")
+                put("extension", extension)
+                put("message", message)
                 put("channel", topic.removePrefix("realtime:"))
             },
             null,
@@ -809,9 +941,10 @@ class SupabaseRealtimeFeedTest {
         withTimeout(10.seconds) { receive() }
 
     /**
-     * Answers the leave supabase-kt sends, when it reaches this socket within two seconds: after a
-     * close from the server, supabase-kt disconnects right after the leave, which can close the
-     * socket before the leave is written.
+     * Answers the leave supabase-kt sends, when it reaches this socket within two seconds. After a
+     * close from the server, supabase-kt removes the channel, which sends its leave and, with no
+     * channel left and `disconnectOnEmptyChannelsAfter` at zero, disconnects right after; the
+     * socket may close before a leave is read.
      */
     private suspend fun ScriptedRealtimeWebsocket.answerLeaveIfSent() {
         val leave =
