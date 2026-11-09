@@ -19,8 +19,7 @@ import okio.SYSTEM
 /**
  * The library's own on-disk encoding of an object name with spaces, `%`, `?` and `#`: the cache is
  * keyed by the name as the caller wrote it, not by its URL form, and the local file is named by it.
- * Pinned on every supabase-kt minor, through the file cache; what reaches the wire, from 3.8 on, is
- * in `StorageObjectNameUrlEncodingTest`.
+ * Pinned through the file cache; what reaches the wire is in `StorageObjectNameUrlEncodingTest`.
  */
 class StorageObjectNameEncodingTest {
 

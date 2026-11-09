@@ -25,11 +25,10 @@ import okio.SYSTEM
 
 /**
  * Object names with spaces, `%`, `?` and `#` reach their own object on the wire, and a download is
- * served offline and evicted under the name as written. Since supabase-kt 3.8.0 the bucket
- * URL-encodes each segment of an object path; 3.6 puts the name in the URL as written, where a `%`
- * fails the request and a `?` or `#` can fetch a different object, so these cases build only from
- * 3.8 on. The library's own on-disk encoding of such a name is pinned on every minor by
- * `StorageObjectNameEncodingTest`.
+ * served offline and evicted under the name as written. supabase-kt URL-encodes each segment of an
+ * object path (since 3.8.0; 3.6 put the name in the URL as written, where a `%` failed the request
+ * and a `?` or `#` could fetch a different object). The library's own on-disk encoding of such a
+ * name is pinned by `StorageObjectNameEncodingTest`.
  */
 class StorageObjectNameUrlEncodingTest {
 

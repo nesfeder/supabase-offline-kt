@@ -87,15 +87,20 @@ class CachedSingleTest {
         )
     private val items = client.from(TABLE)
 
-    /** The single-object reads of list A's one row: `single()`, and on 3.8 `maybeSingle()`. */
+    /** The single-object reads of list A's one row: `single()` and `maybeSingle()`. */
     private val readsOfOneRow: List<Pair<String, SelectRequestBuilder.() -> Unit>> =
         listOf<Pair<String, SelectRequestBuilder.() -> Unit>>(
             "single" to
                 {
                     filter { eq("list_id", "A") }
                     single()
-                }
-        ) + maybeSingleReadShapes(oneRow = ROW_1).map { (name, request, _) -> name to request }
+                },
+            "maybeSingle" to
+                {
+                    filter { eq("list_id", "A") }
+                    maybeSingle()
+                },
+        )
 
     private val singleOfListA: SelectRequestBuilder.() -> Unit = {
         filter { eq("list_id", "A") }

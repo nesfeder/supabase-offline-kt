@@ -18,7 +18,7 @@ import kotlinx.serialization.json.JsonElement
 
 /**
  * Offline for longer than a session token lives, a write that may queue still queues
- * (`ExpiredSessionWriteTest`), but a supabase-kt 3.8 `dryRun()` in the same state is still refused.
+ * (`ExpiredSessionWriteTest`), but a `dryRun()` in the same state is still refused.
  */
 class ExpiredSessionDryRunTest {
 

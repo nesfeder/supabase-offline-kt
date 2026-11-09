@@ -20,10 +20,10 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 
 /**
- * What happens to a write built with supabase-kt 3.8's `dryRun()`, once the engine has told it is
- * one. On the online-success path the server's own `Preference-Applied` header decides whether the
- * write was rolled back: PostgREST's default `db-tx-end` ignores `tx=rollback` and commits, and
- * then the write must be overlaid like any other. Offline, a dry run is never persisted.
+ * What happens to a write built with supabase-kt's `dryRun()`, once the engine has told it is one.
+ * On the online-success path the server's own `Preference-Applied` header decides whether the write
+ * was rolled back: PostgREST's default `db-tx-end` ignores `tx=rollback` and commits, and then the
+ * write must be overlaid like any other. Offline, a dry run is never persisted.
  */
 class DryRunOutcomeTest {
 

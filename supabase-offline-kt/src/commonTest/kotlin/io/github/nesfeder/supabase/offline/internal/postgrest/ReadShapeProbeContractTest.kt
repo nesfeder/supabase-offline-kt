@@ -66,6 +66,7 @@ class ReadShapeProbeContractTest {
                         limit(5)
                     },
                 ReadShape.SingleObject to { single() },
+                ReadShape.SingleObject to { maybeSingle() },
                 ReadShape.SingleObject to
                     {
                         filter { eq("id", 1) }
@@ -103,7 +104,7 @@ class ReadShapeProbeContractTest {
                     {
                         headers.append("Accept", "application/vnd.pgrst.object+json")
                     },
-            ) + maybeSingleProbeReads
+            )
 
         // When
         val shapes = reads.map { (_, request) -> handle.shapeOf(Columns.ALL, request) }

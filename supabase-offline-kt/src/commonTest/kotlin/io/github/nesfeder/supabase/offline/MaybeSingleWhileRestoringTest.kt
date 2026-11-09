@@ -29,9 +29,9 @@ import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 
 /**
- * supabase-kt 3.8's `maybeSingle()`, like the other read shapes of `ReadShapeTest`, goes to the
- * network once the session has settled, as `ReadsWhileRestoringTest` pins for `single()`; with no
- * row it then returns supabase-kt's empty result.
+ * supabase-kt's `maybeSingle()`, like the other read shapes of `ReadShapeTest`, goes to the network
+ * once the session has settled, as `ReadsWhileRestoringTest` pins for `single()`; with no row it
+ * then returns supabase-kt's empty result.
  */
 class MaybeSingleWhileRestoringTest {
 

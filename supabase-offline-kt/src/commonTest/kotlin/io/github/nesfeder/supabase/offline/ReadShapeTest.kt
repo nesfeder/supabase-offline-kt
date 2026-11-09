@@ -38,8 +38,8 @@ import kotlinx.coroutines.test.runTest
  * Reads whose response is not a JSON array of rows — `head`, a `count`, `csv()`, `geojson()`,
  * `stripNulls()` and `explain()` — bypass the cache: they go to the network, their response is not
  * stored, they never share the slot of the list read with the same filters, and offline they fail
- * as a network-only read does. `single()` and `maybeSingle()` (supabase-kt 3.8 on) are cached as
- * their list, one row long: `CachedSingleTest`.
+ * as a network-only read does. `single()` and `maybeSingle()` are cached as their list, one row
+ * long: `CachedSingleTest`.
  */
 class ReadShapeTest {
 
@@ -138,8 +138,8 @@ class ReadShapeTest {
         )
 
     /**
-     * The single-object reads, `single()` and on 3.8 `maybeSingle()`: cached as their list, one row
-     * long (`CachedSingleTest`), but never answered from a list the request could not be built for.
+     * The single-object reads, `single()` and `maybeSingle()`: cached as their list, one row long
+     * (`CachedSingleTest`), but never answered from a list the request could not be built for.
      */
     private val singleObjectShapes: List<Triple<String, SelectRequestBuilder.() -> Unit, String>> =
         listOf<Triple<String, SelectRequestBuilder.() -> Unit, String>>(
@@ -150,8 +150,16 @@ class ReadShapeTest {
                     single()
                 },
                 ONE_ROW,
-            )
-        ) + maybeSingleReadShapes(oneRow = ONE_ROW)
+            ),
+            Triple(
+                "maybeSingle",
+                {
+                    filter { eq("list_id", "A") }
+                    maybeSingle()
+                },
+                ONE_ROW,
+            ),
+        )
 
     private val listOfA: SelectRequestBuilder.() -> Unit = { filter { eq("list_id", "A") } }
 

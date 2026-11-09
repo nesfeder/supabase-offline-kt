@@ -31,7 +31,7 @@ import kotlinx.serialization.json.JsonElement
  * A dry run must never reach the queue, so the engine classifies a write before it persists it.
  * When it cannot tell whether a write is a dry run, it does not persist it at all: it sends it, and
  * never queues it — and says so, once, at ERROR. What happens to an actual dry run is in
- * `DryRunOutcomeTest`, which needs supabase-kt 3.8's `dryRun()`.
+ * `DryRunOutcomeTest`.
  */
 class DryRunClassificationTest {
 
