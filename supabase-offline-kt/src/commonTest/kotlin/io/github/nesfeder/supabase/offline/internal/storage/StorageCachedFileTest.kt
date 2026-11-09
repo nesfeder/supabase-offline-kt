@@ -2,13 +2,13 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.storage
 
-import io.github.jan.supabase.exceptions.NotFoundRestException
+import io.github.jan.supabase.storage.StorageRestException
 import io.github.nesfeder.supabase.offline.OfflineBucketApi
 import io.github.nesfeder.supabase.offline.testdoubles.FakeBucketApi
 import io.github.nesfeder.supabase.offline.testdoubles.TestStore
 import io.github.nesfeder.supabase.offline.testdoubles.newTestBucketApi
 import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
-import io.github.nesfeder.supabase.offline.testdoubles.notFoundRestException
+import io.github.nesfeder.supabase.offline.testdoubles.notFoundStorageException
 import kotlin.random.Random
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
@@ -145,10 +145,13 @@ class StorageCachedFileTest {
     @Test
     fun ensureCachedFile_rethrows_not_found_and_caches_nothing() = runTest {
         // Given
-        delegate.onDownload = { throw notFoundRestException() }
+        delegate.onDownload = { throw notFoundStorageException() }
 
         // When / Then
-        assertFailsWith<NotFoundRestException> { bucket().ensureCachedFile(PATH) }
+        assertEquals(
+            404,
+            assertFailsWith<StorageRestException> { bucket().ensureCachedFile(PATH) }.statusCode,
+        )
         assertNull(store.getStorageByKey(BUCKET, PATH))
     }
 

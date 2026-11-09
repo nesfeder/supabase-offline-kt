@@ -120,7 +120,7 @@ class QueuedUploadLostAnswerTest {
         // Then — refused as the duplicate it is, its bytes kept for a retry
         assertEquals(0, report.alreadyOnServerCount)
         val refused = client.storage.rejectedUploadList().single()
-        assertEquals(400, refused.serverError?.status)
+        assertEquals(409, refused.serverError?.status)
         assertEquals("The resource already exists", refused.serverError?.message)
         assertEquals(1, queuedFiles().size)
         assertNull(client.storage.from(BUCKET).cachedFile(PATH))

@@ -5,6 +5,7 @@ package io.github.nesfeder.supabase.offline.internal.mutationqueue
 import io.github.jan.supabase.auth.exception.TokenExpiredException
 import io.github.jan.supabase.exceptions.RestException
 import io.github.jan.supabase.postgrest.exception.PostgrestRestException
+import io.github.jan.supabase.storage.StorageRestException
 import io.github.nesfeder.supabase.offline.SyncFailedException
 import io.github.nesfeder.supabase.offline.SyncStopReason
 import io.github.nesfeder.supabase.offline.internal.POSTGREST_DID_NOT_RUN_CODES
@@ -133,7 +134,8 @@ internal suspend fun classifyReplayFailure(
  * the pass: no connection or no answer, a token Storage refused or that could not be refreshed, a
  * status that says the request did not finish, and any `5xx`. A refusal (another `4xx`) goes to the
  * rejected list: by then every earlier write of the user has been sent or settled, so none can be
- * the row Storage's policy reads.
+ * the row Storage's policy reads. The status is the one Storage's error body names
+ * ([storageStatusOrNull]), so a `400` whose body says `500` stays queued.
  */
 private fun classifyUploadFailure(failure: Exception, engineLogger: EngineLogger): ReplayOutcome {
     val status = failure.storageStatusOrNull()
@@ -213,14 +215,23 @@ private suspend fun classifyRowWriteFailure(
     }
 
 /**
- * What Storage answered with [this] refusal, as the rejected list keeps it: the HTTP status,
- * Storage's error name as the code when supabase-kt kept it apart from the message, and the
- * message. supabase-kt's Storage throws a `RestException` for every error answer.
+ * What Storage answered with [this] refusal, as the rejected list keeps it. supabase-kt's Storage
+ * throws a [StorageRestException] for every error answer: the status its error body names, its code
+ * (the service's error code, or its error name when it sends none) and its description. Another
+ * [RestException] keeps its status, its error name as the code when it carries a description apart
+ * from it, and the message.
  */
 private fun Throwable.storageServerErrorOrNull(): StoredServerError? {
     var current: Throwable? = this
     while (current != null) {
         when (current) {
+            // An answer whose body did not decode leaves the code and the description blank
+            is StorageRestException ->
+                return StoredServerError(
+                    status = current.statusCode,
+                    code = current.code.takeUnless(String::isBlank),
+                    message = current.description?.takeUnless(String::isBlank) ?: current.error,
+                )
             is RestException ->
                 return current.description?.let { description ->
                     StoredServerError(

@@ -4,13 +4,13 @@
 
 package io.github.nesfeder.supabase.offline.internal.storage
 
-import io.github.jan.supabase.exceptions.NotFoundRestException
+import io.github.jan.supabase.storage.StorageRestException
 import io.github.nesfeder.supabase.offline.testdoubles.FakeBucketApi
 import io.github.nesfeder.supabase.offline.testdoubles.TestStore
-import io.github.nesfeder.supabase.offline.testdoubles.forbiddenRestException
+import io.github.nesfeder.supabase.offline.testdoubles.forbiddenStorageException
 import io.github.nesfeder.supabase.offline.testdoubles.newTestBucketApi
 import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
-import io.github.nesfeder.supabase.offline.testdoubles.notFoundRestException
+import io.github.nesfeder.supabase.offline.testdoubles.notFoundStorageException
 import io.ktor.utils.io.ByteChannel
 import kotlin.random.Random
 import kotlin.test.AfterTest
@@ -41,12 +41,11 @@ import okio.SYSTEM
  * transport-failure cache fallback, object-missing eviction (byte-array and byte-channel
  * overloads), transient-auth-failure cache retention, and cancellation propagation.
  *
- * The object-missing cases construct the exception the way Supabase Storage actually surfaces a
- * deleted object — a [NotFoundRestException] carried on an **HTTP 400** whose body reports 404, so
- * its [io.github.jan.supabase.exceptions.RestException.statusCode] reads 400. That is the case only
- * the type-based branch of `indicatesServerObjectMissing` catches; a status-only `== 404` check
- * (the original plan) would miss it, so these tests pin the deviation rather than passing by
- * accident on a literal-404 response.
+ * The object-missing cases construct the exception the way hosted Supabase Storage may surface a
+ * deleted object: a [StorageRestException] carried on an **HTTP 400** whose body reports 404. Its
+ * [StorageRestException.statusCode] is the body's 404, which is what `indicatesServerObjectMissing`
+ * reads; a check of the response's own status would miss it, so these tests pin that the body's
+ * status decides rather than passing by accident on a literal-404 response.
  *
  * Backed by the real okio [FileSystem.SYSTEM] against a per-test temp directory (okio's
  * `FakeFileSystem` isn't a dependency and `java.io.tmpdir` is JVM-only), plus the in-memory
@@ -116,17 +115,16 @@ class OfflineBucketApiTest {
         assertTrue(FileSystem.SYSTEM.exists(localFile), "precondition: object cached on disk")
         assertNotNull(store.getStorageByKey(BUCKET, OBJECT_PATH), "precondition: cache row tracked")
 
-        // When the object is now missing on the server. Supabase Storage surfaces this as a
-        // NotFoundRestException carried on an HTTP 400 (body reports 404), so statusCode reads 400
-        // —
-        // only the exception TYPE marks it as object-missing, which is what this asserts.
-        val notFound = notFoundRestException()
-        assertEquals(400, notFound.statusCode, "production carrier is HTTP 400, not a literal 404")
+        // When the object is now missing on the server, as an HTTP 400 whose body reports 404:
+        // statusCode reads the body's status, which is what marks the object missing
+        val notFound = notFoundStorageException()
+        assertEquals(400, notFound.response.status.value, "the carrier is HTTP 400")
+        assertEquals(404, notFound.statusCode, "the body's status is the exception's")
         fake.onDownload = { throw notFound }
 
         // Then the failure is rethrown (cache is NOT served) and the stale cache is evicted
         val thrown =
-            assertFailsWith<NotFoundRestException> {
+            assertFailsWith<StorageRestException> {
                 offlineApi.downloadAuthenticated(OBJECT_PATH)
             }
         assertSame(notFound, thrown, "original not-found error rethrown, not swallowed")
@@ -180,7 +178,7 @@ class OfflineBucketApiTest {
 
         // When a later read fails with a transient auth error (expired token / RLS blip → 403),
         // which must NOT be mistaken for a deleted object
-        val forbidden = forbiddenRestException()
+        val forbidden = forbiddenStorageException()
         fake.onDownload = { throw forbidden }
         val served = offlineApi.downloadAuthenticated(OBJECT_PATH)
 
@@ -203,7 +201,7 @@ class OfflineBucketApiTest {
         assertTrue(FileSystem.SYSTEM.exists(localFile), "precondition: object cached on disk")
 
         // When the byte-channel download finds the object missing on the server
-        val notFound = notFoundRestException()
+        val notFound = notFoundStorageException()
         fake.onDownload = { throw notFound }
         val channel = ByteChannel(autoFlush = true)
 
@@ -211,7 +209,7 @@ class OfflineBucketApiTest {
         // because the wrapper finishes the download into a file before touching the channel) and
         // the stale cache is evicted — the byte-channel overload funnels through the same guard.
         val thrown =
-            assertFailsWith<NotFoundRestException> {
+            assertFailsWith<StorageRestException> {
                 offlineApi.downloadAuthenticated(OBJECT_PATH, channel)
             }
         assertSame(notFound, thrown, "channel overload rethrows the original not-found error")

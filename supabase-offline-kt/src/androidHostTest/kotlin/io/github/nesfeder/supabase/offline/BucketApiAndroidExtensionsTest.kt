@@ -6,11 +6,11 @@ import android.content.Context
 import android.net.Uri
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import io.github.jan.supabase.exceptions.UnauthorizedRestException
+import io.github.jan.supabase.storage.StorageRestException
 import io.github.jan.supabase.storage.storage
 import io.github.nesfeder.supabase.offline.testdoubles.FakeBucketApi
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingStorageServer
-import io.github.nesfeder.supabase.offline.testdoubles.forbiddenRestException
+import io.github.nesfeder.supabase.offline.testdoubles.forbiddenStorageException
 import io.github.nesfeder.supabase.offline.testdoubles.newTestBucketApi
 import java.io.File
 import kotlin.test.AfterTest
@@ -208,10 +208,10 @@ class BucketApiAndroidExtensionsTest {
     @Test
     fun `ensureLocalUri throws the download failure when nothing is cached`() = runTest {
         // Given
-        fakeBucket.onDownload = { throw forbiddenRestException() }
+        fakeBucket.onDownload = { throw forbiddenStorageException() }
 
         // When / Then
-        assertFailsWith<UnauthorizedRestException> {
+        assertFailsWith<StorageRestException> {
             offlineApi.ensureLocalUri("missing_uri.txt", isPublic = true)
         }
     }

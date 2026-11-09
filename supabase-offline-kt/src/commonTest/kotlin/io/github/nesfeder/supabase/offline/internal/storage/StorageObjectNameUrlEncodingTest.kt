@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.storage
 
-import io.github.jan.supabase.exceptions.NotFoundRestException
+import io.github.jan.supabase.storage.StorageRestException
 import io.github.jan.supabase.storage.storage
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingStorageServer
 import io.github.nesfeder.supabase.offline.testdoubles.TestStore
@@ -96,7 +96,11 @@ class StorageObjectNameUrlEncodingTest {
 
         // When — the object is deleted on the server
         server.objects.remove("$BUCKET/$NAME")
-        assertFailsWith<NotFoundRestException> { bucket.downloadAuthenticated(NAME) {} }
+        assertEquals(
+            404,
+            assertFailsWith<StorageRestException> { bucket.downloadAuthenticated(NAME) {} }
+                .statusCode,
+        )
 
         // Then
         assertNull(store.getStorageByKey(BUCKET, NAME))

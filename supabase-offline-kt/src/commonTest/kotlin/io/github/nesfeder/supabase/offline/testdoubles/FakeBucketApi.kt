@@ -34,7 +34,7 @@ import kotlin.time.Duration
  *
  * @property bucketId Bucket identifier the wrapper reads via `BucketApi by delegate`.
  * @property onDownload what every download, of every kind, returns or throws: a transport error, a
- *   `NotFoundRestException` or `awaitCancellation()` scripts a failure. It fails by default, so a
+ *   `StorageRestException` or `awaitCancellation()` scripts a failure. It fails by default, so a
  *   test opts into success.
  */
 internal class FakeBucketApi(

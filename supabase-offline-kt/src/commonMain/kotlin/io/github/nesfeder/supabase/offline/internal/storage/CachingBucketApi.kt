@@ -4,7 +4,6 @@
 
 package io.github.nesfeder.supabase.offline.internal.storage
 
-import io.github.jan.supabase.exceptions.NotFoundRestException
 import io.github.jan.supabase.exceptions.RestException
 import io.github.jan.supabase.network.HttpRequestOverride
 import io.github.jan.supabase.storage.BucketApi
@@ -1316,13 +1315,14 @@ internal class CachingBucketApi(
     }
 
     /**
-     * Whether this failure, or a cause, says the object is gone. That is a [NotFoundRestException]
-     * (Storage reports one on an HTTP 400), or any [RestException] or response with a literal 404.
+     * Whether this failure, or a cause, says the object is gone: a [RestException] or a response
+     * with a 404. supabase-kt's Storage throws a `StorageRestException` whose status is the one
+     * Storage's error body names, which is 404 for a missing object even when the HTTP status line
+     * says 400.
      */
     private fun Throwable.indicatesServerObjectMissing(): Boolean {
         var current: Throwable? = this
         while (current != null) {
-            if (current is NotFoundRestException) return true
             if (current is RestException && current.statusCode == HTTP_NOT_FOUND) return true
             current = current.cause
         }

@@ -2,11 +2,11 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline
 
-import io.github.jan.supabase.exceptions.UnauthorizedRestException
+import io.github.jan.supabase.storage.StorageRestException
 import io.github.jan.supabase.storage.storage
 import io.github.nesfeder.supabase.offline.testdoubles.FakeBucketApi
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingStorageServer
-import io.github.nesfeder.supabase.offline.testdoubles.forbiddenRestException
+import io.github.nesfeder.supabase.offline.testdoubles.forbiddenStorageException
 import io.github.nesfeder.supabase.offline.testdoubles.newTestBucketApi
 import kotlin.random.Random
 import kotlin.test.AfterTest
@@ -99,10 +99,10 @@ class BucketApiIosExtensionsTest {
     @Test
     fun ensureLocalPath_throws_an_auth_failure() = runTest {
         // Given
-        fakeBucket.onDownload = { throw forbiddenRestException() }
+        fakeBucket.onDownload = { throw forbiddenStorageException() }
 
         // When / Then
-        assertFailsWith<UnauthorizedRestException> { offlineApi.ensureLocalPath("missing.txt") }
+        assertFailsWith<StorageRestException> { offlineApi.ensureLocalPath("missing.txt") }
     }
 
     @Test

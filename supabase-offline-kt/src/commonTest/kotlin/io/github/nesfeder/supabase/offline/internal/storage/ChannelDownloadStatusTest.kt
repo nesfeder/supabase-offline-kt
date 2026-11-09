@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.storage
 
-import io.github.jan.supabase.exceptions.NotFoundRestException
 import io.github.jan.supabase.exceptions.RestException
+import io.github.jan.supabase.storage.StorageRestException
 import io.github.nesfeder.supabase.offline.OfflineBucketApi
 import io.github.nesfeder.supabase.offline.internal.OfflineClient
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingStorageServer
@@ -61,7 +61,7 @@ class ChannelDownloadStatusTest {
             val failure = failureOf { bucket.ensureCachedFile(PATH) }
 
             // Then — the same not-found, and nothing cached
-            assertIs<NotFoundRestException>(bytesFailure)
+            assertEquals(404, assertIs<StorageRestException>(bytesFailure).statusCode)
             assertSameFailure(bytesFailure, failure)
             assertNull(bucket.cachedFile(PATH))
         }
@@ -110,7 +110,7 @@ class ChannelDownloadStatusTest {
         val failure = failureOf { bucket.downloadAuthenticated(PATH, ByteChannel()) {} }
 
         // Then — the server's not-found, and the cached copy is gone
-        assertIs<NotFoundRestException>(failure)
+        assertEquals(404, assertIs<StorageRestException>(failure).statusCode)
         assertNull(bucket.cachedFile(PATH))
     }
 
@@ -204,7 +204,7 @@ class ChannelDownloadStatusTest {
         val ensureFailure = failureOf { bucket.ensureCachedFile(PATH) }
 
         // Then — the bytes download's not-found from both; no bytes, nothing cached
-        assertIs<NotFoundRestException>(bytesFailure)
+        assertEquals(404, assertIs<StorageRestException>(bytesFailure).statusCode)
         assertSameFailure(bytesFailure, channelFailure)
         assertSameFailure(bytesFailure, ensureFailure)
         assertEquals(0, bytesLeftIn(channel).size)

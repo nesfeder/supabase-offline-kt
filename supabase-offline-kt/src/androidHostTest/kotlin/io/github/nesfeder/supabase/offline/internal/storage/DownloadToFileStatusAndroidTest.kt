@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.storage
 
-import io.github.jan.supabase.exceptions.NotFoundRestException
 import io.github.jan.supabase.exceptions.RestException
+import io.github.jan.supabase.storage.StorageRestException
 import io.github.jan.supabase.storage.downloadAuthenticatedTo
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingStorageServer
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
@@ -46,7 +46,11 @@ class DownloadToFileStatusAndroidTest {
         val target = File(directory, "photo.jpg")
 
         // When / Then — the bytes download's not-found
-        assertFailsWith<NotFoundRestException> { bucket.downloadAuthenticatedTo(PATH, target) }
+        assertEquals(
+            404,
+            assertFailsWith<StorageRestException> { bucket.downloadAuthenticatedTo(PATH, target) }
+                .statusCode,
+        )
         assertNull(bucket.cachedFile(PATH))
     }
 

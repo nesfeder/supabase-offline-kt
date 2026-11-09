@@ -4,6 +4,7 @@ package io.github.nesfeder.supabase.offline.internal
 
 import io.github.jan.supabase.exceptions.RestException
 import io.github.jan.supabase.postgrest.exception.PostgrestRestException
+import io.github.jan.supabase.storage.StorageRestException
 import io.github.nesfeder.supabase.offline.NetworkDisabledException
 import io.github.nesfeder.supabase.offline.SyncFailedException
 import io.ktor.client.network.sockets.ConnectTimeoutException
@@ -206,10 +207,12 @@ private fun retryAfterValueOrNull(value: String, now: () -> Long): Duration? {
 }
 
 /**
- * The HTTP status of the answer this throwable or a cause carries from Storage: a [RestException]'s
- * (supabase-kt's Storage throws one for every error answer), or a [ResponseException]'s; `null`
- * when neither is in the chain. Hosted Storage answers most refusals with a `400`, its own status
- * in the body, which supabase-kt does not keep for every one.
+ * The status of the answer this throwable or a cause carries from Storage: a [RestException]'s, or
+ * a [ResponseException]'s; `null` when neither is in the chain. supabase-kt's Storage throws a
+ * [StorageRestException] for every error answer, and its status is the one Storage's error body
+ * names, not the HTTP status line: hosted Storage may answer a refusal with a `400` and its own
+ * status in the body, and the body's is the one that says what happened. An answer whose body is
+ * not Storage's error (a gateway's page, say) carries the HTTP status instead.
  */
 internal fun Throwable.storageStatusOrNull(): Int? {
     var current: Throwable? = this
@@ -225,8 +228,9 @@ internal fun Throwable.storageStatusOrNull(): Int? {
 
 /**
  * Whether Storage refused the access token rather than the upload: a `401`, or Storage's own error
- * for a token it could not verify or found expired (`InvalidJWT`, `jwt expired`), whatever status
- * carries it. A later send carries a refreshed token, so such an upload stays queued.
+ * for a token it could not verify or found expired (`InvalidJWT`, as its error or its code, or `jwt
+ * expired`), whatever status carries it. A later send carries a refreshed token, so such an upload
+ * stays queued.
  */
 internal fun Throwable.isStorageTokenRefusal(): Boolean {
     if (storageStatusOrNull() == HTTP_UNAUTHORIZED) return true
@@ -234,7 +238,9 @@ internal fun Throwable.isStorageTokenRefusal(): Boolean {
     while (current != null) {
         if (current is RestException) {
             val text = current.error + " " + current.description.orEmpty()
+            val code = (current as? StorageRestException)?.code
             return current.error.equals(STORAGE_INVALID_TOKEN_ERROR, ignoreCase = true) ||
+                code.equals(STORAGE_INVALID_TOKEN_ERROR, ignoreCase = true) ||
                 text.contains(STORAGE_EXPIRED_TOKEN_MESSAGE, ignoreCase = true)
         }
         current = current.cause

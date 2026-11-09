@@ -64,7 +64,7 @@ class BridgeErrorsTest {
 
     @Test
     fun a_storage_refusal_carries_its_status_and_never_the_url() = bridgeTest {
-        // Given — a server with no such object
+        // Given — a server with no such object, answering an HTTP 400 whose body says 404
         server.answer = {
             ScriptedAnswer.json(
                 400,
@@ -78,9 +78,9 @@ class BridgeErrorsTest {
         client.storage.download("avatars", "secret-user/photo.png", false, null, probe.completion)
         val error = probe.awaitError()
 
-        // Then
+        // Then — the status is the one Storage's body names
         assertEquals(BridgeErrorKind.HTTP, error.kind)
-        assertEquals(400, error.httpStatus)
+        assertEquals(404, error.httpStatus)
         assertFalse(error.message.contains("secret-user"))
         assertFalse(error.details.orEmpty().contains("fixture.supabase.co"))
         client.closeAndWait()
