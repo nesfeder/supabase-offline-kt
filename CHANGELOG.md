@@ -9,7 +9,7 @@ All notable changes to this project are recorded in this file. The format follow
      the heading it needs (before the first release, under any of them). A release renames
      "Unreleased" to its version and date, and starts a new one. -->
 
-## Unreleased
+## [0.4.0] - 2026-11-09
 
 ### Breaking
 
@@ -78,10 +78,6 @@ All notable changes to this project are recorded in this file. The format follow
   supabase-kt's socket when nothing but its own channels was on it. In every other case supabase-kt
   closes an empty socket after `disconnectOnEmptyChannelsAfter` (its default, 30 s) rather than at
   once.
-
-### Deprecated
-
-### Removed
 
 ### Fixed
 
