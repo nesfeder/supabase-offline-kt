@@ -81,7 +81,9 @@ public struct OfflineMutationRequestBuilder: OfflinePostgrestFilterBuilder {
     /// The write's description and body as the core reads them.
     func request() throws -> (description: String, body: String?) {
         let bodyText = try body?.get()
-        var fields = try shape.descriptionFields().merging(target.targetFields) { _, target in target }
+        // Filters sharing a column stay at the top level, where the core can queue the write
+        var fields = try shape.descriptionFields(groupsSameColumnFilters: false)
+            .merging(target.targetFields) { _, target in target }
         fields["operation"] = .string(operation.rawValue)
         fields["strategy"] = mutationStrategy.descriptionValue
         if let returning { fields["returning"] = .string(returning) }

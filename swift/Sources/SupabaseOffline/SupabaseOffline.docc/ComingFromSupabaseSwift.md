@@ -58,8 +58,8 @@ server's code, message, details and hint are in ``OfflineError/serverError``.
 See <doc:HandlingErrors>.
 
 **Some values are written differently.** A `UUID` in a row or a filter is written in lower case, a
-`Date` in UTC to the microsecond, and two conditions on one column are sent together in one `and`
-group, which PostgREST reads the same way. See <doc:OfflineBehavior>.
+`Date` in UTC to the microsecond, and a read sends two conditions on one column together in one
+`and` group, which PostgREST reads the same way. See <doc:OfflineBehavior>.
 
 ### Storage
 

@@ -178,14 +178,18 @@ internal class RpcDescription(
     }
 
     /**
-     * Refuses [arguments] on a call by GET or HEAD: supabase-kt 3.6 reads the method before the
-     * request lambda sets it, so it would send them in a body PostgREST ignores.
+     * Refuses [arguments] on a call by GET or HEAD. supabase-kt puts them in the query string, as
+     * PostgREST reads a GET's arguments, but still attaches them as a JSON body to the GET or HEAD
+     * request as well. That request has been checked against a mock engine only, never against a
+     * PostgREST server through the Darwin engine, which may refuse a body on a GET; until it has,
+     * such a call is refused rather than sent in a form nobody has seen work.
      */
     fun refuseArgumentsUnlessPost(arguments: String?) {
         if (arguments != null && method != RpcMethod.POST) {
             throw InvalidDescriptionException(
-                "A function called by ${method.name} takes no arguments: supabase-kt would send " +
-                    "them in a body the server ignores; call it by POST"
+                "A function called by ${method.name} takes no arguments here: supabase-kt would " +
+                    "send them in the query string and in a request body as well, which is not " +
+                    "yet known to work; call it by POST"
             )
         }
     }

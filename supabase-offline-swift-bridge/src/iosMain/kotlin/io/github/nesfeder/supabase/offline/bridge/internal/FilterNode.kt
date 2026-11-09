@@ -37,7 +37,7 @@ internal sealed interface FilterNode {
         }
 
         /**
-         * Whether supabase-kt 3.6 would send a value of this condition in a form the server reads
+         * Whether supabase-kt would send a value of this condition in a form the server reads
          * differently: an element of an `in` list at any level, or a single value [inGroup], that
          * holds `"` or `\` and none of `,.:()`. supabase-kt puts a backslash before each `"` and
          * `\` of such a value and quotes it only when it holds one of `,.:()`, and PostgREST reads
@@ -81,6 +81,10 @@ internal sealed interface FilterNode {
         val column: String,
         private val patterns: List<String>,
     ) : FilterNode {
+        /** Whether the list holds no pattern: `LIKE ALL` over it matches every row. */
+        val isEmpty: Boolean
+            get() = patterns.isEmpty()
+
         override fun applyTo(builder: PostgrestFilterBuilder) {
             when (kind) {
                 LIKE_ALL -> builder.likeAll(column, patterns)
@@ -147,51 +151,39 @@ internal fun readFilterNodes(
 }
 
 /**
- * Refuses a filter list supabase-kt 3.6 would quietly drop part of, so a read is never wider than
- * the caller wrote it, or would send with a value the server reads differently, so it never matches
- * other rows than written. At the top level supabase-kt sends one filter per column and keeps one
- * group per parameter; at any level a text search replaces its column's earlier filters, and an
- * `in` element or a group value holding `"` or `\` and none of `,.:()` goes out escaped but
- * unquoted ([FilterNode.Condition.hasValueReadDifferently]). The message names the column and the
- * operator, never the value.
+ * Refuses a filter list supabase-kt would quietly drop part of, so a read is never wider than the
+ * caller wrote it, or would send with a value the server reads differently, so it never matches
+ * other rows than written. At the top level supabase-kt keeps one `or` and one `and` group per
+ * parameter, a second replacing the first; at any level an `in` element or a group value holding
+ * `"` or `\` and none of `,.:()` goes out escaped but unquoted
+ * ([FilterNode.Condition.hasValueReadDifferently]). The message names the column and the operator,
+ * never the value.
+ *
+ * Several filters on one column, a text search beside them included, are not refused: supabase-kt
+ * sends every value of a parameter and PostgREST ANDs them. An empty pattern list is refused at any
+ * level, as the library refuses a Kotlin caller's: `LIKE ALL` over no pattern matches every row.
  */
 private fun refuseWhatSupabaseKtDrops(nodes: List<FilterNode>, path: String, isTopLevel: Boolean) {
-    val filteredColumns = mutableSetOf<String>()
     val groupParameters = mutableSetOf<String>()
     nodes.forEachIndexed { index, node ->
-        val column =
-            when (node) {
-                is FilterNode.Condition -> node.column
-                is FilterNode.PatternList -> node.column
-                is FilterNode.TextSearch -> node.column
-                is FilterNode.Group -> null
-            }
         when {
             node is FilterNode.Condition && node.hasValueReadDifferently(inGroup = !isTopLevel) ->
                 throw InvalidDescriptionException(
-                    "$path[$index]: a value of \"${node.operatorName}\" on \"$column\" holds a " +
-                        "quote or a backslash and none of ,.:(), which supabase-kt escapes but does " +
-                        "not quote, so the server would read the escapes as the value; only a " +
-                        "single top-level filter sends such a value as written"
+                    "$path[$index]: a value of \"${node.operatorName}\" on \"${node.column}\" " +
+                        "holds a quote or a backslash and none of ,.:(), which supabase-kt " +
+                        "escapes but does not quote, so the server would read the escapes as the " +
+                        "value; only a single top-level filter sends such a value as written"
                 )
             node is FilterNode.Group && isTopLevel && !groupParameters.add(node.parameter) ->
                 throw InvalidDescriptionException(
                     "$path[$index]: a second \"${node.parameter}\" group at the top level, of " +
                         "which supabase-kt sends only the last; put both groups in one \"and\" group"
                 )
-            column == null -> Unit
-            node is FilterNode.TextSearch && column in filteredColumns ->
+            node is FilterNode.PatternList && node.isEmpty ->
                 throw InvalidDescriptionException(
-                    "$path[$index]: a text search on \"$column\" replaces the filters before it on " +
-                        "that column; put the text search first, or the filters in an \"and\" group"
+                    "$path[$index]: the pattern list on \"${node.column}\" is empty, and LIKE ALL " +
+                        "over no pattern matches every row; give at least one pattern"
                 )
-            isTopLevel && !filteredColumns.add(column) ->
-                throw InvalidDescriptionException(
-                    "$path[$index]: a second filter on \"$column\" at the top level, which " +
-                        "supabase-kt drops (it sends one filter per column); put the filters on " +
-                        "\"$column\" in one \"and\" group"
-                )
-            else -> filteredColumns += column
         }
     }
 }

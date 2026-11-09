@@ -5,6 +5,7 @@ package io.github.nesfeder.supabase.offline.bridge
 import io.github.jan.supabase.postgrest.query.Columns
 import io.github.jan.supabase.postgrest.query.Order
 import io.github.jan.supabase.postgrest.query.filter.FilterOperator
+import io.github.jan.supabase.postgrest.query.filter.TextSearchType
 import io.github.jan.supabase.postgrest.query.request.SelectRequestBuilder
 import io.github.nesfeder.supabase.offline.ReadStrategy
 import io.github.nesfeder.supabase.offline.isFromCache
@@ -74,6 +75,30 @@ class DescriptionParityTest {
                 sl("slot", 1 to 5)
                 contains("tags", listOf("x", "y"))
                 ilikeAll("title", listOf("a%", "%b"))
+            }
+        }
+
+    @Test
+    fun same_column_filters_text_searches_and_quoted_patterns_match_their_kotlin_calls() =
+        parity(
+            description =
+                """{"v":1,"table":"notes","filters":[
+               {"kind":"filter","column":"age","operator":"gte","value":"18"},
+               {"kind":"filter","column":"age","operator":"lt","value":"65"},
+               {"kind":"filter","column":"tsv","operator":"neq","value":"x"},
+               {"kind":"textSearch","column":"tsv","query":"cat"},
+               {"kind":"likeAll","column":"body","patterns":[""," a","b{c}","NULL","d.e"]},
+               {"kind":"filter","column":"tags","operator":"ov","values":["a,b","x\"y"]}]}""",
+            table = "notes",
+            columns = Columns.ALL,
+        ) {
+            filter {
+                gte("age", 18)
+                lt("age", 65)
+                neq("tsv", "x")
+                textSearch("tsv", "cat", TextSearchType.NONE)
+                likeAll("body", listOf("", " a", "b{c}", "NULL", "d.e"))
+                ov("tags", listOf("a,b", "x\"y"))
             }
         }
 
