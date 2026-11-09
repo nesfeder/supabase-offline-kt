@@ -207,6 +207,65 @@ class RejectedMutationListTest {
         }
 
     @Test
+    fun a_malformed_array_literal_an_earlier_release_queued_is_refused_and_the_next_write_sent() =
+        runTest {
+            // Given — an UPDATE queued by a release on supabase-kt 3.6, which wrote the elements of
+            // `cs("tags", listOf("a\"b"))` raw, so its stored literal is one the server refuses
+            // as malformed, and a DELETE queued behind it
+            val malformed =
+                mutationDao.insert(
+                    MutationRow(
+                        table = TABLE,
+                        operation = MutationOperation.UPDATE.storedName,
+                        bodyJson = """{"done":true}""",
+                        filterJson =
+                            encodeFilter(
+                                FilterDescriptor(
+                                    conditions =
+                                        listOf(
+                                            FilterDescriptor.Condition("tags", "cs", """{a"b}""")
+                                        )
+                                ),
+                                Json,
+                            ),
+                        createdAtMs = 0L,
+                    )
+                )
+            mutationDao.insert(
+                MutationRow(
+                    table = TABLE,
+                    operation = MutationOperation.DELETE.storedName,
+                    bodyJson = "{}",
+                    filterJson =
+                        encodeFilter(
+                            FilterDescriptor(
+                                conditions = listOf(FilterDescriptor.Condition("id", "eq", "t1"))
+                            ),
+                            Json,
+                        ),
+                    createdAtMs = 1L,
+                )
+            )
+
+            // When
+            val report = replayer.sync()
+
+            // Then — the UPDATE is refused locally and sends nothing, and the DELETE behind it is
+            // sent as it was queued
+            val rejected = report.rejected.single()
+            assertEquals(malformed, rejected.id)
+            assertNull(rejected.serverError)
+            assertEquals("The queued filter no longer replays in full", rejected.message)
+            assertEquals(
+                listOf(malformed),
+                store.mutationQueue.rejectedList.rejections().map { it.id },
+            )
+            assertEquals(0, store.pendingMutationCount())
+            assertEquals("DELETE", server.requests.single().method)
+            assertEquals("eq.t1", server.requests.single().query["id"])
+        }
+
+    @Test
     fun an_unfiltered_update_is_rejected_without_a_request() = runTest {
         // Given — a legacy UPDATE row that carries no filter
         mutationDao.insert(
