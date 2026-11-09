@@ -92,8 +92,8 @@ public class OfflinePostgrestQueryBuilder internal constructor(private val engin
      * with the same request, and pick the row from it.
      *
      * Only a list of rows is cached. A read that asks for another shape (`single()`,
-     * `maybeSingle()` from supabase-kt 3.8, `head`, a `count` with rows or without, `csv()`,
-     * `geojson()`, `stripNulls()` or `explain()`) goes to the server under every strategy but
+     * `maybeSingle()`, `head`, a `count` with rows or without, `csv()`, `geojson()`,
+     * `stripNulls()` or `explain()`) goes to the server under every strategy but
      * [ReadStrategy.CacheOnly], is not stored, and offline fails as [ReadStrategy.NetworkOnly]
      * does; under [ReadStrategy.CacheOnly] it sends nothing and throws [CacheMissException].
      *

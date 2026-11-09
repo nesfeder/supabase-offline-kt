@@ -32,7 +32,7 @@ public sealed interface MutationStrategy {
      * and does not stay queued. Cached reads show a queued write at once.
      *
      * Some writes cannot be queued faithfully and are sent at once instead, as with [OnlineOnly]: a
-     * dry run (a write carrying `Prefer: tx=rollback`, as supabase-kt 3.8's `dryRun()` writes it)
+     * dry run (a write carrying `Prefer: tx=rollback`, as supabase-kt's `dryRun()` writes it)
      * or one whose request could not be inspected to tell whether it is one, an UPDATE or DELETE
      * whose filter the queue cannot record exactly, a write whose user cannot be read from the
      * stored session, a write to a schema other than the client's default (the queue replays to the
