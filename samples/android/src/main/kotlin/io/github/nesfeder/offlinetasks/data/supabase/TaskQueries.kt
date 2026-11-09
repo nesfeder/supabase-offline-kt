@@ -86,8 +86,9 @@ private fun PostgrestFilterBuilder.chip(filter: TaskFilter, recent: RecentWindow
 
 // --8<-- [start:same-column]
 /**
- * Made within [window]: two conditions on one column, in one `and` group. Written as two top-level
- * filters, supabase-kt would send only the first, so the library refuses them.
+ * Made within [window]: two conditions on one column, in one `and` group. Two top-level filters on
+ * the column are sent and read the same way since supabase-kt 3.9; the group keeps the pair
+ * together.
  */
 private fun PostgrestFilterBuilder.madeIn(window: RecentWindow) {
     and {
