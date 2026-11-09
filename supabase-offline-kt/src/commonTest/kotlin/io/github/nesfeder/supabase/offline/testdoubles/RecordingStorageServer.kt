@@ -32,9 +32,10 @@ import kotlinx.io.IOException
  *
  * A transformed download answers the transform's query before the original's bytes
  * (`"render?height=64&width=64:" + original`). A missing object answers HTTP 400 with a
- * `statusCode` of 404, which supabase-kt raises as a `NotFoundRestException`. A download with a
- * `Range` header answers that part of the object with HTTP 206, and a `HEAD` answers with no body,
- * as Storage does. With [answersETags] set, a whole download carries an `ETag`, and a `GET` whose
+ * `statusCode` of 404 in its body, as hosted Storage does, which supabase-kt raises as a
+ * `StorageRestException` whose `statusCode` is the body's 404. A download with a `Range` header
+ * answers that part of the object with HTTP 206, and a `HEAD` answers with no body, as Storage
+ * does. With [answersETags] set, a whole download carries an `ETag`, and a `GET` whose
  * `If-None-Match` names it is answered HTTP 304, before any `Range` is looked at, as RFC 9110
  * (13.2.2) orders the two.
  */

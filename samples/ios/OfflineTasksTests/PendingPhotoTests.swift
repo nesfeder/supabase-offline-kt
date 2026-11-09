@@ -311,7 +311,7 @@ struct PendingPhotoTests {
         let failure = await #expect(throws: SampleFailure.self) { try await test.repository.deleteTask(id: task.id) }
 
         // Then: nothing is deleted, the waiting photo and its JPEG included
-        #expect(failure == .storageRefused(status: 400, message: "new row violates row-level security policy"))
+        #expect(failure == .storageRefused(status: 403, message: "new row violates row-level security policy"))
         #expect(test.repository.pendingPhotos.photo(id: waiting.id) != nil)
         #expect(FileManager.default.fileExists(atPath: test.repository.pendingPhotos.jpegURL(ofPhoto: waiting.id).path(percentEncoded: false)))
         #expect(await test.server.rows(of: Tables.tasks).count == 1)
@@ -405,7 +405,7 @@ struct PendingPhotoTests {
         await test.server.intercept(Self.failingUploads(with: Self.policyRefusal))
         let refused = try await test.repository.filePhoto(try await PhotoEncoder.encode(jpegFixture()), forTask: task.id)
         let failed = try await test.pendingPhoto(refused.id, "the upload is refused") { $0.state != .waiting && $0.state != .uploading }
-        #expect(failed.state == .failed(reason: "Storage refused it (400): new row violates row-level security policy", isRetryable: false))
+        #expect(failed.state == .failed(reason: "Storage refused it (403): new row violates row-level security policy", isRetryable: false))
         await test.server.intercept(nil)
         // As if Storage had stored it after all, its answer lost: a file no row names.
         try await test.repository.uploadFile(of: refused, jpeg: try await test.repository.pendingPhotos.jpeg(of: refused))

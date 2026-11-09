@@ -429,13 +429,19 @@ final class TaskRepository {
         // --8<-- [end:delete-task]
     }
 
-    /// Deletes the done tasks made last week. Online, their photos' files, then their photos waiting
-    /// to upload, then their photo rows go first, as Delete task does; offline, the tasks' grouped
-    /// delete is refused before anything is deleted.
-    func deleteLastWeeksDoneTasks(now: Date = .now) async throws {
+    /// Deletes the done tasks made last week, as Delete task does for one: their photos' files
+    /// (only online: Storage writes are never queued, so offline they stay in the bucket), then
+    /// their photos waiting to upload, then their photo rows, then the tasks. Online the tasks are
+    /// the server's; offline they are the ones in the task list this device holds, and the deletes
+    /// wait in the queue.
+    ///
+    /// - Returns: The tasks' delete: applied, or queued when the server cannot be reached.
+    @discardableResult
+    func deleteLastWeeksDoneTasks(now: Date = .now) async throws -> MutationOutcome<Void> {
         let lastWeek = TaskQuery.week(before: now)
+        let taskIDs: [String]
         if canReachNetwork {
-            let taskIDs = try await client.from(Tables.tasks)
+            taskIDs = try await client.from(Tables.tasks)
                 .select("id", readStrategy: .networkOnly)
                 .is("done", value: true)
                 .gte("created_at", value: lastWeek.start)
@@ -443,27 +449,53 @@ final class TaskRepository {
                 .execute([RowKey].self)
                 .value
                 .map(\.id)
-            guard !taskIDs.isEmpty else { return }
-            try await deleteFiles(photoPathsOnServer { $0.in("task_id", values: taskIDs) })
+            if !taskIDs.isEmpty {
+                try await deleteFiles(photoPathsOnServer { $0.in("task_id", values: taskIDs) })
+            }
+        } else {
+            taskIDs = try await cachedTaskIDs { $0.done && lastWeek.start <= $0.createdAt && $0.createdAt < lastWeek.end }
+        }
+        if !taskIDs.isEmpty {
             for taskID in taskIDs { try pendingPhotos.removePhotos(ofTask: taskID) }
+            // The server's cascade would delete the photo rows, but the cache never sees a cascade.
             try await write(taskTitle: nil) {
                 try await client.from(Tables.taskPhotos).delete().in("task_id", values: taskIDs).execute()
             }
         }
-        try await deleteDoneTasks(createdWithin: lastWeek)
+        return try await deleteDoneTasks(createdWithin: lastWeek)
+    }
+
+    /// The ids of the tasks `isIncluded` picks from the task list this device holds, without asking
+    /// the server; none when the device holds no list.
+    private func cachedTaskIDs(where isIncluded: (TaskRow) -> Bool) async throws -> [String] {
+        do {
+            return try await client.from(Tables.tasks)
+                .select(readStrategy: .cacheOnly)
+                .order("created_at", ascending: false)
+                .execute([TaskRow].self)
+                .value
+                .filter(isIncluded)
+                .map(\.id)
+        } catch OfflineError.cacheMiss {
+            return []
+        }
     }
 
     // --8<-- [start:same-column-write]
     /// Deletes the done tasks created within `window`: two conditions on `created_at`, which the
-    /// client sends together in one group. The queue cannot record a group, so the delete is sent
-    /// at once rather than queued, and offline it fails with `mutationNotQueueable`.
-    func deleteDoneTasks(createdWithin window: DateInterval) async throws {
-        try await client.from(Tables.tasks)
-            .delete()
-            .is("done", value: true)
-            .gte("created_at", value: window.start)
-            .lt("created_at", value: window.end)
-            .execute()
+    /// queue records like any other filters. Online the delete is sent at once; offline it waits
+    /// in the queue, and the device's list keeps the tasks until it has synced and the list is
+    /// fetched again, since the cache cannot evaluate `gte` and `lt`.
+    @discardableResult
+    func deleteDoneTasks(createdWithin window: DateInterval) async throws -> MutationOutcome<Void> {
+        try await write(taskTitle: nil) {
+            try await client.from(Tables.tasks)
+                .delete()
+                .is("done", value: true)
+                .gte("created_at", value: window.start)
+                .lt("created_at", value: window.end)
+                .execute()
+        }
     }
     // --8<-- [end:same-column-write]
 

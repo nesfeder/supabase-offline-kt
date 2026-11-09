@@ -15,8 +15,8 @@ import kotlinx.serialization.Serializable
  * cache key is only a fingerprint of the query and is never read back.
  *
  * @property select the `select` list as sent; `*` when the request names none.
- * @property conditions the filters on plain columns: each column's first value, as sent, the only
- *   one supabase-kt sends.
+ * @property conditions the filters on plain columns, one per value as sent: supabase-kt sends every
+ *   value of a column and the server ANDs them.
  * @property hasOtherFilters whether the request also filters in a way kept out of [conditions]: a
  *   logical group, a referenced table's column, a JSON path or a cast.
  * @property referencedTableOptions what the request asks of the tables it embeds (a limit, an
@@ -46,24 +46,26 @@ internal fun queryShapeOf(columns: Columns, builder: SelectRequestBuilder): Quer
     builder.params.forEach { (name, values) ->
         // A referenced table's parameter: `comments.limit`, `comments.order`, `comments.author`
         if ('.' in name && name !in LOGICAL_GROUPS)
-            values.firstOrNull()?.let { value -> referencedTableOptions += "$name=$value" }
+            values.forEach { value -> referencedTableOptions += "$name=$value" }
         if (
             name in WINDOW_AND_PROJECTION_PARAMETERS ||
                 name.substringAfterLast('.') in WINDOW_AND_PROJECTION_PARAMETERS
         )
             return@forEach
-        val value = values.firstOrNull() ?: return@forEach
-        val separator = value.indexOf('.')
-        if (name in LOGICAL_GROUPS || !isPlainColumn(name) || separator <= 0) {
-            hasOtherFilters = true
-            return@forEach
+        // Every value is sent and the server ANDs them, so each is a condition of its own
+        values.forEach { value ->
+            val separator = value.indexOf('.')
+            if (name in LOGICAL_GROUPS || !isPlainColumn(name) || separator <= 0) {
+                hasOtherFilters = true
+                return@forEach
+            }
+            conditions +=
+                FilterDescriptor.Condition(
+                    column = name,
+                    operatorId = value.substring(0, separator),
+                    value = value.substring(separator + 1),
+                )
         }
-        conditions +=
-            FilterDescriptor.Condition(
-                column = name,
-                operatorId = value.substring(0, separator),
-                value = value.substring(separator + 1),
-            )
     }
     return QueryShape(
         select = columns.value,

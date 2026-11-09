@@ -3,7 +3,6 @@
 package io.github.nesfeder.supabase.offline.docs
 
 import io.github.jan.supabase.SupabaseClient
-import io.github.jan.supabase.annotations.SupabaseExperimental
 import io.github.jan.supabase.auth.auth
 import io.github.jan.supabase.exceptions.HttpRequestException
 import io.github.nesfeder.supabase.offline.MutationOutcome
@@ -29,13 +28,12 @@ internal suspend fun signOutForGood(supabase: SupabaseClient) {
     // --8<-- [end:sign-out]
 }
 
-/** A dry run on supabase-kt 3.6, which has no `dryRun()`. */
-@OptIn(SupabaseExperimental::class)
+/** A dry run, written with supabase-kt's `dryRun()`. */
 internal suspend fun dryRunInsert(supabase: SupabaseClient, todo: Todo): MutationOutcome {
     // --8<-- [start:dry-run]
     val outcome =
         supabase.offline.from("todos").insert(todo) {
-            headers.append("Prefer", "tx=rollback") // sent at once, never queued
+            dryRun() // sent at once, never queued
         }
     // --8<-- [end:dry-run]
     return outcome

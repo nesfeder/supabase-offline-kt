@@ -63,7 +63,7 @@ class OfflineMutationReplayWireTest {
             listOf(
                 write(
                     method = "POST",
-                    query = mapOf("columns" to "id,title"),
+                    query = mapOf("columns" to "\"id\",\"title\""),
                     prefer = "return=minimal",
                     body = """[{"id":1,"title":"Buy milk"}]""",
                 )
@@ -110,7 +110,7 @@ class OfflineMutationReplayWireTest {
                     query =
                         mapOf(
                             "on_conflict" to "list_id,user_id",
-                            "columns" to "list_id,user_id,role",
+                            "columns" to "\"list_id\",\"user_id\",\"role\"",
                         ),
                     prefer = "resolution=merge-duplicates,return=minimal",
                     body = """[{"list_id":"l-1","user_id":"u-2","role":"editor"}]""",

@@ -236,7 +236,8 @@ upload, its response wrapped in `Applied`.
   leaves the refusal standing, on the rejected list, and its cached copy is never the device's
   bytes.
 - **Refusals**: an upload Storage refuses for good moves to the rejected list with its bytes, as
-  `storage.rejectedUploads()` lists it, with Storage's status, error name (`code`) and message, and
+  `storage.rejectedUploads()` lists it, with the status Storage's error body names, its error code
+  (`code`, such as `NoSuchKey`) and message, and
   the file's path on the device as `localPath` while it is whole;
   `retryRejectedMutation(id)` queues it again at the end of the queue, and
   `dismissRejectedMutation(id)` drops it with its file. A refused upload does not hold the writes
@@ -432,12 +433,13 @@ From the samples: [PendingPhotoQueue.swift](https://github.com/nesfeder/supabase
 
 An object path that cannot be mapped safely onto a file (a leading `/`, an empty, `.` or `..`
 segment, a `\`, a control character) still downloads and writes, uncached, and `ensureCachedFile`
-refuses it with `IllegalArgumentException`. So does a name holding `%`, `?` or `#` on supabase-kt
-3.6, which puts the name in the URL as written: a `?` or `#` can fetch or overwrite a different
-object (`x?y.png` fetches `x`, and an upload of it writes `x`), and a `%` that does not begin a
-percent-escape (`100%.png`) cannot be put in a URL at all, so every call naming it throws
-`IllegalArgumentException` before anything is sent. Keep these characters out of object names. A
-segment that starts with a letter and a colon, like `u:42`, is cached, under a hash of the name
+refuses it with `IllegalArgumentException`. A name holding `%`, `?` or `#` is put in the URL
+percent-encoded, so it names its own object and is cached like any other. A name holding a lone
+UTF-16 surrogate, half of a pair with the other half missing, is not a valid Unicode string and
+cannot be sent the same way on every platform: every call that sends it, in a URL or in a request
+body, throws `IllegalArgumentException` before anything is sent, and it is never cached. An upload
+an earlier version queued under such a name goes to the rejected list when it comes up for
+sending. A segment that starts with a letter and a colon, like `u:42`, is cached, under a hash of the name
 ([On-device data](../reference/on-device-data.md#the-files)).
 
 ## Whose files they are

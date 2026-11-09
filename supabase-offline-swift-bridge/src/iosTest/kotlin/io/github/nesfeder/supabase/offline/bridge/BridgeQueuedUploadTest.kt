@@ -151,10 +151,10 @@ class BridgeQueuedUploadTest {
         val listed = CompletionProbe<List<BridgeRejectedUpload>>()
         client.storage.rejectedUploads(listed.completion)
 
-        // Then
+        // Then — the status is the one Storage's error body names, not the HTTP 400 it came on
         val refused = assertNotNull(listed.awaitValue()).single()
         assertEquals("a.png", refused.path)
-        assertEquals(400, refused.serverError?.status)
+        assertEquals(403, refused.serverError?.status)
         assertTrue(refused.isRetryable)
         assertNotNull(refused.localPath)
         client.closeAndWait()

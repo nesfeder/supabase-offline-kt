@@ -123,17 +123,43 @@ struct FilterDescriptionTests {
         ])
     }
 
-    @Test func aTextSearchGoesFirstInItsColumnsGroup() throws {
+    @Test func aTextSearchKeepsItsPlaceInItsColumnsGroup() throws {
         // When
         let filters = try filters { $0.neq("tsv", value: "x").textSearch("tsv", query: "cat", config: "english") }
 
-        // Then
+        // Then: sent beside the filter before it, which a row must meet too
         #expect(filters == [
             ["kind": "and", "filters": [
-                ["kind": "textSearch", "column": "tsv", "query": "cat", "config": "english"],
                 ["kind": "filter", "column": "tsv", "operator": "neq", "value": "x"],
+                ["kind": "textSearch", "column": "tsv", "query": "cat", "config": "english"],
             ]],
         ])
+    }
+
+    @Test func anUpdateOrADeleteKeepsFiltersOnOneColumnAtTheTopLevel() throws {
+        // When: the filters a read would move into one and group, so the core can queue the write
+        let delete = try client.from("todos").delete().gte("age", value: 18).lt("age", value: 65)
+            .textSearch("tsv", query: "cat, dog", config: "english").neq("tsv", value: "x").or("a.eq.1").or("b.eq.2")
+            .request()
+        let update = try client.from("todos").update(["done": true]).gte("age", value: 18).lt("age", value: 65)
+            .request()
+
+        // Then: one value each at the top level; two or groups still share one and group
+        let sameColumn: OfflineJSON = [
+            ["kind": "filter", "column": "age", "operator": "gte", "value": "18"],
+            ["kind": "filter", "column": "age", "operator": "lt", "value": "65"],
+        ]
+        #expect(try descriptionFilters(delete.description) == [
+            ["kind": "filter", "column": "age", "operator": "gte", "value": "18"],
+            ["kind": "filter", "column": "age", "operator": "lt", "value": "65"],
+            ["kind": "textSearch", "column": "tsv", "query": "cat, dog", "config": "english"],
+            ["kind": "filter", "column": "tsv", "operator": "neq", "value": "x"],
+            ["kind": "and", "filters": [
+                ["kind": "or", "filters": [["kind": "filter", "column": "a", "operator": "eq", "value": "1"]]],
+                ["kind": "or", "filters": [["kind": "filter", "column": "b", "operator": "eq", "value": "2"]]],
+            ]],
+        ])
+        #expect(try descriptionFilters(update.description) == sameColumn)
     }
 
     @Test func aChainWithNothingToRearrangeIsWrittenInCallOrder() throws {
@@ -202,15 +228,19 @@ struct FilterDescriptionTests {
         #expect(error?.code == .invalidRequest, "\(chain)")
     }
 
-    @Test func whatNoArrangementCanSendFailsAsAnInvalidRequest() {
-        // Two text searches on one column: the second would replace the first
+    @Test func twoTextSearchesOnOneColumnAreBothSent() throws {
+        // When
         let twoSearches = client.from("notes").select()
             .textSearch("tsv", query: "cat", config: "english").textSearch("tsv", query: "dog", config: "english")
-        #expect(TopLevelFilters.refusal(of: [.group(kind: .or, children: [], isNegated: false, referencedTable: nil)]) != nil)
 
-        // Then
-        let error = #expect(throws: OfflineError.self) { try twoSearches.descriptionText() }
-        #expect(error?.code == .invalidRequest)
+        // Then: a row must match both
+        #expect(try descriptionFilters(twoSearches.descriptionText()) == [
+            ["kind": "and", "filters": [
+                ["kind": "textSearch", "column": "tsv", "query": "cat", "config": "english"],
+                ["kind": "textSearch", "column": "tsv", "query": "dog", "config": "english"],
+            ]],
+        ])
+        #expect(TopLevelFilters.refusal(of: [.group(kind: .or, children: [], isNegated: false, referencedTable: nil)]) != nil)
     }
 
     @Test func aFilterTextRefusalFailsTheRequestWithItsReason() {

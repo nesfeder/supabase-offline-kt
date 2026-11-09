@@ -248,9 +248,12 @@ writes that can be queued are queued, passes send nothing, and a Storage downloa
 the file cache. A request that must reach the server (a `NetworkOnly` read, an `OnlineOnly` write,
 an `rpc`, any Storage call but a download) throws `NetworkDisabledException`, a connectivity
 failure. A request already on the wire still answers, and so does a resumable upload created or
-paused while access was on. `syncStatus.value.network` reads `DISABLED` as soon as
-`disableNetwork()` returns; a flow you derive from `syncStatus` catches up a moment later, so wait
-for the value you expect on it.
+paused while access was on. The Realtime channels of the named tables are left, and supabase-kt's
+socket is closed when nothing else is on it; a socket that also holds a channel of your app's own,
+or one your app keeps with `disconnectOnNoSubscriptions = false`, stays open and keeps sending
+heartbeats ([Applying Realtime events](realtime.md#the-lifecycle)). `syncStatus.value.network` reads
+`DISABLED` as soon as `disableNetwork()` returns; a flow you derive from `syncStatus` catches up a
+moment later, so wait for the value you expect on it.
 
 ## Background work
 

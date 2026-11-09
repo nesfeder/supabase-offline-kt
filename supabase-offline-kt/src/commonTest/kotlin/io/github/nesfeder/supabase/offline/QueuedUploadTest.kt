@@ -283,7 +283,7 @@ class QueuedUploadTest {
         assertEquals(listOf(refused), client.storage.rejectedUploads().first())
         assertEquals(listOf(refused), client.storage.rejectedUploadList())
         assertEquals(emptyList(), client.rejectedMutationList())
-        assertEquals(400, refused.serverError?.status)
+        assertEquals(403, refused.serverError?.status)
         assertEquals("refused by the test", refused.message)
         assertTrue(refused.isRetryable)
         assertEquals(1, queuedFiles().size)

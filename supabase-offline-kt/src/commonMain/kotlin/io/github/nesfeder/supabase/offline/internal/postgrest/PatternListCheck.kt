@@ -8,21 +8,25 @@ import io.github.jan.supabase.annotations.SupabaseExperimental
 import io.github.jan.supabase.postgrest.query.PostgrestRequestBuilder
 
 /**
- * Refuses a pattern list the server would read as another list, at the top level or in a group.
- * That is an empty list, or a pattern that is empty, `NULL`, edged with white space or holding a
- * brace: supabase-kt quotes a pattern only when it holds one of `,.:()`, and `LIKE ALL` over no
- * pattern matches every row.
+ * Refuses an empty pattern list, at the top level or in a group. supabase-kt writes it as `{}`, and
+ * `LIKE ALL` over no pattern matches every row, so `likeAll("title", emptyList())` would read, or
+ * queue a write against, the whole table. `likeAny` and `ilikeAny` over no pattern match nothing,
+ * so only the `ALL` forms need the refusal; it covers all four on purpose, since a list built at
+ * run time that comes out empty is almost certainly not what the app meant, and one rule is easier
+ * to state than two.
  *
- * @throws IllegalArgumentException naming the column and never a pattern.
+ * A pattern itself is read as written: supabase-kt quotes one that is empty, `NULL`, edged with
+ * white space or holds one of `, { } " \`, which is how Postgres reads an array literal.
+ *
+ * @throws IllegalArgumentException naming the column.
  */
 internal fun requireReadablePatternLists(builder: PostgrestRequestBuilder) {
     builder.params.forEach { (key, values) ->
-        val column = values.firstNotNullOfOrNull { value -> misreadPatternList(key, value) }
+        val column = values.firstNotNullOfOrNull { value -> emptyPatternList(key, value) }
         if (column != null) {
             throw IllegalArgumentException(
-                "a pattern list on `$column` is empty, or holds a pattern that is empty, NULL, " +
-                    "edged with white space or holds a brace, which goes out unquoted, so the " +
-                    "server would read another list; use single `like` or `ilike` filters"
+                "a pattern list on `$column` is empty, and `LIKE ALL` over no pattern matches " +
+                    "every row; pass at least one pattern, or leave the filter out"
             )
         }
     }
@@ -33,15 +37,13 @@ private val PATTERN_LIST_OPERATORS =
     listOf("like(all).{", "like(any).{", "ilike(all).{", "ilike(any).{")
 
 /**
- * The column of the first misread pattern list in parameter [key]'s [value], or `null`. A top-level
- * filter's value is sent as written, so only a group's value is read for lists inside it.
+ * The column of the first empty pattern list in parameter [key]'s [value], or `null`. A top-level
+ * filter's value is the list alone; a group's value is walked for the conditions inside it, past
+ * quoted text and the patterns of every list that is not empty.
  */
-private fun misreadPatternList(key: String, value: String): String? {
+private fun emptyPatternList(key: String, value: String): String? {
     if (!value.startsWith('(')) {
-        val operator = PATTERN_LIST_OPERATORS.firstOrNull { value.startsWith(it) } ?: return null
-        return key.takeIf {
-            endOfReadablePatternList(value, operator.length, isGroup = false) == null
-        }
+        return key.takeIf { PATTERN_LIST_OPERATORS.any { operator -> value == "$operator}" } }
     }
     var index = 0
     var conditionStart = 0
@@ -52,50 +54,35 @@ private fun misreadPatternList(key: String, value: String): String? {
             value[index] == '\\' -> index += 2
             value[index] == '(' || value[index] == ',' -> conditionStart = ++index
             operator == null || value[index - 1] != '.' -> index++
-            else ->
-                index =
-                    endOfReadablePatternList(value, index + operator.length, isGroup = true)
-                        ?: return value.substring(conditionStart, index - 1)
+            else -> {
+                val patterns = index + operator.length
+                val next = patterns + 1
+                val closesEmpty =
+                    value.startsWith("}", patterns) &&
+                        (next == value.length || value[next] == ')' || value[next] == ',')
+                if (closesEmpty) return value.substring(conditionStart, index - 1)
+                index = endOfPatterns(value, patterns)
+            }
         }
     }
     return null
 }
 
-/** Where the list whose patterns start at [start] ends, or `null` when it would be misread. */
-private fun endOfReadablePatternList(value: String, start: Int, isGroup: Boolean): Int? {
+/**
+ * The index just past the `}` closing the patterns that start at [start], whose quoted patterns may
+ * hold any character and whose backslashes escape the next one.
+ */
+private fun endOfPatterns(value: String, start: Int): Int {
     var index = start
-    while (index < value.length) {
-        if (value[index] == '"') {
-            index = endOfQuoted(value, index)
-        } else {
-            val patternStart = index
-            while (index < value.length && value[index] != ',' && value[index] != '}') {
-                if (value[index] == '{') return null
-                index += if (value[index] == '\\') 2 else 1
+    while (index < value.length && value[index] != '}') {
+        index =
+            when (value[index]) {
+                '"' -> endOfQuoted(value, index)
+                '\\' -> index + 2
+                else -> index + 1
             }
-            val pattern = value.substring(patternStart, minOf(index, value.length))
-            val isMisread = pattern.isEmpty() || pattern.equals("NULL", ignoreCase = true)
-            if (isMisread || pattern.first().isWhitespace() || pattern.last().isWhitespace()) {
-                return null
-            }
-        }
-        if (index >= value.length || value[index] != ',') break
-        index++
     }
-    // The list must close here and end its condition: anything else means a pattern held a `}`
-    if (index >= value.length || value[index] != '}') return null
-    val next = index + 1
-    val closesCondition =
-        next == value.length ||
-            (isGroup && value[next] == ')') ||
-            (isGroup && value[next] == ',' && startsCondition(value, next + 1))
-    return if (closesCondition) next else null
-}
-
-/** Whether a group condition (`column.` or `or(`) starts at [start], not a pattern's remnant. */
-private fun startsCondition(value: String, start: Int): Boolean {
-    val stop = value.indexOfAny(charArrayOf('.', '(', ',', ')', '{', '}', '"', '\\'), start)
-    return stop > start && (value[stop] == '.' || value[stop] == '(')
+    return index + 1
 }
 
 /** The index just past the double-quoted text opening at [start], skipping escaped characters. */

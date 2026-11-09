@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.storage
 
-import io.github.jan.supabase.exceptions.NotFoundRestException
 import io.github.jan.supabase.exceptions.RestException
+import io.github.jan.supabase.storage.StorageRestException
 import io.github.nesfeder.supabase.offline.OfflineBucketApi
 import io.github.nesfeder.supabase.offline.internal.OfflineClient
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingStorageServer
@@ -61,7 +61,7 @@ class ChannelDownloadStatusTest {
             val failure = failureOf { bucket.ensureCachedFile(PATH) }
 
             // Then — the same not-found, and nothing cached
-            assertIs<NotFoundRestException>(bytesFailure)
+            assertEquals(404, assertIs<StorageRestException>(bytesFailure).statusCode)
             assertSameFailure(bytesFailure, failure)
             assertNull(bucket.cachedFile(PATH))
         }
@@ -110,7 +110,7 @@ class ChannelDownloadStatusTest {
         val failure = failureOf { bucket.downloadAuthenticated(PATH, ByteChannel()) {} }
 
         // Then — the server's not-found, and the cached copy is gone
-        assertIs<NotFoundRestException>(failure)
+        assertEquals(404, assertIs<StorageRestException>(failure).statusCode)
         assertNull(bucket.cachedFile(PATH))
     }
 
@@ -154,16 +154,16 @@ class ChannelDownloadStatusTest {
     }
 
     @Test
-    fun a_channel_download_of_a_name_sent_unencoded_still_checks_the_status() = runTest {
-        // Given — a stored object Storage refuses to serve, under a name supabase-kt before 3.8
-        // puts in the URL as written, so it is downloaded but never cached
-        server.objects["$BUCKET/$NAME_SENT_UNENCODED"] = CONTENT
+    fun a_channel_download_of_an_uncacheable_name_still_checks_the_status() = runTest {
+        // Given — a stored object Storage refuses to serve, under a name holding a control
+        // character, which the cache never maps onto a file, so it is downloaded but never cached
+        server.objects["$BUCKET/$UNCACHEABLE_NAME"] = CONTENT
         server.downloadRefusal = HttpStatusCode.Forbidden
-        val bytesFailure = failureOf { bucket.downloadAuthenticated(NAME_SENT_UNENCODED) {} }
+        val bytesFailure = failureOf { bucket.downloadAuthenticated(UNCACHEABLE_NAME) {} }
         val channel = ByteChannel(autoFlush = true)
 
         // When — the app downloads it into a channel
-        val failure = failureOf { bucket.downloadAuthenticated(NAME_SENT_UNENCODED, channel) {} }
+        val failure = failureOf { bucket.downloadAuthenticated(UNCACHEABLE_NAME, channel) {} }
 
         // Then — the bytes download's failure, and no bytes
         assertSameFailure(bytesFailure, failure)
@@ -204,7 +204,7 @@ class ChannelDownloadStatusTest {
         val ensureFailure = failureOf { bucket.ensureCachedFile(PATH) }
 
         // Then — the bytes download's not-found from both; no bytes, nothing cached
-        assertIs<NotFoundRestException>(bytesFailure)
+        assertEquals(404, assertIs<StorageRestException>(bytesFailure).statusCode)
         assertSameFailure(bytesFailure, channelFailure)
         assertSameFailure(bytesFailure, ensureFailure)
         assertEquals(0, bytesLeftIn(channel).size)
@@ -257,7 +257,7 @@ class ChannelDownloadStatusTest {
     private companion object {
         const val BUCKET = "photos"
         const val PATH = "u/photo.jpg"
-        const val NAME_SENT_UNENCODED = "u/photo?1.jpg"
+        const val UNCACHEABLE_NAME = "u/photo\u0001.jpg"
         const val REDIRECT_TARGET = "objects/real-photo.jpg"
         val CONTENT = "the photo's bytes".encodeToByteArray()
     }

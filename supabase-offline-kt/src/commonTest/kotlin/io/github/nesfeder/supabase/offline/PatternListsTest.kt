@@ -20,11 +20,12 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 
 /**
- * A pattern list (`likeAll`, `likeAny`, `ilikeAll`, `ilikeAny`) the server would read as another
- * list is refused before anything is sent, queued or read from the cache: an empty list, or a
- * pattern that is empty, `NULL` in any case, edged with white space or holding a brace, at the top
- * level or inside a group, for reads and writes, online and offline. supabase-kt quotes a pattern
- * only when it holds one of `,.:()`, and `LIKE ALL` over no pattern matches every row.
+ * An empty pattern list (`likeAll`, `likeAny`, `ilikeAll`, `ilikeAny`) is refused before anything
+ * is sent, queued or read from the cache, at the top level or inside a group, for reads and writes,
+ * online and offline: supabase-kt writes it as `{}`, and `LIKE ALL` over no pattern matches every
+ * row. Every other pattern list is sent as supabase-kt writes it, which is how Postgres reads it: a
+ * pattern that is empty, `NULL` in any case, edged with white space or holding one of `, { } " \`
+ * goes out quoted.
  */
 class PatternListsTest {
 
@@ -113,45 +114,68 @@ class PatternListsTest {
         }
     }
 
-    @Test
-    fun an_empty_pattern_is_refused_and_nothing_is_sent_or_queued() = runTest {
-        val patterns = listOf("%q7%", "")
-        placements(patterns).forEach { filter -> assertRefusedSendingNothing(patterns, filter) }
-    }
-
-    @Test
-    fun a_null_pattern_in_any_case_is_refused_and_nothing_is_sent_or_queued() = runTest {
-        listOf("nUlL", "null").forEach { pattern ->
-            placements(listOf(pattern)).forEach { filter ->
-                assertRefusedSendingNothing(listOf(pattern), filter)
+    /**
+     * A read and a delete with [patterns] under `likeAll`, and a read with them under `likeAny` in
+     * an `or` group, are each sent once, carrying the list as [expected], online.
+     */
+    private suspend fun assertSentAs(patterns: List<String>, expected: String) {
+        server.requests.clear()
+        val client = newTestOfflineClient(supabase = server.supabaseClient())
+        try {
+            val table = client.from(TABLE)
+            table.select(readStrategy = ReadStrategy.NetworkOnly) {
+                filter { likeAll(COLUMN, patterns) }
             }
-        }
-    }
-
-    @Test
-    fun a_pattern_edged_with_white_space_is_refused_and_nothing_is_sent_or_queued() = runTest {
-        listOf(" ", " q7%", "%q7\t").forEach { pattern ->
-            placements(listOf(pattern)).forEach { filter ->
-                assertRefusedSendingNothing(listOf(pattern), filter)
+            val deleted =
+                table.delete(MutationStrategy.OnlineOnly) { filter { likeAll(COLUMN, patterns) } }
+            table.select(readStrategy = ReadStrategy.NetworkOnly) {
+                filter { or { likeAny(COLUMN, patterns) } }
             }
+
+            assertIs<MutationOutcome.Applied>(deleted)
+            assertEquals(
+                listOf("like(all).$expected", "like(all).$expected", null),
+                server.requests.map { it.query[COLUMN] },
+            )
+            assertEquals("($COLUMN.like(any).$expected)", server.requests[2].query["or"])
+        } finally {
+            client.close()
         }
     }
 
     @Test
-    fun a_pattern_holding_a_brace_is_refused_and_nothing_is_sent_or_queued() = runTest {
-        listOf(listOf("q7{"), listOf("}"), listOf("q7}", "z9"), listOf("z9", "q7}w")).forEach {
-            patterns ->
-            placements(patterns).forEach { filter -> assertRefusedSendingNothing(patterns, filter) }
-        }
+    fun an_empty_pattern_is_sent_quoted_as_postgres_reads_it() = runTest {
+        assertSentAs(listOf("%q7%", ""), """{%q7%,""}""")
+        assertSentAs(listOf(""), """{""}""")
     }
 
     @Test
-    fun plain_and_quoted_pattern_lists_are_sent_as_before() = runTest {
+    fun a_null_pattern_in_any_case_is_sent_quoted_as_the_string_postgres_reads() = runTest {
+        assertSentAs(listOf("nUlL"), """{"nUlL"}""")
+        assertSentAs(listOf("NULL"), """{"NULL"}""")
+    }
+
+    @Test
+    fun a_pattern_edged_with_white_space_is_sent_quoted_as_postgres_reads_it() = runTest {
+        assertSentAs(listOf(" "), """{" "}""")
+        assertSentAs(listOf(" q7%", "%q7\t"), "{\" q7%\",\"%q7\t\"}")
+    }
+
+    @Test
+    fun a_pattern_holding_a_brace_is_sent_quoted_as_postgres_reads_it() = runTest {
+        assertSentAs(listOf("q7{"), """{"q7{"}""")
+        assertSentAs(listOf("z9", "q7}w"), """{z9,"q7}w"}""")
+        assertSentAs(listOf("b{c}"), """{"b{c}"}""")
+    }
+
+    @Test
+    fun plain_and_quoted_pattern_lists_are_sent_as_written() = runTest {
         // Given
         val client = newTestOfflineClient(supabase = server.supabaseClient())
         val table = client.from(TABLE)
 
-        // When — patterns holding one of ,.:() go out quoted, which the server reads as written
+        // When — a pattern edged with white space or holding a brace goes out quoted, one holding
+        // only `.:()` bare, and the server reads each as written
         table.select(readStrategy = ReadStrategy.NetworkOnly) {
             filter { likeAll(COLUMN, listOf("%a%", "b_c")) }
         }
@@ -175,7 +199,7 @@ class PatternListsTest {
         assertEquals(
             listOf(
                 "like(all).{%a%,b_c}",
-                """ilike(any).{%x%," a.","NULL:","{b,c}"}""",
+                """ilike(any).{%x%," a.",NULL:,"{b,c}"}""",
                 null,
                 null,
             ),

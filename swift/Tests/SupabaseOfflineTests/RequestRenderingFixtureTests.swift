@@ -292,12 +292,31 @@ struct RequestRenderingFixtureTests {
         "two or groups at the top level are refused": .notExpressible(
             "the chain sends two or groups in one and group: see \"two or groups nested in one and group\""
         ),
-        "two filters on one column at the top level are refused": .notExpressible(
-            "the chain sends them in one and group: see \"two filters on one column in an and group\""
-        ),
-        "a text search after a filter on its column is refused": .notExpressible(
-            "the chain sends a text search with a configuration ahead of its column's other filters"
-        ),
+        "two filters on one column at the top level are both sent": .chain {
+            try await $0.from("people").delete().gte("age", value: 18).lt("age", value: 65).execute()
+        },
+        "a text search after a filter on its column is sent beside it": .chain {
+            try await $0.from("notes").delete().neq("tsv", value: "x").fts("tsv", query: "cat").execute()
+        },
+        "a text search with a configuration after a filter on its column is sent beside it": .chain {
+            try await $0.from("notes").select(readStrategy: .networkOnly).neq("body", value: "x")
+                .textSearch("body", query: "dog", config: "english", type: .plain).execute()
+        },
+        "an empty pattern list is refused": .chain {
+            try await $0.from("notes").select().likeAllOf("body", patterns: [String]()).execute()
+        },
+        "an empty pattern list in a group is refused": .chain {
+            try await $0.from("notes").delete().or("done.eq.true,body.ilike(any).{}").execute()
+        },
+        "patterns Postgres would read as another list go out quoted": .chain {
+            try await $0.from("notes").select(readStrategy: .networkOnly)
+                .likeAllOf("body", patterns: ["", "NULL", " a", "b{c}", "d,e", "f\"g", "h\\i"])
+                .or(#"title.ilike(any).{a.b,c:d,(e),"null"},done.eq.true"#).execute()
+        },
+        "array literal elements Postgres would misread go out quoted": .chain {
+            try await $0.from("posts").select(readStrategy: .networkOnly)
+                .contains("tags", value: ["a,b", "x\"y", "NULL", "p.q"]).overlaps("labels", value: ["", " s"]).execute()
+        },
         "a list for an operator that takes one value is refused": .notExpressible(
             "an array value is sent as one Postgres array literal, such as {x,y}"
         ),
@@ -323,9 +342,9 @@ struct RequestRenderingFixtureTests {
         "a backslash in an or group is refused": .chain {
             try await $0.from("todos").select().or(#"title.ilike.%50\%%,done.eq.true"#).execute()
         },
-        "a quote in an and group is refused": .chain {
-            try await $0.from("todos").delete().eq("title", value: "Say \"hi\"").neq("title", value: "x").execute()
-        },
+        "a quote in an and group is refused": .notExpressible(
+            "a delete keeps two filters on one column at the top level, where a quote is sent as written; a read moves them into an and group and is refused, as PostgrestBehaviorTests shows"
+        ),
         "a quote beside a comma in an or group is quoted": .chain {
             try await $0.from("todos").select(readStrategy: .networkOnly).or(#"title.eq."Say \"hi\", ok",done.eq.true"#).execute()
         },

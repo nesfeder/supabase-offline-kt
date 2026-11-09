@@ -519,7 +519,7 @@ class StoragePinnedFileTest {
         const val MOVED = "moved.png"
         const val COPIED = "copied.png"
         const val UNCACHEABLE = "/leading-slash.png"
-        const val UNPINNABLE = "photo?v=1.png"
+        const val UNPINNABLE = "album/../photo.png"
         const val ALBUM = "album"
         const val ALBUM_COVER = "album/cover.png"
         const val FILE_SIZE = 10

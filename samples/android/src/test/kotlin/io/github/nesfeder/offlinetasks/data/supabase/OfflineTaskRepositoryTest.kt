@@ -206,12 +206,14 @@ class OfflineTaskRepositoryTest {
     }
 
     @Test
-    fun two_filters_on_one_column_are_refused_before_anything_is_sent() = runTest {
+    fun a_quoted_value_in_an_in_list_is_refused_before_anything_is_sent() = runTest {
         // Given
         val sentBefore = server.requests.size
 
         // When / Then
-        assertFailsWith<InvalidRequestException> { repository.readWithTwoFiltersOnOneColumn() }
+        val refused =
+            assertFailsWith<InvalidRequestException> { repository.readWithQuotedValueInList() }
+        assertTrue("`title`" in refused.libraryMessage, refused.libraryMessage)
         assertEquals(sentBefore, server.requests.size)
     }
 

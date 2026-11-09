@@ -240,8 +240,15 @@ private fun PostgrestFilterBuilder.replayCondition(condition: FilterDescriptor.C
  * so it is not a valid JSON string array), yielded `null`, and the condition was silently dropped —
  * broadening the replayed mutation's target set.
  *
+ * An element list is decoded as the server reads the array literal ([parseArrayLiteral]) and
+ * re-encoded through the operator's typed call, so a replayed write is byte-identical to the same
+ * call made fresh, and one queued by a release that sent its elements unquoted goes out quoted,
+ * holding the elements the server read from it. A list holding SQL `NULL` goes through the generic
+ * `filter(column, operator, list)`, which writes a null element as `NULL` as the typed calls would
+ * if they took one.
+ *
  * @param condition The captured condition.
- * @param operator The operator to re-encode a range form under.
+ * @param operator The operator to re-encode a range form, or a list holding SQL `NULL`, under.
  * @param replayList Applies the element-list form via the operator's typed DSL entry point.
  * @return true when either encoding was recognized and applied; false when the stored value matched
  *   neither, leaving the condition off the request.
@@ -254,6 +261,13 @@ private fun PostgrestFilterBuilder.replayArrayOrRangeCondition(
     val range = parsePostgrestRangeLiteral(condition.value)
     if (range != null) {
         filter(condition.column, operator, range)
+        return true
+    }
+    if (condition.value.trim().isArrayLiteral()) {
+        val elements = parseArrayLiteral(condition.value.trim()) ?: return false
+        val present = elements.filterNotNull()
+        if (present.size == elements.size) replayList(present)
+        else filter(condition.column, operator, elements)
         return true
     }
     val list = parseArray(condition.value) ?: return false
@@ -289,15 +303,15 @@ internal fun inListMembersOf(value: String): List<String>? =
  * Parse Condition.value into a list of strings for array-like operators:
  *
  * - If the string looks like JSON array (`[ "a", "b" ]`), we parse via kotlinx.serialization.
- * - Otherwise, we treat it as a comma-separated list, stripping the PostgREST wrapper the strict
- *   capture preserves from supabase-kt's param encoding: `(a,b,c)` for `in` and `{a,b,c}` for `cs`
- *   / `cd` / `ov`. The two wrappers are tokenized differently because supabase-kt encodes them
- *   differently — see [splitPostgrestListValue].
+ * - An array literal, `{a,b,c}`, is read as the server reads it ([parseArrayLiteral]); one holding
+ *   SQL `NULL` or refused as malformed is `null`.
+ * - Otherwise, we treat it as a comma-separated list, stripping the `(a,b,c)` wrapper the strict
+ *   capture preserves from supabase-kt's `in` encoding — see [splitPostgrestListValue].
  *
  * An `in` list keeps every element, an empty one included, as PostgREST's list parser does: `(,a)`
  * and `("",a)` are the empty string and `a`. A list of exactly one empty element, `()` or `("")`,
- * is the empty list, which PostgREST sends as `= ANY('{}')` and which matches no row. In an array
- * literal or a bare list an empty element is dropped.
+ * is the empty list, which PostgREST sends as `= ANY('{}')` and which matches no row. In a bare
+ * list an empty element is dropped.
  *
  * A wrapped-but-empty value (`()` / `{}`) returns an empty list — distinct from `null` — so replay
  * can reproduce the caller's original empty filter instead of dropping the condition and broadening
@@ -317,7 +331,13 @@ private fun parseArray(raw: String?): List<Any>? {
         return decodeJsonStringList(trimmed)
     }
 
-    // Comma-separated form, with or without the PostgREST list wrapper
+    // An array literal, read as the server reads it; one holding SQL `NULL` is not a list of values
+    if (trimmed.isArrayLiteral()) {
+        val elements = parseArrayLiteral(trimmed) ?: return null
+        return elements.filterNotNull().takeIf { it.size == elements.size }
+    }
+
+    // Comma-separated form, with or without the `in` list wrapper
     val unwrapped = trimmed.stripPostgrestListWrapper()
     val elements = splitPostgrestListValue(trimmed)
     if (trimmed.hasEscapedListWrapper()) {
@@ -347,14 +367,13 @@ private fun decodeJsonStringList(raw: String): List<String>? = runCatching {
  * Tokenizes a captured list value, choosing the tokenizer from **how supabase-kt encoded the body**
  * rather than from the comma alone.
  *
- * supabase-kt has exactly one list encoder that escapes its elements — `encodeAsList`, which emits
- * the `in` operator's `(a,b)` and runs every element through `escapeValue`. Every other list or
- * range body is interpolated verbatim: `encodeOverlapAsArray` (`cs`/`cd`/`ov`'s `{a,b}`) joins
- * plain `toString()` output, and `encodeAsRange` / `encodeOverlapAsRange` build
- * `"(${first},${second})"` / `"[${first},${second}]"` by raw string interpolation. Applying the
- * escaped tokenizer to one of those verbatim bodies deletes the element's real `"` and `\`
- * characters and replays a filter that targets different rows — the exact failure class this parser
- * exists to prevent.
+ * Two of supabase-kt's list encoders escape their elements: `encodeAsList`, which emits the `in`
+ * operator's `(a,b)` through `escapeValue`, and `encodeOverlapAsArray`, whose `cs`/`cd`/`ov` array
+ * literal [parseArrayLiteral] reads before this is reached. Every range body is interpolated
+ * verbatim: `encodeAsRange` / `encodeOverlapAsRange` build `"(${first},${second})"` /
+ * `"[${first},${second}]"` by raw string interpolation. Applying the escaped tokenizer to one of
+ * those verbatim bodies deletes the element's real `"` and `\` characters and replays a filter that
+ * targets different rows — the exact failure class this parser exists to prevent.
  *
  * @param value The captured value, wrapper included.
  * @return the value's elements, wrapper stripped.
@@ -380,15 +399,107 @@ private fun String.hasEscapedListWrapper(): Boolean =
     length >= 2 && startsWith('(') && endsWith(')')
 
 /**
- * Splits a body supabase-kt interpolated verbatim — `{a,b}` (`encodeOverlapAsArray`), `[a,b]`
- * (`encodeOverlapAsRange`) and the range operators' `(a,b)` (`encodeAsRange`).
+ * Splits a body supabase-kt interpolated verbatim: `[a,b]` (`encodeOverlapAsRange`) and the range
+ * operators' `(a,b)` (`encodeAsRange`). An array literal, `{a,b}`, is not one: supabase-kt quotes
+ * its elements, and [parseArrayLiteral] reads it.
  *
- * None of those encoders calls `escapeValue`, so every byte between the commas is literal element
- * content: unescaping a `\` or stripping a `"` here would replay a *different* value. The flip side
- * is that an element containing a `,` is unrecoverable — the encoder emitted no marker separating
- * it from a real delimiter, so the loss happens before capture and the parser cannot undo it.
+ * Neither encoder calls `escapeValue`, so every byte between the commas is literal element content:
+ * unescaping a `\` or stripping a `"` here would replay a *different* value. The flip side is that
+ * an element containing a `,` is unrecoverable: the encoder emitted no marker separating it from a
+ * real delimiter, so the loss happens before capture and the parser cannot undo it.
  */
 private fun splitVerbatimElements(body: String): List<String> = body.split(',')
+
+/** Whether [this] is wrapped in braces, as an array literal of `cs`, `cd` or `ov` is. */
+private fun String.isArrayLiteral(): Boolean = length >= 2 && startsWith('{') && endsWith('}')
+
+/**
+ * The elements of the one-dimensional array literal [literal], `{a,"b,c",NULL}`, read by Postgres's
+ * array input rules, or `null` when the server would refuse it as malformed. supabase-kt writes the
+ * array literal of `cs`, `cd` and `ov` this way, quoting an element that is empty, `NULL`, edged
+ * with white space or holds one of `, { } " \`, with a backslash before each `"` and `\`.
+ *
+ * - A quoted element is taken as written, its backslashes escaping the next character.
+ * - An unquoted element runs to the next `,` or `}`, its backslashes escaping the next character,
+ *   and loses the white space at either end that no backslash escapes ([isPostgresArraySpace]).
+ * - An unquoted `NULL`, in any case and without a backslash, is SQL null; `"NULL"` is the string.
+ * - `{}` is the empty list.
+ *
+ * Refused as malformed, as the server refuses them: an empty unquoted element (`{a,,b}`), a quote
+ * inside an unquoted element or text after a closing quote (`{a"b}`), an unclosed quote, a trailing
+ * backslash, and a nested brace. Only a release that sent the elements unquoted can have queued
+ * one; replay drops it ([replaysFully]) rather than guess at rows the server never matched.
+ */
+internal fun parseArrayLiteral(literal: String): List<String?>? {
+    if (!literal.isArrayLiteral()) return null
+    val body = literal.substring(1, literal.length - 1)
+    if (body.all(::isPostgresArraySpace)) return emptyList()
+    val elements = mutableListOf<String?>()
+    var index = 0
+    while (true) {
+        while (index < body.length && isPostgresArraySpace(body[index])) index++
+        val element = StringBuilder()
+        var isNullable = true
+        if (index < body.length && body[index] == '"') {
+            isNullable = false
+            index++
+            while (true) {
+                if (index >= body.length) return null
+                val char = body[index]
+                when {
+                    char == '"' -> break
+                    char == '\\' -> {
+                        if (index + 1 >= body.length) return null
+                        element.append(body[index + 1])
+                        index += 2
+                    }
+                    else -> {
+                        element.append(char)
+                        index++
+                    }
+                }
+            }
+            index++
+            while (index < body.length && isPostgresArraySpace(body[index])) index++
+        } else {
+            // The length up to the last character white space trimming must keep
+            var kept = 0
+            while (index < body.length && body[index] != ',') {
+                val char = body[index]
+                when {
+                    char == '"' || char == '{' || char == '}' -> return null
+                    char == '\\' -> {
+                        if (index + 1 >= body.length) return null
+                        isNullable = false
+                        element.append(body[index + 1])
+                        kept = element.length
+                        index += 2
+                    }
+                    else -> {
+                        element.append(char)
+                        if (!isPostgresArraySpace(char)) kept = element.length
+                        index++
+                    }
+                }
+            }
+            element.setLength(kept)
+            if (element.isEmpty()) return null
+        }
+        val text = element.toString()
+        elements += if (isNullable && text.equals("NULL", ignoreCase = true)) null else text
+        if (index >= body.length) return elements
+        if (body[index] != ',') return null
+        index++
+    }
+}
+
+/**
+ * Whether Postgres's array input trims [char] as white space around an element: its `array_isspace`
+ * takes only a space, `\t`, `\n`, `\r`, `\u000B` and `\u000C`. Kotlin's [Char.isWhitespace] also
+ * takes a no-break space, U+2003 and U+001C to U+001F, which Postgres keeps as element content, so
+ * using it would read `{\u00A0}` as the empty list.
+ */
+private fun isPostgresArraySpace(char: Char): Boolean = char in " \t\n\r\u000B\u000C"
 
 /**
  * Splits an unwrapped `in` list body on its element separators, honoring the quoting `escapeValue`

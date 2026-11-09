@@ -3,7 +3,6 @@
 package io.github.nesfeder.offlinetasks.data.supabase
 
 import io.github.jan.supabase.auth.exception.TokenExpiredException
-import io.github.jan.supabase.exceptions.NotFoundRestException
 import io.github.jan.supabase.exceptions.RestException
 import io.github.jan.supabase.exceptions.SupabaseEncodingException
 import io.github.jan.supabase.postgrest.exception.PostgrestRestException
@@ -99,7 +98,8 @@ internal fun Throwable.toAppFailure(call: LibraryCall): Throwable =
         // A row that does not decode into the app's type, or a value that does not encode.
         this is SerializationException || this is SupabaseEncodingException ->
             RowFormatException(this)
-        // Two top-level filters on one column, or a retry of a write that cannot be retried.
+        // An empty pattern list, a quoted `in` value, or a retry of a write that cannot be
+        // retried.
         this is IllegalArgumentException -> InvalidRequestException(message.orEmpty(), this)
         else -> this // unexpected: reported as it is
     }
@@ -124,9 +124,9 @@ private fun PostgrestRestException.serverRefusal(call: LibraryCall): Exception =
 /** Storage's refusal, for the file the call was about. */
 private fun RestException.storageRefusal(call: LibraryCall): Exception =
     when {
-        // Storage answers a missing object with HTTP 400, which supabase-kt reads as this type.
-        call is LibraryCall.Storage &&
-            (this is NotFoundRestException || statusCode == HTTP_NOT_FOUND) ->
+        // supabase-kt's status for Storage is the one Storage's error body names: 404 for a
+        // missing object, even when the HTTP status line says 400.
+        call is LibraryCall.Storage && statusCode == HTTP_NOT_FOUND ->
             PhotoNotFoundException(call.objectPath)
         statusCode >= HTTP_SERVER_ERROR -> ServerUnreachableException(this)
         else -> PhotoStorageException(statusCode, error, this)

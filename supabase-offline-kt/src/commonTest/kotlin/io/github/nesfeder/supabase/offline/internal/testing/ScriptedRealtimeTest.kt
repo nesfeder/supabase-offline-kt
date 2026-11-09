@@ -47,7 +47,7 @@ import kotlinx.serialization.json.put
  * The gated hook behind the testing artifact's `FakeRealtime`: each channel the client opens, one
  * per table, reaches the test with the table the configuration named, what the test reports on it
  * is applied, and a channel the test fails or ends stalls the client, which joins again. A channel
- * built with a capacity drops what it cannot hold, as supabase-kt 3.6.0's does, and counts it.
+ * built with a capacity drops what it cannot hold, as supabase-kt's channel does, and counts it.
  */
 class ScriptedRealtimeTest {
 

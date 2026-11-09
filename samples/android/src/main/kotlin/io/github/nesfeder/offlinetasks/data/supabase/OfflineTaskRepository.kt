@@ -1042,24 +1042,25 @@ class OfflineTaskRepository(
 
     // --8<-- [end:operator-filter]
 
-    // --8<-- [start:two-filters-refused]
+    // --8<-- [start:quoted-in-value-refused]
     /**
-     * Try it: two top-level filters on one column. supabase-kt would send only the first, so the
-     * library refuses the read before anything is sent, online and offline alike.
+     * Try it: an `in` list whose element holds a double quote. supabase-kt escapes the quote but
+     * leaves the element unquoted, so the server would read the backslash as part of the title and
+     * match nothing; the library refuses the read before anything is sent, online and offline
+     * alike.
      */
-    override suspend fun readWithTwoFiltersOnOneColumn() {
-        val week = recentWindow(clock.now())
+    override suspend fun readWithQuotedValueInList() {
         read {
             offline.from(Tables.TASKS).select {
                 filter {
-                    gte(CREATED_AT, week.from.toString())
-                    lt(CREATED_AT, week.until.toString()) // refused: write them in one `and`
+                    // refused: filter on such a title with a single `eq` outside any list
+                    isIn(TITLE, listOf("Say \"hi\"", "Buy milk"))
                 }
             }
         }
     }
 
-    // --8<-- [end:two-filters-refused]
+    // --8<-- [end:quoted-in-value-refused]
 
     // --8<-- [start:network-switch]
     /** Simulate offline: the library's network switch, which nothing else on the device notices. */

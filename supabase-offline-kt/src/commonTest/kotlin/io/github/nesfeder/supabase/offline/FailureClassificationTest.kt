@@ -8,7 +8,7 @@ import io.github.nesfeder.supabase.offline.testdoubles.FakeResumableCache
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.postgrestError
-import io.github.nesfeder.supabase.offline.testdoubles.forbiddenRestException
+import io.github.nesfeder.supabase.offline.testdoubles.forbiddenStorageException
 import io.github.nesfeder.supabase.offline.testdoubles.httpResponse
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
 import io.github.nesfeder.supabase.offline.testdoubles.newTestSupabaseClient
@@ -104,7 +104,7 @@ class FailureClassificationTest {
     @Test
     fun the_status_is_read_through_causes_and_from_a_ktor_response_failure() = runTest {
         // Given — a Storage refusal the app wrapped, and a Ktor response failure, bare and wrapped
-        val wrappedRefusal = IllegalStateException("upload failed", forbiddenRestException())
+        val wrappedRefusal = IllegalStateException("upload failed", forbiddenStorageException())
         val ktorFailure = ResponseException(httpResponse(HttpStatusCode.Conflict), "conflict")
         val wrappedKtorFailure = IllegalStateException("sync failed", ktorFailure)
 
@@ -118,7 +118,7 @@ class FailureClassificationTest {
     @Test
     fun a_failure_with_a_status_further_down_its_chain_is_not_a_connectivity_failure() = runTest {
         // Given — I/O failures raised around a Storage refusal and around a sync's failure
-        val aroundStorage = IOException("upload interrupted", forbiddenRestException())
+        val aroundStorage = IOException("upload interrupted", forbiddenStorageException())
         val aroundSync =
             IOException(
                 "sync interrupted",

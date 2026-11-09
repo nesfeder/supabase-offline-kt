@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.storage
 
-import io.github.jan.supabase.exceptions.UnauthorizedRestException
+import io.github.jan.supabase.storage.StorageRestException
 import io.github.jan.supabase.storage.storage
 import io.github.nesfeder.supabase.offline.OfflineBucketApi
 import io.github.nesfeder.supabase.offline.internal.ClientOperationGate
@@ -11,7 +11,7 @@ import io.github.nesfeder.supabase.offline.testdoubles.FakeBucketApi
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingStorageServer
 import io.github.nesfeder.supabase.offline.testdoubles.TestStore
 import io.github.nesfeder.supabase.offline.testdoubles.assertClientClosedError
-import io.github.nesfeder.supabase.offline.testdoubles.forbiddenRestException
+import io.github.nesfeder.supabase.offline.testdoubles.forbiddenStorageException
 import io.github.nesfeder.supabase.offline.testdoubles.newTestBucketApi
 import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
 import io.ktor.client.plugins.HttpRequestTimeoutException
@@ -479,10 +479,10 @@ class StorageWriteInvalidationTest {
         fake.onDownload = { OLD.encodeToByteArray() }
         val bucket = newTestBucketApi(delegate = fake, baseDirectory = dataDirectory, store = store)
         bucket.downloadAuthenticated(PATH) {}
-        fake.onWrite = { throw forbiddenRestException() }
+        fake.onWrite = { throw forbiddenStorageException() }
 
         // When
-        assertFailsWith<UnauthorizedRestException> { bucket.update(PATH, NEW.encodeToByteArray()) }
+        assertFailsWith<StorageRestException> { bucket.update(PATH, NEW.encodeToByteArray()) }
 
         // Then
         assertNotNull(store.getStorageByKey(BUCKET, PATH))

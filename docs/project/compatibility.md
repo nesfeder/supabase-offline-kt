@@ -117,7 +117,7 @@ different supabase-kt minor can fail at runtime even when your app compiles.
 
 | supabase-offline-kt | supabase-kt |
 | --- | --- |
-| Unreleased | 3.6.0 |
+| Unreleased | 3.9.0 |
 | 0.3.0 | 3.6.0 |
 | 0.2.0 | 3.6.0 |
 | 0.1.0 | 3.6.0 |
@@ -127,78 +127,42 @@ version without its row. Moving to a new supabase-kt minor is a minor release of
 supabase-offline-kt, even when nothing else changes, because it changes which supabase-kt your app
 must use. A supabase-kt patch can arrive in a patch release.
 
-### Why 3.6, not 3.8
+### Why 3.9
 
-supabase-kt 3.7.0 and 3.8.0 carry two Realtime defects, as upstream describes them:
+Releases up to 0.3.0 were built on supabase-kt 3.6.0, because 3.7.0 and 3.8.0 carry two Realtime
+defects: a heartbeat tick can race `disconnect()` and throw from a coroutine with no exception
+handler, which ends the app's process on Android, and `phx_leave` and `access_token` messages are
+sent with `join_ref: null`, a Phoenix protocol violation. This library depends on supabase-kt's
+Realtime module and declares supabase-kt through its BOM, so its pin sets an app's whole
+supabase-kt, Realtime included. supabase-kt 3.9.0 is the first release with both fixes
+(supabase-community/supabase-kt#1395 and #1402), together with a batch of Realtime reliability
+fixes, so the pin moved to it.
 
-- A heartbeat tick can race `disconnect()` and throw from a coroutine with no exception handler,
-  which ends the app's process on Android.
-- `phx_leave` and `access_token` messages are sent with `join_ref: null`, a Phoenix protocol
-  violation.
+Ktor, kotlinx.coroutines and okio are held at the versions supabase-kt 3.9.0 was released with
+(Ktor 3.6.0, kotlinx.coroutines 1.11.0, okio 3.18.2), so adopting the library does not move your
+app past them.
 
-Both fixes are merged upstream and not yet released. This library depends on supabase-kt's Realtime
-module and declares supabase-kt through its BOM, so its pin sets an app's whole supabase-kt,
-Realtime included. The pin moves to the first supabase-kt release that contains both fixes. Ktor and
-kotlinx.coroutines are held at the versions supabase-kt 3.6.0 was released with (3.4.3 and
-1.10.2), so adopting the library does not move your app past them.
-
-**What an app on supabase-kt 3.6 does not have.**
-
-- supabase-kt 3.8 API: `dryRun()`, `maybeSingle()`, the `isdistinct` filter operator
-  (`FilterOperator.ISDISTINCT`), and `purgeCache` / `purgeBucketCache`.
-- On 3.6, write a dry run by adding the header yourself: `headers.append("Prefer", "tx=rollback")`
-  in the request block, which supabase-kt marks experimental
-  (`@OptIn(SupabaseExperimental::class)`). The library reads every `Prefer` value, so such a write
-  is never queued. A hosted Supabase project commits a dry run all the same, unless it allows the
-  rollback: see [the write path](architecture.md#the-write-path).
-- Storage object names containing `%`, `?` or `#`. supabase-kt 3.6.0 puts the name in the URL as
-  written: a `?` or `#` can fetch or overwrite a different object (`x?y.png` fetches `x`, and an
-  upload of it writes `x`), and a `%` that does not begin a percent-escape cannot be put in a URL.
-  The library downloads such a name as supabase-kt does but never caches it or serves it from the
-  cache, `ensureCachedFile` refuses it, and a call naming an object with such a `%` throws
-  `IllegalArgumentException` before anything is sent. Keep such characters out of object names
-  until the pin moves.
-
-**What an app on supabase-kt 3.6 inherits from it.**
-
-- The first request after supabase-kt refreshes an expired token goes out with the old token and
-  fails once with `401` (fixed in 3.7.0). A replayed write that meets it stays queued and is sent
-  again on a later pass; an app's own call sees the `401`.
-- When the server refuses a sign-out, supabase-kt 3.6 keeps the local session (fixed in 3.7.0).
-
-**Two top-level filters on one column.** Every supabase-kt release to date, 3.6 and 3.8 included,
-sends only the first value of each top-level query parameter: `filter { gte("age", 1); lte("age",
-10) }` sends `age=gte.1` and nothing else, where postgrest-js and supabase-swift send both. Rather
-than read or delete more rows than the call names, the library refuses such a read, update or
-delete with `IllegalArgumentException` before anything is sent or queued. Write the two conditions
-as one group, which sends both:
-
-From the samples: [TaskQueries.kt](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/android/src/main/kotlin/io/github/nesfeder/offlinetasks/data/supabase/TaskQueries.kt) · [TaskQuery.swift](https://github.com/nesfeder/supabase-offline-kt/blob/main/samples/ios/OfflineTasks/Data/TaskQuery.swift)
-
-=== "Android"
-
-    ```kotlin
-    --8<-- "data/supabase/TaskQueries.kt:same-column"
-    ```
-
-=== "iOS"
-
-    ```swift
-    --8<-- "Data/TaskQuery.swift:same-column"
-    ```
-
-The refusal sees a parameter that holds two values. It cannot see the calls that replace one: a
-second top-level `or { }` group replaces the first, and a text search replaces a filter written
-before it on the same column. Combine those into one group too. The day supabase-kt sends every
-value, this rule is revisited before the pin moves.
+**What an app gets with 3.9.** The supabase-kt API that arrived in 3.7 and 3.8 works through the
+library: `dryRun()`, `maybeSingle()`, `notIn`, the `isdistinct` filter operator, and `purgeCache` on
+a bucket from `supabase.offline.storage`. `notIn` works in reads and in writes sent online; a write
+filtered with it is negated (`not.in.(…)`), which the queue cannot record, so it is sent at once and
+never queued, and offline throws `MutationNotQueueableException` ([supported
+features](../reference/supported-features.md#postgrest)). Storage object names containing `%`, `?`
+or `#` are put in the URL percent-encoded, so the library caches them like any other name. Two
+top-level filters on one column, such as `filter { gte("age", 1); lte("age", 10) }`, are both sent,
+and the server joins them as AND, so the library sends, caches and queues them instead of refusing
+them. Two fixes come with it: the first request after supabase-kt refreshes an expired token no
+longer goes out with the old token (supabase-community/supabase-kt#1352), and a sign-out the server
+refuses now clears the local session (#1359).
 
 **Pattern lists.** supabase-kt quotes a pattern of `likeAll`, `likeAny`, `ilikeAll` or `ilikeAny`
-only when it holds one of `,.:()`, so Postgres reads an empty pattern, `NULL`, a pattern edged with
-white space or one holding a brace as something else, and an empty list as no pattern at all:
-`delete { filter { likeAll("code", listOf("")) } }` sends `code=like(all).{}`, which matches every
-row. The library refuses such a list, at the top level or in a group, with
-`IllegalArgumentException` before anything is sent or queued. Match such a pattern with a single
-`like` or `ilike` filter.
+that Postgres would otherwise read as something else (an empty pattern, `NULL`, a pattern edged
+with white space, or one holding a brace, a comma, a quote or a backslash), so each pattern is read
+as written. An empty list is still sent as no pattern at all:
+`delete { filter { likeAll("code", emptyList()) } }` sends `code=like(all).{}`, which matches every
+row. The library refuses an empty pattern list, at the top level or in a group, with
+`IllegalArgumentException` before anything is sent or queued. `likeAny` and `ilikeAny` over an
+empty list would match nothing; they are refused too, so all four behave alike.
 
 **A value with a quote or a backslash in a list or a group.** supabase-kt puts a backslash before
 each `"` and `\` of an `in` element, and of a comparison value inside an `or { }` or `and { }`
@@ -210,14 +174,10 @@ is sent as written and matches. The library refuses such an `in` element or grou
 0.3.0 with such a value to the rejected list when it comes up for sending. Filter on the value
 with a single top-level filter.
 
-**An app that asks for supabase-kt 3.7 or 3.8 itself** gets it: Gradle picks the higher version,
-so the library's pin is a floor, not a ceiling.
-
-- The plugin logs one warning when it is installed, naming both versions.
-- On 3.8, `purgeCache` called on a bucket from `supabase.offline.storage` fails, on Android as an
-  `AbstractMethodError` when it is called, and on iOS as an `IrLinkageError`. The library was
-  built against a `BucketApi` without that member. Call `purgeCache` on supabase-kt's own bucket
-  instead (`supabase.storage.from(…)`).
+**An app that asks for another supabase-kt minor itself** gets it: Gradle picks the higher version,
+so the library's pin is a floor, not a ceiling. The plugin logs one warning when it is installed,
+naming both versions. The library was built and tested against 3.9 only, so another minor can fail
+at run time.
 
 Every Monday a scheduled job looks for a newer supabase-kt minor, builds this library against it,
 runs its Android host tests, and reports the result in one issue labeled

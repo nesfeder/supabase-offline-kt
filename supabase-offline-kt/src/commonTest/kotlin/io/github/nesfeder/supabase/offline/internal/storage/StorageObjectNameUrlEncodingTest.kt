@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.storage
 
-import io.github.jan.supabase.exceptions.NotFoundRestException
+import io.github.jan.supabase.storage.StorageRestException
 import io.github.jan.supabase.storage.storage
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingStorageServer
 import io.github.nesfeder.supabase.offline.testdoubles.TestStore
@@ -25,11 +25,10 @@ import okio.SYSTEM
 
 /**
  * Object names with spaces, `%`, `?` and `#` reach their own object on the wire, and a download is
- * served offline and evicted under the name as written. Since supabase-kt 3.8.0 the bucket
- * URL-encodes each segment of an object path; 3.6 puts the name in the URL as written, where a `%`
- * fails the request and a `?` or `#` can fetch a different object, so these cases build only from
- * 3.8 on. The library's own on-disk encoding of such a name is pinned on every minor by
- * `StorageObjectNameEncodingTest`.
+ * served offline and evicted under the name as written. supabase-kt URL-encodes each segment of an
+ * object path (since 3.8.0; 3.6 put the name in the URL as written, where a `%` failed the request
+ * and a `?` or `#` could fetch a different object). The library's own on-disk encoding of such a
+ * name is pinned by `StorageObjectNameEncodingTest`.
  */
 class StorageObjectNameUrlEncodingTest {
 
@@ -97,11 +96,35 @@ class StorageObjectNameUrlEncodingTest {
 
         // When — the object is deleted on the server
         server.objects.remove("$BUCKET/$NAME")
-        assertFailsWith<NotFoundRestException> { bucket.downloadAuthenticated(NAME) {} }
+        assertEquals(
+            404,
+            assertFailsWith<StorageRestException> { bucket.downloadAuthenticated(NAME) {} }
+                .statusCode,
+        )
 
         // Then
         assertNull(store.getStorageByKey(BUCKET, NAME))
         assertFalse(FileSystem.SYSTEM.exists(file))
+    }
+
+    @Test
+    fun a_name_with_a_bare_percent_is_requested_encoded_and_cached_under_its_own_name() = runTest {
+        // Given — a `%` that begins no escape, which supabase-kt 3.6 could not put in a URL
+        val name = "100%.png"
+        server.objects["$BUCKET/$name"] = CONTENT.encodeToByteArray()
+        val bucket = bucket()
+
+        // When
+        bucket.downloadAuthenticated(name) {}
+
+        // Then — requested percent-encoded, and served offline under the name as written
+        assertEquals(
+            "/storage/v1/object/authenticated/$BUCKET/100%25.png",
+            server.requests.single().encodedPath,
+        )
+        assertNotNull(store.getStorageByKey(BUCKET, name))
+        server.online = false
+        assertEquals(CONTENT, bucket.downloadAuthenticated(name) {}.decodeToString())
     }
 
     private companion object {

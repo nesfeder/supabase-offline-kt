@@ -337,7 +337,8 @@ internal class MutationQueue(
         val versionColumn = versionColumns.of(table) ?: return null
         val lookup = cachedRowLookup.load() ?: return null
         if (filter == null || columns == null) return null
-        // A second top-level filter on the version column would be dropped on the wire
+        // The guard adds its own condition on the version column; beside the caller's, the write
+        // goes unguarded, as a caution, rather than replay two conditions on it
         if (filter.conditions.any { condition -> condition.column == versionColumn }) return null
         val keyColumns = primaryKeys.of(table)
         val key = pinnedRowKeyOf(filter, keyColumns)?.let { pinned -> keyOf(pinned, keyColumns) }

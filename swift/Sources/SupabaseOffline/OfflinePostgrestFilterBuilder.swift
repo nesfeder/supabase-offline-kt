@@ -140,9 +140,9 @@ extension OfflinePostgrestFilterBuilder {
 
     /// Rows where `column` matches every one of the `LIKE` `patterns`, case-sensitively.
     ///
-    /// An empty list fails the request with ``OfflineError/Code/invalidRequest``, and so does a
-    /// pattern holding none of `,.:()` that is empty, `NULL` in any case, edged with white space or
-    /// holding a brace: match such a pattern with ``like(_:pattern:)`` or ``ilike(_:pattern:)``.
+    /// An empty list fails the request with ``OfflineError/Code/invalidRequest``: `LIKE ALL` over no
+    /// pattern matches every row. A pattern that is empty, `NULL`, edged with white space or holds
+    /// one of `, { } " \` is sent quoted, as Postgres reads it.
     public func likeAllOf(_ column: String, patterns: [some OfflineFilterValue]) -> Self {
         patternList(.likeAll, column, patterns)
     }
@@ -171,7 +171,7 @@ extension OfflinePostgrestFilterBuilder {
     /// Rows where the `text` or `tsvector` `column` matches the full-text `query`, read as `type`
     /// says (`nil`: `to_tsquery` syntax), with the text search configuration `config`.
     ///
-    /// A search with a `config` replaces any filter before it on its column, so it is sent first.
+    /// It is sent beside any other filter on its column, and a row must meet them all.
     public func textSearch(
         _ column: String,
         query: some OfflineFilterValue,

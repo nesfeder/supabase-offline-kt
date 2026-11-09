@@ -18,8 +18,8 @@ itself when the network comes back. Storage downloads are kept on disk and serve
 offline. A write returns a `MutationOutcome` rather than the server's result, because a queued write
 has none yet: that is the one difference in what a call returns, and a few call shapes need an edit
 (see [Moving a call from supabase-kt](#moving-a-call-from-supabase-kt)). Each minor release is built
-and tested against exactly one supabase-kt minor: today 3.6, until a supabase-kt release carries the
-two Realtime fixes 3.7.0 and 3.8.0 lack (see [Decisions](#decisions)).
+and tested against exactly one supabase-kt minor: today 3.9, the first release that carries the two
+Realtime fixes 3.7.0 and 3.8.0 lack (see [Decisions](#decisions)).
 
 ```kotlin
 val supabase = createSupabaseClient(url, key) {
@@ -134,8 +134,8 @@ filter values or object paths; `DEBUG` may.
 | --- | --- | --- | --- |
 | `from(table)`, `from(schema, table)`, `get(table)`, `get(schema, table)` | A table's `OfflinePostgrestQueryBuilder`; `offline["todos"]` is `offline.from("todos")`. | A table of another schema is cached apart from the default schema's table of the same name. | `IllegalStateException` without PostgREST |
 | `class OfflinePostgrestQueryBuilder` | The offline counterpart of supabase-kt's `PostgrestQueryBuilder`, with its `postgrest`, `table` and `schema`. | Final, with an internal constructor. Each verb takes its offline choice as a named parameter with a default, before the trailing request lambda. | — |
-| `select(columns, readStrategy = ReadStrategy.NetworkFirst(), request): PostgrestResult` | Reads rows once, from the server or the cache. | Each request is cached on its own. Only a list of rows is cached: `single()` and `maybeSingle()` (supabase-kt 3.8) as their list, one row long, under its key, answered offline when it holds exactly one row. `head`, a count (with rows or without), `csv()`, `geojson()`, `stripNulls()` and `explain()` go to the server under every strategy but `CacheOnly`, are never stored, and fail offline as `NetworkOnly` does. | `CacheMissException` under `CacheOnly`; `NetworkDisabledException` while network access is off and the cache cannot answer; `IllegalArgumentException` for two top-level filters on one column, a pattern list the server would misread, or an `in` element or group value holding `"` or `\` the server would read with its escapes |
-| `selectAsFlow(columns, readStrategy = FlowReadStrategy.CacheFirstThenNetwork, request): Flow<QuerySnapshot>` | Reads rows as they change: emits again whenever a write, a refresh or a server record changes them. | A failing refresh is reported in the snapshot, not thrown. A failure the read cannot recover from ends the flow after the values before it. A shape the cache never holds emits the server's answer once and completes. Needs no channel of its own: it follows the cache, which the tables `realtime { }` names keep current through the plugin's channel. | Through the flow: `CacheMissException` under `CacheOnly` for a shape the cache never holds; `NetworkDisabledException` while network access is off, for such a shape or for `NetworkFirstThenCache` with nothing cached; `IllegalArgumentException` for two top-level filters on one column, a pattern list the server would misread, or an `in` element or group value holding `"` or `\` the server would read with its escapes |
+| `select(columns, readStrategy = ReadStrategy.NetworkFirst(), request): PostgrestResult` | Reads rows once, from the server or the cache. | Each request is cached on its own. Only a list of rows is cached: `single()` and `maybeSingle()` as their list, one row long, under its key, answered offline when it holds exactly one row. `head`, a count (with rows or without), `csv()`, `geojson()`, `stripNulls()` and `explain()` go to the server under every strategy but `CacheOnly`, are never stored, and fail offline as `NetworkOnly` does. | `CacheMissException` under `CacheOnly`; `NetworkDisabledException` while network access is off and the cache cannot answer; `IllegalArgumentException` for an empty pattern list, or an `in` element or group value holding `"` or `\` the server would read with its escapes |
+| `selectAsFlow(columns, readStrategy = FlowReadStrategy.CacheFirstThenNetwork, request): Flow<QuerySnapshot>` | Reads rows as they change: emits again whenever a write, a refresh or a server record changes them. | A failing refresh is reported in the snapshot, not thrown. A failure the read cannot recover from ends the flow after the values before it. A shape the cache never holds emits the server's answer once and completes. Needs no channel of its own: it follows the cache, which the tables `realtime { }` names keep current through the plugin's channel. | Through the flow: `CacheMissException` under `CacheOnly` for a shape the cache never holds; `NetworkDisabledException` while network access is off, for such a shape or for `NetworkFirstThenCache` with nothing cached; `IllegalArgumentException` for an empty pattern list, or an `in` element or group value holding `"` or `\` the server would read with its escapes |
 
 A verb may run its `request` lambda more than once: a read once to learn its shape and once per
 request sent, a queueable write up to three times. The lambda must build the same request every
@@ -146,24 +146,22 @@ request never answered online has nothing cached, even when another cached reque
 holds the rows it asks for: a read is never answered from another query's rows. A detail screen
 reads the list a list screen already reads, with the same request, and picks its row from it.
 
-**Two top-level filters on one column are refused.** supabase-kt, every release to date, sends only
-the first value of each top-level query parameter: `filter { gte("age", 1); lte("age", 10) }` sends
-`age=gte.1` alone. A read, an update or a delete whose built request holds a top-level parameter
-with two values throws `IllegalArgumentException`, naming the column and never a value, before
-anything is sent, queued or read from the cache, under every strategy, online and offline. One
-group, `filter { and { gte("age", 1); lte("age", 10) } }`, sends both. The rule cannot see the
-calls that replace an earlier value and leave one: a second top-level `or` group, or a text search
-after a filter on its column. A test pins what supabase-kt itself sends, so the day it sends every
-value this rule, and the query shape and queue capture that read a column's first value alone, are
-revisited before the pin moves.
+**Two top-level filters on one column are sent whole.** supabase-kt sends every value of a top-level
+query parameter, so `filter { gte("age", 1); lte("age", 10) }` sends `age=gte.1&age=lte.10`, and
+PostgREST joins the two as AND. The query shape reads every value, the queue captures one condition
+per value and replays them all, and a cached query with both conditions admits a queued row only
+when it meets both. What the library cannot see is a call that replaces an earlier value: a second
+top-level `or` group replaces the first, and only the last is sent. A test pins what supabase-kt
+itself sends, so the day it sends only one value again, this is revisited before the pin moves.
 
-**A pattern list the server would misread is refused.** supabase-kt quotes a pattern of `likeAll`,
-`likeAny`, `ilikeAll` or `ilikeAny` only when it holds one of `,.:()`, so an empty list, or a
-pattern that is empty, `NULL` in any case, edged with white space or holding a brace, reaches the
-server as another list: `likeAll("code", listOf(""))` sends `like(all).{}`, and `LIKE ALL` over no
-pattern matches every row. A read, an update or a delete carrying such a list, at the top level or
-in a group, throws `IllegalArgumentException`, naming the column and never a pattern, before
-anything is sent, queued or read from the cache. A test pins what supabase-kt sends.
+**An empty pattern list is refused.** supabase-kt quotes a pattern of `likeAll`, `likeAny`,
+`ilikeAll` or `ilikeAny` that Postgres would otherwise read as something else (empty, `NULL`, edged
+with white space, or holding one of `, { } " \`), and sends `.`, `:` and parentheses bare, so each
+pattern is read as written. An empty list still goes out as `like(all).{}`, and `LIKE ALL` over no
+pattern matches every row. A read, an update or a delete carrying an empty list, at the top level or
+in a group, throws `IllegalArgumentException`, naming the column, before anything is sent, queued
+or read from the cache. `likeAny` and `ilikeAny` over no pattern match nothing, and are refused too,
+so that one rule covers all four. A test pins what supabase-kt sends.
 
 **A value the server would read with its escapes is refused.** supabase-kt puts a backslash before
 each `"` and `\` of an `in` element, and of a value inside an `or { }` or `and { }` group, and
@@ -233,8 +231,8 @@ asked for a shape the cache never holds. No request was sent.
 | --- | --- | --- | --- |
 | `insert(body: JsonArray, mutationStrategy, request)`; reified `insert(value: T, …)`, `insert(values: List<T>, …)` | Inserts rows. | A typed value is encoded by `postgrest.serializer`, as supabase-kt encodes it. | `MutationNotQueueableException` |
 | `upsert(body: JsonArray, …)`; reified `upsert(value: T, …)`, `upsert(values: List<T>, …)` | Inserts rows, or merges them into the rows they conflict with. | Shown merged by `onConflict`'s columns, or by the table's key. | `MutationNotQueueableException` |
-| `update(update: PostgrestUpdate.() -> Unit, …)`, `update(body: JsonElement, …)`; reified `update(value: T, …)` | Sets columns on the rows `request` filters. | A queued update replays exactly the values it sets. Queueing needs a filter the queue can record exactly. | `MutationNotQueueableException`; `IllegalArgumentException` for two top-level filters on one column, a pattern list the server would misread, or an `in` element or group value holding `"` or `\` the server would read with its escapes |
-| `delete(mutationStrategy, request)` | Deletes the rows `request` filters. | Queueing needs a filter the queue can record exactly. | `MutationNotQueueableException`; `IllegalArgumentException` for two top-level filters on one column, a pattern list the server would misread, or an `in` element or group value holding `"` or `\` the server would read with its escapes |
+| `update(update: PostgrestUpdate.() -> Unit, …)`, `update(body: JsonElement, …)`; reified `update(value: T, …)` | Sets columns on the rows `request` filters. | A queued update replays exactly the values it sets. Queueing needs a filter the queue can record exactly. | `MutationNotQueueableException`; `IllegalArgumentException` for an empty pattern list, or an `in` element or group value holding `"` or `\` the server would read with its escapes |
+| `delete(mutationStrategy, request)` | Deletes the rows `request` filters. | Queueing needs a filter the queue can record exactly. | `MutationNotQueueableException`; `IllegalArgumentException` for an empty pattern list, or an `in` element or group value holding `"` or `\` the server would read with its escapes |
 
 Each returns a `MutationOutcome`, and `mutationStrategy` defaults to `QueueIfOffline`. An
 `OnlineOnly` write made while network access is off throws `NetworkDisabledException`.
@@ -278,7 +276,7 @@ that a success updates the cache: patched in, or, where it cannot be (a write to
 filter the queue cannot record), the queries it may reach marked stale. A rolled-back dry run, and a
 write that answered after local data was cleared, leave the cache as it was. These writes are:
 
-- a dry run, a write carrying `Prefer: tx=rollback` (supabase-kt 3.8's `dryRun()`, or the header
+- a dry run, a write carrying `Prefer: tx=rollback` (supabase-kt's `dryRun()`, or the header
   added by hand), or a write whose request could not be inspected to tell whether it is one. A
   hosted Supabase project ignores the rollback unless its PostgREST lets a request choose
   (`db-tx-end`), so there a dry run commits: it is applied like any write, and a warning is logged;
@@ -539,11 +537,12 @@ bytes become the cached copy and its file goes. While it waits, `cachedFile` and
 answer its file. Signed URLs, listings, `info`, `exists` and the public
 status always ask the server. An object path that cannot be mapped safely onto a file (a leading
 `/`, an empty, `.` or `..` segment, a `\`, a control character) still downloads and writes,
-uncached. So does one holding `%`, `?` or `#` while the pin is below 3.8: supabase-kt before 3.8
-puts the name in the URL as written, so its request can fetch or overwrite a different object. A `%`
-there that does not begin a percent-escape leaves a URL the HTTP client cannot build, which it
-reports as a network failure, so every call that puts such a name in its URL throws
-`IllegalArgumentException` first.
+uncached. A name holding `%`, `?` or `#` is put in the URL percent-encoded and cached like any
+other. A name holding a lone UTF-16 surrogate cannot be encoded alike everywhere (the JVM puts a
+`?` in its place, which names a third object, and Kotlin/Native throws, which would read as a lost
+connection), so every call that sends such a name, in its URL or its body, throws
+`IllegalArgumentException` first, and an upload queued under one by an earlier version goes to the
+rejected list.
 
 ### Local data and lifecycle
 
@@ -635,7 +634,6 @@ lambda, so supabase-kt's call shapes resolve unchanged. These need an edit:
 | Realtime's `selectAsFlow(…)` on a table | The builder's own `selectAsFlow` is the offline one. | Keep realtime calls on `supabase.from(table)`. |
 | The typed `rpc(function, parameters)` | It is this library's extension on `Offline`. | Import `io.github.nesfeder.supabase.offline.rpc` in place of `io.github.jan.supabase.postgrest.rpc`. |
 | Any call through the plugin | The accessor is an extension of its own. | Import `io.github.nesfeder.supabase.offline.offline`. |
-| Two top-level filters on one column: `filter { gte("age", 1); lte("age", 10) }` | supabase-kt sends only the first, so the library refuses the read or write before anything is sent. | One group: `filter { and { gte("age", 1); lte("age", 10) } }`. |
 
 ## How it works
 
@@ -958,12 +956,12 @@ flowchart TD
    it restores or refreshes, or the anonymous identity.
 2. The engine works out how the write would be queued. An INSERT or UPSERT always can be; an UPDATE
    or DELETE needs a filter the strict capture records exactly and that replays in full.
-3. It tells a dry run, a write carrying `Prefer: tx=rollback`, from a write. supabase-kt 3.8 records
-   `dryRun()` only in that header, and on 3.6, which has no `dryRun()`, a caller adds the header
-   itself. The queue does not keep it, so the engine builds the write once more, on the token-free
-   PostgREST instance, under a probe that a pipeline phase ahead of every plugin reads (every
-   `Prefer` value) and stops. No app plugin sees the stopped request; a subscriber to the client's
-   `HttpRequestCreated` monitor event does, as for the read-shape check.
+3. It tells a dry run, a write carrying `Prefer: tx=rollback`, from a write. supabase-kt records
+   `dryRun()` only in that header, and a caller can add the header itself. The queue does not keep
+   it, so the engine builds the write once more, on the token-free PostgREST instance, under a probe
+   that a pipeline phase ahead of every plugin reads (every `Prefer` value) and stops. No app plugin
+   sees the stopped request; a subscriber to the client's `HttpRequestCreated` monitor event does,
+   as for the read-shape check.
 4. It saves the write: one row in `mutation_cache` with its owner, inserted under the queue lock,
    refused when local data was cleared since the write began. The table's readers are told, and the
    overlay shows the write from now on.
@@ -1339,6 +1337,7 @@ The decisions that shaped the API and the engine, with the date each was settled
 | 2026-10-22 | A write sent at once stays queued on every answer that says the request did not finish (`408`, `429`, `502`, `503`, `504`, `520`, `522`, `524`) and on a `401` for a token PostgREST holds expired or cannot read (`PGRST301`, `PGRST303`); one list serves the head send and replay. | The head threw on answers a replay keeps queued: a `504` after the database committed led a caller's retry to duplicate a write that landed, a `429` dropped a write that never ran, and a device clock behind the server's lost writes to a `401`. A `500` from the database is still thrown, since sending the write again gets the same answer. |
 | 2026-10-22 | `single()`, and `maybeSingle()` on supabase-kt 3.8, are cached as their list, one row long, under the list read's key, through the guards a list response passes, and answered offline when that list holds exactly one row, unwrapped, with the queued writes laid over it. | The most common detail-screen read had nothing offline. Only `Accept` tells it from the list read of the same query, so that list, one row long, is its answer in the one shape the cache holds: every list read, patch, Realtime change and overlay already handles it, and the list read is served the list it asked for, where the object stored as it came was served in the list's place (2026-09-30). No row or several answer nothing, as the server would. `maybeSingle()` sends what `single()` sends and answers no row and several rows alike with a blank body, so its blank is not stored, and offline it cannot answer no row with `null`. Online the server's object is returned as it came, so a queued write shows only when the cache answers. |
 | 2026-10-22 | A Realtime channel for each named table, with a status of its own (`realtimeTableStatus`) beside the summed `realtimeStatus`; a leave sends the leave supabase-kt 3.6.0 skips for a channel not joined, and closes a socket that holds only the library's channels when supabase-kt's own rejoin has stopped its read loop. | One binding the server refused, such as a filter on a renamed column, ended the one shared channel, so every named table lost Realtime and was read again at each retry. supabase-kt reports a refused binding as an error on the channel and names no binding, so quarantining the refused one would mean probing subsets; a channel per table costs a join message per table and nothing more in reads. |
+| 2026-11-08 | supabase-kt 3.9.0, with Ktor 3.6.0, kotlinx.coroutines 1.11.0 and okio 3.18.2 held to it. The rules it made unnecessary go: two top-level filters on one column are sent, captured and replayed; a pattern list is refused only when empty; object names with `%`, `?` or `#` are cached. An `in` element or group value with a quote or a backslash is still refused. A channel's feed ends on a refused binding's system message, the socket close that freed supabase-kt's stuck rejoin goes, and the library closes the socket itself when network access goes off with nothing else on it. | 3.9.0 is the first release with both Realtime fixes the 2026-10-04 pin waited for (supabase-community/supabase-kt#1395 and #1402). It sends every value of a parameter, quotes a pattern or array element as Postgres reads it and percent-encodes object names, so those refusals guarded nothing; keeping the first-value capture while both values are sent would have replayed queued writes broader than written. On 3.9 a refused binding leaves the channel joined and is only logged, so without the watch a table would read `Subscribed` and receive nothing, and an empty socket lingers for `disconnectOnEmptyChannelsAfter`, which would break the promise that nothing is sent while access is off. The cache keys of the queries whose quoting changed change once; normalizing keys was rejected, since it would re-implement supabase-kt's quoting for good. |
 
 ### What it deliberately does not do
 
@@ -1370,9 +1369,9 @@ What the library promises, each with the tests that pin it:
 | Answering a read from the cache sends no request. | `CachedReadsSendNothingTest` |
 | The time the queue was last emptied is kept across clients for the identity whose queue it was, and never shown for another. | `SyncStatusTest`, `SyncStatusTrackerTest`, `CacheOwnershipTest` |
 | On a table with a version column, a queued UPDATE or DELETE that pins one cached row is applied only while the server's row has the version the device saw; a row that moved is never overwritten without the resolver or the defaults deciding, and the device's own earlier writes never read as a conflict. | `MutationBaseCaptureTest`, `GuardedReplayRequestTest`, `GuardedReplayOutcomesTest`, `BaseForwardingTest`, `ConflictPolicyTest`, `ConflictResolverTest` |
-| A read, an update or a delete with two top-level filters on one column is refused before anything is sent or queued, under every strategy, online and offline. | `SameColumnFiltersTest`, `UpstreamRepeatedParameterTest` |
-| A read, an update or a delete with a pattern list the server would read as another list (empty, or a pattern that is empty, `NULL`, edged with white space or holding a brace) is refused before anything is sent or queued, at the top level and in a group, online and offline. | `PatternListsTest`, `UpstreamPatternListTest` |
-| A read, an update or a delete with an `in` element, or a comparison value inside an `or` or `and` group, holding `"` or `\` and none of `,.:()` is refused before anything is sent or queued, at the top level and in a group, online and offline; a value beside one of `,.:()`, a top-level comparison, a pattern list and a text search query are sent as before. A write queued with such an `in` element by an earlier release is moved to the rejected list when it comes up for sending. | `EscapedValuesTest`, `UpstreamInListEscapingTest`, `RejectedMutationListTest`, `IsDistinctEscapedValueTest` (supabase-kt 3.8) |
+| A read, an update or a delete with two top-level filters on one column sends both; a cached query admits a local row only when it meets both, and a queued write captures and replays both. | `SameColumnFiltersTest`, `SameColumnConditionsTest`, `UpstreamRepeatedParameterTest` |
+| A read, an update or a delete with an empty pattern list is refused before anything is sent or queued, at the top level and in a group, online and offline; every other pattern list is sent as supabase-kt quotes it. | `PatternListsTest`, `UpstreamPatternListTest` |
+| A read, an update or a delete with an `in` element, or a comparison value inside an `or` or `and` group, holding `"` or `\` and none of `,.:()` is refused before anything is sent or queued, at the top level and in a group, online and offline; a value beside one of `,.:()`, a top-level comparison, a pattern list and a text search query are sent as before. A write queued with such an `in` element by an earlier release is moved to the rejected list when it comes up for sending. | `EscapedValuesTest`, `UpstreamInListEscapingTest`, `RejectedMutationListTest`, `IsDistinctEscapedValueTest` |
 | A `RealtimeFilter` is made only with a shape the server evaluates: a non-empty list for `in`, one value for another operator. | `RealtimeConfigTest`, `UpstreamRealtimeFilterTest` |
 | Each emission of a live read is one view of the cache, the queue and its refresh: no write shows both patched into the cache and still queued, a replayed write never drops out of a list that holds it, and `Idle` comes with the rows its refresh fetched. | `LiveReadConsistencyTest`, `LiveReadSourceOrderTest`, `LiveReadConsistencyAndroidTest`, `LiveReadConsistencyIosTest` |
 | No error answer from Storage is cached as a file. | `ChannelDownloadStatusTest`, `DownloadToFileStatusAndroidTest` |
@@ -1397,7 +1396,7 @@ What it does not do yet, or does only so far:
 | Rejected entries dropped from a full list are not reported anywhere public: an app lets its user dismiss or retry each entry, so the list stays short. | Not yet; a count is additive later |
 | Nothing fires when the app comes to the foreground: a resume starts a pass only when Auth refreshes the session on it, and a reconnect starts one through the network trigger. An app calls `syncPendingMutations()` as it comes to the foreground. | Not yet; a trigger is additive later |
 | Each request is cached on its own: offline, a read never answered online has nothing, even when another cached read of the table holds its rows. Read a detail from the list a screen already reads. | Not yet; additive later |
-| The refusal of two top-level filters on one column cannot see a second top-level `or` group, or a text search after a filter on its column, which replace what came before and leave one value. Put those conditions in one group. | No change planned |
+| A second top-level `or` group replaces the first, as supabase-kt builds it, and nothing refuses it: only the last group is sent. Put those conditions in one group. | No change planned |
 | On a hosted project a dry run commits, unless the project lets a request choose the rollback. | No change planned |
 | An upload made without a `MutationStrategy` does not seed the file cache, so a file uploaded that way just before going offline is not available offline: the bytes are the caller's. One made with a strategy does, once Storage has it, and answers its queued copy until then. | Done for `upload(path, data, mutationStrategy)`; resumable uploads and the other writes are not queued |
 | An INSERT whose key the server makes is inserted twice when its response is lost and it replays, and shows twice in a read of its table answered while it is on the wire and, unless the INSERT asks for its rows back (`select()`), in that query's cached rows, across restarts, until they are fetched again. Give rows their ids on the device. | No change planned |
@@ -1442,8 +1441,8 @@ version number too small for everything since the last tag. See [Compatibility](
 The stored data is pinned apart from the records. Once a version is tagged, editing an exported Room
 schema is an error that nothing can override; before that it rates `format`, as a new schema version
 does. The schema's identity hash, `d82a2435c50b4595368573f8728a370b`, is pinned by a continuity test
-and by a fixture of the database a 0.1.0 install holds. Eighteen pinned files (fifteen test classes,
-one of them built only on supabase-kt 3.8, and three fixtures) hold the persisted names and reserved
+and by a fixture of the database a 0.1.0 install holds. Eighteen pinned files (fifteen test classes
+and three fixtures) hold the persisted names and reserved
 rows, the stored mutation formats and their replay on each SQLite driver, the object-name encoding
 and file layout of the file cache, and where the database and the files live on both platforms, the
 earlier iOS place they move from included; a change to any of them rates `format`. What no record

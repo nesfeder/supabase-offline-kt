@@ -117,10 +117,8 @@ struct StorageURLTests {
         let upload = try await bucket.createSignedUploadURL(path: name)
         try await bucket.uploadToSignedURL(name, token: upload.token, data: FakeStorageServer.photo)
 
-        // Then each URL's path decodes back to the name, with no query or fragment of its own. A
-        // name encoded twice here means the core now encodes names itself: remove
-        // `escapingURLDelimiters`, `holdsURLDelimiters` and the refusal in `ensureCachedFile`
-        // (`theCoreStillRefusesANameHoldingEachDelimiter` fails then too).
+        // Then each URL's path decodes back to the name, with no query or fragment of its own: the
+        // core encodes each segment once, and the package hands it the name as given
         let base = "/storage/v1/object"
         #expect(publicURL.path(percentEncoded: false) == "\(base)/public/avatars/\(name)")
         #expect(publicURL.query() == nil && publicURL.fragment() == nil)

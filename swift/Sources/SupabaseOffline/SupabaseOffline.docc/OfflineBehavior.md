@@ -115,15 +115,15 @@ object's copies through every eviction, across restarts, until
 clears. ``OfflineBucketApi/ensureCachedFile(path:isPublic:onProgress:)`` hands a closure the
 download's ``DownloadProgress`` on a background thread, for a progress bar.
 
-An object name holding `%`, `?` or `#` is never kept on the device, and other requests than the URL
-builders, signing and uploads to a signed URL can mistake it for another object: keep those
-characters out of object names. A name that cannot be mapped onto a file safely (a leading `/`, an
-empty, `.` or `..` segment, a `\` or a control character) downloads without being kept.
+Every request encodes each segment of an object's name, so a name holding `%`, `?` or `#` names
+its own object and is kept on the device like any other. A name that cannot be mapped onto a file
+safely (a leading `/`, an empty, `.` or `..` segment, a `\` or a control character) downloads
+without being kept.
 
 ## Two conditions on one column
 
-The builder sends two conditions on one column, and two `or` groups on one table, together in one
-`and` group, which PostgREST reads the same way:
+A read sends two conditions on one column, and two `or` groups on one table, together in one `and`
+group, which PostgREST reads the same way:
 
 <!-- swift-listing: OfflineBehaviorListings.swift:same-column -->
 ```swift
@@ -134,21 +134,24 @@ let thisWeek: [Todo] = try await offline.from("todos").select()
     .execute().value
 ```
 
-On an update or a delete, that group is a filter the queue cannot record, so the write is sent at
-once.
+An update or a delete sends two conditions on one column side by side, as supabase-swift does, so
+the queue records each and replays the write as written. Two `or` groups on one table still go in
+one `and` group, a filter the queue cannot record, so such a write is sent at once.
 
 ## Refused before sending
 
 These fail with ``OfflineError/Code/invalidRequest`` and send nothing:
 
-- a pattern list (``OfflinePostgrestFilterBuilder/likeAllOf(_:patterns:)`` and its three siblings)
-  that is empty, or holds a pattern with none of `,.:()` that is empty, `NULL`, edged with white
-  space or holding a brace;
-- a value in an `in` list, or inside an `or` group, holding `"` or `\` and none of `,.:()`; a range
-  filter inside a group; a range written other than as exclusive bounds, `(lower,upper)`;
+- an empty pattern list (``OfflinePostgrestFilterBuilder/likeAllOf(_:patterns:)`` and its three
+  siblings), which `LIKE ALL` would read as matching every row; a pattern itself is sent quoted as
+  Postgres reads it;
+- a value in an `in` list, or inside an `or` group, holding `"` or `\` and none of `,.:()`, and so
+  such a value in a read beside another condition on its column, which the read moves into a group;
+  a range filter inside a group; a range written other than as exclusive bounds, `(lower,upper)`;
 - filter text the package cannot read, and a negative `maxAge`;
 - an empty upload, or one of 2 GiB or more;
-- ``OfflineBucketApi/ensureCachedFile(path:isPublic:)`` for a name the cache cannot hold;
+- ``OfflineBucketApi/ensureCachedFile(path:isPublic:)`` and
+  ``OfflineBucketApi/pinCachedFile(path:)`` for a name the cache cannot hold;
 - retrying a rejected write whose ``RejectedMutation/isRetryable`` is `false`.
 
 ## How values are written

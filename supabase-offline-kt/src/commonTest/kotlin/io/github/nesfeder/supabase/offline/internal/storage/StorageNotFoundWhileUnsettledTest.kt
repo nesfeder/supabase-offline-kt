@@ -2,14 +2,14 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.storage
 
-import io.github.jan.supabase.exceptions.NotFoundRestException
+import io.github.jan.supabase.storage.StorageRestException
 import io.github.jan.supabase.storage.storage
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.QueueIdentity
 import io.github.nesfeder.supabase.offline.internal.postgrest.RequestSession
 import io.github.nesfeder.supabase.offline.testdoubles.FakeBucketApi
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingStorageServer
 import io.github.nesfeder.supabase.offline.testdoubles.newTestBucketApi
-import io.github.nesfeder.supabase.offline.testdoubles.notFoundRestException
+import io.github.nesfeder.supabase.offline.testdoubles.notFoundStorageException
 import io.ktor.utils.io.ByteChannel
 import io.ktor.utils.io.readRemaining
 import kotlin.random.Random
@@ -55,7 +55,7 @@ class StorageNotFoundWhileUnsettledTest {
         bucket.downloadAuthenticated(PATH) {}
         assertNotNull(bucket.cachedFile(PATH))
         session = unsettled
-        delegate.onDownload = { throw notFoundRestException() }
+        delegate.onDownload = { throw notFoundStorageException() }
     }
 
     @Test
@@ -104,7 +104,7 @@ class StorageNotFoundWhileUnsettledTest {
         cachedThenNotFoundUnder(RequestSession.Restoring)
         delegate.onDownload = {
             session = SIGNED_IN
-            throw notFoundRestException()
+            throw notFoundStorageException()
         }
 
         // When
@@ -121,7 +121,7 @@ class StorageNotFoundWhileUnsettledTest {
         cachedThenNotFoundUnder(SIGNED_IN)
         delegate.onDownload = {
             session = RequestSession.RefreshFailed
-            throw notFoundRestException()
+            throw notFoundStorageException()
         }
 
         // When
@@ -136,11 +136,18 @@ class StorageNotFoundWhileUnsettledTest {
     fun a_not_found_while_the_session_restores_with_nothing_cached_is_thrown() = runTest {
         // Given
         session = RequestSession.Restoring
-        delegate.onDownload = { throw notFoundRestException() }
+        delegate.onDownload = { throw notFoundStorageException() }
 
         // When / Then
-        assertFailsWith<NotFoundRestException> { bucket.downloadAuthenticated(PATH) {} }
-        assertFailsWith<NotFoundRestException> { bucket.ensureCachedFile(PATH) }
+        assertEquals(
+            404,
+            assertFailsWith<StorageRestException> { bucket.downloadAuthenticated(PATH) {} }
+                .statusCode,
+        )
+        assertEquals(
+            404,
+            assertFailsWith<StorageRestException> { bucket.ensureCachedFile(PATH) }.statusCode,
+        )
         assertNull(bucket.cachedFile(PATH))
     }
 
@@ -165,7 +172,11 @@ class StorageNotFoundWhileUnsettledTest {
             server.objects.remove("$BUCKET/$PATH")
 
             // When
-            assertFailsWith<NotFoundRestException> { storageBucket.ensureCachedFile(PATH) }
+            assertEquals(
+                404,
+                assertFailsWith<StorageRestException> { storageBucket.ensureCachedFile(PATH) }
+                    .statusCode,
+            )
 
             // Then — the thumbnail is still answered from the cache
             server.online = false
@@ -181,7 +192,11 @@ class StorageNotFoundWhileUnsettledTest {
         cachedThenNotFoundUnder(SIGNED_IN)
 
         // When / Then
-        assertFailsWith<NotFoundRestException> { bucket.downloadAuthenticated(PATH) {} }
+        assertEquals(
+            404,
+            assertFailsWith<StorageRestException> { bucket.downloadAuthenticated(PATH) {} }
+                .statusCode,
+        )
         assertNull(bucket.cachedFile(PATH))
         assertEquals(2, delegate.downloadInvocations)
     }

@@ -32,7 +32,7 @@ public class CacheMissException internal constructor(message: String) :
  * at once instead, and could not be sent for want of a connection. Nothing was queued.
  *
  * Such writes are:
- * - a dry run, a write carrying `Prefer: tx=rollback` (supabase-kt 3.8's `dryRun()`, or the header
+ * - a dry run, a write carrying `Prefer: tx=rollback` (supabase-kt's `dryRun()`, or the header
  *   added by hand), or one whose request could not be inspected to tell whether it is one;
  * - an UPDATE or DELETE whose filter the queue cannot record exactly;
  * - a write whose user cannot be read from the stored session;

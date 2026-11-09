@@ -1380,8 +1380,8 @@ internal class StorageFileCache(
 
     /**
      * Gives the object at [to] the pin of the one at [from], when [from] has one and [to] can be
-     * pinned, as [pinObject]'s caller requires: mapped onto a file, and a name supabase-kt's
-     * requests reach. [from] loses it unless [keepSource]. [to]'s own pin stays either way.
+     * pinned, as [pinObject]'s caller requires: mapped onto a file. [from] loses it unless
+     * [keepSource]. [to]'s own pin stays either way.
      */
     private suspend fun movePinLocked(
         fromBucket: String,
@@ -1392,7 +1392,7 @@ internal class StorageFileCache(
     ) {
         if (!pinRecords.isPinned(fromBucket, from)) return
         pinRecords.runInTransaction {
-            if (entryFor(toBucket, to) != null && isRequestedByItsOwnName(to)) {
+            if (entryFor(toBucket, to) != null) {
                 pinRecords.pin(toBucket, to)
             }
             if (!keepSource) pinRecords.unpin(fromBucket, from)

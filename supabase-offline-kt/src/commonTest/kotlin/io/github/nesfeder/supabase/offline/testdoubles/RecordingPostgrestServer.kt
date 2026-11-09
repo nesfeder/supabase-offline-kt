@@ -41,7 +41,8 @@ internal class RecordingPostgrestServer(
      *
      * @property method the HTTP method, e.g. `"POST"`.
      * @property table the last path segment, i.e. the table or view the request addresses.
-     * @property query the decoded query parameters. supabase-kt sends one value per name.
+     * @property query the decoded query parameters, the first value of each: supabase-kt sends
+     *   several for a column only when the request filters it more than once ([queryValues]).
      * @property prefer the raw `Prefer` header, or `null` when absent.
      * @property contentProfile the `Content-Profile` header (the schema of a write), or `null`.
      * @property acceptProfile the `Accept-Profile` header (the schema of a read), or `null`.
@@ -76,6 +77,9 @@ internal class RecordingPostgrestServer(
 
         /** The query string as it went on the wire, percent-encoded. Outside equality. */
         var encodedQuery: String? = null
+
+        /** Every value of each decoded query parameter, in order. Outside equality. */
+        var queryValues: Map<String, List<String>> = emptyMap()
     }
 
     /** Every request received, in order. */
@@ -105,6 +109,10 @@ internal class RecordingPostgrestServer(
                                 authorization = request.headers["Authorization"]
                                 retryCount = request.headers["x-retry-count"]
                                 encodedQuery = request.url.encodedQuery
+                                queryValues =
+                                    request.url.parameters.names().associateWith { name ->
+                                        request.url.parameters.getAll(name).orEmpty()
+                                    }
                             }
                     requests += recorded
                     answer(recorded)

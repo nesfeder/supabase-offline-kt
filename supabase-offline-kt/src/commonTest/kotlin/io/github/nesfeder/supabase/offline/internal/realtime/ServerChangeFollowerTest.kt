@@ -51,7 +51,8 @@ import kotlinx.serialization.json.put
  * the cap and reads the table again instead, and joins a table again after its channel ended,
  * waiting longer each time until an edge or a follow that lasted, while the other tables stay
  * joined; a channel that ended is logged at DEBUG, and the warning comes with the rejoin. The
- * tables' statuses sum up to one, a stall first.
+ * tables' statuses sum up to one, a stall first. While the network is off or known down, the feed
+ * is told to release it once every channel is left.
  */
 class ServerChangeFollowerTest {
 
@@ -175,6 +176,94 @@ class ServerChangeFollowerTest {
         runCurrent()
         assertEquals(RealtimeStatus.Paused, follower.state.value)
         assertTrue(feed.follows.value[3].isLeft)
+        scope.cancel()
+    }
+
+    @Test
+    fun the_network_is_released_once_every_channel_is_left_while_it_is_off_or_known_down() =
+        runTest {
+            // Given — following, joined
+            val scope = newScope()
+            val follower = newFollower(scope)
+            sessionIdentity.emit(USER)
+            follower.start()
+            runCurrent()
+            feed.follows.value.single().join()
+            runCurrent()
+
+            // When — the network is known down
+            network.value = NetworkStatus.OFFLINE
+            runCurrent()
+
+            // Then — the network is released, once the channel was left
+            assertEquals(RealtimeStatus.Paused, follower.state.value)
+            assertEquals(listOf(true), feed.releases.value)
+
+            // When — the network is back, and the user signs out
+            network.value = NetworkStatus.ONLINE
+            runCurrent()
+            sessionIdentity.emit(null)
+            runCurrent()
+
+            // Then — paused, but the network is the session's to close, not the follower's
+            assertEquals(RealtimeStatus.Paused, follower.state.value)
+            assertEquals(listOf(true), feed.releases.value)
+
+            // When — network access is turned off while signed out
+            network.value = NetworkStatus.DISABLED
+            runCurrent()
+
+            // Then — released again
+            assertEquals(listOf(true, true), feed.releases.value)
+
+            // When — back on and signed in, then the subscription off
+            network.value = NetworkStatus.ONLINE
+            sessionIdentity.emit(USER)
+            runCurrent()
+            follower.setEnabled(false)
+            runCurrent()
+
+            // Then — off, and nothing released while the network is up
+            assertEquals(RealtimeStatus.Off, follower.state.value)
+            assertEquals(listOf(true, true), feed.releases.value)
+
+            // When — network access is turned off while the subscription is off
+            network.value = NetworkStatus.DISABLED
+            runCurrent()
+
+            // Then — released, every follow left, and still off
+            assertEquals(listOf(true, true, true), feed.releases.value)
+            assertEquals(RealtimeStatus.Off, follower.state.value)
+            scope.cancel()
+        }
+
+    @Test
+    fun a_failure_to_release_the_network_is_logged_by_type_and_the_follow_resumes() = runTest {
+        // Given — a feed whose release fails, following
+        val failing =
+            object : ServerChangeFeed by feed {
+                override fun releaseNetwork() {
+                    throw IllegalStateException("socket stuck")
+                }
+            }
+        val scope = newScope()
+        val follower = newFollower(scope, feed = failing)
+        sessionIdentity.emit(USER)
+        follower.start()
+        runCurrent()
+
+        // When — the network is known down, then back
+        network.value = NetworkStatus.OFFLINE
+        runCurrent()
+        network.value = NetworkStatus.ONLINE
+        runCurrent()
+
+        // Then — the failure is logged at debug by its type, and the follow joins again
+        val said = logs.entriesAt(EngineLogLevel.DEBUG).map { entry -> entry.message }
+        assertTrue(said.any { message -> "IllegalStateException" in message }, "$said")
+        assertTrue(said.none { message -> "stuck" in message }, "$said")
+        assertEquals(2, feed.follows.value.size)
+        assertEquals(RealtimeStatus.Subscribing, follower.state.value)
         scope.cancel()
     }
 
@@ -615,7 +704,7 @@ class ServerChangeFollowerTest {
 
     @Test
     fun a_channel_that_holds_few_changes_loses_none_to_a_slow_apply() = runTest {
-        // Given — a channel that holds 64 changes, as supabase-kt 3.6.0's does, followed with an
+        // Given — a channel that holds 64 changes, as supabase-kt's does, followed with an
         // apply held on its first batch
         var opened: ScriptedRealtimeChannel? = null
         val bounded = scriptedServerChangeFeed(capacity = 64) { channel -> opened = channel }

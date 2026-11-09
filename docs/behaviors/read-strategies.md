@@ -93,7 +93,7 @@ filters, columns, order and range share one cached payload, and either one fills
 row, with the user's queued writes laid over it, as one object marked as from the cache;
 `CacheFirst` answers from it first, without a request. No row or several answer nothing: the read
 fails as it would with nothing cached, and `CacheOnly` throws `CacheMissException`.
-`maybeSingle()` (supabase-kt 3.8) asks the server the same way and is cached and answered the same
+`maybeSingle()` asks the server the same way and is cached and answered the same
 way, but offline it cannot answer no row with `null`: nothing in its request tells it from
 `single()`, and its blank answer online stands for no row and for several, so it is not stored. A
 row never read with its own query is not answered from another cached list. Read the list and pick
@@ -136,9 +136,6 @@ From the samples: [OfflineTaskRepository.kt](https://github.com/nesfeder/supabas
     --8<-- "Data/TaskRepository.swift:operator-filter"
     ```
 
-- **Two filters on one column** are refused with an `IllegalArgumentException` before anything is
-  sent, since supabase-kt would send only the first: see
-  [Coming from supabase-kt](../getting-started/migrating.md#two-filters-on-one-column).
 - **While a stored session restores, or after its token refresh failed** (supabase-kt tries the
   refresh again, every ten seconds by default), supabase-kt sends requests on the anon key, which
   row-level security can answer with fewer rows, or none, so nothing such a request returns is
@@ -199,13 +196,12 @@ response, laid over what a read returns.
 `stripNulls()` and `explain()`, `single()` with `stripNulls()` among them, do not return a plain
 list, so their answer is neither stored nor overlaid. Under every strategy but `CacheOnly` such a
 read goes to the network, and offline throws as `NetworkOnly` does; under `CacheOnly` it sends
-nothing and throws `CacheMissException`. While the session restores, or after its refresh failed,
-it waits for the session as a list read does (300, 900 and 2,400 ms, woken early when the session
-settles), then is sent once, settled or not. `single()` and `maybeSingle()` (supabase-kt 3.8) wait
-the same way and are cached as their list, one row long (see **One row offline** above); on
-supabase-kt 3.8, `maybeSingle()` with no row returns supabase-kt's empty result, which is not
-stored. The shape is read from the request supabase-kt builds, before anything is sent; a read
-whose request cannot be built (no token to be had) fails as sending it would, and is never
-answered from the list.
+nothing and throws `CacheMissException`. While the session restores, or after its refresh failed, it
+waits for the session as a list read does (300, 900 and 2,400 ms, woken early when the session
+settles), then is sent once, settled or not. `single()` and `maybeSingle()` wait the same way and
+are cached as their list, one row long (see **One row offline** above); `maybeSingle()` with no row
+returns supabase-kt's empty result, which is not stored. The shape is read from the request
+supabase-kt builds, before anything is sent; a read whose request cannot be built (no token to be
+had) fails as sending it would, and is never answered from the list.
 
 **The request lambda and schemas.**

@@ -11,6 +11,7 @@ import io.github.jan.supabase.storage.FileObjectV2
 import io.github.jan.supabase.storage.FileUploadResponse
 import io.github.jan.supabase.storage.ImageTransformation
 import io.github.jan.supabase.storage.PublicUrlBuilder
+import io.github.jan.supabase.storage.PurgeCacheOptions
 import io.github.jan.supabase.storage.SignedUrl
 import io.github.jan.supabase.storage.SignedUrlBuilder
 import io.github.jan.supabase.storage.SignedUrlsBuilder
@@ -21,26 +22,26 @@ import io.github.jan.supabase.storage.UploadSignedUrl
 import io.github.jan.supabase.storage.resumable.ResumableClient
 import io.ktor.client.request.HttpRequestBuilder
 import io.ktor.client.request.url
+import io.ktor.http.encodeURLPath
 import io.ktor.utils.io.ByteWriteChannel
 import io.ktor.utils.io.writeFully
 import kotlin.time.Duration
 
 /**
  * Scriptable [BucketApi] for the offline bucket's tests: every download returns [onDownload]'s
- * bytes, and every write records its arguments after [onWrite]. [setHeader] records its header,
- * [bucketId] is served, and every other member fails, those a supabase-kt minor after 3.6 adds
- * included ([BucketMembersSinceSupabaseKt38]). It sees no image transform; a test that needs one
- * uses [RecordingStorageServer] and the real bucket.
+ * bytes, and every write records its arguments after [onWrite]. [purgeCache] records its path,
+ * [setHeader] records its header, [bucketId] is served, and every other member fails. It sees no
+ * image transform; a test that needs one uses [RecordingStorageServer] and the real bucket.
  *
  * @property bucketId Bucket identifier the wrapper reads via `BucketApi by delegate`.
  * @property onDownload what every download, of every kind, returns or throws: a transport error, a
- *   `NotFoundRestException` or `awaitCancellation()` scripts a failure. It fails by default, so a
+ *   `StorageRestException` or `awaitCancellation()` scripts a failure. It fails by default, so a
  *   test opts into success.
  */
 internal class FakeBucketApi(
     override val bucketId: String = "test-bucket",
     var onDownload: suspend (path: String) -> ByteArray = { error("onDownload not scripted") },
-) : BucketMembersSinceSupabaseKt38() {
+) : BucketApi {
 
     /** Size of the pieces a channel download writes. */
     var channelChunkSize: Int = 4
@@ -78,6 +79,9 @@ internal class FakeBucketApi(
 
     /** `(from, to, destinationBucket)` of every [copy], in call order. */
     val copies: MutableList<Triple<String, String, String?>> = mutableListOf()
+
+    /** Paths passed to [purgeCache], in call order. */
+    val purgedPaths: MutableList<String> = mutableListOf()
 
     private fun unsupported(member: String): Nothing =
         error("FakeBucketApi.$member must not be called in this test")
@@ -123,7 +127,8 @@ internal class FakeBucketApi(
 
     /**
      * Runs the overrides in [options] on the request supabase-kt would send for an untransformed
-     * download of [path], as the real bucket does.
+     * download of [path], as the real bucket does: at a URL whose bucket and path segments are each
+     * percent-encoded, as supabase-kt's own `storagePath` encodes them.
      */
     private fun runRequestOverrides(
         path: String,
@@ -135,7 +140,10 @@ internal class FakeBucketApi(
         val access = if (isPublic) "public" else "authenticated"
         val request =
             HttpRequestBuilder().apply {
-                url("$TEST_SUPABASE_URL/storage/v1/object/$access/$bucketId/$path")
+                val encodedPath = path.split('/').joinToString("/") { it.encodeURLPath() }
+                url(
+                    "$TEST_SUPABASE_URL/storage/v1/object/$access/${bucketId.encodeURLPath()}/$encodedPath"
+                )
             }
         overrides.forEach { override -> request.override() }
     }
@@ -238,6 +246,10 @@ internal class FakeBucketApi(
 
     override suspend fun changePublicStatusTo(public: Boolean): Unit =
         unsupported("changePublicStatusTo")
+
+    override suspend fun purgeCache(path: String, options: PurgeCacheOptions.() -> Unit) {
+        purgedPaths += path
+    }
 
     override fun publicUrl(path: String, builder: PublicUrlBuilder.() -> Unit): String =
         unsupported("publicUrl")

@@ -28,7 +28,7 @@ https://github.com/user-attachments/assets/d0c7d5ee-dbc1-42ab-be43-4f7170e2a79b
 ### Add the dependency
 
 The library brings supabase-kt's Postgrest, Storage and Auth with it, at the supabase-kt minor it
-is built and tested against: 3.6. supabase-kt sends its requests through Ktor, so give each target
+is built and tested against: 3.9. supabase-kt sends its requests through Ktor, so give each target
 a Ktor engine of the version supabase-kt uses.
 
 ```kotlin
@@ -38,8 +38,8 @@ kotlin {
         commonMain.dependencies {
             implementation("io.github.nesfeder.supabase-offline:supabase-offline-kt:0.3.0")
         }
-        androidMain.dependencies { implementation("io.ktor:ktor-client-okhttp:3.4.3") }
-        iosMain.dependencies { implementation("io.ktor:ktor-client-darwin:3.4.3") }
+        androidMain.dependencies { implementation("io.ktor:ktor-client-okhttp:3.6.0") }
+        iosMain.dependencies { implementation("io.ktor:ktor-client-darwin:3.6.0") }
         commonTest.dependencies {
             implementation("io.github.nesfeder.supabase-offline:supabase-offline-kt-testing:0.3.0")
         }

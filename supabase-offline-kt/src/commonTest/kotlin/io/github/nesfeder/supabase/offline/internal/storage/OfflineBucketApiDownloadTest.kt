@@ -2,14 +2,14 @@
 // SPDX-License-Identifier: MIT
 package io.github.nesfeder.supabase.offline.internal.storage
 
-import io.github.jan.supabase.exceptions.UnauthorizedRestException
+import io.github.jan.supabase.storage.StorageRestException
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogLevel
 import io.github.nesfeder.supabase.offline.testdoubles.FakeBucketApi
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingLogSink
-import io.github.nesfeder.supabase.offline.testdoubles.forbiddenRestException
+import io.github.nesfeder.supabase.offline.testdoubles.forbiddenStorageException
 import io.github.nesfeder.supabase.offline.testdoubles.newTestBucketApi
 import io.github.nesfeder.supabase.offline.testdoubles.newTestStore
-import io.github.nesfeder.supabase.offline.testdoubles.notFoundRestException
+import io.github.nesfeder.supabase.offline.testdoubles.notFoundStorageException
 import io.ktor.utils.io.ByteChannel
 import io.ktor.utils.io.readRemaining
 import kotlin.random.Random
@@ -236,10 +236,10 @@ class OfflineBucketApiDownloadTest {
     @Test
     fun downloadPublic_noCache_refused_logsWarning() = runTest {
         // Given — nothing cached, and the server refuses the download
-        delegate.onDownload = { throw forbiddenRestException() }
+        delegate.onDownload = { throw forbiddenStorageException() }
 
         // When
-        assertFailsWith<UnauthorizedRestException> { api.downloadPublic(PATH) {} }
+        assertFailsWith<StorageRestException> { api.downloadPublic(PATH) {} }
 
         // Then — not an offline condition: WARNING, and nothing above
         assertEquals(
@@ -311,10 +311,10 @@ class OfflineBucketApiDownloadTest {
     @Test
     fun downloadAuthenticated_noCache_refused_logsWarning() = runTest {
         // Given — nothing cached, and the server refuses the download
-        delegate.onDownload = { throw forbiddenRestException() }
+        delegate.onDownload = { throw forbiddenStorageException() }
 
         // When
-        assertFailsWith<UnauthorizedRestException> { api.downloadAuthenticated(PATH) {} }
+        assertFailsWith<StorageRestException> { api.downloadAuthenticated(PATH) {} }
 
         // Then — not an offline condition: WARNING, and nothing above
         assertEquals(
@@ -332,7 +332,7 @@ class OfflineBucketApiDownloadTest {
         delegate.onDownload = { throw IOException("network unreachable") }
         api.downloadPublic(PATH) {}
         assertFailsWith<IOException> { api.downloadPublic("folder/never-cached.bin") {} }
-        delegate.onDownload = { throw notFoundRestException() }
+        delegate.onDownload = { throw notFoundStorageException() }
         assertFailsWith<Exception> { api.downloadPublic(PATH) {} }
 
         // When

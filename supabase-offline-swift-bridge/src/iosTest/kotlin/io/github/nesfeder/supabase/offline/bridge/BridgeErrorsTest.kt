@@ -64,7 +64,7 @@ class BridgeErrorsTest {
 
     @Test
     fun a_storage_refusal_carries_its_status_and_never_the_url() = bridgeTest {
-        // Given — a server with no such object
+        // Given — a server with no such object, answering an HTTP 400 whose body says 404
         server.answer = {
             ScriptedAnswer.json(
                 400,
@@ -78,9 +78,9 @@ class BridgeErrorsTest {
         client.storage.download("avatars", "secret-user/photo.png", false, null, probe.completion)
         val error = probe.awaitError()
 
-        // Then
+        // Then — the status is the one Storage's body names
         assertEquals(BridgeErrorKind.HTTP, error.kind)
-        assertEquals(400, error.httpStatus)
+        assertEquals(404, error.httpStatus)
         assertFalse(error.message.contains("secret-user"))
         assertFalse(error.details.orEmpty().contains("fixture.supabase.co"))
         client.closeAndWait()
@@ -421,25 +421,32 @@ class BridgeErrorsTest {
 
     @Test
     fun an_operator_is_offered_exactly_when_the_pinned_supabase_kt_has_it() = bridgeTest {
-        // Given — the operator this pin may or may not have
-        val pinHasIsDistinct = FilterOperator.entries.any { it.identifier == "isdistinct" }
+        // Given — `isdistinct`, which the pin has, and a name no supabase-kt has
+        assertTrue(FilterOperator.entries.any { it.identifier == "isdistinct" })
         val client = openTestClient(server)
 
         // When
-        val (_, error) =
+        val (_, offered) =
             client.selectAndWait(
                 """{"v":1,"table":"todos","filters":[{"kind":"filter","column":"a",
                    "operator":"isdistinct","value":"1"}],"strategy":{"kind":"networkOnly"}}"""
             )
+        val (_, missing) =
+            client.selectAndWait(
+                """{"v":1,"table":"todos","filters":[{"kind":"filter","column":"a",
+                   "operator":"isnotdistinct","value":"1"}],"strategy":{"kind":"networkOnly"}}"""
+            )
 
-        // Then — refused with a clear error on a pin without it, sent on one with it
-        if (pinHasIsDistinct) {
-            assertEquals(null, error)
-        } else {
-            assertEquals(BridgeErrorKind.UNSUPPORTED, error?.kind)
-            assertTrue(error?.message.orEmpty().contains("isdistinct"))
-            assertTrue(server.requests.isEmpty())
-        }
+        // Then — the one it has is sent, the other refused with a clear error before sending
+        assertEquals(null, offered)
+        assertEquals(
+            listOf("a" to "isdistinct.1"),
+            server.requests.single().queryParameters.filter {
+                it.first == "a"
+            },
+        )
+        assertEquals(BridgeErrorKind.UNSUPPORTED, missing?.kind)
+        assertTrue(missing?.message.orEmpty().contains("isnotdistinct"))
         client.closeAndWait()
     }
 }

@@ -52,8 +52,9 @@ class ServerRefusedException(
 ) : Exception(message, cause)
 
 /**
- * The library refused a request before sending it: two top-level filters on one column, or a retry
- * of a refused write that can no longer be sent as it was made.
+ * The library refused a request before sending it: an `in` element holding a double quote, which
+ * the server would read differently, or a retry of a refused write that can no longer be sent as it
+ * was made.
  *
  * @property libraryMessage the library's own sentence.
  */

@@ -11,6 +11,7 @@ import io.github.nesfeder.supabase.offline.internal.logging.EngineLogLevel
 import io.github.nesfeder.supabase.offline.internal.mutationqueue.STORAGE_NOT_INSTALLED_REASON
 import io.github.nesfeder.supabase.offline.internal.storage.MISSING_UPLOAD_FILE_REASON
 import io.github.nesfeder.supabase.offline.internal.storage.QUEUED_UPLOADS_DIRECTORY_NAME
+import io.github.nesfeder.supabase.offline.internal.storage.UNNAMEABLE_UPLOAD_PATH_REASON
 import io.github.nesfeder.supabase.offline.internal.storage.UNREADABLE_UPLOAD_REASON
 import io.github.nesfeder.supabase.offline.internal.storage.UPLOAD_OPERATION_NAME
 import io.github.nesfeder.supabase.offline.internal.testing.InMemoryCachedFileDao
@@ -43,8 +44,8 @@ import okio.SYSTEM
 /**
  * A queued upload the library can no longer send as it was made is refused onto the rejected list
  * with the library's reason, and the pass goes on: its file gone from the device, its stored body
- * unreadable, or no Storage plugin to send it through. An upload whose bytes the device cannot keep
- * is sent at once instead of being queued.
+ * unreadable, an object path no request can name, or no Storage plugin to send it through. An
+ * upload whose bytes the device cannot keep is sent at once instead of being queued.
  */
 class QueuedUploadRefusalTest {
 
@@ -166,6 +167,35 @@ class QueuedUploadRefusalTest {
     }
 
     @Test
+    fun an_upload_whose_path_no_request_can_name_is_refused_and_the_pass_goes_on() = runTest {
+        // Given — an upload queued, as an earlier version could, under a path with a lone
+        // surrogate, which supabase-kt cannot percent-encode; then a row queued behind it
+        val client = openClient()
+        server.online = false
+        client.storage.from(BUCKET).upload(PATH, BYTES, MutationStrategy.QueueIfOffline)
+        val queued = mutationDao.pendingAll().single()
+        mutationDao.deleteById(queued.id)
+        mutationDao.insert(
+            queued.copy(id = 0, bodyJson = queued.bodyJson.replace(PATH, LONE_SURROGATE_PATH))
+        )
+        client.from(PHOTOS).insert(JsonArray(emptyList()))
+
+        // When
+        server.online = true
+        val report = client.syncPendingMutations()
+
+        // Then — refused by the library, never sent, rather than held as a lost connection, and
+        // the row behind it went
+        val refused = client.storage.rejectedUploadList().single()
+        assertEquals(LONE_SURROGATE_PATH, refused.path)
+        assertNull(refused.serverError)
+        assertEquals(UNNAMEABLE_UPLOAD_PATH_REASON, refused.message)
+        assertEquals(emptyList(), server.uploads())
+        assertEquals(listOf("rest/$PHOTOS"), server.writes())
+        assertEquals(0, report.remainingCount)
+    }
+
+    @Test
     fun an_upload_whose_bytes_the_device_cannot_keep_is_sent_at_once() = runTest {
         // Given — a disk that refuses every write
         val directory =
@@ -194,6 +224,7 @@ class QueuedUploadRefusalTest {
     private companion object {
         const val BUCKET = "photos"
         const val PATH = "user-a/photo.jpg"
+        const val LONE_SURROGATE_PATH = "user-a/photo\uD800.jpg"
         const val PHOTOS = "task_photos"
         val BYTES = "a photo".encodeToByteArray()
     }

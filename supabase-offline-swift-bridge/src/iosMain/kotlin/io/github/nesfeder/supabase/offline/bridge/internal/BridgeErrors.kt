@@ -6,6 +6,7 @@ import io.github.jan.supabase.exceptions.HttpRequestException
 import io.github.jan.supabase.exceptions.RestException
 import io.github.jan.supabase.exceptions.SupabaseEncodingException
 import io.github.jan.supabase.postgrest.exception.PostgrestRestException
+import io.github.jan.supabase.storage.StorageRestException
 import io.github.nesfeder.supabase.offline.CacheMissException
 import io.github.nesfeder.supabase.offline.MutationNotQueueableException
 import io.github.nesfeder.supabase.offline.NetworkDisabledException
@@ -149,33 +150,29 @@ private fun restError(failure: RestException, type: String): BridgeError {
 internal class StorageRefusal(val code: String?, val message: String)
 
 /**
- * What Storage sent with [failure]. supabase-kt keeps Storage's error and message as the error and
- * description of a `400`, and for any other status prints its own record of them into the error.
+ * What Storage sent with [failure]. supabase-kt's Storage throws a [StorageRestException] for every
+ * error answer: its code is the service's error code, or Storage's error name when it sends none,
+ * and its description is Storage's message. An answer that held no refusal supabase-kt could read
+ * (a gateway's page, say) leaves both blank under supabase-kt's own error name. Another
+ * [RestException] keeps its error as the code when it carries a description apart from it.
  */
 internal fun storageRefusalOf(failure: RestException): StorageRefusal {
-    val printed = PRINTED_STORAGE_ERROR.matchEntire(failure.error)
     val description = failure.description
     val (code, message) =
         when {
-            printed != null -> printed.groupValues[1] to printed.groupValues[2]
+            failure is StorageRestException ->
+                failure.code.takeUnless(String::isBlank) to description.orEmpty()
             description != null -> failure.error to description
             else -> null to failure.error
         }
     return when {
-        code == UNREAD_STORAGE_ERROR && message.isBlank() ->
+        failure.error == UNREAD_STORAGE_ERROR && code == null && message.isBlank() ->
             StorageRefusal(null, "The server answered ${failure.statusCode}")
         message.isBlank() ->
             StorageRefusal(code, code ?: "The server answered ${failure.statusCode}")
         else -> StorageRefusal(code, message)
     }
 }
-
-/** supabase-kt's printed record of a Storage refusal: Storage's error, then its message. */
-private val PRINTED_STORAGE_ERROR =
-    Regex(
-        """Unknown error response StorageErrorResponse\(statusCode=-?\d+, error=(.*?), message=(.*)\)""",
-        RegexOption.DOT_MATCHES_ALL,
-    )
 
 /** The error supabase-kt records when Storage's answer held no refusal it could read. */
 private const val UNREAD_STORAGE_ERROR = "Unknown error"

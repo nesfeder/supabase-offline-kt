@@ -85,12 +85,6 @@ indirect enum FilterNode: Sendable, Hashable {
         }
     }
 
-    /// Whether this is a text search, which replaces the filters before it on its column.
-    var isTextSearch: Bool {
-        if case .textSearch = self { return true }
-        return false
-    }
-
     /// The node as a description's filter object.
     var descriptionValue: OfflineJSON {
         switch self {
@@ -131,17 +125,22 @@ indirect enum FilterNode: Sendable, Hashable {
 
 /// Puts a request's top-level filters in a form the core sends exactly as written.
 ///
-/// The core sends one filter per column and one group per parameter at the top level, as the
-/// library underneath does, and refuses a list that breaks either rule. PostgREST reads several
-/// conditions joined by `&` and the same conditions inside one `and` group alike, so conditions that
-/// share a top-level column, and `or` groups that share a table, move into one `and` group: the
-/// embedded table's own group (`authors.and`) for a column of one (`authors.born`).
+/// The core sends one group per parameter at the top level, as the library underneath does (a
+/// second `or` group would replace the first), and refuses a list that breaks that rule, so `or`
+/// groups that share a table move into one `and` group. Several filters on one column are sent as
+/// they are, one value each, which PostgREST ANDs; a read still moves them into one `and` group, as
+/// it did when the library underneath sent one filter per column, so the cache keys of the reads a
+/// Swift app already holds stay as they were. An update or a delete keeps them at the top level,
+/// where the core can capture each one and queue the write; inside a group the queue could not
+/// hold it. A column of an embedded table (`authors.born`) moves into that table's own group
+/// (`authors.and`).
 enum TopLevelFilters {
 
-    /// `nodes` with the conflicting ones moved into `and` groups, each where its first member stood;
-    /// the rest keep their order.
-    static func arranged(_ nodes: [FilterNode]) -> [FilterNode] {
-        let columnCounts = counts(of: nodes.compactMap(\.column))
+    /// `nodes` with the conflicting ones moved into `and` groups, each where its first member stood,
+    /// members in the order written; the rest keep their order. Filters sharing a column move only
+    /// when `groupsSameColumnFilters`, as a read's do.
+    static func arranged(_ nodes: [FilterNode], groupsSameColumnFilters: Bool = true) -> [FilterNode] {
+        let columnCounts = groupsSameColumnFilters ? counts(of: nodes.compactMap(\.column)) : [:]
         let groupCounts = counts(of: nodes.compactMap(\.groupParameter))
         var arranged: [FilterNode] = []
         var bucketPositions: [String: Int] = [:]
@@ -161,11 +160,9 @@ enum TopLevelFilters {
             buckets[key, default: []].append(member)
         }
         for (key, position) in bucketPositions {
-            let members = buckets[key, default: []]
-            let textSearchesFirst = members.filter(\.isTextSearch) + members.filter { !$0.isTextSearch }
             arranged[position] = .group(
                 kind: .and,
-                children: textSearchesFirst,
+                children: buckets[key, default: []],
                 isNegated: false,
                 referencedTable: bucketTables[key] ?? nil
             )
@@ -221,13 +218,12 @@ enum TopLevelFilters {
     }
 
     /// Why `nodes` cannot be sent as written at this level, or `nil` when they can: what the core
-    /// refuses (an empty group anywhere, a text search after a filter on its column, and at the top
-    /// level a second filter on one column or a second group on one parameter), and a value the
-    /// request would carry in a form PostgREST reads differently (``valueRefusal(of:isInGroup:table:)``).
-    /// `table` is the embedded table a group's columns belong to, named in a message as the caller
-    /// wrote the column (`authors.name`).
+    /// refuses (an empty group anywhere, and at the top level a second group on one parameter), and
+    /// a value the request would carry in a form PostgREST reads differently
+    /// (``valueRefusal(of:isInGroup:table:)``). Several filters on one column, a text search among
+    /// them, are sent as written. `table` is the embedded table a group's columns belong to, named
+    /// in a message as the caller wrote the column (`authors.name`).
     static func refusal(of nodes: [FilterNode], isTopLevel: Bool = true, table: String? = nil) -> String? {
-        var filteredColumns: Set<String> = []
         var groupParameters: Set<String> = []
         for node in nodes {
             if let refusal = valueRefusal(of: node, isInGroup: !isTopLevel, table: table) { return refusal }
@@ -238,13 +234,6 @@ enum TopLevelFilters {
                     return "Two \"\(parameter)\" groups at the top level; combine them in one group"
                 }
             }
-            guard let column = node.column else { continue }
-            if node.isTextSearch && filteredColumns.contains(column) {
-                return "A text search on \"\(written(column, in: table))\" follows another filter on that column, which it would replace"
-            }
-            if !filteredColumns.insert(column).inserted && isTopLevel {
-                return "Two filters on \"\(written(column, in: table))\" at the top level"
-            }
         }
         return nil
     }
@@ -253,8 +242,9 @@ enum TopLevelFilters {
     ///
     /// A list or group escapes `"` and `\` but quotes only a value with one of `,.:()`, which
     /// PostgREST then reads literally; a group splits a range and cuts a text search's query at a
-    /// comma or `)`. A pattern list leaves empty, `NULL`, edge-spaced or braced patterns unquoted
-    /// (and an empty list matches every row). A top-level single value is read as written.
+    /// comma or `)`. An empty pattern list matches every row under `LIKE ALL` (and nothing under
+    /// `LIKE ANY`, refused alike); a pattern is quoted as Postgres reads it. A top-level single
+    /// value is read as written.
     static func valueRefusal(of node: FilterNode, isInGroup: Bool, table: String? = nil) -> String? {
         let advice = "filter on it with a single condition outside any list or group"
         let column = node.column.map { written($0, in: table) } ?? ""
@@ -267,8 +257,6 @@ enum TopLevelFilters {
             return "A range filter on \"\(column)\" cannot be sent inside a filter group; filter on it with a single condition outside any group"
         case .patternList(_, _, let patterns) where patterns.isEmpty:
             return "The pattern list for \"\(column)\" is empty, which would match every row; give at least one pattern"
-        case .patternList(_, _, let patterns) where patterns.contains(where: isMisreadInAnArrayUnquoted):
-            return "A pattern for \"\(column)\" is empty, NULL, edged with white space or holds a brace, which a pattern list sends in a form the server reads differently; match it with a single like or ilike condition outside any list"
         case .textSearch(_, let query, _, _)
         where isInGroup && (query.contains(where: { $0 == "," || $0 == ")" }) || query.hasPrefix("\"")):
             return "A text search on \"\(column)\" inside a filter group has a comma, a \")\" or a leading double quote in its query, which a group cannot carry; search on it with a single condition outside any group"
@@ -280,15 +268,6 @@ enum TopLevelFilters {
     /// `column` as the caller wrote it: prefixed with its embedded `table`, when it has one.
     private static func written(_ column: String, in table: String?) -> String {
         table.map { "\($0).\(column)" } ?? column
-    }
-
-    /// Whether Postgres would read `text`, sent unquoted in an array literal (it holds none of
-    /// `,.:()`), as something else: empty, `NULL` in any case, edged with white space, or braced.
-    static func isMisreadInAnArrayUnquoted(_ text: String) -> Bool {
-        guard !text.contains(where: { ",.:()".contains($0) }) else { return false }
-        return text.isEmpty || text.caseInsensitiveCompare("NULL") == .orderedSame
-            || text.first?.isWhitespace == true || text.last?.isWhitespace == true
-            || text.contains(where: { $0 == "{" || $0 == "}" })
     }
 
     /// Whether `text` would be escaped but left unquoted in a list or group (a `"` or `\`, and none

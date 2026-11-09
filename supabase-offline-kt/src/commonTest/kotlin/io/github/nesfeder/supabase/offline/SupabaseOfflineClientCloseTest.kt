@@ -573,6 +573,7 @@ class SupabaseOfflineClientCloseTest {
                 "delete" to { bucket -> bucket.delete("u-1/me.png") },
                 "move" to { bucket -> bucket.move("u-1/me.png", "u-1/moved.png") },
                 "copy" to { bucket -> bucket.copy("u-1/me.png", "u-1/copy.png") },
+                "purgeCache" to { bucket -> bucket.purgeCache("u-1/me.png") },
             )
         for ((name, call) in calls) {
             // Given — the call on the wire, held at the server

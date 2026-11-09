@@ -4,7 +4,6 @@
 
 package io.github.nesfeder.supabase.offline.internal.storage
 
-import io.github.jan.supabase.exceptions.NotFoundRestException
 import io.github.jan.supabase.exceptions.RestException
 import io.github.jan.supabase.network.HttpRequestOverride
 import io.github.jan.supabase.storage.BucketApi
@@ -13,6 +12,7 @@ import io.github.jan.supabase.storage.FileObject
 import io.github.jan.supabase.storage.FileObjectV2
 import io.github.jan.supabase.storage.FileUploadResponse
 import io.github.jan.supabase.storage.ImageTransformation
+import io.github.jan.supabase.storage.PurgeCacheOptions
 import io.github.jan.supabase.storage.SignedUrl
 import io.github.jan.supabase.storage.SignedUrlBuilder
 import io.github.jan.supabase.storage.SignedUrlsBuilder
@@ -74,8 +74,8 @@ private const val DOWNLOAD_BUFFER_BYTES: Int = 64 * 1024
  * The offline client's [OfflineBucketApi]: supabase-kt's bucket, with downloads cached in the
  * client's [StorageFileCache]. Every member that can change the server's copy of a path is
  * overridden, its convenience overloads included, so stale copies are dropped; every member passes
- * the client's gate. `purgeCache` (supabase-kt 3.8) is not overridden, so this compiles on 3.6: on
- * 3.8 it reaches the delegate past the gate, and a build on 3.6 run on 3.8 fails the call.
+ * the client's gate and its network switch, `purgeCache` among them. That one purges Storage's CDN
+ * cache of an object, not the object, so it leaves the file cache as it is.
  *
  * @param engineLogger messages at INFO and above name the bucket, never the object path.
  * @param backgroundScope the client's own scope, which closing the client cancels.
@@ -403,7 +403,7 @@ internal class CachingBucketApi(
                 wrap: (DownloadOptionBuilder.() -> Unit) -> (DownloadOptionBuilder.() -> Unit)
             ) -> ByteArray,
     ): ByteArray {
-        requireUrlFor(path)
+        requireSendable(path)
         engineLogger.debug { "Storage download $bucketId/$path attempting network" }
         if (!cachesDownloadsOf(path)) {
             networkAccess.ensureEnabled()
@@ -700,7 +700,7 @@ internal class CachingBucketApi(
             { target, wrappedOptions ->
                 checkingDownloadStatus { uncheckedFetch(target, wrappedOptions) }
             }
-        requireUrlFor(path)
+        requireSendable(path)
         engineLogger.debug { "Storage download $bucketId/$path attempting network" }
         if (!cachesDownloadsOf(path)) {
             networkAccess.ensureEnabled()
@@ -1040,7 +1040,7 @@ internal class CachingBucketApi(
         options: UploadOptionBuilder.() -> Unit,
     ): UploadOutcome = operationGate.call {
         require(data.isNotEmpty()) { "The data to upload should not be empty" }
-        requireUrlFor(path)
+        requireSendable(path)
         if (mutationStrategy == MutationStrategy.OnlineOnly) {
             return@call UploadOutcome.Applied(upload(path, data, options))
         }
@@ -1121,18 +1121,22 @@ internal class CachingBucketApi(
         invalidatingAfter(path) { delegate.uploadToSignedUrl(path, token, data, options) }
 
     // A pin goes with the object; kept while the object may still be there
-    override suspend fun delete(paths: Collection<String>): Unit =
+    override suspend fun delete(paths: Collection<String>) {
+        paths.forEach(::requireSendable)
         storageWrite(
             write = { delegate.delete(paths) },
             applied = { paths.forEach { path -> cache.forgetObject(bucketId, path) } },
             uncertain = { paths.forEach { path -> cache.invalidateObject(bucketId, path) } },
         )
+    }
 
     override suspend fun delete(vararg paths: String) {
         delete(paths.toList())
     }
 
-    override suspend fun move(from: String, to: String, destinationBucket: String?): Unit =
+    override suspend fun move(from: String, to: String, destinationBucket: String?) {
+        requireSendable(from)
+        requireSendable(to)
         storageWrite(
             write = { delegate.move(from, to, destinationBucket) },
             applied = {
@@ -1152,21 +1156,25 @@ internal class CachingBucketApi(
                 )
             },
         )
+    }
 
     // The copy's bytes are not on the device, and a cached copy of the destination is stale
     // whether the copy went through or not
-    override suspend fun copy(from: String, to: String, destinationBucket: String?): Unit =
+    override suspend fun copy(from: String, to: String, destinationBucket: String?) {
+        requireSendable(from)
+        requireSendable(to)
         storageWrite(
             write = { delegate.copy(from, to, destinationBucket) },
             applied = { cache.invalidateObject(destinationBucket ?: bucketId, to) },
             uncertain = { cache.invalidateObject(destinationBucket ?: bucketId, to) },
         )
+    }
 
     // Passed through: refused once the client is closed, and stopped by close().
 
     override suspend fun createSignedUploadUrl(path: String, upsert: Boolean): UploadSignedUrl =
         operationGate.cancellableCall(backgroundScope) {
-            requireUrlFor(path)
+            requireSendable(path)
             networkAccess.ensureEnabled()
             delegate.createSignedUploadUrl(path, upsert)
         }
@@ -1177,7 +1185,7 @@ internal class CachingBucketApi(
         builder: SignedUrlBuilder.() -> Unit,
     ): String =
         operationGate.cancellableCall(backgroundScope) {
-            requireUrlFor(path)
+            requireSendable(path)
             networkAccess.ensureEnabled()
             delegate.createSignedUrl(path, expiresIn, builder)
         }
@@ -1188,6 +1196,7 @@ internal class CachingBucketApi(
         builder: SignedUrlsBuilder.() -> Unit,
     ): List<SignedUrl> =
         operationGate.cancellableCall(backgroundScope) {
+            paths.forEach(::requireSendable)
             networkAccess.ensureEnabled()
             delegate.createSignedUrls(expiresIn, paths, builder)
         }
@@ -1203,20 +1212,21 @@ internal class CachingBucketApi(
         filter: StorageListFilter.Files.() -> Unit,
     ): List<FileObject> =
         operationGate.cancellableCall(backgroundScope) {
+            requireSendable(prefix)
             networkAccess.ensureEnabled()
             delegate.list(prefix, filter)
         }
 
     override suspend fun info(path: String): FileObjectV2 =
         operationGate.cancellableCall(backgroundScope) {
-            requireUrlFor(path)
+            requireSendable(path)
             networkAccess.ensureEnabled()
             delegate.info(path)
         }
 
     override suspend fun exists(path: String): Boolean =
         operationGate.cancellableCall(backgroundScope) {
-            requireUrlFor(path)
+            requireSendable(path)
             networkAccess.ensureEnabled()
             delegate.exists(path)
         }
@@ -1227,6 +1237,14 @@ internal class CachingBucketApi(
             delegate.changePublicStatusTo(public)
         }
 
+    // The CDN's copy, not the object: no copy on the device is stale after it
+    override suspend fun purgeCache(path: String, options: PurgeCacheOptions.() -> Unit): Unit =
+        operationGate.cancellableCall(backgroundScope) {
+            requireSendable(path)
+            networkAccess.ensureEnabled()
+            delegate.purgeCache(path, options)
+        }
+
     /**
      * The cache entry of the untransformed object at [path], refusing a path whose downloads are
      * never cached ([cachesDownloadsOf]) with the reason.
@@ -1234,10 +1252,7 @@ internal class CachingBucketApi(
      * @throws IllegalArgumentException when [path] cannot be cached.
      */
     private fun requireCacheableEntry(path: String): FileCacheEntry {
-        require(isRequestedByItsOwnName(path)) {
-            "This object path cannot be cached on the device: it holds '%', '?' or '#', which go " +
-                "into the request's URL unencoded, so its request can reach another object"
-        }
+        requireSendable(path)
         require(isCacheableObjectPath(path)) {
             "This object path cannot be cached on the device: it has a leading '/', an empty, '.' " +
                 "or '..' segment, a '\\' or a control character"
@@ -1250,19 +1265,21 @@ internal class CachingBucketApi(
     }
 
     /**
-     * Whether a download of [path] in this bucket is cached: both map onto a file, and the pinned
-     * supabase-kt's request reaches the object the path names.
+     * Whether a download of [path] in this bucket is cached: both map onto a file, and a request
+     * can name the path ([canBeNamedInAUrl]), so a download of it is ever sent.
      */
     private fun cachesDownloadsOf(path: String): Boolean =
-        isCacheableBucketId(bucketId) &&
-            isCacheableObjectPath(path) &&
-            isRequestedByItsOwnName(path)
+        isCacheableBucketId(bucketId) && isCacheableObjectPath(path) && canBeNamedInAUrl(path)
 
-    /** Refuses [path] when the request's URL cannot be built, which reads as a network failure. */
-    private fun requireUrlFor(path: String) {
-        require(canBuildTheUrlFor(path)) {
-            "This object path holds a '%' that does not begin a percent-escape, so the request's " +
-                "URL cannot be built"
+    /**
+     * Refuses [path] before anything is sent when supabase-kt cannot send it as the same name on
+     * every platform ([canBeNamedInAUrl]), whether in a request's URL or in its JSON body: on the
+     * JVM it would reach another object, on Kotlin/Native it could fail as if the network had.
+     */
+    private fun requireSendable(path: String) {
+        require(canBeNamedInAUrl(path)) {
+            "This object path holds a lone UTF-16 surrogate, which is not a Unicode character, so " +
+                "supabase-kt cannot send it as the same name on every platform"
         }
     }
 
@@ -1271,7 +1288,7 @@ internal class CachingBucketApi(
 
     /** An upload or update of [path] that drops its stale cached copies, stored or maybe stored. */
     private suspend fun <T> invalidatingAfter(path: String, write: suspend () -> T): T {
-        requireUrlFor(path)
+        requireSendable(path)
         return storageWrite(
             write = write,
             applied = { cache.invalidateObject(bucketId, path) },
@@ -1316,13 +1333,14 @@ internal class CachingBucketApi(
     }
 
     /**
-     * Whether this failure, or a cause, says the object is gone. That is a [NotFoundRestException]
-     * (Storage reports one on an HTTP 400), or any [RestException] or response with a literal 404.
+     * Whether this failure, or a cause, says the object is gone: a [RestException] or a response
+     * with a 404. supabase-kt's Storage throws a `StorageRestException` whose status is the one
+     * Storage's error body names, which is 404 for a missing object even when the HTTP status line
+     * says 400.
      */
     private fun Throwable.indicatesServerObjectMissing(): Boolean {
         var current: Throwable? = this
         while (current != null) {
-            if (current is NotFoundRestException) return true
             if (current is RestException && current.statusCode == HTTP_NOT_FOUND) return true
             current = current.cause
         }

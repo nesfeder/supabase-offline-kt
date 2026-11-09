@@ -92,14 +92,8 @@ struct StorageTests {
         try await client.close()
     }
 
-    @Test(arguments: [
-        ("photo?v=1.png", true), ("100%.png", true), ("a#b.png", true), ("#\u{FE0F}\u{20E3}.png", true),
-        ("a?\u{301}b.png", true), ("../a.png", false),
-    ])
-    func ensureCachedFileRefusesANameTheCacheCannotHoldAndSendsNothing(
-        name: String,
-        holdsADelimiter: Bool
-    ) async throws {
+    @Test(arguments: ["../a.png", "a/./b.png"])
+    func ensureCachedFileRefusesANameTheCacheCannotHoldAndSendsNothing(name: String) async throws {
         // Given
         let storage = FakeStorageServer()
         let client = Self.makeClient(storage)
@@ -112,23 +106,47 @@ struct StorageTests {
         // Then
         #expect(error?.code == .invalidRequest)
         #expect(!readableTexts(of: error).contains(where: namesTheRuntime))
-        #expect(error?.message.contains("keep those characters out of the names") == holdsADelimiter)
         #expect(storage.requests.values.isEmpty)
         try await client.close()
     }
 
-    /// The package refuses these names in `ensureCachedFile` and `pinCachedFile` and encodes them in
-    /// `escapingURLDelimiters` because the core refuses to cache them. When this test fails, the
-    /// core caches names holding that character: remove the package's refusal in
-    /// `refuseANameTheCacheCannotHold`, `escapingURLDelimiters` and `holdsURLDelimiters`, and the
-    /// tests of them.
-    @Test(arguments: ["photo?v=1.png", "100%.png", "a#b.png"])
-    func theCoreStillRefusesANameHoldingEachDelimiter(name: String) async throws {
+    /// The core encodes each segment of an object's name, so a name holding `%`, `?` or `#` (alone,
+    /// or inside a character such as a keycap emoji) names its own object and is kept like any
+    /// other.
+    @Test(arguments: ["photo?v=1.png", "100%.png", "a#b.png", "#\u{FE0F}\u{20E3}.png", "a?\u{301}b.png"])
+    func aNameHoldingEachDelimiterIsCachedAndPinnedUnderItsOwnName(name: String) async throws {
         // Given
         let storage = FakeStorageServer()
         let client = Self.makeClient(storage)
+        let bucket = client.storage.from("avatars")
 
-        // When the core is asked directly, past the package's own check
+        // When
+        let file = try await bucket.ensureCachedFile(path: name)
+        try await bucket.pinCachedFile(path: name)
+        let pinned = try await bucket.isCachedFilePinned(path: name)
+        storage.goOffline()
+        let offline = try await bucket.download(path: name)
+
+        // Then every request named the object, and the copy answers offline
+        #expect(file.sizeBytes == FakeStorageServer.photo.count)
+        #expect(storage.requests.values.first?.storagePath == "object/authenticated/avatars/\(name)")
+        #expect(storage.requests.values.allSatisfy { $0.storagePath.hasSuffix("avatars/\(name)") })
+        #expect(storage.requests.values.first?.url.query() == nil)
+        #expect(pinned)
+        #expect(offline == FakeStorageServer.photo)
+        try await client.close()
+    }
+
+    /// A name holding a lone UTF-16 surrogate has no UTF-8 form to encode, so the core refuses it
+    /// before anything is sent. A Swift `String` cannot hold one; the core is handed an `NSString`
+    /// that does, as an Objective-C caller could.
+    @Test func theCoreRefusesANameHoldingALoneSurrogateAndSendsNothing() async throws {
+        // Given
+        let storage = FakeStorageServer()
+        let client = Self.makeClient(storage)
+        let name = NSString(characters: [0x78, 0xD800, 0x2E, 0x70, 0x6E, 0x67], length: 6) as String
+
+        // When the core is asked directly
         let error = await #expect(throws: OfflineError.self) {
             try await client.connection.call { core, complete in
                 core.storage.ensureCachedFile(bucket: "avatars", path: name, isPublic: false) { file, failure in
@@ -143,7 +161,7 @@ struct StorageTests {
         try await client.close()
     }
 
-    @Test func aNameWithAQuestionMarkDownloadsUncached() async throws {
+    @Test func aNameWithAQuestionMarkIsDownloadedAndCachedUnderItsOwnName() async throws {
         // Given
         let storage = FakeStorageServer()
         let client = Self.makeClient(storage)
@@ -153,13 +171,14 @@ struct StorageTests {
         let bytes = try await bucket.download(path: "photo?v=1.png")
         let cached = try await bucket.cachedFile(path: "photo?v=1.png")
         storage.goOffline()
-        let offline = await #expect(throws: OfflineError.self) { try await bucket.download(path: "photo?v=1.png") }
+        let offline = try await bucket.download(path: "photo?v=1.png")
 
-        // Then the request named another object, and nothing was kept
+        // Then the request named the object, and its copy answers offline
         #expect(bytes == FakeStorageServer.photo)
-        #expect(storage.requests.values.first?.storagePath == "object/authenticated/avatars/photo")
-        #expect(cached == nil)
-        #expect(offline?.code == .connectivity)
+        #expect(storage.requests.values.first?.storagePath == "object/authenticated/avatars/photo?v=1.png")
+        #expect(storage.requests.values.first?.url.query() == nil)
+        #expect(cached?.sizeBytes == FakeStorageServer.photo.count)
+        #expect(offline == FakeStorageServer.photo)
         try await client.close()
     }
 
@@ -454,8 +473,8 @@ struct StorageTests {
         try await client.close()
     }
 
-    @Test(arguments: [("photo?v=1.png", true), ("../a.png", false)])
-    func pinningANameTheCacheCannotHoldIsRefused(name: String, holdsADelimiter: Bool) async throws {
+    @Test(arguments: ["../a.png", "a/./b.png"])
+    func pinningANameTheCacheCannotHoldIsRefused(name: String) async throws {
         // Given
         let storage = FakeStorageServer()
         let client = Self.makeClient(storage)
@@ -466,7 +485,6 @@ struct StorageTests {
 
         // Then
         #expect(error?.code == .invalidRequest)
-        #expect(error?.message.contains("keep those characters out of the names") == holdsADelimiter)
         #expect(try await bucket.isCachedFilePinned(path: name) == false)
         #expect(storage.requests.values.isEmpty)
         try await client.close()

@@ -3,11 +3,13 @@
 package io.github.nesfeder.supabase.offline.internal
 
 import io.github.nesfeder.supabase.offline.SyncFailedException
-import io.github.nesfeder.supabase.offline.testdoubles.forbiddenRestException
+import io.github.nesfeder.supabase.offline.testdoubles.forbiddenStorageException
+import io.github.nesfeder.supabase.offline.testdoubles.storageRestException
 import io.ktor.client.network.sockets.ConnectTimeoutException
 import io.ktor.client.network.sockets.SocketTimeoutException
 import io.ktor.client.plugins.HttpRequestTimeoutException
 import io.ktor.client.request.HttpRequestBuilder
+import io.ktor.http.HttpStatusCode
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -71,7 +73,7 @@ class FailureClassificationTest {
     @Test
     fun httpStatusOrNull_readsStoragesErrorsAndASyncsFailure() = runTest {
         // Given — Storage's refusal, and the failure a sync reports
-        val storageRefusal = forbiddenRestException()
+        val storageRefusal = forbiddenStorageException()
         val syncFailure =
             SyncFailedException(
                 message = "The server answered 503",
@@ -83,6 +85,30 @@ class FailureClassificationTest {
         // When / Then — the statuses the public httpStatusOrNull reads too
         assertEquals(403, storageRefusal.httpStatusOrNull())
         assertEquals(503, syncFailure.httpStatusOrNull())
+    }
+
+    @Test
+    fun storage_failures_are_classified_by_the_status_their_body_names() = runTest {
+        // Given — hosted Storage's answers on an HTTP 400 whose body names another status
+        val fault = storageRestException(HttpStatusCode.BadRequest, 500, "InternalError")
+        val duplicate = storageRestException(HttpStatusCode.BadRequest, 409, "Duplicate")
+        val expiredToken =
+            storageRestException(
+                HttpStatusCode.BadRequest,
+                403,
+                "Unauthorized",
+                code = "InvalidJWT",
+            )
+
+        // When / Then — the body's status decides: a fault may pass later, a duplicate is refused
+        assertEquals(500, fault.storageStatusOrNull())
+        assertFalse(fault.isStorageRefusal())
+        assertEquals(409, duplicate.storageStatusOrNull())
+        assertTrue(duplicate.isStorageRefusal())
+        // And a token Storage names by its code alone is a refused token, not a refusal
+        assertTrue(expiredToken.isStorageTokenRefusal())
+        assertFalse(expiredToken.isStorageRefusal())
+        assertTrue(expiredToken.uploadMayPassWhenSentAgain())
     }
 
     // ---------- isNetworkOrConnectivityFailure ----------

@@ -19,9 +19,11 @@ public fun Throwable.isNetworkOrConnectivityFailure(): Boolean =
     engineIsNetworkOrConnectivityFailure()
 
 /**
- * The HTTP status the server answered with, read from this failure or a cause: a supabase-kt
+ * The status the server answered with, read from this failure or a cause: a supabase-kt
  * `RestException` (PostgREST's and Storage's errors among them), a Ktor `ResponseException`, or a
- * [SyncFailedException].
+ * [SyncFailedException]. For Storage it is the status Storage's error body names, which supabase-kt
+ * keeps as its `StorageRestException`'s: hosted Storage may send a refusal on an HTTP 400 with its
+ * real status, 404 for a missing object say, in the body.
  *
  * @return the status, or `null` when no failure in the chain carries one, as for a connectivity
  *   failure.

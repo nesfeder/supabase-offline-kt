@@ -30,10 +30,9 @@ internal sealed interface ReadShape {
     data object RowList : ReadShape
 
     /**
-     * One row as a JSON object: `single()`, and from supabase-kt 3.8 `maybeSingle()`, which asks
-     * for the same media type. It asks for the rows the list read of the same query does, and only
-     * `Accept` tells the two apart, so the cache holds its answer as that list, one row long, under
-     * the list's key.
+     * One row as a JSON object: `single()`, and `maybeSingle()`, which asks for the same media
+     * type. It asks for the rows the list read of the same query does, and only `Accept` tells the
+     * two apart, so the cache holds its answer as that list, one row long, under the list's key.
      */
     data object SingleObject : ReadShape
 

@@ -53,8 +53,8 @@ import kotlinx.serialization.json.jsonPrimitive
  * `single()` asks for the rows the list read of the same query does, as one object: its answer is
  * cached as that list, one row long, under the list's key, through every guard a list response
  * passes, and the cache answers it, with the queued writes laid over it, when that list holds
- * exactly one row. No row, or several, answer nothing. supabase-kt 3.8's `maybeSingle()` asks the
- * same and is held to the same rule.
+ * exactly one row. No row, or several, answer nothing. `maybeSingle()` asks the same and is held to
+ * the same rule.
  */
 class CachedSingleTest {
 
@@ -87,15 +87,20 @@ class CachedSingleTest {
         )
     private val items = client.from(TABLE)
 
-    /** The single-object reads of list A's one row: `single()`, and on 3.8 `maybeSingle()`. */
+    /** The single-object reads of list A's one row: `single()` and `maybeSingle()`. */
     private val readsOfOneRow: List<Pair<String, SelectRequestBuilder.() -> Unit>> =
         listOf<Pair<String, SelectRequestBuilder.() -> Unit>>(
             "single" to
                 {
                     filter { eq("list_id", "A") }
                     single()
-                }
-        ) + maybeSingleReadShapes(oneRow = ROW_1).map { (name, request, _) -> name to request }
+                },
+            "maybeSingle" to
+                {
+                    filter { eq("list_id", "A") }
+                    maybeSingle()
+                },
+        )
 
     private val singleOfListA: SelectRequestBuilder.() -> Unit = {
         filter { eq("list_id", "A") }

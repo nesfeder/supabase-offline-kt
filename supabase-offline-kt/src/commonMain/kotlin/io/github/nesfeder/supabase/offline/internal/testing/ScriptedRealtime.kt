@@ -29,8 +29,8 @@ import kotlinx.serialization.json.JsonObject
  * `supabase-offline-kt-testing` artifact's `FakeRealtime` drives it.
  *
  * The channel holds as many reported events for the client as its capacity, unlimited for the
- * testing artifact: one reported while that many wait is dropped, as the Realtime plugin of
- * supabase-kt 3.6.0 drops a change once 64 wait, and counted in `droppedCount`.
+ * testing artifact: one reported while that many wait is dropped, as supabase-kt's channel drops a
+ * change once 64 wait, and counted in `droppedCount`.
  *
  * @property tables the tables the client follows through this channel.
  * @property defaultSchema the schema of a table that names none.

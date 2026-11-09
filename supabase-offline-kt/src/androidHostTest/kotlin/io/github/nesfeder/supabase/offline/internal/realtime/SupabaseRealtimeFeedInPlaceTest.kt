@@ -8,6 +8,7 @@ import io.github.jan.supabase.annotations.SupabaseInternal
 import io.github.jan.supabase.postgrest.Postgrest
 import io.github.jan.supabase.realtime.Realtime
 import io.github.jan.supabase.realtime.RealtimeMessage
+import io.github.jan.supabase.realtime.RealtimeProtocolVersion
 import io.github.jan.supabase.realtime.websocket.RealtimeWebsocket
 import io.github.jan.supabase.realtime.websocket.RealtimeWebsocketFactory
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingLogSink
@@ -193,8 +194,8 @@ private class JoinBlockingSocketFactory(private val sockets: ScriptedRealtimeWeb
     override suspend fun create(url: String): RealtimeWebsocket {
         val socket = sockets.create(url)
         return object : RealtimeWebsocket by socket {
-            override suspend fun send(message: RealtimeMessage) {
-                socket.send(message)
+            override suspend fun send(message: RealtimeMessage, vsn: RealtimeProtocolVersion) {
+                socket.send(message, vsn)
                 if (message.event == "phx_join") joinRelease.await(30, TimeUnit.SECONDS)
             }
         }

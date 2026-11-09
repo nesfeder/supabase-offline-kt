@@ -51,15 +51,19 @@ import kotlinx.serialization.json.jsonArray
  *   one. Keep realtime calls on `supabase.from(table)`.
  * - **The typed `rpc`** is this library's extension on [Offline]: import
  *   `io.github.nesfeder.supabase.offline.rpc` in place of `io.github.jan.supabase.postgrest.rpc`.
- * - **Two top-level filters on one column**, as in `filter { gte("age", 1); lte("age", 10) }`:
- *   supabase-kt sends only the first, so a read, an update or a delete here throws
- *   [IllegalArgumentException] before anything is sent or queued. Put them in one group, `filter {
- *   and { gte("age", 1); lte("age", 10) } }`, which sends both. A second top-level `or` group, or a
- *   text search after a filter on its column, replaces what came before, and is not caught.
- * - **A pattern list the server would misread**: supabase-kt quotes a pattern only when it holds
- *   one of `,.:()`, so `likeAll`, `likeAny`, `ilikeAll` or `ilikeAny` with an empty list, or with a
- *   pattern that is empty, `NULL`, edged with white space or holding a brace, throws
- *   [IllegalArgumentException] before anything is sent or queued.
+ * - **An empty pattern list**: `LIKE ALL` over no pattern matches every row, so `likeAll`,
+ *   `likeAny`, `ilikeAll` or `ilikeAny` with an empty list throws [IllegalArgumentException] before
+ *   anything is sent or queued.
+ * - **A value the server would read with its escapes**: supabase-kt escapes a `"` or `\` in an `in`
+ *   element, or in a comparison inside an `or { }` or `and { }` group, but quotes the value only
+ *   when it holds one of `,.:()`, so the server would read the backslashes as part of it. A read,
+ *   an update or a delete with such a value throws [IllegalArgumentException] before anything is
+ *   sent or queued; a single top-level filter sends the value as written.
+ *
+ * Two top-level filters on one column, a text search among them, are sent as supabase-kt sends
+ * them, one value each, which the server ANDs. A second top-level `or { }` group replaces the
+ * first, as supabase-kt writes one parameter per group, and is not caught: put both groups inside
+ * one `and { }` group.
  *
  * A verb may run its `request` lambda more than once: a read once to learn its shape and once per
  * request sent, a queueable write up to three times. The lambda must configure the same request
@@ -87,11 +91,12 @@ public class OfflinePostgrestQueryBuilder internal constructor(private val engin
      * holds the rows it asks for. To show one row offline, read the list a screen already reads,
      * with the same request, and pick the row from it.
      *
-     * Only a list of rows is cached. A read that asks for another shape (`single()`,
-     * `maybeSingle()` from supabase-kt 3.8, `head`, a `count` with rows or without, `csv()`,
-     * `geojson()`, `stripNulls()` or `explain()`) goes to the server under every strategy but
-     * [ReadStrategy.CacheOnly], is not stored, and offline fails as [ReadStrategy.NetworkOnly]
-     * does; under [ReadStrategy.CacheOnly] it sends nothing and throws [CacheMissException].
+     * Only a list of rows is cached. A `single()` or `maybeSingle()` read is cached as its list,
+     * and answered offline when that list holds one row. A read that asks for another shape
+     * (`head`, a `count` with rows or without, `csv()`, `geojson()`, `stripNulls()` or `explain()`)
+     * goes to the server under every strategy but [ReadStrategy.CacheOnly], is not stored, and
+     * offline fails as [ReadStrategy.NetworkOnly] does; under [ReadStrategy.CacheOnly] it sends
+     * nothing and throws [CacheMissException].
      *
      * @param columns the columns to select.
      * @param readStrategy where the rows come from; [ReadStrategy.NetworkFirst] by default, which
@@ -106,8 +111,8 @@ public class OfflinePostgrestQueryBuilder internal constructor(private val engin
      * @throws NetworkDisabledException while network access is off ([Offline.disableNetwork]) and
      *   the cache cannot answer the read.
      * @throws OfflineClientClosedException when the client is closed.
-     * @throws IllegalArgumentException when two top-level filters name one column (see
-     *   [OfflinePostgrestQueryBuilder]).
+     * @throws IllegalArgumentException when a filter would be misread: an empty pattern list, or a
+     *   value the server would read with its escapes (see [OfflinePostgrestQueryBuilder]).
      */
     @Throws(Throwable::class)
     public suspend fun select(
@@ -149,8 +154,9 @@ public class OfflinePostgrestQueryBuilder internal constructor(private val engin
      * @param readStrategy how the read starts and refreshes;
      *   [FlowReadStrategy.CacheFirstThenNetwork] by default.
      * @param request filters, order, range and the rest of the request, as in supabase-kt.
-     * @return the flow of emissions. It fails with [IllegalArgumentException] when two top-level
-     *   filters name one column (see [OfflinePostgrestQueryBuilder]).
+     * @return the flow of emissions. It fails with [IllegalArgumentException] when a filter would
+     *   be misread: an empty pattern list, or a value the server would read with its escapes (see
+     *   [OfflinePostgrestQueryBuilder]).
      */
     public fun selectAsFlow(
         columns: Columns = Columns.ALL,
@@ -298,8 +304,8 @@ public class OfflinePostgrestQueryBuilder internal constructor(private val engin
      * @throws MutationNotQueueableException when a write the mutation queue cannot hold cannot be
      *   sent for want of a connection; see [MutationStrategy.QueueIfOffline].
      * @throws OfflineClientClosedException when the client is closed.
-     * @throws IllegalArgumentException when two top-level filters name one column (see
-     *   [OfflinePostgrestQueryBuilder]).
+     * @throws IllegalArgumentException when a filter would be misread: an empty pattern list, or a
+     *   value the server would read with its escapes (see [OfflinePostgrestQueryBuilder]).
      */
     @Throws(Throwable::class)
     public suspend fun update(
@@ -321,8 +327,8 @@ public class OfflinePostgrestQueryBuilder internal constructor(private val engin
      * @throws MutationNotQueueableException when a write the mutation queue cannot hold cannot be
      *   sent for want of a connection; see [MutationStrategy.QueueIfOffline].
      * @throws OfflineClientClosedException when the client is closed.
-     * @throws IllegalArgumentException when two top-level filters name one column (see
-     *   [OfflinePostgrestQueryBuilder]).
+     * @throws IllegalArgumentException when a filter would be misread: an empty pattern list, or a
+     *   value the server would read with its escapes (see [OfflinePostgrestQueryBuilder]).
      */
     @Throws(Throwable::class)
     public suspend fun update(
@@ -344,8 +350,8 @@ public class OfflinePostgrestQueryBuilder internal constructor(private val engin
      * @throws MutationNotQueueableException when a write the mutation queue cannot hold cannot be
      *   sent for want of a connection; see [MutationStrategy.QueueIfOffline].
      * @throws OfflineClientClosedException when the client is closed.
-     * @throws IllegalArgumentException when two top-level filters name one column (see
-     *   [OfflinePostgrestQueryBuilder]).
+     * @throws IllegalArgumentException when a filter would be misread: an empty pattern list, or a
+     *   value the server would read with its escapes (see [OfflinePostgrestQueryBuilder]).
      */
     @Throws(Throwable::class)
     public suspend inline fun <reified T : Any> update(
@@ -366,8 +372,8 @@ public class OfflinePostgrestQueryBuilder internal constructor(private val engin
      * @throws MutationNotQueueableException when a write the mutation queue cannot hold cannot be
      *   sent for want of a connection; see [MutationStrategy.QueueIfOffline].
      * @throws OfflineClientClosedException when the client is closed.
-     * @throws IllegalArgumentException when two top-level filters name one column (see
-     *   [OfflinePostgrestQueryBuilder]).
+     * @throws IllegalArgumentException when a filter would be misread: an empty pattern list, or a
+     *   value the server would read with its escapes (see [OfflinePostgrestQueryBuilder]).
      */
     @Throws(Throwable::class)
     public suspend fun delete(

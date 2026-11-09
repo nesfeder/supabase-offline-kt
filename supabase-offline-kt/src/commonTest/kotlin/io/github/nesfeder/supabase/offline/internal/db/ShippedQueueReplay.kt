@@ -35,14 +35,15 @@ internal suspend fun OfflineDatabase.replayShippedQueue(server: RecordingPostgre
  * Writes replay in the order they were queued (their ids 1 to 4), whatever their table. The INSERT
  * carries its key and its send is recorded as unconfirmed (`send_unconfirmed`), so it replays as an
  * upsert that takes a row already there as its own. The UPDATE replays its body exactly as it was
- * queued.
+ * queued. supabase-kt names an insert's or an upsert's columns quoted, each in double quotes (since
+ * 3.9.0); that is the wire's form only, and the queue on disk is the same as before.
  */
 internal val SHIPPED_QUEUE_REPLAY: List<RecordedRequest> =
     listOf(
         RecordedRequest(
             method = "POST",
             table = "todos",
-            query = mapOf("on_conflict" to "id", "columns" to "id,title"),
+            query = mapOf("on_conflict" to "id", "columns" to "\"id\",\"title\""),
             prefer = "count=exact,resolution=ignore-duplicates,return=minimal",
             contentProfile = "public",
             acceptProfile = null,
@@ -51,7 +52,11 @@ internal val SHIPPED_QUEUE_REPLAY: List<RecordedRequest> =
         RecordedRequest(
             method = "POST",
             table = "list_members",
-            query = mapOf("on_conflict" to "list_id,user_id", "columns" to "list_id,user_id,role"),
+            query =
+                mapOf(
+                    "on_conflict" to "list_id,user_id",
+                    "columns" to "\"list_id\",\"user_id\",\"role\"",
+                ),
             prefer = "resolution=ignore-duplicates,missing=default,return=minimal",
             contentProfile = "public",
             acceptProfile = null,

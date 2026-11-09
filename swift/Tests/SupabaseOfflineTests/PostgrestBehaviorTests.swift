@@ -402,6 +402,25 @@ struct PostgrestBehaviorTests {
         try await client.close()
     }
 
+    @Test func aQuotedValueBesideAFilterOnItsColumnIsRefusedInAReadAndSentByADelete() async throws {
+        // Given
+        let server = RecordingFakeServer(rows: Self.serverRows)
+        let client = SupabaseOfflineClient.inMemory(server: server.server)
+
+        // When: a read moves the two filters into one and group; a delete keeps them at the top level
+        let read = await #expect(throws: OfflineError.self) {
+            try await client.from("todos").select().eq("title", value: #"Say "hi""#).neq("title", value: "x").execute()
+        }
+        try await client.from("todos").delete(mutationStrategy: .onlineOnly).eq("title", value: #"Say "hi""#)
+            .neq("title", value: "x").execute()
+
+        // Then: inside the group the server would read the escapes; at the top level it reads the value
+        #expect(read?.code == .invalidRequest)
+        #expect(read?.message.contains("double quote or a backslash") == true)
+        #expect(server.requests.values.map(\.queryParameters) == [[["title", #"eq.Say "hi""#], ["title", "neq.x"]]])
+        try await client.close()
+    }
+
     @Test func aBackslashInAnOrTextIsRefusedAndNothingIsSent() async throws {
         // Given
         let server = RecordingFakeServer(rows: Self.serverRows)
@@ -486,11 +505,12 @@ struct PostgrestBehaviorTests {
         _ = try await client.from("todos").select().filter("code", operator: "like(any)", value: #"{a\\b,c}"#).execute()
         _ = try await client.from("todos").select().filter("code", operator: "like(any)", value: #"{a\"b,c}"#).execute()
 
-        // Then: each is sent as written, so Postgres reads `a\b` and `a"b`, as written
+        // Then: each element is sent quoted, as supabase-kt quotes one holding `\` or `"`, so Postgres
+        // reads `a\b` and `a"b`, as written
         #expect(server.requests.values.map(\.queryParameters) == [
-            [["or", #"(code.like(any).{a\\b,c})"#], ["select", "*"]],
-            [["code", #"like(any).{a\\b,c}"#], ["select", "*"]],
-            [["code", #"like(any).{a\"b,c}"#], ["select", "*"]],
+            [["or", #"(code.like(any).{"a\\b",c})"#], ["select", "*"]],
+            [["code", #"like(any).{"a\\b",c}"#], ["select", "*"]],
+            [["code", #"like(any).{"a\"b",c}"#], ["select", "*"]],
         ])
         try await client.close()
     }
@@ -558,37 +578,76 @@ struct PostgrestBehaviorTests {
         return errors
     }
 
-    @Test func anEmptyPatternIsRefusedAndNothingIsSent() async throws {
-        _ = try await refusalsOf([
+    /// Runs each of `chains` on a client of its own and returns, for each, the values of the
+    /// `code` and `or` parameters its one request carried.
+    private func patternParametersOf(
+        _ chains: [@Sendable (SupabaseOfflineClient) async throws -> Void]
+    ) async throws -> [[[String]]] {
+        var sent: [[[String]]] = []
+        for chain in chains {
+            let server = RecordingFakeServer(rows: "[]")
+            let client = SupabaseOfflineClient.inMemory(server: server.server)
+            try await chain(client)
+            #expect(server.requests.values.count == 1)
+            sent.append(server.requests.values.first?.queryParameters.filter { $0.first == "code" || $0.first == "or" } ?? [])
+            try await client.close()
+        }
+        return sent
+    }
+
+    @Test func anEmptyPatternIsSentQuotedAsPostgresReadsIt() async throws {
+        let sent = try await patternParametersOf([
             { try await $0.from("todos").delete().likeAllOf("code", patterns: [""]).execute() },
             { try await $0.from("todos").select().filter("code", operator: "like(all)", value: #"{""}"#).execute() },
             { try await $0.from("todos").select().filter("code", operator: "like(any)", value: #"{"",c}"#).execute() },
             { try await $0.from("todos").select().or(#"code.like(all).{""},done.eq.true"#).execute() },
         ])
+        #expect(sent == [
+            [["code", #"like(all).{""}"#]],
+            [["code", #"like(all).{""}"#]],
+            [["code", #"like(any).{"",c}"#]],
+            [["or", #"(code.like(all).{""},done.eq.true)"#]],
+        ])
     }
 
-    @Test func aNullPatternInAnyCaseIsRefusedAndNothingIsSent() async throws {
-        _ = try await refusalsOf([
+    @Test func aNullPatternInAnyCaseIsSentQuotedAsTheStringPostgresReads() async throws {
+        let sent = try await patternParametersOf([
             { try await $0.from("todos").select().likeAnyOf("code", patterns: ["null"]).execute() },
             { try await $0.from("todos").update(["done": true]).iLikeAllOf("code", patterns: ["NuLl"]).execute() },
             { try await $0.from("todos").select().filter("code", operator: "ilike(any)", value: #"{"NULL",c}"#).execute() },
         ])
+        #expect(sent == [
+            [["code", #"like(any).{"null"}"#]],
+            [["code", #"ilike(all).{"NuLl"}"#]],
+            [["code", #"ilike(any).{"NULL",c}"#]],
+        ])
     }
 
-    @Test func aPatternEdgedWithWhiteSpaceIsRefusedAndNothingIsSent() async throws {
-        _ = try await refusalsOf([
+    @Test func aPatternEdgedWithWhiteSpaceIsSentQuotedAsPostgresReadsIt() async throws {
+        let sent = try await patternParametersOf([
             { try await $0.from("todos").update(["done": true]).iLikeAllOf("code", patterns: [" "]).execute() },
             { try await $0.from("todos").select().likeAnyOf("code", patterns: [" a"]).execute() },
             { try await $0.from("todos").select().iLikeAnyOf("code", patterns: ["a\t"]).execute() },
             { try await $0.from("todos").select().filter("code", operator: "like(any)", value: #"{" a",c}"#).execute() },
         ])
+        #expect(sent == [
+            [["code", #"ilike(all).{" "}"#]],
+            [["code", #"like(any).{" a"}"#]],
+            [["code", "ilike(any).{\"a\t\"}"]],
+            [["code", #"like(any).{" a",c}"#]],
+        ])
     }
 
-    @Test func aPatternHoldingABraceIsRefusedAndNothingIsSent() async throws {
-        _ = try await refusalsOf([
+    @Test func aPatternHoldingABraceIsSentQuotedAsPostgresReadsIt() async throws {
+        let sent = try await patternParametersOf([
             { try await $0.from("todos").select().likeAllOf("code", patterns: ["a{b"]).execute() },
             { try await $0.from("todos").delete().likeAnyOf("code", patterns: ["}"]).execute() },
             { try await $0.from("todos").select().filter("code", operator: "like(all)", value: #"{"a}b",c}"#).execute() },
+        ])
+        #expect(sent == [
+            [["code", #"like(all).{"a{b"}"#]],
+            [["code", #"like(any).{"}"}"#]],
+            [["code", #"like(all).{"a}b",c}"#]],
         ])
     }
 
@@ -600,7 +659,7 @@ struct PostgrestBehaviorTests {
         #expect(errors.allSatisfy { $0?.message.contains("empty") == true })
     }
 
-    @Test func aPlainPatternListIsSentAsBefore() async throws {
+    @Test func aPlainPatternListIsSentAsWritten() async throws {
         // Given
         let server = RecordingFakeServer(rows: "[]")
         let client = SupabaseOfflineClient.inMemory(server: server.server)
@@ -610,10 +669,11 @@ struct PostgrestBehaviorTests {
         _ = try await client.from("todos").delete().iLikeAnyOf("code", patterns: ["%x%", " a.", "NULL:"]).execute()
         _ = try await client.from("todos").select().filter("code", operator: "like(any)", value: "{%a%,b_c}").execute()
 
-        // Then: patterns holding one of ,.:() are quoted, as Postgres reads them
+        // Then: a pattern edged with white space is quoted, one holding only `.:()` is not, as
+        // Postgres reads them
         #expect(server.requests.values.map(\.queryParameters) == [
             [["code", "like(all).{%a%,b_c}"], ["select", "*"]],
-            [["code", #"ilike(any).{%x%," a.","NULL:"}"#]],
+            [["code", #"ilike(any).{%x%," a.",NULL:}"#]],
             [["code", "like(any).{%a%,b_c}"], ["select", "*"]],
         ])
         try await client.close()

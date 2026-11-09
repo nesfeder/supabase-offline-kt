@@ -10,6 +10,7 @@ import io.github.jan.supabase.auth.Auth
 import io.github.jan.supabase.realtime.PostgresAction
 import io.github.jan.supabase.realtime.Realtime
 import io.github.jan.supabase.realtime.RealtimeChannel
+import io.github.jan.supabase.realtime.RealtimeSystemPayload
 import io.github.jan.supabase.realtime.channel
 import io.github.jan.supabase.realtime.postgresChangeFlow
 import io.github.jan.supabase.realtime.realtime
@@ -39,8 +40,11 @@ import kotlinx.coroutines.yield
 /** What the client's channels are named, with a number that makes each join's topic its own. */
 internal const val REALTIME_TOPIC_PREFIX: String = "supabase-offline"
 
-/** What supabase-kt puts before a channel's name to make its topic. */
-private const val REALTIME_TOPIC_NAMESPACE: String = "realtime:"
+/** The extension a `system` message names when it is about the channel's table bindings. */
+private const val POSTGRES_CHANGES_EXTENSION: String = "postgres_changes"
+
+/** The status of a `system` message that reports a failure. */
+private const val SYSTEM_STATUS_ERROR: String = "error"
 
 /** What a client whose configuration names tables but has no Realtime plugin fails with. */
 internal const val REALTIME_NOT_INSTALLED_MESSAGE: String =
@@ -53,23 +57,31 @@ internal const val REALTIME_NOT_INSTALLED_MESSAGE: String =
  *
  * Every follow makes a channel with a topic of its own: supabase-kt refuses a binding once a
  * channel has joined and hands back an existing channel of the same topic, which a leave that ran
- * out of time could have left behind. The feed ends when the channel does: a refused join, a close
- * from the server, or a socket that dropped. supabase-kt's own rejoin leaves the channel before it
- * joins again, which ends the feed too, so every join is the follower's, on a fresh channel with a
- * fresh token.
+ * out of time could have left behind. The feed ends when the channel does: a binding the server
+ * refused, a join supabase-kt gave up on, a close from the server, or a socket that dropped. Every
+ * join after an end is the follower's, on a fresh channel with a fresh token.
+ *
+ * The server refuses a binding (a filter on a column a migration renamed, a table missing from the
+ * publication) after it took the join, with a `system` message whose status is `error`. supabase-kt
+ * logs it and keeps the channel joined, so the feed watches the channel's system messages and ends
+ * on such a message from the `postgres_changes` extension: otherwise it would report the table
+ * joined and deliver nothing. supabase-kt's own rejoins do not end the feed. A join the server
+ * answers with an error is joined again every `rejoinDelay`, the channel still joining, until
+ * `maxAttempts` refusals, when supabase-kt unsubscribes it, which ends the feed. A channel error
+ * (`phx_error`) while joined counts the same way: below `maxAttempts` the channel is joined again,
+ * and the feed reports joined once more, which reads the table again. With supabase-kt's default
+ * `requireValidSession = true`, a token provider that throws makes supabase-kt join again every
+ * `rejoinDelay` until it stops throwing, without counting those attempts, and the channel stays
+ * joining, so the table stays subscribing.
  *
  * The follower follows each table on its own, so each table has a channel of its own, and the
- * channels share supabase-kt's one socket. A leave does two things supabase-kt 3.6.0 leaves undone
- * once another channel keeps that socket open. supabase-kt sends no leave for a channel that is not
- * joined: one still joining, or one the server refused once supabase-kt stopped rejoining it, which
- * the server may still hold, trying its binding again and again; so the leave sends one. And
- * supabase-kt's own rejoin, after a refusal, runs inside the loop that reads the socket and waits
- * there for a reply only that loop could read, so no channel on the socket receives anything until
- * the heartbeat gives up on it; with nothing but this library's channels left on the socket, the
- * leave closes it, which ends the loop, as removing the last channel does. The other tables'
- * channels end with it and are joined again by the follower. An app's own channel is never closed
- * this way: with one on the socket the loop waits for the heartbeat, which `install(Realtime) {
- * maxAttempts = 1 }` avoids.
+ * channels share supabase-kt's one socket. supabase-kt sends no leave for a channel that is not
+ * joined, so the leave sends one for a channel still joining, which the server may hold once the
+ * join reaches it; it also cancels a rejoin supabase-kt has scheduled for it, which would put the
+ * removed channel back on the socket. A channel whose binding the server refused is still joined,
+ * and supabase-kt's removal leaves it. Once the last channel is gone, supabase-kt closes the socket
+ * after `disconnectOnEmptyChannelsAfter`; [releaseNetwork] closes it at once when the network goes
+ * away, unless an app's own channel is still on it.
  *
  * Nothing a burst sends is lost: each table's `postgresChangeFlow` is buffered without limit, which
  * supabase-kt's `callbackFlow` takes as its own buffer, so the `trySend` behind it cannot drop a
@@ -79,7 +91,8 @@ internal const val REALTIME_NOT_INSTALLED_MESSAGE: String =
  * Nor is a change sent as soon as the join is taken: supabase-kt registers a table's callback only
  * when that `callbackFlow`'s producer first runs, and drops a change no callback takes. The
  * producers run unconfined, so each starts inside the collection that asks for it, and every
- * table's callback is in place before the join goes out.
+ * table's callback, and the one for the channel's system messages, is in place before the join goes
+ * out.
  *
  * @param tokenRefresher keeps the channel's token current for a client without Auth, or `null` when
  *   Auth, or supabase-kt itself, does.
@@ -124,6 +137,14 @@ internal class SupabaseRealtimeFeed(
                     }
                 }
             }
+            val systemMessages =
+                channel
+                    .systemFlow()
+                    // Fused, as each table's changes are: a refusal waits in supabase-kt's
+                    // callbackFlow, and its callback is in place before the join goes out
+                    .buffer(Channel.UNLIMITED)
+                    .flowOn(Dispatchers.Unconfined)
+            launch(start = CoroutineStart.UNDISPATCHED) { reportRefusals(systemMessages) }
             launch(start = CoroutineStart.UNDISPATCHED) { reportStatus(channel) }
             awaitQueuedRegistrations()
             joinSent = true
@@ -149,11 +170,34 @@ internal class SupabaseRealtimeFeed(
     }
 
     /**
+     * Fails the feed once the server refuses one of the channel's table bindings: a system message
+     * from the `postgres_changes` extension with an error status, which supabase-kt only logs,
+     * keeping the channel joined. An error from another extension is logged and changes nothing:
+     * the bindings still deliver. A system message that is not an error says the channel joined,
+     * which [reportStatus] reports.
+     */
+    private suspend fun reportRefusals(messages: Flow<RealtimeSystemPayload>) {
+        messages.collect { message ->
+            if (message.status != SYSTEM_STATUS_ERROR) return@collect
+            if (message.extension == POSTGRES_CHANGES_EXTENSION) {
+                throw ServerChangeFeedEndedException(
+                    "The server refused the Realtime channel's postgres_changes binding"
+                )
+            }
+            engineLogger.debug {
+                "Realtime: the server reported an error from the channel's " +
+                    "${message.extension} extension; the channel is still followed"
+            }
+        }
+    }
+
+    /**
      * Sends [ServerChangeEvent.Joined] each time the channel subscribes, and fails the feed once a
-     * channel that was joining or joined is being left or is unsubscribed. Only supabase-kt leaves
-     * a channel the feed still follows: for a rejoin after a refused join, or for a close from the
-     * server. Its rejoin waits, inside the loop that reads the socket, for the reply to its own
-     * leave, which that loop can then never read, so the leave itself is the end.
+     * channel that was joining or joined is being left or is unsubscribed. Only supabase-kt does
+     * that to a channel the feed still follows: once it gives up on a join the server refused
+     * `maxAttempts` times, on a close from the server, and on a socket that disconnected. Its
+     * rejoins before that keep the channel joining, and a rejoin after a channel error while joined
+     * subscribes it again, which sends Joined again.
      */
     private suspend fun ProducerScope<ServerChangeEvent>.reportStatus(channel: RealtimeChannel) {
         var started = false
@@ -168,8 +212,8 @@ internal class SupabaseRealtimeFeed(
                 RealtimeChannel.Status.UNSUBSCRIBED ->
                     if (started) {
                         throw ServerChangeFeedEndedException(
-                            "The Realtime channel ended: the join was refused, or the server " +
-                                "closed the channel"
+                            "The Realtime channel ended: the join was refused, the server " +
+                                "closed the channel, or the socket disconnected"
                         )
                     }
             }
@@ -177,9 +221,9 @@ internal class SupabaseRealtimeFeed(
     }
 
     /**
-     * Leaves [channel] within [leaveBound]: removes it, sends the leave supabase-kt does not, and
-     * frees the socket's read loop that supabase-kt's own rejoin of it stopped, when only this
-     * library's channels are left on the socket. A failure to leave is logged, never thrown.
+     * Leaves [channel] within [leaveBound]: removes it, which leaves a joined channel, and sends
+     * the leave supabase-kt does not for one still joining. A failure to leave is logged, never
+     * thrown.
      *
      * @param joinSent whether a join of [channel] went out.
      */
@@ -191,7 +235,7 @@ internal class SupabaseRealtimeFeed(
                     val status = channel.status.value
                     realtime.removeChannel(channel)
                     if (joinSent && realtime.status.value == Realtime.Status.CONNECTED) {
-                        finishLeaving(realtime, channel, status)
+                        finishLeaving(channel, status)
                     }
                 } catch (cancellation: CancellationException) {
                     throw cancellation
@@ -208,35 +252,46 @@ internal class SupabaseRealtimeFeed(
 
     /**
      * Does what [Realtime.removeChannel] left undone for [channel], removed at [status] from a
-     * socket still connected: sends the leave of a channel joining, or refused, which the server
-     * may still hold; or, for one supabase-kt's own rejoin was leaving, closes the socket when
-     * nothing but this library's channels is left on it, which ends the read loop the rejoin
-     * stopped. The leave goes out after the removal, so its reply, an error for a channel the
-     * server no longer holds, reaches no channel.
+     * socket still connected: sends the leave of a channel still joining, which the server may hold
+     * once the join reaches it. The leave also cancels a rejoin supabase-kt scheduled for it, which
+     * would add the channel back to the socket. A channel supabase-kt unsubscribed is left too, at
+     * the cost of an error reply. The leave goes out after the removal, so its reply, an error for
+     * a channel the server no longer holds, reaches no channel.
      */
-    private suspend fun finishLeaving(
-        realtime: Realtime,
-        channel: RealtimeChannel,
-        status: RealtimeChannel.Status,
-    ) {
+    private suspend fun finishLeaving(channel: RealtimeChannel, status: RealtimeChannel.Status) {
         when (status) {
             RealtimeChannel.Status.SUBSCRIBING,
             RealtimeChannel.Status.UNSUBSCRIBED -> channel.unsubscribe()
-            RealtimeChannel.Status.UNSUBSCRIBING ->
-                if (realtime.subscriptions.keys.all(::isOwnTopic)) {
-                    engineLogger.debug {
-                        "Realtime: a refused channel stopped the socket's read loop; the socket " +
-                            "is closed, and the tables' channels are joined again"
-                    }
-                    realtime.disconnect()
-                }
+            RealtimeChannel.Status.UNSUBSCRIBING,
             RealtimeChannel.Status.SUBSCRIBED -> Unit
         }
     }
 
-    /** Whether [topic] is one of this library's channels. */
-    private fun isOwnTopic(topic: String): Boolean =
-        topic.startsWith("$REALTIME_TOPIC_NAMESPACE$REALTIME_TOPIC_PREFIX-")
+    /**
+     * Closes supabase-kt's socket once the follower has left every channel because the network is
+     * off or known down, when nothing else is on it: supabase-kt would keep it open, sending
+     * heartbeats, for `disconnectOnEmptyChannelsAfter`, and nothing may be sent while network
+     * access is off. A socket that holds an app's own channel is the app's to close, and so is one
+     * the app keeps open with `disconnectOnNoSubscriptions = false`. A failure is logged, never
+     * thrown.
+     */
+    override fun releaseNetwork() {
+        try {
+            val realtime = supabase.realtime
+            if (
+                realtime.status.value == Realtime.Status.CONNECTED &&
+                    realtime.subscriptions.isEmpty() &&
+                    realtime.config.disconnectOnNoSubscriptions
+            ) {
+                engineLogger.debug { "Realtime: the network is off; the socket is closed" }
+                realtime.disconnect()
+            }
+        } catch (failure: Exception) {
+            engineLogger.debug {
+                "Realtime: closing the socket failed (${failure::class.simpleName})"
+            }
+        }
+    }
 
     /** This change as the feed reports it; `null` for a kind the feed never asked for. */
     private fun PostgresAction.toEvent(table: String, schema: String): ServerChangeEvent? =

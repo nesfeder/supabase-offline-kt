@@ -8,7 +8,7 @@ supabase-kt plugin, so most of this is supabase-kt's own setup with one more `in
 | | |
 | --- | --- |
 | Kotlin | 2.4 or later. The library is built with Kotlin 2.4.20 and needs `kotlin-stdlib` 2.4.20 at run time |
-| supabase-kt | 3.6. The library brings supabase-kt's BOM at 3.6.0, with PostgREST, Storage and Auth; with another minor, the plugin logs a warning when it is installed ([why 3.6](../project/compatibility.md#supabase-kt)) |
+| supabase-kt | 3.9. The library brings supabase-kt's BOM at 3.9.0, with PostgREST, Storage and Auth; with another minor, the plugin logs a warning when it is installed ([why 3.9](../project/compatibility.md#why-39)) |
 | Android | API 23 (Android 6.0) or later for the library. The [sample app](../samples/android.md) needs API 24 |
 | iOS | 15 or later, for the `iosArm64` and `iosSimulatorArm64` targets of a Kotlin Multiplatform module |
 
@@ -57,7 +57,7 @@ supabase-kt module, such as Functions, from the same BOM, so every module stays 
 
 ```kotlin
 commonMain.dependencies {
-    implementation(project.dependencies.platform("io.github.jan-tennert.supabase:bom:3.6.0"))
+    implementation(project.dependencies.platform("io.github.jan-tennert.supabase:bom:3.9.0"))
     implementation("io.github.jan-tennert.supabase:functions-kt")
 }
 ```
@@ -68,16 +68,16 @@ Before 1.0, pin the minor you have tested: a minor release may break your build.
 ## Add a Ktor engine per target
 
 supabase-kt sends its requests through Ktor: give each platform an engine, at the Ktor version
-supabase-kt 3.6.0 was released with, 3.4.3, or later:
+supabase-kt 3.9.0 was released with, 3.6.0, or later:
 
 ```kotlin
 kotlin {
     sourceSets {
         androidMain.dependencies {
-            implementation("io.ktor:ktor-client-okhttp:3.4.3")
+            implementation("io.ktor:ktor-client-okhttp:3.6.0")
         }
         iosMain.dependencies {
-            implementation("io.ktor:ktor-client-darwin:3.4.3")
+            implementation("io.ktor:ktor-client-darwin:3.6.0")
         }
     }
 }

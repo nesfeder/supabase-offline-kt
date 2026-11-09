@@ -28,8 +28,8 @@ import kotlinx.serialization.json.Json
 /**
  * A dry run is a write whose `Prefer` header carries `tx=rollback`, wherever it carries it:
  * supabase-kt writes its own `Prefer` first and appends one a caller adds, so the check reads every
- * value, in every header, not the first. On supabase-kt 3.6, which has no `dryRun()`, a header the
- * caller adds is the only way to write a dry run.
+ * value, in every header, not the first. A header the caller adds still writes a dry run beside
+ * supabase-kt's own `dryRun()`.
  */
 class PreferHeaderValuesTest {
 

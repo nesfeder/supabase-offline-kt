@@ -273,8 +273,8 @@
     <string name="try_grouped_delete">Delete done tasks offline</string>
     <string name="try_grouped_delete_body">delete filtered by an and group. The queue can’t hold a group, so offline the library refuses it.</string>
     <string name="try_grouped_delete_online">Turn on Simulate offline first: online, this deletes this week’s done tasks.</string>
-    <string name="try_two_filters">Two filters on one column</string>
-    <string name="try_two_filters_body">gte and lt on created_at, not grouped: the library refuses it before sending anything.</string>
+    <string name="try_quoted_in_value">A quote in an in list</string>
+    <string name="try_quoted_in_value_body">isIn on title with a value holding a double quote: the server would read it differently, so the library refuses it before sending anything.</string>
     <string name="try_count_open">Count open tasks on the server</string>
     <string name="try_count_open_body">A count with the generic filter, naming its operator: done eq false. A count is never saved on the device, so it needs a connection.</string>
     <string name="try_signed_upload">Upload through a signed URL</string>

@@ -56,9 +56,9 @@ internal fun interface DryRunProbe {
 
 /**
  * The [DryRunProbe] over supabase-kt's HTTP pipeline. A dry run shows only as `tx=rollback` in a
- * `Prefer` header (supabase-kt 3.8's `dryRun()`, or the header a caller adds), so the write runs
- * under a [PreferHeaderCapture], and the phase that [installDryRunCheck] puts ahead of every plugin
- * reads every `Prefer` value and stops the request.
+ * `Prefer` header (supabase-kt's `dryRun()`, or the header a caller adds), so the write runs under
+ * a [PreferHeaderCapture], and the phase that [installDryRunCheck] puts ahead of every plugin reads
+ * every `Prefer` value and stops the request.
  *
  * A dry run is never queued; whether the server rolled it back is read from [wasRolledBack].
  *
@@ -141,7 +141,7 @@ internal fun namesRollback(header: String?): Boolean =
 internal val PostgrestResult.wasRolledBack: Boolean
     get() = namesRollback(headers.getAll(PREFERENCE_APPLIED_HEADER)?.joinToString(","))
 
-/** The preference that makes a write a dry run, as supabase-kt 3.8's `dryRun()` writes it. */
+/** The preference that makes a write a dry run, as supabase-kt's `dryRun()` writes it. */
 private const val TX_ROLLBACK_PREFERENCE = "tx=rollback"
 
 /** The response header PostgREST lists the preferences it applied in. */

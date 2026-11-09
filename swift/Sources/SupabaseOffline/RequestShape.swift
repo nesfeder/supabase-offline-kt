@@ -73,14 +73,15 @@ struct RequestShape: Sendable {
     }
 
     /// The description fields this shape adds, the filters arranged so the core sends them as
-    /// written.
+    /// written; filters sharing a column move into one `and` group only when
+    /// `groupsSameColumnFilters` (see ``TopLevelFilters``).
     ///
     /// - Throws: ``OfflineError/Code/invalidRequest`` for a filter that cannot be sent as written.
-    func descriptionFields() throws -> [String: OfflineJSON] {
+    func descriptionFields(groupsSameColumnFilters: Bool = true) throws -> [String: OfflineJSON] {
         if let refusal = refusals.first {
             throw OfflineError(code: .invalidRequest, message: refusal)
         }
-        let arranged = TopLevelFilters.arranged(filters)
+        let arranged = TopLevelFilters.arranged(filters, groupsSameColumnFilters: groupsSameColumnFilters)
         if let refusal = TopLevelFilters.refusal(of: arranged) {
             throw OfflineError(code: .invalidRequest, message: refusal)
         }

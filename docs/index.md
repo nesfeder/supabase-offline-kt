@@ -58,7 +58,7 @@ no answer yet. That is the one difference in what a call returns.
 | --- | --- |
 | Android | API 23 and later |
 | iOS | 15 and later, `iosArm64` and `iosSimulatorArm64`, from Kotlin |
-| supabase-kt | 3.6, the one minor each release is built and tested against ([why](project/compatibility.md#supabase-kt)) |
+| supabase-kt | 3.9, the one minor each release is built and tested against ([why](project/compatibility.md#supabase-kt)) |
 | Other Kotlin targets | none: no JVM, JS or Wasm |
 
 The library is not affiliated with Supabase.
