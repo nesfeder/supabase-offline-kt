@@ -56,4 +56,11 @@ internal fun interface ServerChangeFeed {
      * @param defaultSchema the schema of a table that names none.
      */
     fun follow(tables: List<WatchedTable>, defaultSchema: String): Flow<ServerChangeEvent>
+
+    /**
+     * Called once every follow has been left because the network is off or known down: closes what
+     * the feed still holds open on the network, so nothing more is sent until the next follow. A
+     * feed that holds nothing open does nothing.
+     */
+    fun releaseNetwork() {}
 }

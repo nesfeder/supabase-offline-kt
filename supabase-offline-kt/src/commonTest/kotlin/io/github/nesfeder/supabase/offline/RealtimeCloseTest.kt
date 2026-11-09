@@ -16,7 +16,10 @@ import io.github.jan.supabase.plugins.SupabasePlugin
 import io.github.jan.supabase.plugins.SupabasePluginProvider
 import io.github.jan.supabase.postgrest.Postgrest
 import io.github.jan.supabase.realtime.Realtime
+import io.github.jan.supabase.realtime.RealtimeChannel
 import io.github.jan.supabase.realtime.RealtimeMessage
+import io.github.jan.supabase.realtime.channel
+import io.github.jan.supabase.realtime.realtime
 import io.github.nesfeder.supabase.offline.internal.logging.EngineLogLevel
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingLogSink
 import io.github.nesfeder.supabase.offline.testdoubles.ScriptedRealtimeWebsocket
@@ -38,6 +41,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.add
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonArray
@@ -54,6 +58,10 @@ import kotlinx.serialization.json.putJsonObject
  * close after Realtime's, so the channel's end reaches the follower before Offline's close does,
  * the ordering that stalled the status; the close is repeated all the same, since how the end
  * travels is a matter of timing.
+ *
+ * Turning network access off pauses the follower, which leaves the channel and then closes the
+ * socket at once, rather than after supabase-kt's `disconnectOnEmptyChannelsAfter`, since nothing
+ * may be sent while access is off; never a socket that holds an app's own channel.
  */
 class RealtimeCloseTest {
 
@@ -168,6 +176,69 @@ class RealtimeCloseTest {
                 assertEquals(RealtimeStatus.Off, supabase.offline.realtimeStatus.value)
                 val warnings = logs.entriesAt(EngineLogLevel.WARNING)
                 assertTrue(warnings.isEmpty(), "$warnings")
+            }
+        }
+
+    @Test
+    fun turning_network_access_off_leaves_the_channel_and_closes_the_socket() =
+        runTest(timeout = 2.minutes) {
+            withContext(Dispatchers.Default) {
+                // Given — the channel joined, on a socket supabase-kt would keep open for two
+                // hours once its last channel is gone
+                val logs = RecordingLogSink()
+                val sockets = ScriptedRealtimeWebsocketFactory()
+                val supabase = pluginClient(logs, sockets)
+                val socket = sockets.awaitSocket(0)
+                socket.takeJoin()
+                supabase.offline.awaitStatus(RealtimeStatus.Subscribed)
+
+                // When — the app turns network access off
+                supabase.offline.disableNetwork()
+
+                // Then — paused, the channel left, and the socket closed at once
+                supabase.offline.awaitStatus(RealtimeStatus.Paused)
+                val leave = socket.awaitSent("phx_leave")
+                assertTrue(leave.topic.startsWith("realtime:supabase-offline-"), leave.topic)
+                socket.awaitDisconnected()
+                assertEquals(Realtime.Status.DISCONNECTED, supabase.realtime.status.value)
+                supabase.close()
+                val warnings = logs.entriesAt(EngineLogLevel.WARNING)
+                assertTrue(warnings.isEmpty(), "$warnings")
+            }
+        }
+
+    @Test
+    fun turning_network_access_off_keeps_a_socket_that_holds_an_apps_own_channel() =
+        runTest(timeout = 2.minutes) {
+            withContext(Dispatchers.Default) {
+                // Given — the library's channel and an app's own channel joined on one socket
+                val logs = RecordingLogSink()
+                val sockets = ScriptedRealtimeWebsocketFactory()
+                val supabase = pluginClient(logs, sockets)
+                val socket = sockets.awaitSocket(0)
+                socket.takeJoin()
+                supabase.offline.awaitStatus(RealtimeStatus.Subscribed)
+                val appChannel = supabase.channel("app-presence")
+                appChannel.subscribe()
+                socket.takeJoin()
+                withTimeout(10.seconds) {
+                    appChannel.status.first { status ->
+                        status == RealtimeChannel.Status.SUBSCRIBED
+                    }
+                }
+
+                // When — the app turns network access off
+                supabase.offline.disableNetwork()
+
+                // Then — the library's channel is left, and the socket stays open for the app's
+                supabase.offline.awaitStatus(RealtimeStatus.Paused)
+                val leave = socket.awaitSent("phx_leave")
+                assertTrue(leave.topic.startsWith("realtime:supabase-offline-"), leave.topic)
+                val closed = withTimeoutOrNull(1.seconds) { socket.disconnected.await() }
+                assertEquals(null, closed)
+                assertEquals(Realtime.Status.CONNECTED, supabase.realtime.status.value)
+                assertEquals(RealtimeChannel.Status.SUBSCRIBED, appChannel.status.value)
+                supabase.close()
             }
         }
 

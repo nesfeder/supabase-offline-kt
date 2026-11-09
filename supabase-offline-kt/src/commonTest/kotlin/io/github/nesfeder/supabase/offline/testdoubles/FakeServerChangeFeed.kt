@@ -25,7 +25,8 @@ import kotlinx.serialization.json.JsonObject
 /**
  * A server-change feed a test scripts: each follow the client starts is recorded with what it asked
  * for, and the test joins it, reports changes on it, ends it, or fails it. Nothing is reported
- * until the test says so, so a follow is not joined by itself.
+ * until the test says so, so a follow is not joined by itself. Each time the client releases the
+ * network, the feed records whether every follow had been left by then.
  */
 internal class FakeServerChangeFeed : ServerChangeFeed {
 
@@ -81,6 +82,16 @@ internal class FakeServerChangeFeed : ServerChangeFeed {
 
     /** Every follow the client started, in order. */
     val follows: StateFlow<List<Follow>> = started.asStateFlow()
+
+    private val released = MutableStateFlow<List<Boolean>>(emptyList())
+
+    /** Each time the client released the network, in order: whether every follow was left then. */
+    val releases: StateFlow<List<Boolean>> = released.asStateFlow()
+
+    override fun releaseNetwork() {
+        val everyFollowLeft = started.value.all { follow -> follow.isLeft }
+        released.update { current -> current + everyFollowLeft }
+    }
 
     override fun follow(
         tables: List<WatchedTable>,

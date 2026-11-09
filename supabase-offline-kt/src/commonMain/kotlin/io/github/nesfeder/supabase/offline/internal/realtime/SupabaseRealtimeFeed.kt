@@ -80,7 +80,8 @@ internal const val REALTIME_NOT_INSTALLED_MESSAGE: String =
  * join reaches it; it also cancels a rejoin supabase-kt has scheduled for it, which would put the
  * removed channel back on the socket. A channel whose binding the server refused is still joined,
  * and supabase-kt's removal leaves it. Once the last channel is gone, supabase-kt closes the socket
- * after `disconnectOnEmptyChannelsAfter`.
+ * after `disconnectOnEmptyChannelsAfter`; [releaseNetwork] closes it at once when the network goes
+ * away, unless an app's own channel is still on it.
  *
  * Nothing a burst sends is lost: each table's `postgresChangeFlow` is buffered without limit, which
  * supabase-kt's `callbackFlow` takes as its own buffer, so the `trySend` behind it cannot drop a
@@ -263,6 +264,32 @@ internal class SupabaseRealtimeFeed(
             RealtimeChannel.Status.UNSUBSCRIBED -> channel.unsubscribe()
             RealtimeChannel.Status.UNSUBSCRIBING,
             RealtimeChannel.Status.SUBSCRIBED -> Unit
+        }
+    }
+
+    /**
+     * Closes supabase-kt's socket once the follower has left every channel because the network is
+     * off or known down, when nothing else is on it: supabase-kt would keep it open, sending
+     * heartbeats, for `disconnectOnEmptyChannelsAfter`, and nothing may be sent while network
+     * access is off. A socket that holds an app's own channel is the app's to close, and so is one
+     * the app keeps open with `disconnectOnNoSubscriptions = false`. A failure is logged, never
+     * thrown.
+     */
+    override fun releaseNetwork() {
+        try {
+            val realtime = supabase.realtime
+            if (
+                realtime.status.value == Realtime.Status.CONNECTED &&
+                    realtime.subscriptions.isEmpty() &&
+                    realtime.config.disconnectOnNoSubscriptions
+            ) {
+                engineLogger.debug { "Realtime: the network is off; the socket is closed" }
+                realtime.disconnect()
+            }
+        } catch (failure: Exception) {
+            engineLogger.debug {
+                "Realtime: closing the socket failed (${failure::class.simpleName})"
+            }
         }
     }
 

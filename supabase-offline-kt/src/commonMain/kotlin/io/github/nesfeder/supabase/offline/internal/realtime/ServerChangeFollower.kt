@@ -59,6 +59,10 @@ import kotlinx.coroutines.withTimeoutOrNull
  * another user has signed in, is dropped instead of reaching the new user's cache, and [apply] is
  * told the identity so the cache can refuse it under its own lock.
  *
+ * While the network is off or known down, once every channel is left, the feed is told to release
+ * the network ([ServerChangeFeed.releaseNetwork]): leaving the channels alone may keep a socket
+ * open, and nothing may be sent while network access is off.
+ *
  * A channel that ends is logged at DEBUG; the warning comes when it is joined again, so an end that
  * a sign-out, a network known down, the switch or [stop] brought about, which pauses the follow
  * before the wait is over, leaves no warning. After [stop] the state is final: nothing a channel
@@ -126,7 +130,7 @@ internal class ServerChangeFollower(
     private val stopped = AtomicBoolean(false)
 
     /** What the inputs ask for, as last combined; what a follow whose channel ended checks. */
-    private val wantedNow = MutableStateFlow<Wanted>(Wanted.Paused)
+    private val wantedNow = MutableStateFlow<Wanted>(Wanted.Paused(networkDown = false))
 
     /** The following, once started. */
     private var following: Job? = null
@@ -195,11 +199,14 @@ internal class ServerChangeFollower(
         }
     }
 
-    /** What the inputs ask for. */
+    /**
+     * What the inputs ask for. Off and paused say whether the network is off or known down as well,
+     * so the network going away while nothing is followed still releases it.
+     */
     private sealed interface Wanted {
-        data object Off : Wanted
+        data class Off(val networkDown: Boolean) : Wanted
 
-        data object Paused : Wanted
+        data class Paused(val networkDown: Boolean) : Wanted
 
         /** Follow for [identity]; another identity is another follow. */
         data class Follow(val identity: String) : Wanted
@@ -211,23 +218,41 @@ internal class ServerChangeFollower(
      */
     private suspend fun keepFollowing() {
         combine(enabled, sessionIdentity, networkStatuses) { on, identity, network ->
+                val networkDown =
+                    network == NetworkStatus.OFFLINE || network == NetworkStatus.DISABLED
                 when {
-                    !on -> Wanted.Off
-                    identity == null ||
-                        network == NetworkStatus.OFFLINE ||
-                        network == NetworkStatus.DISABLED -> Wanted.Paused
+                    !on -> Wanted.Off(networkDown)
+                    identity == null || networkDown -> Wanted.Paused(networkDown)
                     else -> Wanted.Follow(identity)
                 }
             }
             .onEach { wanted -> wantedNow.value = wanted }
             .distinctUntilChanged()
             .collectLatest { wanted ->
+                // The follow before this answer has been left by now: collectLatest waits for it
                 when (wanted) {
-                    Wanted.Off -> reportEveryTable(RealtimeStatus.Off)
-                    Wanted.Paused -> reportEveryTable(RealtimeStatus.Paused)
+                    is Wanted.Off -> {
+                        reportEveryTable(RealtimeStatus.Off)
+                        if (wanted.networkDown) releaseNetwork()
+                    }
+                    is Wanted.Paused -> {
+                        reportEveryTable(RealtimeStatus.Paused)
+                        if (wanted.networkDown) releaseNetwork()
+                    }
                     is Wanted.Follow -> followUntilCanceled(wanted)
                 }
             }
+    }
+
+    /** Has the feed release the network, every channel left; a failure is logged, never thrown. */
+    private fun releaseNetwork() {
+        try {
+            feed.releaseNetwork()
+        } catch (failure: Exception) {
+            engineLogger.debug {
+                "Realtime: releasing the network failed (${failure::class.simpleName})"
+            }
+        }
     }
 
     /**

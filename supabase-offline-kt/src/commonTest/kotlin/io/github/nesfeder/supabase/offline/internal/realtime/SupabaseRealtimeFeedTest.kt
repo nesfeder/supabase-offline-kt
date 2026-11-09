@@ -74,9 +74,9 @@ import kotlinx.serialization.json.putJsonObject
  * supabase-kt, and reported joined once more. A binding the server refuses ends the feed, though
  * supabase-kt keeps the channel joined; an error from another extension does not. With a channel
  * per table on one socket, a refused channel is left on the server while another table's keeps
- * receiving, a channel left while joining is left on the server, and a leave never closes a socket
- * that holds an app's own channel. A token provider that throws keeps the channel joining, and the
- * feed waits, until it stops throwing.
+ * receiving, and a channel left while joining is left on the server. Releasing the network closes a
+ * socket that holds only this library's channels, and never one that holds an app's. A token
+ * provider that throws keeps the channel joining, and the feed waits, until it stops throwing.
  */
 class SupabaseRealtimeFeedTest {
 
@@ -433,16 +433,78 @@ class SupabaseRealtimeFeedTest {
                 socket.answer(joinTaken(join, join.bindings()))
                 assertEquals(ServerChangeEvent.Joined, events.receiveWithin())
 
-                // When — the server refuses the binding, and the feed ends and leaves
+                // When — the server refuses the binding, the feed ends and leaves, and the network
+                // is released, as the follower does when the network goes away
                 socket.answer(bindingRefused(join.topic))
                 val ended = withTimeout(10.seconds) { outcome.receive() }
                 assertTrue(ended.exceptionOrNull() is ServerChangeFeedEndedException, "$ended")
                 assertEquals(join.topic, socket.awaitSent("phx_leave").topic)
+                feed.releaseNetwork()
 
                 // Then — the socket stays open: closing it would end the app's channel
                 assertFalse(socket.disconnected.isCompleted)
                 assertEquals(Realtime.Status.CONNECTED, supabase.realtime.status.value)
                 assertTrue(supabase.realtime.subscriptions.containsKey(appChannel.topic))
+            }
+            supabase.close()
+        }
+
+    @Test
+    fun releasing_the_network_closes_a_socket_left_with_only_the_librarys_channels_gone() =
+        runTest(timeout = 2.minutes) {
+            withContext(Dispatchers.Default) {
+                // Given — a Realtime plugin that keeps a socket with no channels open for the
+                // default two heartbeats, and a table followed, joined and then left
+                val ownSockets = ScriptedRealtimeWebsocketFactory()
+                val own = newTestSupabaseClient {
+                    install(Postgrest)
+                    install(Realtime) {
+                        websocketFactory = ownSockets
+                        heartbeatInterval = 1.hours
+                        reconnectDelay = 1.hours
+                    }
+                }
+                val ownFeed = SupabaseRealtimeFeed(own, logs.asEngineLogger())
+                val socket = followJoinedAndLeft(ownFeed, ownSockets)
+                assertFalse(socket.disconnected.isCompleted)
+
+                // When — the network is released
+                ownFeed.releaseNetwork()
+
+                // Then — the socket closes at once, rather than after two heartbeats
+                socket.awaitDisconnected()
+                assertEquals(Realtime.Status.DISCONNECTED, own.realtime.status.value)
+                own.close()
+            }
+            supabase.close()
+        }
+
+    @Test
+    fun releasing_the_network_leaves_open_a_socket_the_app_keeps_without_channels() =
+        runTest(timeout = 2.minutes) {
+            withContext(Dispatchers.Default) {
+                // Given — a Realtime plugin the app told to keep a socket with no channels open,
+                // and a table followed, joined and then left
+                val ownSockets = ScriptedRealtimeWebsocketFactory()
+                val own = newTestSupabaseClient {
+                    install(Postgrest)
+                    install(Realtime) {
+                        websocketFactory = ownSockets
+                        heartbeatInterval = 1.hours
+                        reconnectDelay = 1.hours
+                        disconnectOnNoSubscriptions = false
+                    }
+                }
+                val ownFeed = SupabaseRealtimeFeed(own, logs.asEngineLogger())
+                val socket = followJoinedAndLeft(ownFeed, ownSockets)
+
+                // When — the network is released
+                ownFeed.releaseNetwork()
+
+                // Then — the socket stays open, as the app configured it
+                assertFalse(socket.disconnected.isCompleted)
+                assertEquals(Realtime.Status.CONNECTED, own.realtime.status.value)
+                own.close()
             }
             supabase.close()
         }
@@ -754,6 +816,36 @@ class SupabaseRealtimeFeedTest {
             }
             supabase.close()
         }
+
+    /**
+     * Follows `tasks` through [feed] on the socket [factory] opens, joins it, cancels the follow
+     * and answers its leave: the library's one channel is gone, and the socket is returned.
+     */
+    private suspend fun CoroutineScope.followJoinedAndLeft(
+        feed: SupabaseRealtimeFeed,
+        factory: ScriptedRealtimeWebsocketFactory,
+    ): ScriptedRealtimeWebsocket {
+        val events = Channel<ServerChangeEvent>(Channel.UNLIMITED)
+        val collecting = launch {
+            feed.follow(listOf(WatchedTable("tasks")), "public").collect { events.send(it) }
+        }
+        val socket = factory.awaitSocket(0)
+        val join = socket.awaitSent("phx_join")
+        socket.answer(joinTaken(join, join.bindings()))
+        assertEquals(ServerChangeEvent.Joined, events.receiveWithin())
+        collecting.cancelAndJoin()
+        val leave = socket.awaitSent("phx_leave")
+        socket.answer(
+            RealtimeMessage(
+                leave.topic,
+                "phx_reply",
+                buildJsonObject { put("status", "ok") },
+                leave.ref,
+            )
+        )
+        socket.awaitHandled()
+        return socket
+    }
 
     /** Two tables followed through [feed], each on a channel of its own, both joined. */
     private class TwoTables(
