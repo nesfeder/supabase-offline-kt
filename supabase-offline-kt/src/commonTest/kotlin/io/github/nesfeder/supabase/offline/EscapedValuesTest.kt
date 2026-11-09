@@ -142,7 +142,7 @@ class EscapedValuesTest {
     }
 
     @Test
-    fun quoted_values_top_level_comparisons_and_literals_are_sent_as_before() = runTest {
+    fun quoted_values_top_level_comparisons_and_literals_are_sent_as_written() = runTest {
         // Given
         val client = newTestOfflineClient(supabase = server.supabaseClient())
         val table = client.from(TABLE)
@@ -162,9 +162,9 @@ class EscapedValuesTest {
             }
         // A top-level comparison is sent as written, and the server reads it so
         table.select(readStrategy = ReadStrategy.NetworkOnly) { filter { eq(COLUMN, QUOTED) } }
-        // A pattern list is read by the server as an array literal, whose backslashes are escapes;
-        // an array literal or a range of the array operators and a text search query are sent as
-        // written
+        // A pattern list and an array literal of the array operators are read by the server as
+        // array literals, whose backslashes are escapes, and supabase-kt quotes an element holding
+        // a `"` or `\`; a range of the array operators and a text search query are sent as written
         table.select(readStrategy = ReadStrategy.NetworkOnly) {
             filter {
                 likeAll(COLUMN, listOf(BACKSLASHED))
@@ -189,7 +189,7 @@ class EscapedValuesTest {
                 """in.("a,b",x,"say \"hi\".")""",
                 null,
                 """eq.Say "hi"""",
-                """like(all).{%50\\%%}""",
+                """like(all).{"%50\\%%"}""",
             ),
             server.requests.map { it.query[COLUMN] },
         )
@@ -198,8 +198,8 @@ class EscapedValuesTest {
             server.requests[1].query["or"],
         )
         assertEquals(
-            """(note.like(any).{%50\\%%},tags.cs.{a\b},body.fts.a\b,""" +
-                """during.ov.[2026-01-01,2026-02-01],labels.cs.{"a}b"},tsv.fts.x.eq.a\b,tag.eq.{a,slot.eq.[b,hour.sl.(1,5))""",
+            """(note.like(any).{"%50\\%%"},tags.cs.{"a\\b"},body.fts.a\b,""" +
+                """during.ov.[2026-01-01,2026-02-01],labels.cs.{"\"a}b\""},tsv.fts.x.eq.a\b,tag.eq.{a,slot.eq.[b,hour.sl.(1,5))""",
             server.requests[3].query["or"],
         )
         client.close()

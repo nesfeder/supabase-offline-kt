@@ -112,6 +112,19 @@
     { "name": "not_and_group", "table": "notes", "request": [["and", [["eq", "a", "1"], ["eq", "b", "2"]], {"negate": true}]], "cacheKey": "notes?not.and=(a.eq.1,b.eq.2)" },
     { "name": "offset_on_a_referenced_table", "table": "notes", "columns": "id,comments(id)", "request": [["range", 10, 19, {"referencedTable": "comments"}]], "cacheKey": "notes?comments.limit=10&comments.offset=10&select=id,comments(id)" },
     { "name": "limit_with_a_range_header", "table": "notes", "request": [["limit", 5], ["header", "Range", "0-9"]], "cacheKey": "notes?limit=5|range=0-9" },
-    { "name": "quoted_column_name_in_a_filter", "table": "notes", "request": [["eq", "\"due date\"", "2026-01-01"]], "cacheKey": "notes?\"due date\"=eq.2026-01-01" }
+    { "name": "quoted_column_name_in_a_filter", "table": "notes", "request": [["eq", "\"due date\"", "2026-01-01"]], "cacheKey": "notes?\"due date\"=eq.2026-01-01" },
+    { "name": "like_all_pattern_with_a_dot", "table": "notes", "request": [["likeAll", "title", ["a.b%", "%c"]]], "cacheKey": "notes?title=like(all).{a.b%,%c}" },
+    { "name": "like_any_pattern_with_a_colon", "table": "notes", "request": [["likeAny", "title", ["a:b%"]]], "cacheKey": "notes?title=like(any).{a:b%}" },
+    { "name": "like_all_pattern_with_a_double_quote", "table": "notes", "request": [["likeAll", "title", ["say \"hi\"%"]]], "cacheKey": "notes?title=like(all).{\"say \\\"hi\\\"%\"}" },
+    { "name": "like_any_pattern_edged_with_a_space", "table": "notes", "request": [["likeAny", "title", [" a%", "b"]]], "cacheKey": "notes?title=like(any).{\" a%\",b}" },
+    { "name": "like_all_empty_pattern", "table": "notes", "request": [["likeAll", "title", ["", "%a%"]]], "cacheKey": "notes?title=like(all).{\"\",%a%}" },
+    { "name": "cs_list_element_with_a_comma", "table": "notes", "request": [["cs", "tags", ["a,b", "c"]]], "cacheKey": "notes?tags=cs.{\"a,b\",c}" },
+    { "name": "cs_list_element_with_a_double_quote", "table": "notes", "request": [["cs", "tags", ["a\"b"]]], "cacheKey": "notes?tags=cs.{\"a\\\"b\"}" },
+    { "name": "cs_list_element_the_string_null", "table": "notes", "request": [["cs", "tags", ["NULL", "x"]]], "cacheKey": "notes?tags=cs.{\"NULL\",x}" },
+    { "name": "ov_list_element_with_a_comma", "table": "notes", "request": [["ov", "tags", ["work,home"]]], "cacheKey": "notes?tags=ov.{\"work,home\"}" },
+    { "name": "ov_list_element_with_a_double_quote", "table": "notes", "request": [["ov", "tags", ["x", "y\"z"]]], "cacheKey": "notes?tags=ov.{x,\"y\\\"z\"}" },
+    { "name": "ov_list_element_the_string_null", "table": "notes", "request": [["ov", "tags", ["null"]]], "cacheKey": "notes?tags=ov.{\"null\"}" },
+    { "name": "eq_and_text_search_on_one_column", "table": "notes", "request": [["eq", "body", "x"], ["fts", "body", "cat"]], "cacheKey": "notes?body=eq.x&body=fts.cat" },
+    { "name": "gte_and_lte_on_one_timestamp_column", "table": "notes", "request": [["gte", "created_at", "2026-01-01T00:00:00Z"], ["lte", "created_at", "2026-02-01T00:00:00Z"]], "cacheKey": "notes?created_at=gte.2026-01-01T00:00:00Z&created_at=lte.2026-02-01T00:00:00Z" }
   ]
 }

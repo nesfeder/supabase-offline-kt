@@ -10,13 +10,14 @@ import io.github.jan.supabase.postgrest.query.PostgrestRequestBuilder
 /**
  * Refuses an `in` element, or a comparison value inside an `or { }` or `and { }` group, that
  * supabase-kt escapes but does not quote, so the server reads the escapes as the value. supabase-kt
- * 3.6 puts a backslash before each `"` and `\` of such a value and quotes it only when it holds one
- * of `,.:()`; PostgREST reads an unquoted element or group value as written, so `isIn("title",
+ * puts a backslash before each `"` and `\` of such a value and quotes it only when it holds one of
+ * `,.:()`; PostgREST reads an unquoted element or group value as written, so `isIn("title",
  * listOf("Say \"hi\""))` goes out as `title=in.(Say \"hi\")` and matches nothing, while the same
  * `eq` at the top level, sent as written, matches. Not read: a pattern list and an array literal of
- * `cs`, `cd` or `ov`, which the server reads as array literals whose backslashes are escapes; a
- * range; and a text search query, which `textSearch` sends as written and the request cannot tell
- * from a `filter` with the same operator.
+ * `cs`, `cd` or `ov`, whose elements supabase-kt quotes when they hold a `"` or `\` and which the
+ * server reads as array literals whose backslashes are escapes; a range; and a text search query,
+ * which `textSearch` sends as written and the request cannot tell from a `filter` with the same
+ * operator.
  *
  * @throws IllegalArgumentException naming the column and the operator, never a value.
  */
@@ -44,9 +45,9 @@ internal class MisreadValue(val column: String, val operator: String)
 
 /**
  * The operators whose value supabase-kt escapes inside a group, by their request names, and `in`,
- * whose elements it escapes everywhere. `isdistinct` is supabase-kt 3.8's, escaped as `eq` is on an
- * app that forces that minor. The text search operators are left out: `textSearch` sends a query as
- * written, and the request cannot tell that call from a `filter` with the same operator.
+ * whose elements it escapes everywhere. `isdistinct` is escaped as `eq` is. The text search
+ * operators are left out: `textSearch` sends a query as written, and the request cannot tell that
+ * call from a `filter` with the same operator.
  */
 private val ESCAPED_OPERATORS =
     setOf(

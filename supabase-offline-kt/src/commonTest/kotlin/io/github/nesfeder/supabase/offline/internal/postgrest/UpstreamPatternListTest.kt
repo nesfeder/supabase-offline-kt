@@ -15,21 +15,24 @@ import kotlin.test.assertEquals
 import kotlinx.coroutines.test.runTest
 
 /**
- * What supabase-kt itself puts on the wire for a pattern list: a pattern holding none of `,.:()`
- * goes out unquoted, so an empty list or pattern, `NULL`, edge white space and braces reach the
- * server as another list. The library refuses such a list; when upstream quotes them, this fails.
+ * What supabase-kt itself puts on the wire for a pattern list and for the array literal of `cs`,
+ * `cd` and `ov`: an element that is empty, `NULL`, edged with white space or holds one of `, { } "
+ * \` goes out quoted, a `"` or `\` in it escaped, and every other element bare, `.:()` included.
+ * That is how Postgres reads an array literal, so the library sends such a list as written and
+ * refuses only an empty pattern list, which still goes out as `{}`. Replay decodes an array literal
+ * by the same rules ([parseArrayLiteral]); when upstream quotes otherwise, this fails.
  */
 class UpstreamPatternListTest {
 
     @Test
-    fun supabase_kt_sends_an_empty_pattern_and_other_misread_patterns_unquoted() = runTest {
+    fun supabase_kt_quotes_array_literal_elements_as_postgres_reads_them() = runTest {
         // Given — plain supabase-kt, no offline plugin
         val sent = mutableListOf<String?>()
         val supabase =
             newTestSupabaseClient(
                 engine =
                     MockEngine { request ->
-                        sent += request.url.parameters["code"]
+                        sent += request.url.parameters["code"] ?: request.url.parameters["tags"]
                         respond(
                             "[]",
                             HttpStatusCode.OK,
@@ -42,16 +45,31 @@ class UpstreamPatternListTest {
             )
 
         // When
+        supabase.from("codes").delete { filter { likeAll("code", emptyList()) } }
         supabase.from("codes").delete { filter { likeAll("code", listOf("")) } }
-        supabase.from("codes").select { filter { ilikeAny("code", listOf("NULL", " a", "b{c}")) } }
+        supabase.from("codes").select {
+            filter { ilikeAny("code", listOf("NULL", " a", "b{c}", "d,e", "f\"g", "h\\i")) }
+        }
+        supabase.from("codes").select { filter { likeAny("code", listOf("a.b", "c:d", "(e)")) } }
+        supabase.from("posts").select { filter { cs("tags", listOf("a,b", "x\"y", "NULL", "")) } }
+        supabase.from("posts").select { filter { ov("tags", listOf("p.q", "r s")) } }
 
         // Then
         assertEquals(
-            listOf<String?>("like(all).{}", "ilike(any).{NULL, a,b{c}}"),
+            listOf<String?>(
+                "like(all).{}",
+                """like(all).{""}""",
+                """ilike(any).{"NULL"," a","b{c}","d,e","f\"g","h\\i"}""",
+                "like(any).{a.b,c:d,(e)}",
+                """cs.{"a,b","x\"y","NULL",""}""",
+                "ov.{p.q,r s}",
+            ),
             sent,
-            "supabase-kt no longer sends these patterns unquoted. Revisit the refusal of a " +
-                "pattern list the server would misread (requireReadablePatternLists), and the " +
-                "Swift package's matching refusal, before moving the pin.",
+            "supabase-kt no longer quotes array literal elements as Postgres reads them. Revisit " +
+                "the empty pattern list refusal (requireReadablePatternLists), replay's reading " +
+                "of a cs, cd or ov literal (parseArrayLiteral), the Swift bridge's and the Swift " +
+                "package's pattern-list rules, and the pattern-list and array cases of " +
+                "cache-key-fixture.json before moving the pin.",
         )
     }
 }

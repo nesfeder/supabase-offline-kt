@@ -7,6 +7,7 @@ package io.github.nesfeder.supabase.offline.internal.postgrest
 import io.github.jan.supabase.annotations.SupabaseExperimental
 import io.github.jan.supabase.postgrest.PropertyConversionMethod
 import io.github.jan.supabase.postgrest.query.filter.FilterOperator
+import io.github.jan.supabase.postgrest.query.filter.PostgrestFilterBuilder
 import io.github.jan.supabase.postgrest.query.request.SelectRequestBuilder
 import io.github.nesfeder.supabase.offline.internal.EngineJson
 import kotlin.test.Test
@@ -28,11 +29,12 @@ import kotlinx.serialization.json.put
  * replayed request carries the caller's original param. Overlay parity is asserted via [rowMatch]:
  * a row the overlay treats as matched is one replay reaches.
  *
- * The later cases also pin that the parser tokenizes by *encoding* rather than by delimiter. Only
- * `in`'s `(a,b)` comes from an encoder that escapes its elements (`encodeAsList` → `escapeValue`);
- * `cs`/`cd`/`ov`'s `{a,b}` and every range body are interpolated verbatim, so a `"` or `\` inside
- * one of those is literal content. Unescaping it replays a filter against different rows, which is
- * why each of those cases asserts a byte-exact round trip in both directions.
+ * The later cases also pin that the parser tokenizes by *encoding* rather than by delimiter. `in`'s
+ * `(a,b)` comes from an encoder that escapes its elements (`encodeAsList` → `escapeValue`), and
+ * `cs`/`cd`/`ov`'s `{a,b}` is an array literal whose elements supabase-kt quotes as Postgres reads
+ * them ([parseArrayLiteral]); every range body is interpolated verbatim, so a `"` or `\` inside one
+ * is literal content. Reading either the wrong way replays a filter against different rows, which
+ * is why each of those cases asserts a byte-exact round trip in both directions.
  */
 class FilterReplayTest {
 
@@ -266,60 +268,124 @@ class FilterReplayTest {
         assertEquals(listOf("ov.{p,q}"), replayed["tags"])
     }
 
-    @Test
-    fun `cs filter list element containing a backslash replays byte-exact`() {
-        // Given a cs list element containing a backslash. encodeOverlapAsArray joins plain
-        // toString() output — it never calls escapeValue — so the backslash is literal content.
-        val original =
-            SelectRequestBuilder(schema, conversion).apply {
-                filter { cs("tags", listOf("""a\b""")) }
-            }
-        assertEquals(listOf("""cs.{a\b}"""), original.params["tags"])
+    /**
+     * Captures `filter { [call] }`, stores and restores it as the queue does, and replays it.
+     * Asserts the call went out as [sent] and that replay sends the same bytes.
+     */
+    private fun assertReplaysAsSent(
+        sent: String,
+        column: String = "tags",
+        call: PostgrestFilterBuilder.() -> Unit,
+    ) {
+        val original = SelectRequestBuilder(schema, conversion).apply { filter(call) }
+        assertEquals(listOf(sent), original.params[column])
         val descriptor = assertNotNull(captureFilterExactly(original))
+        assertTrue(replaysFully(storeAndRestore(descriptor)))
 
-        // When
         val replayed = replayParams(storeAndRestore(descriptor))
 
-        // Then the backslash survives. Unescaping it here — as the `in` tokenizer must — would
-        // replay cs.{ab} and target a different array.
-        assertEquals(original.params["tags"], replayed["tags"])
-        assertEquals(listOf("""cs.{a\b}"""), replayed["tags"])
+        assertEquals(original.params[column], replayed[column])
+    }
+
+    /** Replays a `cs` condition captured from an earlier release as [stored], as it was queued. */
+    private fun replayStored(stored: String): Map<String, List<String>> =
+        replayParams(
+            storeAndRestore(
+                FilterDescriptor(
+                    mode = FilterDescriptor.Mode.AND,
+                    conditions = listOf(FilterDescriptor.Condition("tags", "cs", stored)),
+                )
+            )
+        )
+
+    @Test
+    fun `cs filter list element containing a backslash replays byte-exact`() {
+        // Given a cs list element containing a backslash, which supabase-kt quotes and escapes, so
+        // Postgres reads the array literal as the one element `a\b`
+        // When / Then replay decodes it and re-encodes it to the same bytes. Splitting on commas
+        // and re-encoding the raw text would escape the backslash twice and target `a\\b`.
+        assertReplaysAsSent("""cs.{"a\\b"}""") { cs("tags", listOf("""a\b""")) }
     }
 
     @Test
     fun `cs filter list element containing a double quote replays byte-exact`() {
-        // Given a cs list element containing a bare double quote, again unescaped by the encoder
-        val original =
-            SelectRequestBuilder(schema, conversion).apply {
-                filter { cs("tags", listOf("""a"b""")) }
-            }
-        assertEquals(listOf("""cs.{a"b}"""), original.params["tags"])
-        val descriptor = assertNotNull(captureFilterExactly(original))
-
-        // When
-        val replayed = replayParams(storeAndRestore(descriptor))
-
-        // Then the quote survives instead of being read as an element delimiter and dropped
-        assertEquals(original.params["tags"], replayed["tags"])
-        assertEquals(listOf("""cs.{a"b}"""), replayed["tags"])
+        assertReplaysAsSent("""cs.{"a\"b"}""") { cs("tags", listOf("""a"b""")) }
     }
 
     @Test
     fun `ov filter list element containing an escape sequence replays byte-exact`() {
         // Given the same corner under a second array operator, with both characters at once
-        val original =
-            SelectRequestBuilder(schema, conversion).apply {
-                filter { ov("tags", listOf("""a\"b""")) }
+        assertReplaysAsSent("""ov.{"a\\\"b"}""") { ov("tags", listOf("""a\"b""")) }
+    }
+
+    @Test
+    fun `cd filter list element containing a comma replays as one element`() {
+        // Given an element holding the separator, which only its quotes tell from two elements
+        assertReplaysAsSent("""cd.{"a,b",c}""") { cd("tags", listOf("a,b", "c")) }
+    }
+
+    @Test
+    fun `array literal elements that are empty or edged with white space replay byte-exact`() {
+        assertReplaysAsSent("""cs.{""," a","b ",c}""") { cs("tags", listOf("", " a", "b ", "c")) }
+    }
+
+    @Test
+    fun `array literal elements holding braces or dots replay byte-exact`() {
+        // `.:()` no longer quote an array literal element; braces do
+        assertReplaysAsSent("""ov.{"{x}",a.b,c:d,(e)}""") {
+            ov("tags", listOf("{x}", "a.b", "c:d", "(e)"))
+        }
+    }
+
+    @Test
+    fun `the string NULL in an array literal replays as the string`() {
+        // Given `"NULL"`, quoted, which Postgres reads as the four-letter string
+        assertReplaysAsSent("""cs.{"NULL","null"}""") { cs("tags", listOf("NULL", "null")) }
+    }
+
+    @Test
+    fun `SQL NULL in an array literal replays as SQL NULL through the generic filter`() {
+        // Given a contains filter holding SQL NULL, which only the generic call can write: the
+        // typed cs, cd and ov take a list of non-null elements
+        assertReplaysAsSent("cs.{NULL,a}") { filter("tags", FilterOperator.CS, listOf(null, "a")) }
+        assertEquals(listOf(null, "a"), parseArrayLiteral("{NULL,a}"))
+        assertEquals(listOf(null, "NULL"), parseArrayLiteral("""{nUlL,"NULL"}"""))
+    }
+
+    @Test
+    fun `an empty array literal replays as the empty list`() {
+        assertReplaysAsSent("cs.{}") { cs("tags", emptyList()) }
+    }
+
+    @Test
+    fun `an array literal queued unquoted replays the elements the server read`() {
+        // Given literals queued by a release on supabase-kt 3.6, which joined the elements raw.
+        // Postgres read `{a\b}` as `ab`, `{NULL}` as SQL NULL, `{ a , b }` as `a` and `b`, and
+        // `{x.y,z}` as `x.y` and `z`.
+        // When / Then each replays those elements, written as supabase-kt writes them now
+        assertEquals(listOf("cs.{ab}"), replayStored("""{a\b}""")["tags"])
+        assertEquals(listOf("cs.{NULL}"), replayStored("{NULL}")["tags"])
+        assertEquals(listOf("cs.{a,b}"), replayStored("{ a , b }")["tags"])
+        assertEquals(listOf("cs.{x.y,z}"), replayStored("{x.y,z}")["tags"])
+        assertEquals(listOf("""cs.{"a b\\"}"""), replayStored("""{a b\\}""")["tags"])
+    }
+
+    @Test
+    fun `an array literal the server refuses as malformed is not replayed`() {
+        // Given literals an earlier release could queue raw, which Postgres refuses to read: a
+        // quote inside an element, an empty element, a nested brace, an unclosed quote
+        listOf("""{a"b}""", "{a,,b}", "{,a}", "{b{c}}", """{"a}""", """{"a"b}""", """{a\}""")
+            .forEach { stored ->
+                val descriptor =
+                    FilterDescriptor(
+                        mode = FilterDescriptor.Mode.AND,
+                        conditions = listOf(FilterDescriptor.Condition("tags", "cs", stored)),
+                    )
+
+                // When / Then replay refuses it rather than send a filter on other rows
+                assertFalse(replaysFully(storeAndRestore(descriptor)), stored)
+                assertEquals(null, parseArrayLiteral(stored), stored)
             }
-        assertEquals(listOf("""ov.{a\"b}"""), original.params["tags"])
-        val descriptor = assertNotNull(captureFilterExactly(original))
-
-        // When
-        val replayed = replayParams(storeAndRestore(descriptor))
-
-        // Then the backslash-quote pair is preserved rather than collapsed to a bare quote
-        assertEquals(original.params["tags"], replayed["tags"])
-        assertEquals(listOf("""ov.{a\"b}"""), replayed["tags"])
     }
 
     @Test
