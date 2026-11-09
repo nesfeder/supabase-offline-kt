@@ -39,24 +39,27 @@ internal fun captureFilter(builder: PostgrestRequestBuilder): FilterDescriptor? 
         // Skip special / nested keys (e.g. "and(...)", "or(...)", "table.column").
         if (key.contains("(") || key.contains(")") || key.contains(".")) return@forEach
 
-        val first = values.firstOrNull() ?: return@forEach
-        // Expect something like "eq.value" or "eq.123"
-        val parts = first.split('.', limit = 2)
-        if (parts.size < 2) return@forEach
+        // supabase-kt sends every value of a parameter and PostgREST ANDs them, so each value is
+        // its own condition, in the order the request holds them
+        values.forEach eachValue@{ value ->
+            // Expect something like "eq.value" or "eq.123"
+            val parts = value.split('.', limit = 2)
+            if (parts.size < 2) return@eachValue
 
-        val operatorIdentifier = parts[0]
-        val rawValue = parts[1]
+            val operatorIdentifier = parts[0]
+            val rawValue = parts[1]
 
-        val operator = filterOperatorOrNull(operatorIdentifier) ?: return@forEach
+            val operator = filterOperatorOrNull(operatorIdentifier) ?: return@eachValue
 
-        // Stored exactly as encoded: trimming whitespace or quotes would replay (and overlay) a
-        // different value than the caller wrote.
-        conditions +=
-            FilterDescriptor.Condition(
-                column = key,
-                operatorId = operator.identifier,
-                value = rawValue,
-            )
+            // Stored exactly as encoded: trimming whitespace or quotes would replay (and overlay)
+            // a different value than the caller wrote.
+            conditions +=
+                FilterDescriptor.Condition(
+                    column = key,
+                    operatorId = operator.identifier,
+                    value = rawValue,
+                )
+        }
     }
 
     if (conditions.isEmpty()) return null
@@ -105,16 +108,16 @@ private val NON_FILTER_PARAMS: Set<String> = setOf("select")
  * [PostgrestRequestBuilder.params] contains:
  * - a key with `(`, `)` or `.` — a logical group (`or(...)` / `and(...)`) or a foreign-table dotted
  *   key; neither is representable in the flat offline descriptor
- * - a first value whose operator prefix is not a known [FilterOperator] identifier — this covers
+ * - a value whose operator prefix is not a known [FilterOperator] identifier — this covers
  *   `not.`-negated operators and any group expression encoded into the value
  *
  * Returns `null` only for a genuinely filter-free request (no capturable params), mirroring
  * [captureFilter]'s empty-conditions contract.
  *
- * Only the **first** value per column is inspected, mirroring upstream supabase-kt 3.6.0, which
- * transmits only the first value per query key (`params.mapToFirstValue()`). Two filters on the
- * same column added via separate calls therefore capture the first value only — this matches live
- * request semantics and is intentional, not a lossy case.
+ * Every value of a column is captured, one condition per value, in the order the request holds
+ * them. supabase-kt sends each value of a query parameter (`age=gte.1&age=lte.10` for two filters
+ * on `age`) and PostgREST ANDs them, so a descriptor that kept only the first would replay the
+ * write against more rows than the caller named.
  *
  * @param builder request builder whose [PostgrestRequestBuilder.params] describe the target rows.
  * @return a faithful [FilterDescriptor], or `null` when no filter conditions are present.
@@ -139,26 +142,28 @@ internal fun captureFilterExactly(builder: PostgrestRequestBuilder): FilterDescr
             )
         }
 
-        val first = values.firstOrNull() ?: return@forEach
-        val parts = first.split('.', limit = 2)
-        val operatorId = parts.firstOrNull()
-        val operator = operatorId?.let { candidate ->
-            filterOperatorOrNull(candidate)
-        }
-        if (operator == null || parts.size < 2) {
-            throw UncapturableFilterException(
-                "cannot faithfully capture offline filter for key '$key': unrecognized operator " +
-                    "in '$first' (negated 'not.' operators and group expressions are not supported)"
-            )
-        }
+        // Every value is sent and ANDed, so every value is captured: dropping one would replay the
+        // write against more rows than the caller named
+        values.forEach { value ->
+            val parts = value.split('.', limit = 2)
+            val operatorId = parts.firstOrNull()
+            val operator = operatorId?.let { candidate -> filterOperatorOrNull(candidate) }
+            if (operator == null || parts.size < 2) {
+                throw UncapturableFilterException(
+                    "cannot faithfully capture offline filter for key '$key': unrecognized " +
+                        "operator in '$value' (negated 'not.' operators and group expressions " +
+                        "are not supported)"
+                )
+            }
 
-        // Stored exactly as encoded, so replay sends the very value the caller's request did.
-        conditions +=
-            FilterDescriptor.Condition(
-                column = key,
-                operatorId = operator.identifier,
-                value = parts[1],
-            )
+            // Stored exactly as encoded, so replay sends the very value the caller's request did.
+            conditions +=
+                FilterDescriptor.Condition(
+                    column = key,
+                    operatorId = operator.identifier,
+                    value = parts[1],
+                )
+        }
     }
 
     if (conditions.isEmpty()) return null

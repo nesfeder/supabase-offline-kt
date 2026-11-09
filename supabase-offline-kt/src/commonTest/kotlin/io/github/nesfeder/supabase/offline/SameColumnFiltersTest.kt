@@ -9,33 +9,36 @@ import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.connectivityFailure
 import io.github.nesfeder.supabase.offline.testdoubles.RecordingPostgrestServer.Companion.okJson
 import io.github.nesfeder.supabase.offline.testdoubles.everyFlowReadStrategy
+import io.github.nesfeder.supabase.offline.testdoubles.idleCoroutineScope
 import io.github.nesfeder.supabase.offline.testdoubles.newTestOfflineClient
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
-import kotlin.test.assertTrue
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
 
 /**
- * Two top-level filters on one column are refused before anything is sent or queued, under every
- * strategy, online and offline: supabase-kt sends only the first, so the read would show more rows
- * than it names, and a write would reach more rows, now or when the queue replays it. One `and { }`
- * group sends both, and filters on different columns are untouched.
+ * Two top-level filters on one column are sent, as supabase-kt sends them: every value of the
+ * parameter, `age=gte.1&age=lte.10`, which PostgREST ANDs. A read sends both and its cached query
+ * admits a local row only when it meets both; an update or a delete sends both, and one queued
+ * offline captures both and replays both, so it never reaches more rows than it named. One `and {
+ * }` group still sends both in one parameter, and filters on different columns are untouched.
  */
 class SameColumnFiltersTest {
 
-    private val server = RecordingPostgrestServer(answer = { okJson(ROWS) })
+    /** Whether the server answers; off, every request fails to connect. */
+    private var online = true
 
-    private val readStrategies =
-        listOf(
-            ReadStrategy.NetworkOnly,
-            ReadStrategy.NetworkFirst(),
-            ReadStrategy.CacheFirst(),
-            ReadStrategy.CacheOnly(),
-        )
+    private val server =
+        RecordingPostgrestServer(answer = { if (online) okJson(ROWS) else connectivityFailure() })
 
     private val mutationStrategies =
         listOf(MutationStrategy.OnlineOnly, MutationStrategy.QueueIfOffline)
@@ -48,93 +51,162 @@ class SameColumnFiltersTest {
         }
     }
 
-    /** Runs [block] against a client whose server answers, then one whose transport fails. */
-    private suspend fun onlineAndOffline(block: suspend (OfflineClient) -> Unit) {
-        listOf(true, false).forEach { online ->
-            server.answer = if (online) ({ okJson(ROWS) }) else ({ connectivityFailure() })
-            val client = newTestOfflineClient(supabase = server.supabaseClient())
-            try {
-                block(client)
-            } finally {
-                client.close()
-            }
+    private fun newClient(): OfflineClient =
+        newTestOfflineClient(supabase = server.supabaseClient())
+
+    /** Asserts every request the server received carried both values of the window, in order. */
+    private fun assertEveryRequestSentTheWindow() {
+        server.requests.forEach { request ->
+            assertEquals(
+                listOf("gte.1", "lte.10"),
+                request.queryValues[COLUMN],
+                "${request.method} ${request.encodedQuery}",
+            )
         }
     }
 
-    private fun assertRefusal(failure: IllegalArgumentException) {
-        val message = failure.message.orEmpty()
-        assertTrue("`$COLUMN`" in message, "the message does not name the column: $message")
-        assertTrue("and { }" in message, "the message does not say what to write: $message")
-        assertFalse("10" in message, "the message carries a filter value: $message")
-    }
-
     @Test
-    fun a_one_shot_read_with_two_filters_on_one_column_is_refused_and_sends_nothing() = runTest {
-        onlineAndOffline { client ->
-            readStrategies.forEach { strategy ->
-                // When
-                val failure =
-                    assertFailsWith<IllegalArgumentException>("$strategy") {
-                        client.from(TABLE).select(readStrategy = strategy, request = ageWindow)
-                    }
-
-                // Then
-                assertRefusal(failure)
-            }
-        }
-        assertEquals(emptyList(), server.requests)
-    }
-
-    @Test
-    fun a_live_read_with_two_filters_on_one_column_fails_and_sends_nothing() = runTest {
-        onlineAndOffline { client ->
-            everyFlowReadStrategy.forEach { strategy ->
-                // When
-                val failure =
-                    assertFailsWith<IllegalArgumentException>("$strategy") {
-                        client
-                            .from(TABLE)
-                            .selectAsFlow(readStrategy = strategy, request = ageWindow)
-                            .first()
-                    }
-
-                // Then
-                assertRefusal(failure)
-            }
-        }
-        assertEquals(emptyList(), server.requests)
-    }
-
-    @Test
-    fun an_update_or_a_delete_with_two_filters_on_one_column_is_refused_sending_and_queueing_nothing() =
+    fun a_one_shot_read_with_two_filters_on_one_column_sends_both_and_caches_the_answer() =
         runTest {
-            onlineAndOffline { client ->
-                mutationStrategies.forEach { strategy ->
-                    // When
-                    val update =
-                        assertFailsWith<IllegalArgumentException>("update, $strategy") {
-                            client
-                                .from(TABLE)
-                                .update({ set("title", "renamed") }, strategy, ageWindow)
-                        }
-                    val delete =
-                        assertFailsWith<IllegalArgumentException>("delete, $strategy") {
-                            client.from(TABLE).delete(strategy, ageWindow)
-                        }
+            // Given
+            val client = newClient()
+            val strategies =
+                listOf(
+                    ReadStrategy.NetworkOnly,
+                    ReadStrategy.NetworkFirst(),
+                    ReadStrategy.CacheFirst(),
+                )
 
-                    // Then
-                    assertRefusal(update)
-                    assertRefusal(delete)
-                    assertEquals(0, client.pendingMutationCount())
-                }
+            // When
+            strategies.forEach { strategy ->
+                client.from(TABLE).select(readStrategy = strategy, request = ageWindow)
             }
-            assertEquals(emptyList(), server.requests)
+            online = false
+            val cached =
+                client
+                    .from(TABLE)
+                    .select(readStrategy = ReadStrategy.CacheOnly(), request = ageWindow)
+
+            // Then — sent with both values, and the cache answers the same query offline
+            assertEquals(listOf(1), idsOf(cached.data))
+            assertEquals(true, server.requests.isNotEmpty())
+            assertEveryRequestSentTheWindow()
+            client.close()
         }
+
+    @Test
+    fun a_live_read_with_two_filters_on_one_column_sends_both() = runTest {
+        // Given
+        val client = newClient()
+
+        // When
+        everyFlowReadStrategy
+            .filter { strategy -> strategy != FlowReadStrategy.CacheOnly }
+            .forEach { strategy ->
+                client
+                    .from(TABLE)
+                    .selectAsFlow(readStrategy = strategy, request = ageWindow)
+                    .first()
+            }
+
+        // Then
+        assertEquals(true, server.requests.isNotEmpty())
+        assertEveryRequestSentTheWindow()
+        client.close()
+    }
+
+    @Test
+    fun an_update_or_a_delete_with_two_filters_on_one_column_sends_both() = runTest {
+        // Given
+        val client = newClient()
+
+        // When
+        mutationStrategies.forEach { strategy ->
+            val update = client.from(TABLE).update({ set("title", "renamed") }, strategy, ageWindow)
+            val delete = client.from(TABLE).delete(strategy, ageWindow)
+
+            // Then
+            assertIs<MutationOutcome.Applied>(update)
+            assertIs<MutationOutcome.Applied>(delete)
+        }
+        assertEquals(
+            listOf("PATCH", "DELETE", "PATCH", "DELETE"),
+            server.requests.map { it.method },
+        )
+        assertEveryRequestSentTheWindow()
+        client.close()
+    }
+
+    @Test
+    fun a_queued_update_or_delete_with_two_filters_on_one_column_replays_both() = runTest {
+        // Given — an update and a delete through the window, queued offline
+        // (no replay pass of the engine's own races the one under test)
+        val client =
+            newTestOfflineClient(
+                supabase = server.supabaseClient(),
+                coordinatorScope = idleCoroutineScope(),
+            )
+        online = false
+        val update = client.from(TABLE).update({ set("title", "renamed") }, request = ageWindow)
+        val delete = client.from(TABLE).delete(request = ageWindow)
+        assertIs<MutationOutcome.Queued>(update)
+        assertIs<MutationOutcome.Queued>(delete)
+        assertEquals(2, client.pendingMutationCount())
+
+        // When — back online, the queue replays
+        online = true
+        server.requests.clear()
+        val synced = client.syncPendingMutations().syncedCount
+
+        // Then — each is sent with both values, as it was written
+        assertEquals(2, synced)
+        assertEquals(listOf("PATCH", "DELETE"), server.requests.map { it.method })
+        assertEveryRequestSentTheWindow()
+        client.close()
+    }
+
+    @Test
+    fun a_cached_query_with_two_filters_on_one_column_admits_a_local_row_meeting_both() = runTest {
+        // Given — `status <> 'a' AND status <> 'b'` cached; then no connection
+        val client = newClient()
+        val neither: PostgrestRequestBuilder.() -> Unit = {
+            filter {
+                neq("status", "a")
+                neq("status", "b")
+            }
+        }
+        client.from(TABLE).select(readStrategy = ReadStrategy.NetworkOnly, request = neither)
+        online = false
+
+        // When — rows of status a, b and c are queued
+        listOf(2 to "a", 3 to "b", 4 to "c").forEach { (id, status) ->
+            client
+                .from(TABLE)
+                .insert(
+                    JsonArray(
+                        listOf(
+                            buildJsonObject {
+                                put("id", id)
+                                put("age", 5)
+                                put("status", status)
+                            }
+                        )
+                    )
+                )
+        }
+
+        // Then — only the row meeting both conditions shows
+        val shown =
+            client.from(TABLE).select(readStrategy = ReadStrategy.CacheOnly(), request = neither)
+        assertEquals(setOf(1, 4), idsOf(shown.data).toSet())
+        assertEquals(listOf("neq.a", "neq.b"), server.requests.first().queryValues["status"])
+        client.close()
+    }
 
     @Test
     fun the_two_filters_in_one_and_group_are_both_sent() = runTest {
         // Given
-        val client = newTestOfflineClient(supabase = server.supabaseClient())
+        val client = newClient()
         val window: PostgrestRequestBuilder.() -> Unit = {
             filter {
                 and {
@@ -161,7 +233,7 @@ class SameColumnFiltersTest {
     @Test
     fun filters_on_different_columns_and_single_valued_parameters_are_untouched() = runTest {
         // Given
-        val client = newTestOfflineClient(supabase = server.supabaseClient())
+        val client = newClient()
 
         // When — two columns filtered, two orders (merged into one parameter) and a limit
         client.from(TABLE).select(readStrategy = ReadStrategy.NetworkOnly) {
@@ -183,9 +255,14 @@ class SameColumnFiltersTest {
         client.close()
     }
 
+    private fun idsOf(data: String): List<Int> =
+        Json.parseToJsonElement(data).jsonArray.map { element ->
+            element.jsonObject.getValue("id").jsonPrimitive.content.toInt()
+        }
+
     private companion object {
         const val TABLE = "people"
         const val COLUMN = "age"
-        const val ROWS = """[{"id":1,"age":5}]"""
+        const val ROWS = """[{"id":1,"age":5,"status":"c"}]"""
     }
 }

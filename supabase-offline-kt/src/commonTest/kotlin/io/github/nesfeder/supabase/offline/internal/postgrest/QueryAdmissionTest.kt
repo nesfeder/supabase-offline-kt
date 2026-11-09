@@ -15,11 +15,12 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 
 /**
  * How a query's shape is captured from its request, which decides the rows the cached query admits:
- * each filter on a plain column, its first value only, taken whole as supabase-kt sends it; the
- * select list as sent; and whether anything else filters the query.
+ * each filter on a plain column, every value of it, taken whole as supabase-kt sends it; the select
+ * list as sent; and whether anything else filters the query.
  */
 class QueryAdmissionTest {
 
@@ -70,17 +71,44 @@ class QueryAdmissionTest {
     }
 
     @Test
-    fun only_the_first_value_of_a_column_counts_as_supabase_kt_sends_only_that_one() {
-        // Given / When
+    fun every_value_of_a_column_is_a_condition_and_a_row_must_meet_them_all() {
+        // Given / When — two filters on one column, both sent, which PostgREST ANDs
         val shape = shapeOf {
             filter {
-                eq("status", "a")
-                eq("status", "b")
+                neq("status", "a")
+                neq("status", "b")
             }
         }
 
         // Then
-        assertEquals(listOf(FilterDescriptor.Condition("status", "eq", "a")), shape.conditions)
+        assertEquals(
+            listOf(
+                FilterDescriptor.Condition("status", "neq", "a"),
+                FilterDescriptor.Condition("status", "neq", "b"),
+            ),
+            shape.conditions,
+        )
+        assertFalse(shape.admission.admits(buildJsonObject { put("status", "a") }))
+        assertFalse(shape.admission.admits(buildJsonObject { put("status", "b") }))
+        assertTrue(shape.admission.admits(buildJsonObject { put("status", "c") }))
+    }
+
+    @Test
+    fun every_value_of_a_referenced_table_parameter_is_recorded() {
+        // Given / When — two filters on one column of an embedded table
+        val shape =
+            shapeOf(Columns.raw("id,comments(body)")) {
+                filter {
+                    gte("comments.likes", 1)
+                    lte("comments.likes", 10)
+                }
+            }
+
+        // Then
+        assertEquals(
+            listOf("comments.likes=gte.1", "comments.likes=lte.10"),
+            shape.referencedTableOptions,
+        )
     }
 
     @Test
