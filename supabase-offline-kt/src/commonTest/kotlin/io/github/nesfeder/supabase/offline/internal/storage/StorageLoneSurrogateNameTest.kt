@@ -14,6 +14,8 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.test.runTest
 import okio.FileSystem
@@ -21,12 +23,12 @@ import okio.Path
 import okio.SYSTEM
 
 /**
- * A call naming an object whose name holds a lone UTF-16 surrogate cannot name it in its URL:
- * supabase-kt percent-encodes the name as UTF-8, which a lone surrogate has no form in. On the JVM
- * the encoder sends a `?` in its place, so the request would reach another object; on Kotlin/Native
- * it throws an `IOException` before sending, which would read as a lost connection. The library
- * refuses such a call as an invalid argument before anything is sent, on every platform, so an app
- * neither touches another object nor thinks it is offline.
+ * A call naming an object whose name holds a lone UTF-16 surrogate cannot send that name:
+ * supabase-kt encodes it as UTF-8, in the URL or in a JSON body, and a lone surrogate has no UTF-8
+ * form. On the JVM the encoder sends a `?` in its place, so the request would reach another object;
+ * on Kotlin/Native the URL's encoder throws an `IOException` before sending, which would read as a
+ * lost connection. The library refuses such a call as an invalid argument before anything is sent,
+ * on every platform, so an app neither touches another object nor thinks it is offline.
  */
 class StorageLoneSurrogateNameTest {
 
@@ -81,6 +83,76 @@ class StorageLoneSurrogateNameTest {
     }
 
     @Test
+    fun a_delete_naming_an_object_with_a_lone_surrogate_is_refused_and_keeps_the_cache() = runTest {
+        // Given — a cached object, deleted in one call with a name the request cannot carry
+        server.objects["$BUCKET/$CACHED"] = BYTES
+        bucket.downloadAuthenticated(CACHED) {}
+        val sent = server.requests.size
+
+        // When
+        val failure =
+            assertFailsWith<IllegalArgumentException> {
+                bucket.delete(listOf(CACHED, "x\uD800.txt"))
+            }
+
+        // Then — nothing sent, so neither `x?.txt` nor the cached object is deleted
+        assertFalse(failure.isNetworkOrConnectivityFailure(), "$failure")
+        assertEquals(sent, server.requests.size)
+        assertNotNull(bucket.cachedFile(CACHED))
+        client.close()
+    }
+
+    @Test
+    fun a_move_to_or_from_a_name_with_a_lone_surrogate_is_refused_and_keeps_the_cache() = runTest {
+        // Given — a cached object
+        server.objects["$BUCKET/$CACHED"] = BYTES
+        bucket.downloadAuthenticated(CACHED) {}
+        val sent = server.requests.size
+
+        // When — moved to, and from, a name the request body cannot carry
+        val failures =
+            listOf(
+                assertFailsWith<IllegalArgumentException> {
+                    bucket.move(CACHED, "x\uD800.txt")
+                },
+                assertFailsWith<IllegalArgumentException> {
+                    bucket.move("x\uDC00.txt", CACHED)
+                },
+            )
+
+        // Then — nothing sent, so no `x?.txt` is made, and the cached copy stays where it was
+        failures.forEach { failure ->
+            assertFalse(failure.isNetworkOrConnectivityFailure(), "$failure")
+        }
+        assertEquals(sent, server.requests.size)
+        assertNotNull(bucket.cachedFile(CACHED))
+        assertNull(bucket.cachedFile("x?.txt"))
+        client.close()
+    }
+
+    @Test
+    fun every_call_sending_a_name_with_a_lone_surrogate_in_its_body_is_refused() = runTest {
+        val name = "x\uD800.txt"
+
+        // When
+        val failures =
+            listOf<suspend () -> Unit>(
+                    { bucket.copy(name, "a.txt") },
+                    { bucket.copy("a.txt", name) },
+                    { bucket.createSignedUrls(60.seconds, listOf("a.txt", name)) },
+                    { bucket.list(name) },
+                )
+                .map { call -> assertFailsWith<IllegalArgumentException> { call() } }
+
+        // Then — invalid arguments, and nothing sent
+        failures.forEach { failure ->
+            assertFalse(failure.isNetworkOrConnectivityFailure(), "$failure")
+        }
+        assertEquals(emptyList(), server.requests)
+        client.close()
+    }
+
+    @Test
     fun a_name_whose_surrogates_pair_up_is_sent_by_its_own_name() = runTest {
         // Given — an emoji outside the Basic Multilingual Plane, one surrogate pair
         val name = "smile-\uD83D\uDE00.png"
@@ -100,6 +172,7 @@ class StorageLoneSurrogateNameTest {
 
     private companion object {
         const val BUCKET = "photos"
+        const val CACHED = "a.txt"
         val BYTES = "bytes".encodeToByteArray()
     }
 }

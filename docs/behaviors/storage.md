@@ -436,10 +436,10 @@ segment, a `\`, a control character) still downloads and writes, uncached, and `
 refuses it with `IllegalArgumentException`. A name holding `%`, `?` or `#` is put in the URL
 percent-encoded, so it names its own object and is cached like any other. A name holding a lone
 UTF-16 surrogate, half of a pair with the other half missing, is not a valid Unicode string and
-cannot be put in a URL the same way on every platform: every call that sends it throws
-`IllegalArgumentException` before anything is sent, and it is never cached. An upload an earlier
-version queued under such a name goes to the rejected list when it comes up for sending. A
-segment that starts with a letter and a colon, like `u:42`, is cached, under a hash of the name
+cannot be sent the same way on every platform: every call that sends it, in a URL or in a request
+body, throws `IllegalArgumentException` before anything is sent, and it is never cached. An upload
+an earlier version queued under such a name goes to the rejected list when it comes up for
+sending. A segment that starts with a letter and a colon, like `u:42`, is cached, under a hash of the name
 ([On-device data](../reference/on-device-data.md#the-files)).
 
 ## Whose files they are

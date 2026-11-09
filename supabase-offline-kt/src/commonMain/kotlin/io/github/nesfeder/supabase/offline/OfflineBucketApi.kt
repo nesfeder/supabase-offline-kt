@@ -46,8 +46,8 @@ import io.github.jan.supabase.storage.UploadOptionBuilder
  * **Object paths that cannot be cached** — a leading `/`, an empty or `.`/`..` segment, a `\` or a
  * control character — still download and write normally; they are never mapped onto a file. A path
  * holding a lone UTF-16 surrogate, which is no Unicode character, throws [IllegalArgumentException]
- * before anything is sent: supabase-kt cannot name it in a request's URL the same way on every
- * platform.
+ * before anything is sent, whether the call puts it in a URL or in a request body: supabase-kt
+ * cannot send it as the same name on every platform.
  *
  * The cache is bounded by [Offline.Config.fileCacheSizeBytes], evicting the least recently used
  * files first and never those of an object pinned with [pinCachedFile]; [evictCachedFile] deletes

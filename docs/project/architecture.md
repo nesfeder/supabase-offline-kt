@@ -540,8 +540,9 @@ status always ask the server. An object path that cannot be mapped safely onto a
 uncached. A name holding `%`, `?` or `#` is put in the URL percent-encoded and cached like any
 other. A name holding a lone UTF-16 surrogate cannot be encoded alike everywhere (the JVM puts a
 `?` in its place, which names a third object, and Kotlin/Native throws, which would read as a lost
-connection), so every call that puts such a name in its URL throws `IllegalArgumentException`
-first, and an upload queued under one by an earlier version goes to the rejected list.
+connection), so every call that sends such a name, in its URL or its body, throws
+`IllegalArgumentException` first, and an upload queued under one by an earlier version goes to the
+rejected list.
 
 ### Local data and lifecycle
 
