@@ -72,11 +72,12 @@ import kotlinx.serialization.json.putJsonObject
  * ends the feed once supabase-kt gives up rejoining it, a close from the server ends it too, and a
  * canceled collector leaves the channel. A channel error while joined is joined again by
  * supabase-kt, and reported joined once more. A binding the server refuses ends the feed, though
- * supabase-kt keeps the channel joined; an error from another extension does not. With a channel
- * per table on one socket, a refused channel is left on the server while another table's keeps
- * receiving, and a channel left while joining is left on the server. Releasing the network closes a
- * socket that holds only this library's channels, and never one that holds an app's. A token
- * provider that throws keeps the channel joining, and the feed waits, until it stops throwing.
+ * supabase-kt keeps the channel joined; the server's ok and an error from another extension do not.
+ * With a channel per table on one socket, a refused channel is left on the server while another
+ * table's keeps receiving, and a channel left while joining is left on the server. Releasing the
+ * network closes a socket that holds only this library's channels, once, and never one that holds
+ * an app's or one the app keeps open. A token provider that throws keeps the channel joining, and
+ * the feed waits, until it stops throwing.
  */
 class SupabaseRealtimeFeedTest {
 
@@ -368,7 +369,7 @@ class SupabaseRealtimeFeedTest {
         }
 
     @Test
-    fun an_error_from_another_extension_does_not_end_the_feed() =
+    fun an_ok_or_an_error_from_another_extension_does_not_end_the_feed() =
         runTest(timeout = 2.minutes) {
             withContext(Dispatchers.Default) {
                 // Given — a table followed and joined
@@ -383,7 +384,21 @@ class SupabaseRealtimeFeedTest {
                 socket.answer(joinTaken(join, join.bindings()))
                 assertEquals(ServerChangeEvent.Joined, events.receiveWithin())
 
-                // When — the server reports an error from an extension other than the bindings'
+                // When — the server says the bindings are subscribed, as it does after the join,
+                // then reports an error from an extension other than the bindings'
+                socket.answer(
+                    RealtimeMessage(
+                        join.topic,
+                        "system",
+                        buildJsonObject {
+                            put("status", "ok")
+                            put("extension", "postgres_changes")
+                            put("message", "Subscribed to PostgreSQL")
+                            put("channel", join.topic.removePrefix("realtime:"))
+                        },
+                        null,
+                    )
+                )
                 socket.answer(systemError(join.topic, extension = "system"))
                 socket.answer(
                     change(
@@ -473,6 +488,11 @@ class SupabaseRealtimeFeedTest {
 
                 // Then — the socket closes at once, rather than after two heartbeats
                 socket.awaitDisconnected()
+                assertEquals(Realtime.Status.DISCONNECTED, own.realtime.status.value)
+
+                // And — releasing it again, with no socket, opens none
+                ownFeed.releaseNetwork()
+                assertEquals(1, ownSockets.sockets.value.size)
                 assertEquals(Realtime.Status.DISCONNECTED, own.realtime.status.value)
                 own.close()
             }
