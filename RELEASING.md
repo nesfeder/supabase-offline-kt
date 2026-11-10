@@ -136,13 +136,13 @@ public.
 runners, macOS included, are free for a public repository. What it takes is time. The `framework`
 job runs on GitHub's macOS runner from nothing (no cache is restored in a release): Gradle, the
 Kotlin/Native toolchain, both iOS builds of the library and the bridge, two release links, then the
-Swift package's build and tests on a simulator. It takes about 20 minutes of macOS, as it did in
-the 0.1.0 release, beside about 20 Linux minutes; a real release takes the same plus Central's wait.
+Swift package's build and tests on a simulator. It takes about 22 minutes of macOS and about 15
+Linux minutes; a real release takes a few more of each, plus Central's wait ("What a run costs").
 
 ## 3. Release
 
 1. **Actions → Release → Run workflow**, branch `main`, with **Dry run** cleared.
-2. **verify** (Linux, about 12 minutes, no secrets, no side effects):
+2. **verify** (Linux, about 9 minutes, no secrets, no side effects):
    - `scripts/release.py check-version`, as in step 1.5;
    - `scripts/api-compat.py check-release`, from a checkout with all history and tags;
    - `check` of both modules, less the iOS simulator suites, which need macOS and ran in the
@@ -383,8 +383,8 @@ standard hosted runners, Linux and macOS alike, cost nothing for a public reposi
 
 | Run | Linux minutes | macOS minutes |
 | --- | --- | --- |
-| Dry run | about 20: `verify` about 12, `publish` about 7 | about 20 (`framework`) |
-| Release | about 27 plus Central's wait for PUBLISHED, usually 5 to 30; `docs` about 2 | 20 (`framework`, measured in the 0.1.0 release) |
+| Dry run | about 15: `verify` about 9, `publish` about 5 | about 22 (`framework`) |
+| Release | about 21 plus Central's wait for PUBLISHED, usually 5 to 30 (10 for 0.3.0, 20 for 0.4.0); `docs` about 6 | about 25 (`framework`, measured in the 0.3.0 and 0.4.0 releases) |
 | Release resume | about 3, with `docs` | none |
 | Docs republish | about 3 | none |
 | Snapshot (a push to `main`) | about 7, beside CI's own run | none |
