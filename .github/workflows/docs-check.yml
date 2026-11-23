@@ -31,7 +31,7 @@ jobs:
 
       # The Kotlin API reference, built as docs-publish.yml builds it: JDK 17, the wrapper's
       # checksum, no Gradle cache, and the image's ANDROID_HOME for the Android SDK.
-      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+      - uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
         with:
           distribution: temurin
           java-version: '17'
