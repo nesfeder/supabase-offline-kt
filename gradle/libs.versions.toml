@@ -87,14 +87,14 @@ buildToolFloor-opentelemetry = "1.67.0"
 # The Android sample's image loader.
 coil = "3.6.3"
 # The documentation engine: the HTML reference in each published artifact's documentation jar.
-dokka = "2.2.0"
+dokka = "2.3.0"
 junit = "4.13.2"
 kotlin = "2.4.21"
 # Held with supabase-bom, as Ktor is: the version the pinned supabase-kt release was built with.
 kotlinx-coroutines = "1.11.0"
 kotlinx-serialization = "1.11.0"
 kover = "0.9.11"
-ksp = "2.3.13"
+ksp = "2.3.14"
 # The formatter kempt runs (.kempt.toml reads this key). CI pins the jar by checksum: see
 # CONTRIBUTING.md, "Formatting", before changing it.
 ktfmt = "0.64"
